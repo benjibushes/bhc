@@ -163,6 +163,11 @@ export async function GET(req: Request) {
     subscriptionStatus,
     subscriptionStarted,
     subscriptionNext,
+    // Dashboard-audit rank 8: the plan switcher must only render for ranchers
+    // with a REAL Stripe subscription — legacy_connect carries a synthetic
+    // 'active' Subscription Status with no Stripe Subscription Id, and
+    // /api/rancher/tier/change 409s without one.
+    hasRealSubscription: !!String(rancher['Stripe Subscription Id'] || '').trim(),
     connectStatus,
     connectAccountId: connectAccountId || null,
     connectCurrentlyDueCount,

@@ -744,6 +744,47 @@ export async function getRancherBySlug(slug: string) {
   }
 }
 
+// Slug-rename fallback (dashboard-audit rank 10): find the LIVE rancher whose
+// 'Previous Slugs' history contains this slug, so links shared before a rename
+// 308-redirect instead of 404ing. Token-exact match on the ", "-joined list
+// (", a," in ", a, b," — never a substring hit on a longer slug). LOWER() on
+// both sides because Airtable FIND is case-sensitive (slugs are stored
+// lowercase; the incoming URL may not be).
+//
+// DEFENSIVE: the 'Previous Slugs' field may not exist in the base yet — an
+// INVALID_FILTER_BY_FORMULA (or any other failure) returns null (plain miss →
+// the caller 404s exactly as before this feature), NEVER throws into the
+// public page. The live-slug lookup always runs first, so a current slug wins
+// over any history match by construction.
+export async function getRancherByPreviousSlug(slug: string) {
+  if (isDemoMode()) return null; // demo store has no rename history
+  try {
+    const safeSlug = escapeAirtableValue(String(slug || '').toLowerCase());
+    if (!safeSlug) return null;
+    const records = await withTimeout(
+      base(TABLES.RANCHERS)
+        .select({
+          filterByFormula:
+            `AND({Page Live} = 1, NOT({Public Map Hidden} = 1), ` +
+            `{Verification Status} != "Removed", ` +
+            `FIND(", " & "${safeSlug}" & ",", ", " & LOWER({Previous Slugs} & "") & ","))`,
+          maxRecords: 1,
+        })
+        .all(),
+      resolveAirtableTimeoutMs(),
+      TABLES.RANCHERS,
+    );
+    if (records.length === 0) return null;
+    return { id: records[0].id, ...records[0].fields };
+  } catch (error: any) {
+    console.warn(
+      `[previous-slug] lookup failed for "${slug}" (field may not exist yet):`,
+      error?.message,
+    );
+    return null;
+  }
+}
+
 // ── Duplicate-rancher guard ─────────────────────────────────────────────
 // Single chokepoint for "does a Ranchers row already exist for this rancher?"
 // Root cause of the "3 Jesses" incident: every signup path

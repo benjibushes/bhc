@@ -10,6 +10,15 @@ import { MIN_TIER_PRICE } from '@/lib/pricing';
 import { normalizeImageUrl } from '@/lib/imageUrl';
 import { validateAccountPatch, ACCOUNT_EDITABLE_KEYS } from '@/lib/accountProfile';
 import { validatePauseValue, validatePauseTransition } from '@/lib/pauseStatus';
+import { getSupabaseAdmin, findSupabaseUserIdByEmail } from '@/lib/supabaseAuth';
+import { appendPreviousSlug } from '@/lib/slugHistory';
+import jwt from 'jsonwebtoken';
+import { JWT_SECRET } from '@/lib/secrets';
+
+// Mirror of app/api/auth/rancher/verify — the session cookie this route
+// refreshes after an email change (rank 9) must be byte-compatible with the
+// one login mints.
+const RANCHER_AUTH_COOKIE = 'bhc-rancher-auth';
 
 // Fulfillment Types option values — mirrors FULFILLMENT_OPTIONS in the setup
 // wizard + the dashboard editor so all three agree on the exact strings the
@@ -735,11 +744,18 @@ export async function PATCH(request: Request) {
       fields['States Served'] = fields['Preferred States'];
     }
 
-    // Prior-row snapshot — shared by the Preferred-States diff alert and the
-    // Ships-Nationwide flip alert below (one Airtable read, not one per
-    // alert). Best-effort: a failed read skips the alerts, never the save.
+    // Prior-row snapshot — shared by the Preferred-States diff alert, the
+    // Ships-Nationwide flip alert, the email-change auth sync (rank 9), and
+    // the slug-rename history (rank 10) below (one Airtable read, not one
+    // per consumer). Best-effort: a failed read skips those follow-ups,
+    // never the save.
     let priorRow: any = null;
-    if ('Preferred States' in fields || 'Ships Nationwide' in fields) {
+    if (
+      'Preferred States' in fields ||
+      'Ships Nationwide' in fields ||
+      'Email' in fields ||
+      (typeof fields['Slug'] === 'string' && fields['Slug'])
+    ) {
       try {
         priorRow = await getRecordById(TABLES.RANCHERS, session.rancherId);
       } catch {
@@ -788,6 +804,94 @@ export async function PATCH(request: Request) {
 
     await updateRecord(TABLES.RANCHERS, session.rancherId, fields);
 
+    // ── Email change → keep the auth rails in sync (rank 9) ─────────────
+    // Before this, an email change wrote Airtable only: the Supabase Auth
+    // user (password login) stayed keyed to the OLD email, and the session
+    // JWT kept the OLD email claim — so a subsequent "Set password" (which
+    // reads session.email) re-bound the stale address. Both best-effort:
+    // the Airtable save above is already committed and must stand.
+    let emailChangeWarning: string | null = null;
+    let refreshedSessionToken: string | null = null;
+    if (accountInBody && typeof fields['Email'] === 'string' && priorRow) {
+      const oldEmail = String(priorRow['Email'] || '').trim().toLowerCase();
+      const newEmail = String(fields['Email'] || '').trim().toLowerCase();
+      if (newEmail && oldEmail && newEmail !== oldEmail) {
+        // (1) Move the Supabase Auth user to the new email. No Supabase env
+        // (build-dark) or no user for the old email (never set a password)
+        // → nothing to sync, magic-link login reads Airtable and just works.
+        try {
+          const admin = getSupabaseAdmin();
+          if (admin) {
+            const supabaseUserId = await findSupabaseUserIdByEmail(admin, oldEmail);
+            if (supabaseUserId) {
+              const { error: updateErr } = await admin.auth.admin.updateUserById(
+                supabaseUserId,
+                { email: newEmail, email_confirm: true },
+              );
+              if (updateErr) {
+                // e.g. the new email already owns a Supabase user — the save
+                // stands, but password login needs a manual reset.
+                console.error('[landing-page] Supabase email sync failed:', updateErr.message);
+                emailChangeWarning =
+                  'Your password login may need to be reset — use the email login link, then set a new password.';
+              }
+            }
+          }
+        } catch (e: any) {
+          console.error('[landing-page] Supabase email sync error:', e?.message);
+          emailChangeWarning =
+            'Your password login may need to be reset — use the email login link, then set a new password.';
+        }
+        // (2) Re-mint the session cookie with the NEW email claim (same
+        // shape + options as /api/auth/rancher/verify) so a follow-up
+        // "Set password" binds the new address, not the stale one.
+        try {
+          refreshedSessionToken = jwt.sign(
+            {
+              type: 'rancher-session',
+              rancherId: session.rancherId,
+              email: newEmail,
+              name: fields['Operator Name'] ?? priorRow['Operator Name'] ?? priorRow['Ranch Name'] ?? '',
+              ranchName: fields['Ranch Name'] ?? priorRow['Ranch Name'] ?? '',
+              state: priorRow['State'] || '',
+            },
+            JWT_SECRET,
+            { expiresIn: '30d' },
+          );
+        } catch (e: any) {
+          console.error('[landing-page] session re-mint failed:', e?.message);
+        }
+      }
+    }
+
+    // ── Slug rename history (rank 10) ────────────────────────────────────
+    // A live page's slug changed: record the old slug in 'Previous Slugs' so
+    // every link the rancher ever shared 308-redirects (app/ranchers/[slug]
+    // falls back to getRancherByPreviousSlug). SEPARATE best-effort write,
+    // AFTER the main save: the 'Previous Slugs' field may not exist in the
+    // Airtable base yet, and an UNKNOWN_FIELD_NAME here must be a logged
+    // no-op — never a failed save. Slug cleared to empty skips history (no
+    // current slug = no redirect target; the page is effectively unpublished).
+    if (priorRow && typeof fields['Slug'] === 'string' && fields['Slug']) {
+      const priorSlug = String(priorRow['Slug'] || '').trim().toLowerCase();
+      if (priorSlug && priorSlug !== fields['Slug'] && priorRow['Page Live']) {
+        try {
+          await updateRecord(TABLES.RANCHERS, session.rancherId, {
+            'Previous Slugs': appendPreviousSlug(
+              String(priorRow['Previous Slugs'] || ''),
+              priorSlug,
+              fields['Slug'],
+            ),
+          });
+        } catch (e: any) {
+          console.warn(
+            '[landing-page] Previous Slugs write failed (create the long-text field in Airtable to enable rename redirects):',
+            e?.message,
+          );
+        }
+      }
+    }
+
     // Fire admin alert AFTER successful write so we never alert on a failed save.
     if (preferredChanged) {
       try {
@@ -815,7 +919,20 @@ export async function PATCH(request: Request) {
       }
     }
 
-    return NextResponse.json({ success: true });
+    const response = NextResponse.json({
+      success: true,
+      ...(emailChangeWarning ? { warning: emailChangeWarning } : {}),
+    });
+    if (refreshedSessionToken) {
+      response.cookies.set(RANCHER_AUTH_COOKIE, refreshedSessionToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 60 * 60 * 24 * 30,
+        path: '/',
+      });
+    }
+    return response;
   } catch (error: any) {
     console.error('Landing page update error:', error);
     return NextResponse.json({ error: 'Failed to save changes' }, { status: 500 });

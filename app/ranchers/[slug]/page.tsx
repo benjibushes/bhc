@@ -1,5 +1,5 @@
 import { Metadata } from 'next';
-import { notFound } from 'next/navigation';
+import { notFound, permanentRedirect } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import Container from '../../components/Container';
@@ -9,7 +9,7 @@ import Card from '../../components/Card';
 import ProspectClaimBanner from '../../components/ProspectClaimBanner';
 import BHCPromiseBadge from '../../components/BHCPromiseBadge';
 import StickyMobileCTA from '../../components/StickyMobileCTA';
-import { getRancherOrProspectBySlug, getActiveRancherPages, getAllRecords, escapeAirtableValue, TABLES } from '@/lib/airtable';
+import { getRancherOrProspectBySlug, getRancherByPreviousSlug, getActiveRancherPages, getAllRecords, escapeAirtableValue, TABLES } from '@/lib/airtable';
 import { isRancherOnConnect } from '@/lib/rancherEligibility';
 import { depositDisplay } from '@/lib/pricing';
 import { tierFor, depositCommissionRate } from '@/lib/tiers';
@@ -131,7 +131,21 @@ export default async function RancherPage(
 ) {
   const { slug } = await params;
   const rancherRaw: any = await getRancherOrProspectBySlug(slug);
-  if (!rancherRaw) notFound();
+  if (!rancherRaw) {
+    // Slug-rename safety (dashboard-audit rank 10): before 404ing, check the
+    // 'Previous Slugs' history — a rancher who renamed their live page keeps
+    // every shared link working via a 308. The live-slug lookup above always
+    // wins; getRancherByPreviousSlug is defensive (returns null when the
+    // Airtable field doesn't exist yet, so this stays a plain 404 until the
+    // long-text field is created). permanentRedirect throws NEXT_REDIRECT —
+    // deliberately OUTSIDE any try/catch.
+    const renamed: any = await getRancherByPreviousSlug(slug);
+    const currentSlug = renamed ? String(renamed['Slug'] || '').trim() : '';
+    if (currentSlug && currentSlug !== slug) {
+      permanentRedirect(`/ranchers/${currentSlug}`);
+    }
+    notFound();
+  }
 
   const r = rancherRaw;
   const isProspect = r['Verification Status'] === 'Prospect';

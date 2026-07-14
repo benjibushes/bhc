@@ -52,3 +52,51 @@ export function absorbStripeFee({
   const feeCents = Math.min(gross, Math.max(floor, gross - est));
   return { feeCents, absorbedCents: gross - feeCents };
 }
+
+export interface AbsorptionPreview {
+  /** Estimated Stripe processing fee on the full charge (product + shipping). */
+  estCents: number;
+  /** How much of that estimate BHC's margin actually absorbs at this price. */
+  absorbedCents: number;
+  /** The card-fee remainder the RANCHER eats when absorption is partial/zero. */
+  shortfallCents: number;
+}
+
+/**
+ * Dashboard preview twin of computeProductCharge's absorption math (qty=1) —
+ * pure and client-safe, so the ProductsTab margin preview can tell the truth
+ * on floor-bound cheap products. The FLOOR above means a thin-margin item
+ * gets PARTIAL (or zero) absorption: "card processing is on us" is only true
+ * when shortfallCents === 0. The preview must branch on this — never promise
+ * full absorption the checkout math won't deliver (brand rule: never claim
+ * "no stripe fees").
+ *
+ * Math parity: lib/productCheckout.ts computeProductCharge at quantity 1 —
+ * gross fee = display − base (product margin only), estimate charged off the
+ * FULL total including shipping (shipping is a passthrough, but Stripe's fee
+ * applies to the whole charge).
+ */
+export function absorptionPreview({
+  displayCents,
+  baseCents,
+  shippingCents,
+}: {
+  displayCents: number;
+  baseCents: number;
+  shippingCents: number;
+}): AbsorptionPreview {
+  const display = Math.max(0, Math.round(displayCents));
+  const base = Math.max(0, Math.round(baseCents));
+  const shipping = Math.max(0, Math.round(shippingCents));
+  const total = display + shipping;
+  const { absorbedCents } = absorbStripeFee({
+    grossFeeCents: display - base,
+    totalChargeCents: total,
+  });
+  const estCents = stripeFeeEstimateCents(total);
+  return {
+    estCents,
+    absorbedCents,
+    shortfallCents: Math.max(0, estCents - absorbedCents),
+  };
+}

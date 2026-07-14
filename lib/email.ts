@@ -2361,6 +2361,62 @@ a{color:#0E0E0E;}
   });
 }
 
+// Rancher subscription past_due dunning email. Fires on invoice.payment_failed
+// for a paid-tier (Pasture/Ranch/Operator) rancher subscription.
+//
+// Dashboard-audit rank 7: alertInvoicePaymentFailed had a consumer branch and
+// a brand branch but NO rancher branch — a paid-tier rancher's card failed
+// silently (no email, no dashboard signal) until Stripe cancelled the sub.
+//
+// Mirrors sendBrandPaymentFailed's structure/voice, but routes through
+// sendEmail (same conventions as sendRancherFinalPaid) so it inherits the
+// suppression check + tagged Reply-To ('rnc' → replies land against the
+// rancher record). 'sendRancherPaymentFailed' is in TRANSACTIONAL_WHITELIST —
+// a payment-failure notice must never be frequency-capped.
+export async function sendRancherPaymentFailed(data: {
+  rancherName: string;
+  contactName: string;
+  email: string;
+  // Stripe-hosted invoice URL — update card + pay in one step.
+  // Falls back to /rancher/billing if Stripe didn't include it on the event.
+  hostedInvoiceUrl?: string;
+  amountCents?: number;
+  rancherId?: string; // for tagged Reply-To
+}): Promise<{ success: boolean; suppressed?: boolean; reason?: string }> {
+  const first = esc(data.contactName.split(/\s+/)[0] || 'there');
+  const ranch = esc(data.rancherName);
+  const amount = data.amountCents
+    ? `$${(data.amountCents / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })}`
+    : 'your monthly invoice';
+  const fixUrl = data.hostedInvoiceUrl || `${SITE_URL}/rancher/billing`;
+  const subject = `bhc — your payment didn't go through`;
+
+  const r = await sendEmail({
+    to: data.email,
+    subject,
+    templateName: 'sendRancherPaymentFailed',
+    _replyContext: data.rancherId ? { type: 'rnc', recordId: data.rancherId } : undefined,
+    html: `<!DOCTYPE html><html><head><style>
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:24px;}
+.container{max-width:600px;margin:0 auto;background:#fff;padding:40px 36px;border:1px solid #A7A29A;}
+h1{font-family:Georgia,serif;font-size:24px;margin:0 0 14px;}
+p{margin:14px 0;color:#2A2A2A;font-size:15px;}
+.cta{display:inline-block;padding:16px 36px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px;}
+a{color:#0E0E0E;}
+</style></head><body><div class="container">
+  <p>hey ${first} —</p>
+  <p>quick heads-up: your card on file for <strong>${ranch}</strong> just declined ${amount} on your bhc plan.</p>
+  <p>stripe will retry automatically a couple times over the next few days, but if the card's expired or you'd rather swap to a new one, tap below — update your card + pay in one step, takes 30 seconds.</p>
+  <p style="text-align:center;margin:28px 0;">
+    <a href="${fixUrl}" class="cta">update payment</a>
+  </p>
+  <p style="font-size:14px;color:#6B4F3F;">your buyers and your page aren't affected today — this just keeps your plan (and its perks) from lapsing. reply to this email if you want to talk anything through.</p>
+  <p style="margin-top:28px;">— Ben<br>BuyHalfCow</p>
+</div></body></html>`,
+  });
+  return { success: !!r.success, suppressed: r.suppressed, reason: r.reason };
+}
+
 // Pre-renewal heads-up. Fires on Stripe's `invoice.upcoming` event (3-7d
 // before a subscription renews — configurable in Stripe Dashboard, default
 // 3d). Sent to brand-partner monthly subs + founder annual subs so they have

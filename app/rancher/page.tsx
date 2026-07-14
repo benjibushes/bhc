@@ -1421,6 +1421,26 @@ export default function RancherDashboardPage() {
         if (body[numKey]) body[numKey] = parseFloat(body[numKey]) || null;
         else body[numKey] = null;
       }
+      // Slug-rename confirm (dashboard-audit rank 10): a LIVE page's URL is
+      // on business cards / IG bios — renaming it deserves a beat of thought.
+      // Old links keep working via the Previous-Slugs 308, but the rancher
+      // should still update bios. Cancel aborts the whole save (simplest
+      // consistent behavior). Normalization mirrors the server's slug rule.
+      const nextSlug = String(body['Slug'] || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9-]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '');
+      if (
+        rancherInfo?.pageLive &&
+        rancherInfo.slug &&
+        nextSlug &&
+        nextSlug !== rancherInfo.slug &&
+        !window.confirm('Change your page URL? Old links will keep working via redirect, but update your bio links when you can.')
+      ) {
+        setPageSaving(false);
+        return;
+      }
       // Silent-wipe guard: if the parity GET never hydrated these fields,
       // pageForm still holds the blank seeds — sending them would erase the
       // rancher's stored refund policy / socials / fulfillment / FAQ in
@@ -6257,6 +6277,10 @@ function AccountSettingsSection({
   const [phone, setPhone] = useState(rancher.phone || '');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  // Non-fatal warning riding a successful save — e.g. the email changed but
+  // the Supabase password-login sync failed (rank 9): the save stood, but the
+  // rancher needs to know their password login may need a reset.
+  const [savedWarning, setSavedWarning] = useState('');
   const [error, setError] = useState('');
   // Self-serve account closure (soft-delete via /api/rancher/remove). The
   // route was previously reachable only with a wizard-token magic link — an
@@ -6305,6 +6329,7 @@ function AccountSettingsSection({
     setSaving(true);
     setError('');
     setSaved(false);
+    setSavedWarning('');
     try {
       const res = await fetch('/api/rancher/landing-page', {
         method: 'PATCH',
@@ -6323,6 +6348,7 @@ function AccountSettingsSection({
         return;
       }
       setSaved(true);
+      if (typeof data?.warning === 'string' && data.warning) setSavedWarning(data.warning);
       onSaved({
         name: operatorName.trim(),
         ranchName: ranchName.trim(),
@@ -6380,6 +6406,11 @@ function AccountSettingsSection({
                 autoComplete="email"
                 className="w-full px-3 py-2 min-h-[44px] border border-dust bg-bone text-charcoal text-sm focus:outline-none focus:border-charcoal"
               />
+              {email.trim().toLowerCase() !== (rancher.email || '').trim().toLowerCase() && (
+                <p className="mt-1 text-xs text-saddle">
+                  Changing your login email updates where login links go and your password login.
+                </p>
+              )}
             </div>
             <div>
               <label className="block text-xs font-medium uppercase tracking-wider mb-1 text-saddle">Phone</label>
@@ -6394,7 +6425,11 @@ function AccountSettingsSection({
             </div>
           </div>
           {error && <div className="p-3 border border-weathered text-weathered text-sm">{error}</div>}
-          {saved && <div className="p-3 border border-sage/40 bg-sage/10 text-sage-dark text-sm">Saved.</div>}
+          {saved && (
+            <div className="p-3 border border-sage/40 bg-sage/10 text-sage-dark text-sm">
+              Saved.{savedWarning ? <span className="block mt-1 text-weathered">⚠️ {savedWarning}</span> : null}
+            </div>
+          )}
           <button
             type="submit"
             disabled={saving}
