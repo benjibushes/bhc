@@ -112,6 +112,31 @@ export default function PromisePage() {
             </p>
           </div>
 
+          {/* Shop-orders policy (checkout audit 2026-07-14): the product rail
+              charged cards with no written refund/shipping/perishable policy
+              anywhere on the site — dispute-defense and consumer-trust gap.
+              The product checkout consent line links HERE. */}
+          <div>
+            <h2 className="font-serif text-2xl mb-3">
+              Orders from the shop
+            </h2>
+            <p className="mb-3">
+              Jerky, boxes, and ground beef ship frozen, direct from the ranch
+              that raised it. You&rsquo;ll get a receipt the moment you pay and
+              a tracking email the moment it ships. Because this is perishable
+              food, <strong>shipped orders can&rsquo;t be returned</strong> —
+              but the guarantee is simple: if your order arrives thawed, short,
+              damaged, or wrong, tell us and <strong>we make it right</strong>{' '}
+              — replacement or refund, your pick. Need to cancel? Reply to your
+              receipt before it ships and we&rsquo;ll refund in full. Refunds
+              land back on your card in 5&ndash;10 business days.
+            </p>
+            <p>
+              Local-pickup and deposit-style reservations follow the same rule:
+              fully refundable until the ranch commits your order.
+            </p>
+          </div>
+
           <div className="border-t border-dust pt-8 mt-12">
             <p className="text-sm text-saddle">
               Questions before you deposit? Email{' '}

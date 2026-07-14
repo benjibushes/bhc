@@ -73,7 +73,10 @@ function LegacyEmbeddedMount({ productId, quantity }: { productId: string; quant
         const res = await fetch('/api/checkout/product/buy', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ productId, quantity, mode: embedded ? 'embedded' : 'hosted' }),
+          // consent: the disclosure line rendered with the frame below —
+          // "By paying you agree…" — is the acknowledgment on this rail
+          // (Stripe owns the form, so there's no room for our checkbox).
+          body: JSON.stringify({ productId, quantity, mode: embedded ? 'embedded' : 'hosted', consent: true }),
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data?.error || 'could not start checkout');
@@ -118,6 +121,13 @@ function LegacyEmbeddedMount({ productId, quantity }: { productId: string; quant
             <EmbeddedCheckout />
           </EmbeddedCheckoutProvider>
         </div>
+        <p className="text-xs text-saddle mt-2 text-center leading-relaxed">
+          by paying you agree to the{' '}
+          <a href="/promise" target="_blank" rel="noopener noreferrer" className="underline hover:text-charcoal">
+            shipping &amp; refund policy
+          </a>{' '}
+          — perishable food, shipped frozen; anything arrives wrong, we make it right.
+        </p>
         <p className="text-xs text-saddle mt-3 text-center">
           changed your mind?{' '}
           <Link href="/shop" className="underline hover:text-charcoal transition-colors">

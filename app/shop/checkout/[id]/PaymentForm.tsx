@@ -40,6 +40,9 @@ function InnerForm({
   const [email, setEmail] = useState('');
   const [err, setErr] = useState('');
   const [paying, setPaying] = useState(false);
+  // Consent (checkout audit 2026-07-14): perishable-goods + policy
+  // acknowledgment before charging — enforced server-side by the mint route.
+  const [consent, setConsent] = useState(false);
   // One attempt id per mount → Stripe idempotency; cached secret on decline
   // so retries re-confirm the SAME intent instead of minting another.
   const attemptIdRef = useRef<string>('');
@@ -55,6 +58,10 @@ function InnerForm({
     const cleanEmail = email.trim().toLowerCase();
     if (!cleanEmail || !cleanEmail.includes('@')) {
       setErr('add your email — it’s where your receipt and tracking go.');
+      return;
+    }
+    if (!consent) {
+      setErr('check the box to agree to the shipping & refund policy first.');
       return;
     }
     inFlightRef.current = true;
@@ -78,6 +85,7 @@ function InnerForm({
             email: cleanEmail,
             attemptId: attemptIdRef.current,
             expectedTotalCents: totalCents,
+            consent: true,
           }),
         });
         const data = await res.json().catch(() => ({}));
@@ -149,7 +157,26 @@ function InnerForm({
         <PaymentElement options={{ layout: 'accordion' }} />
       </div>
 
-      {err && <p className="text-sm text-weathered">{err}</p>}
+      {/* Consent gate — links the written policy the charge relies on. */}
+      <label className="flex items-start gap-2.5 text-[13px] text-saddle leading-snug cursor-pointer">
+        <input
+          type="checkbox"
+          checked={consent}
+          onChange={(e) => setConsent(e.target.checked)}
+          className="mt-0.5 h-4 w-4 accent-[#26251E] shrink-0"
+          aria-describedby="consent-copy"
+        />
+        <span id="consent-copy">
+          I agree to the{' '}
+          <a href="/promise" target="_blank" rel="noopener noreferrer" className="underline hover:text-charcoal">
+            shipping &amp; refund policy
+          </a>{' '}
+          — this is perishable food, shipped frozen; if anything arrives wrong,
+          BuyHalfCow makes it right.
+        </span>
+      </label>
+
+      {err && <p className="text-sm text-weathered" role="alert" aria-live="polite">{err}</p>}
 
       <button
         onClick={pay}
