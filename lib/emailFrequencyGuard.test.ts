@@ -11,6 +11,7 @@ const MONEY_MOMENT_CONFIRMATIONS = [
   'sendBuyerSlotLocked',
   'sendBuyerFinalInvoice',
   'sendRancherDepositPaid',
+  'sendRancherFinalPaid', // deal fully paid — the rancher's payday ping
   // The two quiz-complete invites are the #1 funnel conversion emails: a
   // qualified buyer gets exactly one (deposit invite for tier_v2/Connect,
   // cal invite for legacy). Either being frequency-capped = the qualified

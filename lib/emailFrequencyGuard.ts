@@ -180,6 +180,11 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   // cap would silently swallow the safety-net nudge. Cadence is owned by the
   // SLA cron's own dedupe (Rancher Re-pinged At), not the frequency guard.
   'sendRancherDepositPaid',
+  // Deposit-paid's sibling (2026-07-14): rancher "final balance paid — deal
+  // fully paid" alert from settleFinalInvoice. One-shot per deal (Closed-Won
+  // early-return + claimOnce upstream), and a rancher mid-deal trivially
+  // exceeds 3 emails/week — capping would swallow their payday confirmation.
+  'sendRancherFinalPaid',
   // Flawless-handoff (2026-06-27): buyer-preferences handoff mirror to the
   // rancher (POST /api/checkout/[refId]/preferences). Customer-driven, 1:1,
   // and the rancher likely already got intro + deposit-paid emails this week,
