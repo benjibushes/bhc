@@ -5616,8 +5616,12 @@ function HomeTab({
                   ? 'Full right now'
                   : `${rancherInfo.maxActiveReferrals - rancherInfo.currentActiveReferrals} open`}
             </p>
+            {/* "slots held" not "working" — this counts all 5 slot-holding
+                statuses (incl. Awaiting Payment / Slot Locked), a superset of
+                the in-conversation card next door. Same word for two different
+                sets read as a bug. */}
             <p className="text-xs text-dust mt-0.5">
-              {rancherInfo.currentActiveReferrals} of {rancherInfo.maxActiveReferrals} working
+              {rancherInfo.currentActiveReferrals} of {rancherInfo.maxActiveReferrals} slots held
             </p>
           </button>
           {slotsOpen && (
@@ -5627,7 +5631,7 @@ function HomeTab({
           )}
         </div>
         <div className="border border-dust bg-white p-4">
-          <p className="text-xs text-saddle uppercase tracking-wider">Buyers working</p>
+          <p className="text-xs text-saddle uppercase tracking-wider">In conversation</p>
           <p className="font-serif text-xl text-charcoal mt-1">{activeRefs.length}</p>
           <p className="text-xs text-dust mt-0.5">
             {stats.closedWon} deal{stats.closedWon === 1 ? '' : 's'} closed
