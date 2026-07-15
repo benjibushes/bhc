@@ -228,9 +228,12 @@ export default function ShopGrid({
           </div>
         ) : (
           /* HONEST EMPTY — never an empty market pretending otherwise. Real
-             waitlist count when we have it; neutral copy when we don't. */
+             waitlist count when we have it; neutral copy when we don't.
+             "stand" (not "ranch") on purpose: this claims only that no local
+             ranch is selling on the market — a state can have a live ranch
+             PAGE without a chargeable product, and we don't lie about it. */
           <section className="mt-6 border border-dust bg-bone-warm/60 p-4 md:p-5">
-            <div className="font-serif text-lg lowercase">no ranch near you yet</div>
+            <div className="font-serif text-lg lowercase">no ranch stand near you yet</div>
             <p className="text-[13.5px] text-saddle mt-1 max-w-[54ch]">
               {waitlist ? `${waitlist} ` : ''}join the {stateLabel} list and you&rsquo;re matched
               first the moment a verified ranch goes live near you.
