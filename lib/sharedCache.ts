@@ -36,7 +36,21 @@ function getRedis(): Redis | null {
   const url = process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
   if (!url || !token) return null;
-  _redis = new Redis({ url, token });
+  // cache: 'default' — ISR regression fix (bulletproof walkthrough 2026-07-15).
+  // @upstash/redis defaults its fetch() to cache: 'no-store'. This L2 sits
+  // inside getAllRecords for allowlisted tables (Ranchers, Rancher Products…),
+  // which statically-rendered pages read (/wins reads Ranchers, /ranchers/
+  // [slug] reads Rancher Products via loadProductsForRancher). In Next 16 an
+  // explicit no-store fetch during an ISR revalidation render throws "Page
+  // changed from static to dynamic at runtime, reason: no-store fetch
+  // https://…upstash.io/pipeline" (72+ prod occurrences) — the revalidation
+  // fails and users got the bare /500 ENOENT fallback. An explicit 'default'
+  // is treated by Next's patched fetch as "no cache config" (patch-fetch.js:
+  // autoNoCache — POSTs are never stored in the Data Cache, and autoNoCache
+  // is documented as NOT switching an ISR render to dynamic), so Redis reads
+  // execute live everywhere without dynamic bailout. Keeps every SEO page
+  // static AND keeps the L2 cache for API-route fan-out.
+  _redis = new Redis({ url, token, cache: 'default' });
   return _redis;
 }
 

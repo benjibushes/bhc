@@ -9,6 +9,7 @@ import { getRancherCommissionRate, hasLockedCommissionRate } from '@/lib/commiss
 import { getConnectAccountStatus } from '@/lib/stripeConnect';
 import { getStripe } from '@/lib/stripe';
 import { requireRancher } from '@/lib/rancherAuth';
+import { isDemoMode } from '@/lib/demo/demoMode';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -21,6 +22,65 @@ export async function GET(req: Request) {
   const r = await requireRancher(req);
   if (r instanceof NextResponse) return r;
   const { session } = r;
+
+  // DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
+  // lib/demo/demoMode.ts. Mirrors the payouts route's demo branch so
+  // /rancher/billing isn't a wall of nulls/not_connected on camera. Shape
+  // matches the live response exactly; numbers agree with the demo store
+  // (tier Ranch @ $350/mo, locked 6% commission) and with /api/rancher/
+  // payouts' demo figures (last paid payout $1,225, $610 in transit). No
+  // Stripe or Airtable call.
+  if (isDemoMode()) {
+    const dayMs = 24 * 60 * 60 * 1000;
+    const iso = (deltaDays: number) => new Date(Date.now() + deltaDays * dayMs).toISOString();
+    return NextResponse.json({
+      pricingModel: 'tier_v2',
+      tier: 'ranch',
+      tierLabel: TIERS.ranch.label,
+      monthlyCents: TIERS.ranch.monthlyCents,
+      commissionRate: 0.06, // the demo rancher's locked Commission Rate
+      subscriptionStatus: 'active',
+      subscriptionStarted: iso(-45),
+      subscriptionNext: iso(15),
+      // No real Stripe subscription behind demo mode — keep the plan
+      // switcher hidden so nothing on camera can click into a live 409.
+      hasRealSubscription: false,
+      connectStatus: 'active',
+      connectAccountId: 'acct_DEMO00000000',
+      connectCurrentlyDueCount: 0,
+      connectCanResumeOnboarding: false,
+      // Legacy escrow list — permanently empty under direct charges (same
+      // as live); the UI renders stripePayouts.
+      payouts: [],
+      stripePayouts: [
+        {
+          id: 'po_DEMO0003',
+          amountCents: 61000,
+          status: 'in_transit',
+          createdISO: iso(-1),
+          arrivalDateISO: iso(2),
+          destinationLast4: '4242',
+        },
+        {
+          id: 'po_DEMO0002',
+          amountCents: 122500,
+          status: 'paid',
+          createdISO: iso(-8),
+          arrivalDateISO: iso(-6),
+          destinationLast4: '4242',
+        },
+        {
+          id: 'po_DEMO0001',
+          amountCents: 98750,
+          status: 'paid',
+          createdISO: iso(-22),
+          arrivalDateISO: iso(-20),
+          destinationLast4: '4242',
+        },
+      ],
+      addOns: [],
+    });
+  }
 
   const rancher: any = await getRecordById(TABLES.RANCHERS, session.rancherId);
   if (!rancher) return NextResponse.json({ error: 'Rancher not found' }, { status: 404 });

@@ -33,7 +33,7 @@ import ProductImage from './ProductImage';
 import Button from '../components/Button';
 import Pill from '../components/Pill';
 import { US_STATES, normalizeState, stateName } from '@/lib/states';
-import { waitlistLine } from '@/lib/stateSeo';
+import { waitlistLine, stateNameToSlug, stateBySlug } from '@/lib/stateSeo';
 import {
   splitStandsByState,
   visibleStandProducts,
@@ -59,10 +59,14 @@ const CHIP_ORDER = ['jerky', 'boxes', 'ground', 'shares', 'more'];
 export default function ShopGrid({
   stands,
   waitlistByState,
+  shareRanchesByState,
 }: {
   stands: ShopStand[];
   /** per-state waitlist counts; null = unknown → neutral copy, no numbers */
   waitlistByState: Record<string, number> | null;
+  /** per-state LIVE share-ranch counts (lib/stateSupply — same visibility
+      filter as /half-a-cow/[state]); null = unknown → no cross-link */
+  shareRanchesByState: Record<string, number> | null;
 }) {
   const [active, setActive] = useState<string>('all');
   const [sort, setSort] = useState<StandSort>('price-asc');
@@ -146,6 +150,18 @@ export default function ShopGrid({
     st && waitlistByState && Number(waitlistByState[st]) > 0
       ? waitlistLine(stateLabel, waitlistByState[st])
       : null;
+  // Live share-ranches in the buyer's state (walkthrough 2026-07-15): when a
+  // state has no ranch STAND but DOES have live share-ranches, the honest
+  // empty must say so and route the buyer to /half-a-cow/[state] — the old
+  // copy ("…the moment a verified ranch goes live near you") contradicted
+  // the state page's "N verified ranches are live" claim (the CO case).
+  // stateBySlug guard: only the 50 /half-a-cow pages exist (dynamicParams
+  // false) — DC etc. never gets a dead link, it just skips the cross-link.
+  const shareSlug = st ? stateNameToSlug(stateLabel) : '';
+  const shareRanchCount =
+    st && shareRanchesByState && stateBySlug(shareSlug)
+      ? Number(shareRanchesByState[st]) || 0
+      : 0;
 
   return (
     <div>
@@ -233,11 +249,29 @@ export default function ShopGrid({
              ranch is selling on the market — a state can have a live ranch
              PAGE without a chargeable product, and we don't lie about it. */
           <section className="mt-6 border border-dust bg-bone-warm/60 p-4 md:p-5">
-            <div className="font-serif text-lg lowercase">no ranch stand near you yet</div>
+            <div className="font-serif text-lg lowercase">no ranch stand selling shipped boxes near you yet</div>
             <p className="text-[13.5px] text-saddle mt-1 max-w-[54ch]">
               {waitlist ? `${waitlist} ` : ''}join the {stateLabel} list and you&rsquo;re matched
-              first the moment a verified ranch goes live near you.
+              first the moment a ranch stand opens near you.
             </p>
+            {/* Cross-link (walkthrough 2026-07-15): the state may have live
+                SHARE ranches even with no stand selling shipped boxes —
+                render the real count + route to the state share page instead
+                of reading like a supply desert. Count comes from the same
+                visibility filter /half-a-cow/[state] publishes, so the two
+                surfaces can never contradict. Hidden when 0 or unknown. */}
+            {shareRanchCount > 0 && (
+              <p className="text-[13.5px] text-charcoal mt-2 max-w-[54ch]">
+                want a whole, half, or quarter share instead? {shareRanchCount} verified{' '}
+                {shareRanchCount === 1 ? 'ranch serves' : 'ranches serve'} {stateLabel} —{' '}
+                <Link
+                  href={`/half-a-cow/${shareSlug}`}
+                  className="underline underline-offset-2 hover:text-saddle"
+                >
+                  see {stateLabel.toLowerCase()} share pricing →
+                </Link>
+              </p>
+            )}
             <div className="mt-3">
               <Button href={`/access?state=${st}`} size="sm">
                 join the {stateLabel.toLowerCase()} list →

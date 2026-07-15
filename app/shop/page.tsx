@@ -23,6 +23,7 @@ import { loadMarketplaceProducts, groupKeyForCategory } from '@/lib/marketplaceP
 import { buildShopStands, type MarketProductInput } from '@/lib/marketStands';
 import { getSocialProofStats } from '@/lib/socialProof';
 import { getWaitlistCountsByState } from '@/lib/stateWaitlist';
+import { getLiveShareRanchCountsByState } from '@/lib/stateSupply';
 import Container from '../components/Container';
 import Card from '../components/Card';
 import Button from '../components/Button';
@@ -53,10 +54,16 @@ export default async function MarketplacePage() {
   // effort + lib-cached: socialProof (same 5-min cache ProofStrip shares —
   // no extra Airtable read) and the per-state waitlist counts for the
   // honest-empty fallback (null = unknown → neutral copy, no numbers).
-  const [all, proofStats, waitlistByState] = await Promise.all([
+  const [all, proofStats, waitlistByState, shareRanchesByState] = await Promise.all([
     loadMarketplaceProducts({ includeLocal: true, withStates: true }),
     getSocialProofStats(),
     getWaitlistCountsByState(),
+    // Live share-ranch counts (lib/stateSupply, same visibility filter as
+    // /half-a-cow/[state]) — powers the honest-empty cross-link: a state
+    // with no ranch STAND but live share-ranches points buyers at shares
+    // instead of contradicting the state page. Rides the Ranchers table
+    // cache; null = unknown → no cross-link, never a wrong claim.
+    getLiveShareRanchCountsByState(),
   ]);
   // A ranch that can't take a direct charge yet (Connect != active) never
   // lists on /shop — the buy route would 409 and dead-end the buyer.
@@ -120,7 +127,11 @@ export default async function MarketplacePage() {
           <p className="text-saddle">the shop is stocking up — check back shortly.</p>
         ) : (
           <>
-            <ShopGrid stands={stands} waitlistByState={waitlistByState} />
+            <ShopGrid
+              stands={stands}
+              waitlistByState={waitlistByState}
+              shareRanchesByState={shareRanchesByState}
+            />
 
             {/* SHARE ANCHOR — last, as the graduation. De-emphasized (secondary
                 Button) so the product Buy buttons stay the loudest thing on the

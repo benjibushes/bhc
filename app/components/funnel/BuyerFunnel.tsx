@@ -519,7 +519,10 @@ export default function BuyerFunnel({
             </span>
             {stats && (stats.familiesMatched > 0 || stats.verifiedRanches > 0) && (
               <span className="max-w-[55%] text-right text-[11px] leading-tight text-saddle">
-                {commas(stats.familiesMatched)}+ families matched · {commas(stats.verifiedRanches)}+ verified ranches
+                {/* Honesty (walkthrough 2026-07-15): familiesMatched is
+                    Math.max(1900-floor, closed) — the 1,900 is the WAITLIST,
+                    not matched families. "on the list" is the true claim. */}
+                {commas(stats.familiesMatched)}+ families on the list · {commas(stats.verifiedRanches)}+ verified ranches
               </span>
             )}
           </div>

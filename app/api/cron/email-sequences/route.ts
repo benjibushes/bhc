@@ -1,4 +1,3 @@
-import { NextResponse } from 'next/server';
 import { getAllRecords, getRecordById, updateRecord, isInvalidFilterFormulaError } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import {
@@ -942,22 +941,35 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
   };
 }
 
+// 2026-06-09 sales-floor pivot: drip pipeline paused in favor of Cal-as-funnel.
+// Flag `EMAIL_SEQUENCES_ENABLED=true` re-enables (rollback path) if buyer
+// conversion drops post-pivot. Cron remains scheduled in vercel.json so
+// re-enabling doesn't require code change — just env flip + redeploy.
+//
+// GATE PLACEMENT (bulletproof walkthrough 2026-07-15): this check used to
+// return BEFORE withCronRun, so the cron wrote ZERO Cron Runs rows for 36
+// days while scheduled daily — indistinguishable from a dead cron, and the
+// /cronstatus watchdog flagged it as missing every single day (pure noise).
+// It now sits INSIDE withCronRun (the nurture-drip / demand-router pattern):
+// every scheduled run writes an honest 'skipped: engine off' row, so the
+// watchdog stays quiet while it's dark and catches a REAL missed run.
+async function gatedHandler(request: Request): ReturnType<typeof realHandler> {
+  if (process.env.EMAIL_SEQUENCES_ENABLED !== 'true') {
+    return {
+      status: 'success',
+      recordsTouched: 0,
+      notes: 'skipped: EMAIL_SEQUENCES_ENABLED!=true — drip paused per sales-floor pivot 2026-06-09',
+      skipReasonBreakdown: { disabled: 1 },
+    };
+  }
+  return realHandler(request);
+}
+
 async function authedHandler(request: Request): Promise<Response> {
   const denied = requireCron(request);
   if (denied) return denied;
 
-  // 2026-06-09 sales-floor pivot: drip pipeline killed in favor of Cal-as-funnel.
-  // Flag `EMAIL_SEQUENCES_ENABLED=true` re-enables (rollback path) if buyer
-  // conversion drops post-pivot. Cron remains scheduled in vercel.json so
-  // re-enabling doesn't require code change — just env flip + redeploy.
-  if (process.env.EMAIL_SEQUENCES_ENABLED !== 'true') {
-    return NextResponse.json({
-      ok: true,
-      skipped: 'EMAIL_SEQUENCES_ENABLED=false — drip paused per sales-floor pivot 2026-06-09',
-    });
-  }
-
-  return withCronRun('email-sequences', realHandler)(request);
+  return withCronRun('email-sequences', gatedHandler)(request);
 }
 
 export const GET = authedHandler;
