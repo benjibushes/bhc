@@ -183,11 +183,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // so the inbound webhook routes a reply back into this thread (Task 10).
   // Non-fatal: the message is already persisted; an email send failure
   // shouldn't block the API response.
+  //
+  // Wave C (2026-07-14): the mirror used to be the ONLY signal — if the
+  // rancher's address was bounced/unsubscribed, guardedSend suppressed
+  // without throwing and the route console.warn'd into the void. No push, no
+  // operator signal, no polling anywhere reads THREADS — a live buyer typing
+  // at the rancher just died. Now: (a) a PWA push rides alongside the email
+  // for rancher recipients, (b) a suppressed rancher mirror escalates to the
+  // operator so Ben can relay, and (c) the response carries emailMirror
+  // status so the composer UI can say the other side wasn't emailed.
+  const otherKind: 'buyer' | 'rancher' = auth.kind === 'buyer' ? 'rancher' : 'buyer';
+  const recipientLinkField = otherKind === 'rancher' ? 'Rancher' : 'Buyer';
+  const recipientIds: string[] = thread[recipientLinkField] || [];
+  const recipientId: string | undefined = recipientIds[0];
+  let emailMirror: 'sent' | 'suppressed' | 'failed' | 'skipped' = 'skipped';
   try {
-    const otherKind: 'buyer' | 'rancher' = auth.kind === 'buyer' ? 'rancher' : 'buyer';
-    const recipientLinkField = otherKind === 'rancher' ? 'Rancher' : 'Buyer';
-    const recipientIds: string[] = thread[recipientLinkField] || [];
-    const recipientId = recipientIds[0];
     if (recipientId) {
       const recipientTable = otherKind === 'rancher' ? TABLES.RANCHERS : TABLES.CONSUMERS;
       const recipient: any = await getRecordById(recipientTable, recipientId);
@@ -217,15 +227,63 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // message is persisted in-thread either way, but log honestly so a
         // "rancher never replied" report is debuggable.
         if (!mirrorResult?.success) {
+          emailMirror = 'suppressed';
           console.warn(
             `[threads message] email mirror suppressed (${mirrorResult?.reason || 'unknown'}) — recipient not notified by email`,
           );
+          // Wave C: a suppressed RANCHER mirror means a paying-intent buyer's
+          // question is going nowhere — escalate so Ben can relay. 24h dedupe
+          // per thread so a chatty buyer doesn't storm the channel.
+          if (otherKind === 'rancher') {
+            try {
+              const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+              await sendOperatorSignal({
+                urgency: 'normal',
+                kind: 'system-error',
+                summary: `Thread ${id}: rancher email suppressed — buyer message undelivered`,
+                detail:
+                  `A buyer message in thread ${id} was persisted, but the email mirror to the rancher was ` +
+                  `suppressed (${mirrorResult?.reason || 'unknown'}). Unless they have push enabled, the rancher ` +
+                  `has no idea the buyer is talking to them — relay it or fix the address.`,
+                refs: [{ type: 'rancher', id: recipientId }],
+                dedupeKey: `thread-mirror-${id}`,
+                dedupeWindowMs: 24 * 60 * 60 * 1000,
+              });
+            } catch (sigErr: any) {
+              console.warn('[threads message] suppression operator signal failed:', sigErr?.message);
+            }
+          }
+        } else {
+          emailMirror = 'sent';
         }
       }
     }
   } catch (e: any) {
+    emailMirror = 'failed';
     console.warn('[threads message] email mirror failed (non-fatal):', e?.message);
   }
 
-  return NextResponse.json({ ok: true });
+  // Wave C — PWA push alongside the email mirror. The push rail already
+  // fires for routed-lead/deposit-paid/product-order but not for a live
+  // buyer literally typing at the rancher. Dark-safe + best-effort
+  // (sendRancherPush no-ops without VAPID/subscriptions, never throws) and
+  // deliberately independent of the email result — when the address is
+  // bounced, push may be the only channel left.
+  if (otherKind === 'rancher' && recipientId) {
+    try {
+      const { sendRancherPush } = await import('@/lib/rancherPush');
+      await sendRancherPush(recipientId, {
+        title: 'new message from your buyer',
+        body: messageBody.slice(0, 120),
+        url: '/rancher/inbox',
+      });
+    } catch (pushErr: any) {
+      console.warn('[threads message] rancher push skipped (non-fatal):', pushErr?.message);
+    }
+  }
+
+  // emailMirror lets the composer render an honest thread status ("delivered
+  // in-app — email to the other side was blocked") instead of implying the
+  // other side was notified when they weren't.
+  return NextResponse.json({ ok: true, emailMirror });
 }

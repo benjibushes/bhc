@@ -20,6 +20,10 @@ export default function AskPage() {
   const [draft, setDraft] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  // Wave C — honest delivery status: when the email mirror to the rancher is
+  // suppressed/failed the message still lands in-thread, but pretending the
+  // rancher was emailed would be a lie. The API now reports emailMirror.
+  const [mirrorNote, setMirrorNote] = useState('');
   const [loaded, setLoaded] = useState(false);
   const endRef = useRef<HTMLDivElement | null>(null);
 
@@ -68,6 +72,11 @@ export default function AskPage() {
         setError(j?.error || 'Send failed');
       } else {
         setDraft('');
+        setMirrorNote(
+          j?.emailMirror === 'suppressed' || j?.emailMirror === 'failed'
+            ? `Your message is saved in this thread, but we couldn't email ${rancherName} a copy — our team was alerted and will make sure they see it.`
+            : '',
+        );
         const refresh = await fetch(`/api/threads/${threadId}/message`, { credentials: 'include' }).then((r) => r.json());
         setMessages(refresh.messages || []);
       }
@@ -142,6 +151,7 @@ export default function AskPage() {
         <span className="text-saddle text-xs">{draft.length}/5000</span>
       </div>
       {error && <p className="text-weathered mt-3 text-sm">{error}</p>}
+      {mirrorNote && <p className="text-saddle mt-3 text-sm border border-dust bg-bone-warm p-3">{mirrorNote}</p>}
     </div>
   );
 }
