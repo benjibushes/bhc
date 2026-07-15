@@ -958,8 +958,9 @@ export default function RancherSetupWizard() {
   // HYBRID call-gate (Ben, 2026-06-24): the onboarding call stays the DEFAULT +
   // recommended path — most new ranchers sign up confused and need the
   // conversation. But a pre-sold rancher who knows the ropes can choose "set up
-  // myself" to bypass the booking gate. Persisted to localStorage (keyed on the
-  // setup token) so a refresh doesn't re-clamp them back to the call step.
+  // myself" to bypass the booking gate. Persisted to localStorage (keyed on
+  // the rancher record id) so a refresh doesn't re-clamp them back to the
+  // call step.
   const [selfServeChosen, setSelfServeChosen] = useState(false);
   // Keyed on the stable rancher record id (same reasoning as stepStorageKey):
   // the old key hashed token.slice(0, 32) — the CONSTANT JWT header prefix —
