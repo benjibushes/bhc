@@ -98,6 +98,10 @@ interface QualifyResult {
   // operator) runs the sales call and emails a Cal link. Drives the reveal
   // copy so we never promise a rancher text that won't come (see Mode 2).
   pricingModel?: string;
+  // Rancher's Stripe Connect Status ('active' | 'onboarding' | …). Deposit CTA
+  // renders ONLY when active — a tier_v2 rancher mid Connect onboarding would
+  // 409 at checkout/deposit (dead-CTA guard, 2026-07-15).
+  connectStatus?: string;
   operatorCalLink?: string;
   buyerName?: string;
   buyerEmail?: string;
@@ -124,6 +128,7 @@ interface NationwideMatch {
   rancher: { id: string; name: string; state: string };
   referralId: string | null;
   pricingModel: string;
+  connectStatus?: string;
 }
 
 // Step index helpers — derived from the canonical FUNNEL_STEPS order so the
@@ -853,6 +858,7 @@ export default function BuyerFunnel({
                       rancher: { name: m.rancher.name, state: m.rancher.state },
                       referralId: m.referralId,
                       pricingModel: m.pricingModel,
+                      connectStatus: m.connectStatus,
                     }
                   : prev,
               )
@@ -1036,7 +1042,8 @@ function Reveal({
   // depositCapable). This is the fix for the cash leak where a ready buyer
   // matched to a Connect rancher was routed to "book a call" with no deposit.
   const depositCapable =
-    matched && isDepositCapableMatch(result?.pricingModel, result?.referralId);
+    matched &&
+    isDepositCapableMatch(result?.pricingModel, result?.referralId, result?.connectStatus);
   // Live "family #N" line — familiesMatched + 1 (rounded, comma-formatted). Hides
   // if stats failed.
   const familyNumber = stats && stats.familiesMatched > 0 ? commas(stats.familiesMatched + 1) : null;

@@ -23,6 +23,7 @@ import {
   hasLockedCommissionRate,
   getRancherCommissionRate,
   calcCommissionForRancher,
+  partitionUnpaidByRail,
 } from './commission';
 
 test('referralRail: deposit paid → tier_v2 rail (net = full, nothing to invoice)', () => {
@@ -218,4 +219,36 @@ test('isCommissionRateFieldEmpty: any locked number is NOT empty', () => {
 test('isCommissionRateFieldEmpty: garbage is NOT empty (operator-owned — never clobber)', () => {
   assert.equal(isCommissionRateFieldEmpty('abc'), false);
   assert.equal(isCommissionRateFieldEmpty(400), false);
+});
+
+// ─── Monthly-cron rail partition (RAIL-PER-ROW, 2026-07-15) ─────────────────
+// The commission-invoices cron used to decide per-RANCHER: tier_v2 → skip
+// invoicing AND stamp Commission Paid=true on EVERY unpaid Closed Won row.
+// An off-rail close (no deposit ever paid) by a tier_v2 rancher was thereby
+// stamped "paid" without a cent collected — the receivable was destroyed.
+// partitionUnpaidByRail splits rows by what THIS row actually did:
+//   depositRail     → commission skimmed at deposit; safe to stamp paid.
+//   invoiceEligible → legacy economics; MUST flow into the monthly invoice.
+
+test('partitionUnpaidByRail: deposit-paid rows → depositRail, everything else invoiceEligible', () => {
+  const paid = { id: 'r1', 'Deposit Paid At': '2026-07-01T00:00:00Z' };
+  const offRail = { id: 'r2', 'Commission Due': 156.91 }; // Foodstead class
+  const legacy = { id: 'r3', 'Deposit Paid At': '' };
+  const { depositRail, invoiceEligible } = partitionUnpaidByRail([paid, offRail, legacy]);
+  assert.deepEqual(depositRail.map((r: any) => r.id), ['r1']);
+  assert.deepEqual(invoiceEligible.map((r: any) => r.id), ['r2', 'r3']);
+});
+
+test('partitionUnpaidByRail: whitespace Deposit Paid At is NOT a deposit', () => {
+  const { depositRail, invoiceEligible } = partitionUnpaidByRail([
+    { id: 'r1', 'Deposit Paid At': '   ' },
+  ]);
+  assert.equal(depositRail.length, 0);
+  assert.equal(invoiceEligible.length, 1);
+});
+
+test('partitionUnpaidByRail: empty input → both partitions empty', () => {
+  const { depositRail, invoiceEligible } = partitionUnpaidByRail([]);
+  assert.deepEqual(depositRail, []);
+  assert.deepEqual(invoiceEligible, []);
 });

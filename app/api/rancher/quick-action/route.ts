@@ -8,7 +8,7 @@ import {
 } from '@/lib/airtable';
 import { JWT_SECRET } from '@/lib/secrets';
 import { fetchReferralRowsForRancher } from '@/lib/referralReads';
-import { calcCommission, calcCommissionForRancher, hasLockedCommissionRate } from '@/lib/commission';
+import { calcCommission, calcCommissionForRancher, hasLockedCommissionRate, referralRail } from '@/lib/commission';
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import {
   sendTelegramMessage,
@@ -499,17 +499,20 @@ async function applyAction(
   }
 
   // Closed Won: fire Stripe commission invoice + Telegram celebration.
-  // Tier_v2 ranchers SKIP — their commission was already taken at deposit
-  // time via Stripe Connect application_fee_amount (lib/stripeConnect.ts).
-  // Firing a legacy invoice here would double-bill them.
+  // RAIL-PER-ROW (matches dashboard PATCH, referrals/[id]/route.ts): skip the
+  // commission invoice ONLY when THIS referral rode the deposit rail (Deposit
+  // Paid At stamped) — commission was already skimmed at deposit via
+  // application_fee_amount, so an invoice here would double-bill. A tier_v2
+  // rancher who closes OFF-RAIL via this email link (no deposit ever paid)
+  // still owes commission and MUST be invoiced — the old per-rancher
+  // `pricingModel === 'tier_v2'` skip silently ate that commission.
   if (action === 'won' && saleAmount) {
     let stripeInvoiceUrl = '';
     try {
       const rancher: any = await getRecordById(TABLES.RANCHERS, decoded.rancherId);
-      const pricingModel = String(rancher?.['Pricing Model'] || 'legacy');
-      const skipLegacyInvoice = pricingModel === 'tier_v2';
+      const skipLegacyInvoice = referralRail(referral) === 'tier_v2';
       if (skipLegacyInvoice) {
-        console.log(`[quick-action won] rancher ${decoded.rancherId} is tier_v2 — skipping legacy commission invoice (already taken via application_fee_amount)`);
+        console.log(`[quick-action won] ${decoded.referralId} rode the deposit rail — commission taken at deposit, skipping post-close invoice`);
       }
       if (rancher && rancher['Email'] && !skipLegacyInvoice) {
         try {

@@ -3,6 +3,7 @@ import { getAllRecords, getRecordById, updateRecord, createRecord, createReferra
 import { TABLES } from '@/lib/airtable';
 import { getMaxActiveReferrals, getLiveCapacity, incrementCapacity, decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { shouldDecrementOnClose } from '@/lib/refundLifecycle';
+import { isRancherOnConnect } from '@/lib/rancherEligibility';
 import { HELD_REFERRAL_STATUSES } from '@/lib/capacityCount';
 import {
   sendTelegramMessage,
@@ -828,15 +829,16 @@ async function processUpdate(update: any) {
           const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
           const buyerName = buyer['Full Name'] || 'Buyer';
           if (rancherEmail) {
-            // tier_v2 ranchers route deposits through Stripe Connect direct
-            // charge at /checkout/<refId>/deposit, which requires the
-            // bhc-member-auth cookie. Wrap the deposit deep-link in a
-            // magic-link verify URL. Legacy ranchers stay on the tap-any-tier
+            // Connect-active (tier_v2 + Stripe Connect Status=active) ranchers
+            // route deposits through Stripe Connect direct charge at
+            // /checkout/<refId>/deposit, which requires the bhc-member-auth
+            // cookie. Wrap the deposit deep-link in a magic-link verify URL.
+            // Everyone else — legacy OR tier_v2 mid Connect onboarding (the
+            // link would 409 at checkout/deposit) — stays on the tap-any-tier
             // Payment Link copy (depositMagicLinkUrl stays undefined).
             const buyerEmailAddr = buyer['Email'] || '';
-            const pricingModel = String(rancher['Pricing Model'] || 'legacy');
             let depositMagicLinkUrl: string | undefined;
-            if (pricingModel === 'tier_v2' && buyer.id && buyerEmailAddr) {
+            if (isRancherOnConnect(rancher) && buyer.id && buyerEmailAddr) {
               const magicToken = generateMemberLoginToken(buyer.id, buyerEmailAddr);
               const nextPath = `/checkout/${refRecord.id}/deposit`;
               depositMagicLinkUrl = `${SITE_URL}/api/auth/member/verify?token=${magicToken}&next=${encodeURIComponent(nextPath)}`;
@@ -1015,14 +1017,14 @@ async function processUpdate(update: any) {
               const buyerLoginUrl = `${SITE_URL}/member/verify?token=${buyerToken}`;
               const buyerFirstName = (referral['Buyer Name'] || '').split(' ')[0] || 'there';
 
-              // tier_v2 ranchers route deposits through Stripe Connect direct
-              // charge at /checkout/<refId>/deposit, which requires the
-              // bhc-member-auth cookie. Wrap the deposit deep-link in a
-              // magic-link verify URL. Legacy ranchers stay on the tap-any-
-              // tier Payment Link copy (depositMagicLinkUrl stays undefined).
-              const pricingModel = String(rancher['Pricing Model'] || 'legacy');
+              // Connect-active (tier_v2 + Connect active) ranchers route
+              // deposits through Stripe Connect direct charge at
+              // /checkout/<refId>/deposit, which requires the bhc-member-auth
+              // cookie. Wrap the deposit deep-link in a magic-link verify URL.
+              // Legacy or not-yet-active ranchers stay on the tap-any-tier
+              // Payment Link copy (depositMagicLinkUrl stays undefined).
               let depositMagicLinkUrl: string | undefined;
-              if (pricingModel === 'tier_v2') {
+              if (isRancherOnConnect(rancher)) {
                 const magicToken = generateMemberLoginToken(consumerId, buyerEmail);
                 const nextPath = `/checkout/${fullReferralId}/deposit`;
                 depositMagicLinkUrl = `${SITE_URL}/api/auth/member/verify?token=${magicToken}&next=${encodeURIComponent(nextPath)}`;
@@ -1291,14 +1293,14 @@ async function processUpdate(update: any) {
               const buyerLoginUrl = `${SITE_URL}/member/verify?token=${buyerToken}`;
               const buyerFirstName = (referral['Buyer Name'] || '').split(' ')[0] || 'there';
 
-              // tier_v2 ranchers route deposits through Stripe Connect direct
-              // charge at /checkout/<refId>/deposit, which requires the
-              // bhc-member-auth cookie. Wrap the deposit deep-link in a
-              // magic-link verify URL. Legacy ranchers stay on the tap-any-
-              // tier Payment Link copy (depositMagicLinkUrl stays undefined).
-              const pricingModel = String(rancher['Pricing Model'] || 'legacy');
+              // Connect-active (tier_v2 + Connect active) ranchers route
+              // deposits through Stripe Connect direct charge at
+              // /checkout/<refId>/deposit, which requires the bhc-member-auth
+              // cookie. Wrap the deposit deep-link in a magic-link verify URL.
+              // Legacy or not-yet-active ranchers stay on the tap-any-tier
+              // Payment Link copy (depositMagicLinkUrl stays undefined).
               let depositMagicLinkUrl: string | undefined;
-              if (pricingModel === 'tier_v2') {
+              if (isRancherOnConnect(rancher)) {
                 const magicToken = generateMemberLoginToken(buyerConsumerId, buyerEmail);
                 const nextPath = `/checkout/${refId}/deposit`;
                 depositMagicLinkUrl = `${SITE_URL}/api/auth/member/verify?token=${magicToken}&next=${encodeURIComponent(nextPath)}`;
@@ -3435,7 +3437,7 @@ Output ONLY the email body. First line should be the subject line prefixed with 
 
           // Gate: rancher must have a locked commission rate. Refuse the close
           // until the rate is set on the rancher's record.
-          const { hasLockedCommissionRate, calcCommissionForRancher, getRancherCommissionRate } = await import('@/lib/commission');
+          const { hasLockedCommissionRate, calcCommissionForRancher, getRancherCommissionRate, referralRail } = await import('@/lib/commission');
           if (!hasLockedCommissionRate(rancher)) {
             await sendTelegramMessage(
               chatId,
@@ -3523,13 +3525,15 @@ Output ONLY the email body. First line should be the subject line prefixed with 
           // ratio guards (lib/stripe-commission.ts) — they'll throw before we
           // generate a bogus invoice.
           //
-          // Tier_v2 ranchers SKIP — commission already taken at deposit time
-          // via Stripe Connect application_fee_amount. Legacy invoice here
-          // would double-bill.
-          const pricingModel = String(rancher?.['Pricing Model'] || 'legacy');
-          const skipLegacyInvoice = pricingModel === 'tier_v2';
+          // RAIL-PER-ROW (matches dashboard PATCH, referrals/[id]/route.ts):
+          // skip ONLY when THIS referral rode the deposit rail (Deposit Paid
+          // At stamped) — commission already skimmed at deposit via
+          // application_fee_amount. A tier_v2 rancher closing OFF-RAIL (on a
+          // call, no deposit ever paid) still owes commission — the old
+          // per-rancher `pricingModel === 'tier_v2'` skip silently ate it.
+          const skipLegacyInvoice = referralRail(ref) === 'tier_v2';
           if (skipLegacyInvoice) {
-            console.log(`[telegram close-reply won] rancher ${rancher.id} is tier_v2 — skipping legacy commission invoice`);
+            console.log(`[telegram close-reply won] ${refId} rode the deposit rail — commission taken at deposit, skipping post-close invoice`);
           }
           const { createCommissionInvoice } = await import('@/lib/stripe-commission');
           let stripeInvoiceUrl = '';
@@ -5199,16 +5203,16 @@ Confirm send?`;
                 const notes = ref['Notes'] || '';
 
                 if (rancherEmail) {
-                  // tier_v2 ranchers route deposits through Stripe Connect
-                  // direct charge at /checkout/<refId>/deposit, which requires
-                  // the bhc-member-auth cookie. Wrap the deposit deep-link in
-                  // a magic-link verify URL. Legacy ranchers stay on the tap-
-                  // any-tier Payment Link copy (depositMagicLinkUrl stays
-                  // undefined).
-                  const bulkPricingModel = String(rancher['Pricing Model'] || 'legacy');
+                  // Connect-active (tier_v2 + Connect active) ranchers route
+                  // deposits through Stripe Connect direct charge at
+                  // /checkout/<refId>/deposit, which requires the
+                  // bhc-member-auth cookie. Wrap the deposit deep-link in a
+                  // magic-link verify URL. Legacy or not-yet-active ranchers
+                  // stay on the tap-any-tier Payment Link copy
+                  // (depositMagicLinkUrl stays undefined).
                   const bulkBuyerId = ref['Buyer']?.[0] || '';
                   let bulkDepositMagicLinkUrl: string | undefined;
-                  if (bulkPricingModel === 'tier_v2' && bulkBuyerId && buyerEmail) {
+                  if (isRancherOnConnect(rancher) && bulkBuyerId && buyerEmail) {
                     const magicToken = generateMemberLoginToken(bulkBuyerId, buyerEmail);
                     const nextPath = `/checkout/${ref.id}/deposit`;
                     bulkDepositMagicLinkUrl = `${SITE_URL}/api/auth/member/verify?token=${magicToken}&next=${encodeURIComponent(nextPath)}`;

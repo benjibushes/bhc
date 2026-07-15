@@ -4,6 +4,7 @@ import { sendEmail, sendBuyerIntroNotification } from '@/lib/email';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import jwt from 'jsonwebtoken';
 import { requireAdmin } from '@/lib/adminAuth';
+import { isRancherOnConnect } from '@/lib/rancherEligibility';
 
 import { JWT_SECRET, generateMemberLoginToken } from '@/lib/secrets';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
@@ -96,14 +97,14 @@ export async function POST(
             )}`
           : `${SITE_URL}/member`;
 
-        // tier_v2 ranchers route deposits through Stripe Connect direct charge
-        // at /checkout/<refId>/deposit, which requires the bhc-member-auth
-        // cookie. Wrap the deposit deep-link in a magic-link verify URL so the
-        // buyer can land authenticated. Legacy ranchers stay on the old
+        // Connect-active (tier_v2 + Connect active) ranchers route deposits
+        // through Stripe Connect direct charge at /checkout/<refId>/deposit,
+        // which requires the bhc-member-auth cookie. Wrap the deposit
+        // deep-link in a magic-link verify URL so the buyer can land
+        // authenticated. Legacy or not-yet-active ranchers stay on the old
         // tap-any-tier Payment Link copy (depositMagicLinkUrl stays undefined).
-        const pricingModel = String(rancher['Pricing Model'] || 'legacy');
         let depositMagicLinkUrl: string | undefined;
-        if (pricingModel === 'tier_v2' && buyerId) {
+        if (isRancherOnConnect(rancher) && buyerId) {
           const magicToken = generateMemberLoginToken(buyerId, buyerEmail);
           const nextPath = `/checkout/${referral.id}/deposit`;
           depositMagicLinkUrl = `${SITE_URL}/api/auth/member/verify?token=${magicToken}&next=${encodeURIComponent(nextPath)}`;

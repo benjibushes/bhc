@@ -193,3 +193,30 @@ export function referralRail(ref: any): 'tier_v2' | 'legacy' {
     ref?.['Deposit Paid At'] ?? ref?.deposit_paid_at ?? ref?.depositPaidAt ?? '';
   return String(depositPaidAt || '').trim() ? 'tier_v2' : 'legacy';
 }
+
+/**
+ * RAIL-PER-ROW for the monthly commission-invoices cron (2026-07-15).
+ *
+ * The cron used to decide per-RANCHER: tier_v2 → skip invoicing AND stamp
+ * Commission Paid=true on EVERY unpaid Closed Won row. An off-rail close
+ * (no deposit ever paid) by a tier_v2 rancher was thereby stamped "paid"
+ * without a cent collected — the receivable was destroyed, unrecoverable
+ * by any later run. Split per-row instead:
+ *
+ *   depositRail     — Deposit Paid At stamped; commission was skimmed at
+ *                     deposit via application_fee_amount. Nothing to invoice;
+ *                     safe to stamp Commission Paid so it drops out of runs.
+ *   invoiceEligible — legacy economics (including tier_v2 off-rail closes);
+ *                     MUST flow into the monthly invoice.
+ */
+export function partitionUnpaidByRail<T>(rows: T[]): {
+  depositRail: T[];
+  invoiceEligible: T[];
+} {
+  const depositRail: T[] = [];
+  const invoiceEligible: T[] = [];
+  for (const r of rows) {
+    (referralRail(r) === 'tier_v2' ? depositRail : invoiceEligible).push(r);
+  }
+  return { depositRail, invoiceEligible };
+}

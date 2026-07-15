@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, getRecordById, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
+import { partitionUnpaidByRail } from '@/lib/commission';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import { sendMonthlyCommissionInvoice } from '@/lib/email';
@@ -43,14 +44,39 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     return { status: 'success', recordsTouched: 0, notes: `${monthYear}: no unpaid commissions` };
   }
 
-  // Group ALL unpaid referrals by rancher ID
+  // RAIL-PER-ROW (2026-07-15): decide skip/stamp per REFERRAL, never per
+  // rancher. The old per-rancher tier_v2 branch skipped invoicing AND stamped
+  // Commission Paid=true on EVERY unpaid Closed Won row — an off-rail close
+  // (no deposit ever paid) by a tier_v2 rancher had its receivable destroyed.
+  // Deposit-rail rows (Deposit Paid At stamped) had commission skimmed at
+  // deposit via application_fee_amount: stamp those paid so they drop out of
+  // future runs. Everything else — including tier_v2 off-rail closes — flows
+  // into the monthly invoice below.
+  const { depositRail, invoiceEligible } = partitionUnpaidByRail(allUnpaid);
+  let depositRailStamped = 0;
+  for (const r of depositRail) {
+    try {
+      await updateRecord(TABLES.REFERRALS, r.id, {
+        'Commission Paid': true,
+        'Commission Paid At': new Date().toISOString(),
+      });
+      depositRailStamped++;
+    } catch (e: any) {
+      console.warn(`[commission-invoices] deposit-rail Commission Paid stamp failed for ${r.id}:`, e?.message);
+    }
+  }
+  if (depositRail.length > 0) {
+    console.log(`[commission-invoices] ${depositRailStamped}/${depositRail.length} deposit-rail referrals stamped Commission Paid (taken at deposit — nothing to invoice)`);
+  }
+
+  // Group invoice-eligible unpaid referrals by rancher ID
   const byRancher: Record<string, {
     rancherId: string;
     thisMonth: any[];
     allUnpaid: any[];
   }> = {};
 
-  for (const referral of allUnpaid) {
+  for (const referral of invoiceEligible) {
     const rancherIds: string[] = referral['Suggested Rancher'] || referral['Rancher'] || [];
     const rancherId = rancherIds[0];
     if (!rancherId) continue;
@@ -73,34 +99,12 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
   let errors = 0;
   const summaryLines: string[] = [];
 
-  let tierV2Skipped = 0;
   for (const [rancherId, group] of Object.entries(byRancher)) {
     try {
       const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
       const operatorName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
       const ranchName = rancher['Ranch Name'] || operatorName;
       const rancherEmail = rancher['Email'] || '';
-
-      // Tier_v2 ranchers SKIP. Their commission was already taken at deposit
-      // time via Stripe Connect application_fee_amount. Firing a legacy
-      // monthly commission invoice would double-bill them. Also patch
-      // referral rows to Commission Paid=true so they drop out of future runs.
-      const pricingModel = String(rancher?.['Pricing Model'] || 'legacy');
-      if (pricingModel === 'tier_v2') {
-        for (const r of group.allUnpaid) {
-          try {
-            await updateRecord(TABLES.REFERRALS, r.id, {
-              'Commission Paid': true,
-              'Commission Paid At': new Date().toISOString(),
-            });
-          } catch (e: any) {
-            console.warn(`[commission-invoices] tier_v2 Commission Paid stamp failed for ${r.id}:`, e?.message);
-          }
-        }
-        tierV2Skipped += group.allUnpaid.length;
-        console.log(`[commission-invoices] tier_v2 rancher ${rancherId} — skipped + marked ${group.allUnpaid.length} referrals Commission Paid`);
-        continue;
-      }
 
       if (!rancherEmail) {
         console.warn(`No email for rancher ${rancherId}, skipping invoice`);
@@ -204,7 +208,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
   return {
     status: errors > 0 ? 'partial' : 'success',
     recordsTouched: invoicesSent,
-    notes: `${monthYear}: invoices=${invoicesSent} unpaid=${allUnpaid.length} errors=${errors}`,
+    notes: `${monthYear}: invoices=${invoicesSent} unpaid=${allUnpaid.length} depositRailStamped=${depositRailStamped} errors=${errors}`,
   };
 }
 

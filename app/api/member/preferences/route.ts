@@ -89,6 +89,7 @@ export async function POST(request: Request) {
       rancher: { id: string; name: string; state: string };
       referralId: string | null;
       pricingModel: string;
+      connectStatus: string;
     } | null = null;
 
     if (refire) {
@@ -127,11 +128,15 @@ export async function POST(request: Request) {
             const referralId: string | null = j.referralId || null;
             // Pricing model drives the reveal mode (deposit CTA vs call).
             let pricingModel = 'legacy';
+            // Dead-CTA guard (2026-07-15): deposit capability additionally
+            // requires Connect active — see isDepositCapableMatch.
+            let connectStatus = '';
             let depositAmount: number | null = null;
             let nextProcessingDate = '';
             try {
               const rancher: any = await getRecordById(TABLES.RANCHERS, j.suggestedRancher.id);
               pricingModel = String(rancher?.['Pricing Model'] || 'legacy');
+              connectStatus = String(rancher?.['Stripe Connect Status'] || '');
               nextProcessingDate = String(rancher?.['Next Processing Date'] || '');
               if (pricingModel === 'tier_v2') {
                 const tier = String(consumer['Order Type'] || '');
@@ -153,6 +158,7 @@ export async function POST(request: Request) {
               },
               referralId,
               pricingModel,
+              connectStatus,
             };
 
             // Email parity with the quiz-pass match moment (/api/qualify
@@ -168,7 +174,7 @@ export async function POST(request: Request) {
               const buyerFirstName = String(consumer['Full Name'] || 'there').split(' ')[0];
               after(async () => {
                 try {
-                  if (isDepositCapableMatch(pricingModel, referralId)) {
+                  if (isDepositCapableMatch(pricingModel, referralId, connectStatus)) {
                     const magicToken = generateMemberLoginToken(consumerId, buyerEmail);
                     const nextPath = `/checkout/${referralId}/deposit`;
                     const depositMagicLinkUrl = `${SITE_URL}/api/auth/member/verify?token=${magicToken}&next=${encodeURIComponent(nextPath)}`;

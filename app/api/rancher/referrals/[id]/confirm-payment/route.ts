@@ -5,6 +5,7 @@ import {
   calcCommissionForRancher,
   hasLockedCommissionRate,
   getRancherCommissionRate,
+  referralRail,
 } from '@/lib/commission';
 import { createCommissionInvoice } from '@/lib/stripe-commission';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
@@ -163,12 +164,15 @@ export async function POST(
     // can correct + retry. Status stays Closed Won regardless (sale is
     // confirmed; invoice can be re-fired manually).
     //
-    // Tier_v2 ranchers SKIP — commission already taken at deposit time via
-    // Stripe Connect application_fee_amount. Legacy invoice here = double-bill.
-    const pricingModel = String(rancher?.['Pricing Model'] || 'legacy');
-    const skipLegacyInvoice = pricingModel === 'tier_v2';
+    // RAIL-PER-ROW (matches dashboard PATCH, ../route.ts): skip ONLY when THIS
+    // referral rode the deposit rail (Deposit Paid At stamped) — commission
+    // already skimmed at deposit via application_fee_amount. An Awaiting
+    // Payment row confirmed cash-received here with NO deposit ever paid is
+    // legacy economics even under a tier_v2 rancher and MUST be invoiced —
+    // the old per-rancher `pricingModel === 'tier_v2'` skip silently ate it.
+    const skipLegacyInvoice = referralRail(ref) === 'tier_v2';
     if (skipLegacyInvoice) {
-      console.log(`[confirm-payment] rancher ${rancher.id} is tier_v2 — skipping legacy commission invoice`);
+      console.log(`[confirm-payment] ${id} rode the deposit rail — commission taken at deposit, skipping post-close invoice`);
     }
     let invoiceUrl = '';
     let invoiceId = '';
