@@ -12,6 +12,8 @@ import { hasOperationalRancherForState } from '@/lib/rancherEligibility';
 import { sendTelegramConsumerSignup, sendTelegramHotLeadAlert } from '@/lib/telegram';
 import { transitionBuyerStage } from '@/lib/contracts';
 import { funnelRecord } from '@/lib/funnelMetrics';
+import { computeFunnelIntentScore, classifyFunnelIntent } from '@/lib/funnelIntentScore';
+import { BUDGET_OPTIONS } from '@/lib/funnelConfig';
 import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
 import { metaEventId } from '@/lib/analytics';
 import { leadValueUsd } from '@/lib/leadValue';
@@ -119,6 +121,11 @@ export async function POST(request: Request) {
       // funnel and legacy paths speak the same Timing vocabulary downstream.
       const timingQ = body.timing === 'now' ? 'Within 30 days'
         : (typeof body.timing === 'string' ? body.timing.trim() : '');
+      // Optional budget chip (skippable — '' means "prefer not to say").
+      // Whitelisted against the funnel's chip values (exact Airtable Budget
+      // choice names) so freeform can't be smuggled into the singleSelect.
+      const budgetRawQ = typeof body.budget === 'string' ? body.budget.trim() : '';
+      const budgetQ = BUDGET_OPTIONS.some((o) => o.value === budgetRawQ) ? budgetRawQ : '';
 
       // Required fields — clear 400 per missing field. Phone is a HARD product
       // rule (operator decision 2026-06-18): the rancher must be able to reach
@@ -188,6 +195,19 @@ export async function POST(request: Request) {
         console.error('[funnel] duplicate-email lookup failed:', e);
       }
 
+      // ── Intent signal restore (2026-07-15) ──────────────────────────────
+      // The 2026-06-18 rewrite returned before the legacy intent scorer ran:
+      // Intent Score nonzero went 92.3% (Jun 1-17) → 3-6% (July) and Budget
+      // filled 30% → ~2%. Score from the answers the funnel actually collects
+      // (storage isn't known yet at the contact step — ceiling here is 90).
+      const funnelScoreQ = computeFunnelIntentScore({
+        tier: tierQ,
+        timing: timingQ,
+        budget: budgetQ,
+        phone: phoneQ,
+      });
+      const funnelClassificationQ = classifyFunnelIntent(funnelScoreQ);
+
       // Source/UTMs exactly as the legacy flow records them.
       const funnelFields: Record<string, unknown> = {
         'Full Name': fullNameQ,
@@ -196,6 +216,8 @@ export async function POST(request: Request) {
         'State': normalizeState(stateQ) || stateQ.toUpperCase(),
         'Order Type': tierQ,
         'Timing': timingQ,
+        'Intent Score': funnelScoreQ,
+        'Intent Classification': funnelClassificationQ,
         'Segment': 'Beef Buyer',
         'Status': 'Approved',
         'Buyer Stage': 'WAITING',
@@ -208,6 +230,9 @@ export async function POST(request: Request) {
         // NOTE: `Qualified At` is DELIBERATELY NOT set — GUARD-2 holds the lead
         // unroutable until /api/qualify stamps it on quiz completion.
       };
+      // Budget only when the buyer answered the (optional) chip — a skip never
+      // clobbers a value already on the record from an earlier entry.
+      if (budgetQ) funnelFields['Budget'] = budgetQ;
 
       // ── Ad attribution write-through (per-field UTM + click-ids) ─────────────
       // Reads the `attribution` object posted by BuyerFunnel from bhc_source_v2.
@@ -256,6 +281,60 @@ export async function POST(request: Request) {
           { error: 'Could not save your details. Please try again or email hello@buyhalfcow.com.' },
           { status: 500 },
         );
+      }
+
+      // ── Signal restore (2026-07-15): telemetry + operator alerts ─────────
+      // The rewrite's early return skipped funnelRecord AND both Telegram
+      // alerts — the admin conversion dashboard and the hot-lead phone ping
+      // went dark for every funnel signup. Mirrors the legacy call shapes
+      // (funnelRecord at the legacy signup write; Telegram gated >= 80 like
+      // the legacy backgroundTasks). CREATE only — an upsert re-entry or
+      // backfill must never re-ping the operator or double-count a signup.
+      // Fire-and-forget: never delays the wizard's mid-flow 201.
+      if (!existingIdQ) {
+        const stateCodeQ = normalizeState(stateQ) || stateQ.toUpperCase();
+        (async () => {
+          await funnelRecord({
+            stage: 'signup',
+            buyerId: funnelRec.id,
+            intentScore: funnelScoreQ,
+            metadata: {
+              source: typeof body.source === 'string' && body.source ? body.source : 'funnel',
+              state: stateCodeQ,
+              funnel: true,
+              orderType: tierQ,
+              timing: timingQ,
+            },
+          });
+          if (funnelScoreQ >= 80) {
+            try {
+              await sendTelegramConsumerSignup({
+                consumerId: funnelRec.id,
+                name: fullNameQ,
+                email: emailLowerQ,
+                state: stateCodeQ,
+                segment: 'Beef Buyer',
+                intentScore: funnelScoreQ,
+                intentClassification: funnelClassificationQ,
+                status: 'Approved',
+                orderType: tierQ,
+                budgetRange: budgetQ || undefined,
+              });
+            } catch (e) { console.error('[funnel] Telegram signup alert error:', e); }
+            try {
+              await sendTelegramHotLeadAlert({
+                consumerId: funnelRec.id,
+                name: fullNameQ,
+                email: emailLowerQ,
+                phone: phoneQ,
+                state: stateCodeQ,
+                intentScore: funnelScoreQ,
+                orderType: tierQ,
+                budgetRange: budgetQ || undefined,
+              });
+            } catch (e) { console.error('[funnel] Telegram hot lead alert error:', e); }
+          }
+        })().catch((e) => console.error('[funnel] signup telemetry error:', e));
       }
 
       // 14d resume token — lets the wizard (and the quiz-drip resume link)

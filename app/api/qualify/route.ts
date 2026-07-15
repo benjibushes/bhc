@@ -29,6 +29,7 @@ import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { getOperatorBookingUrl } from '@/lib/calBooking';
 import { isDepositCapableMatch } from '@/lib/depositOptionality';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
+import { buildQualifyConsumerUpdates, isExplicitlyNotReady } from '@/lib/qualifyUpdates';
 // B4 (2026-07-01): matching/suggest is invoked IN-PROCESS (imported route
 // handler + synthetic Request) instead of fetch()ing our own deployment over
 // the network — that self-call was an edge round-trip plus a SECOND serverless
@@ -111,7 +112,11 @@ export async function POST(request: Request) {
   // S5 (2026-06-10): eventId comes from CLIENT so server CAPI + client Pixel
   // share the same event_id for Meta dedup. Falls back to server-mint if
   // client didn't send (older clients).
-  const { token, consumerId, answers, campaign, eventId: clientEventId } = body || {};
+  // ackConfirmedAt: ISO timestamp the client mints ONLY when the buyer taps
+  // the real commitment button ("i'll answer or text back"). Its presence —
+  // not answers.ack — is what earns the `Response Ack At` stamp; the old
+  // hard-coded ack:true fabricated a commitment for every completer.
+  const { token, consumerId, answers, campaign, eventId: clientEventId, ackConfirmedAt } = body || {};
   if (!token || !consumerId || !answers) {
     return NextResponse.json({ error: 'Missing token, consumerId, or answers' }, { status: 400 });
   }
@@ -186,21 +191,21 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Buyer record not found' }, { status: 404 });
   }
 
-  // Update Consumer's Order Type to the chosen tier (overrides whatever was
-  // captured at signup) so matching/suggest tier-fit gate uses the latest
-  // intent. "Not Sure" leaves the existing value alone (no narrowing).
-  // Same for Timing.
-  const consumerUpdates: Record<string, any> = {
-    'Qualification Answers': JSON.stringify(validated),
-    'Qualification Score': score,
-    'Qualified At': completedAt,
-  };
-  if (tier !== 'Not Sure') {
-    consumerUpdates['Order Type'] = tier;
-  }
-  if (timing !== 'Just exploring') {
-    consumerUpdates['Timing'] = timing;
-  }
+  // Consumer writes decided by the pure helper (lib/qualifyUpdates —
+  // unit-tested invariants): every completion stamps `Funnel Completed At`;
+  // ONLY the route-eligible path stamps `Qualified At` (the hold branch used
+  // to stamp it too, marking 234 explicitly-not-ready buyers as ready);
+  // `Response Ack At` lands ONLY with a valid ackConfirmedAt (real tap).
+  // Order Type / Timing updates keep the "no narrowing" rule: "Not Sure" /
+  // "Just exploring" leave the stored signup values alone.
+  const consumerUpdates: Record<string, any> = buildQualifyConsumerUpdates({
+    tier,
+    timing,
+    answersJson: JSON.stringify(validated),
+    score,
+    completedAt,
+    ackConfirmedAt,
+  });
 
   // FUNNEL = QUALIFIED (founder rule 2026-07-08): completing the quiz routes
   // you to your in-state rancher. The numeric score is NO LONGER a gate —
@@ -209,7 +214,7 @@ export async function POST(request: Request) {
   // EXPLICITLY self-identified as not ready: "Not Sure" tier or "Just
   // exploring" timing. Everyone else fires matching/suggest. (Score is still
   // stored for prioritization + analytics.)
-  const explicitlyNotReady = tier === 'Not Sure' || timing === 'Just exploring';
+  const explicitlyNotReady = isExplicitlyNotReady(tier, timing);
   if (explicitlyNotReady) {
     consumerUpdates['Qualification Path'] = 'incomplete';
     try {
@@ -248,7 +253,9 @@ export async function POST(request: Request) {
       'Qualification Answers': consumerUpdates['Qualification Answers'],
       'Qualification Score': consumerUpdates['Qualification Score'],
       'Qualified At': consumerUpdates['Qualified At'],
+      'Funnel Completed At': consumerUpdates['Funnel Completed At'],
     };
+    if (consumerUpdates['Response Ack At']) earlyWrite['Response Ack At'] = consumerUpdates['Response Ack At'];
     if (consumerUpdates['Order Type']) earlyWrite['Order Type'] = consumerUpdates['Order Type'];
     if (consumerUpdates['Timing']) earlyWrite['Timing'] = consumerUpdates['Timing'];
     await updateRecord(TABLES.CONSUMERS, consumerId, earlyWrite);
@@ -387,6 +394,10 @@ export async function POST(request: Request) {
                 // event instead of the operator's. tier_v2 ranchers always get
                 // the operator (Ben) booker — he runs every v2 sales call.
                 suggestedRancher.calComSlug = String(rancher?.['Cal.com Slug'] || '');
+                // Tier drives the reveal's channel promise: Operator = BHC
+                // closes ("our team will call you today"); everyone else =
+                // the rancher calls or texts within 24-48h.
+                suggestedRancher.rancherTier = String(rancher?.['Tier'] || '');
                 suggestedRancher.logoUrl = rancher?.['Logo URL'] || '';
                 suggestedRancher.tagline = rancher?.['Tagline'] || '';
                 suggestedRancher.aboutText = rancher?.['About Text'] || '';
@@ -594,6 +605,7 @@ export async function POST(request: Request) {
           state: suggestedRancher.state,
           slug: suggestedRancher.slug || '',
           calComSlug: suggestedRancher.calComSlug || '',
+          rancherTier: suggestedRancher.rancherTier || '',
           city: suggestedRancher.city || '',
           logoUrl: suggestedRancher.logoUrl || '',
           tagline: suggestedRancher.tagline || '',

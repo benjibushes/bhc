@@ -107,8 +107,10 @@ const sections: Section[] = [
         a: (
           <>
             <p className="mb-3">
-              Typically <strong>$1,200&ndash;$2,500</strong> for a half, depending on ranch location, beef type
-              (grass-fed, grain-finished, wagyu), processing fees, and delivery method.
+              Typically <strong>$3,000&ndash;$3,700</strong> for a half, <strong>$6,000&ndash;$7,000</strong> for
+              a whole &mdash; you&apos;re buying a season of beef at $8&ndash;11/lb, not a grocery run. Exact price
+              depends on ranch location, beef type (grass-fed, grain-finished, wagyu), processing fees, and
+              delivery method.
             </p>
             <p>
               Ranchers set their own pricing. You&apos;ll see exact prices per cut on each rancher&apos;s page
