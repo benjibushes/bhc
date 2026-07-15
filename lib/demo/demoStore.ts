@@ -61,6 +61,9 @@ const DEMO_RANCHER: Record<string, any> = {
   // legacy_connect). 'Partner' failed hasValidTier, blocking online deposit.
   Tier: 'Ranch',
   'Stripe Connect Status': 'active',
+    // Walkthrough 2026-07-15: without an account id the products POST 403s
+    // ('finish your Stripe setup') — the demo's own happy path couldn't complete.
+    'Stripe Connect Account Id': 'acct_DEMO000000000',
   'Subscription Status': 'active',
   'Commission Rate': 0.06,
   'Max Active Referrals': 12,
