@@ -365,6 +365,20 @@ export async function bulkRouteStateToRancher(opts: {
           } catch (pushErr: any) {
             console.warn('[bulkRoute] routed-lead push skipped (non-fatal):', pushErr?.message);
           }
+          // Wave C — SMS alongside intro email + push (mirror of the
+          // matching/suggest block). ENABLE_SMS gate + phone validation live
+          // inside fireRancherSMSEvent; dark-safe, never disturbs the route.
+          try {
+            const { fireRancherSMSEvent } = await import('./smsEvents');
+            const buyerFirstNameForSms = String(buyerName || '').trim().split(/\s+/)[0] || 'A buyer';
+            await fireRancherSMSEvent({
+              type: 'new_lead_rancher',
+              phone: String(rancherPhone || '').trim(),
+              vars: { buyerFirstName: buyerFirstNameForSms, state: buyerState, cut: orderType },
+            });
+          } catch (smsErr: any) {
+            console.warn('[bulkRoute] routed-lead SMS skipped (non-fatal):', smsErr?.message);
+          }
         } else {
           summary.errors.push(`Rancher intro email FAILED for ${buyerEmail} → ${rancherEmail}: ${introSendErr} (referral rolled back to Pending Approval)`);
           // Roll BOTH the referral AND the consumer back so state stays

@@ -1444,6 +1444,25 @@ export async function POST(request: Request) {
             } catch (pushErr: any) {
               console.warn('[matching/suggest] routed-lead push skipped (non-fatal):', pushErr?.message);
             }
+            // Wave C (2026-07-14) — SMS alongside the intro email + push. The
+            // routed-lead moment was single-channel-to-inbox for ranchers with
+            // no PWA install: intro-to-spam is invisible (rollback fires only
+            // on hard errors) and 'Intro Sent' leads rot for weeks. Rides the
+            // proven deposit-paid rail: ENABLE_SMS gate + phone validation
+            // live inside fireRancherSMSEvent (dark-safe), own try/catch so it
+            // can never disturb the routed state.
+            try {
+              const { fireRancherSMSEvent } = await import('@/lib/smsEvents');
+              const rancherPhoneForSms = String(topMatch['Phone'] || '').trim();
+              const buyerFirstNameForSms = String(buyerName || '').trim().split(/\s+/)[0] || 'A buyer';
+              await fireRancherSMSEvent({
+                type: 'new_lead_rancher',
+                phone: rancherPhoneForSms,
+                vars: { buyerFirstName: buyerFirstNameForSms, state: buyerState, cut: orderType },
+              });
+            } catch (smsErr: any) {
+              console.warn('[matching/suggest] routed-lead SMS skipped (non-fatal):', smsErr?.message);
+            }
           }
         }
 
