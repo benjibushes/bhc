@@ -34,6 +34,7 @@ import {
   isNudgeEligibleConsumer,
 } from '@/lib/noActionNudge';
 import { isMaintenanceMode } from '@/lib/maintenance';
+import { isRancherOnConnect } from '@/lib/rancherEligibility';
 import { sendEmail } from '@/lib/email';
 import { sendSMSToConsumer } from '@/lib/twilio';
 import { isSmsWindow } from '@/lib/sendWindow';
@@ -56,16 +57,18 @@ function esc(s: string): string {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-// Deposit CTA: the deposit page requires the bhc-member-auth cookie, so the
-// link is the magic-link verify hop (`/api/auth/member/verify?token=…&next=
-// /checkout/<refId>/deposit`) — verify sets the cookie then 302s to the
-// deposit page. Same pattern as the intro email (matching/suggest) and
-// bulkRoute. A bare /checkout link would 401; the previous /member CTA made
-// the buyer sign in and re-find their match — this cron already knows the
-// exact referral, so send them straight to the money page.
-function buildDepositMagicLink(buyerId: string, buyerEmail: string, referralId: string): string {
+// CTA: both destinations require the bhc-member-auth cookie, so the link is
+// the magic-link verify hop (`/api/auth/member/verify?token=…&next=<path>`) —
+// verify sets the cookie then 302s onward. Same pattern as the intro email
+// (matching/suggest) and bulkRoute. A bare /checkout link would 401.
+//
+// WHICH nextPath depends on the rancher: only Connect-active tier_v2 ranchers
+// (isRancherOnConnect) can take money at /checkout/<refId>/deposit — the
+// deposit route hard-409s for everyone else (app/api/checkout/deposit
+// Connect-status gate). Legacy / not-yet-active ranchers get the /member
+// dashboard CTA instead of a "Reserve your slot" promise the page can't keep.
+function buildNudgeMagicLink(buyerId: string, buyerEmail: string, nextPath: string): string {
   const magicToken = generateMemberLoginToken(buyerId, buyerEmail);
-  const nextPath = `/checkout/${referralId}/deposit`;
   return `${SITE_URL}/api/auth/member/verify?token=${magicToken}&next=${encodeURIComponent(nextPath)}`;
 }
 
@@ -73,7 +76,8 @@ function buildEmailHtml(args: {
   firstName: string;
   rancherName: string;
   state: string;
-  depositUrl: string;
+  ctaUrl: string;
+  ctaLabel: string;
 }): { subject: string; html: string } {
   const first = args.firstName || 'there';
   const subject = `${first}, your match with ${args.rancherName} is still open`;
@@ -84,7 +88,7 @@ function buildEmailHtml(args: {
   <p><strong>What happens if you don't act:</strong> the slot sits open for someone else in your state. ${esc(args.rancherName)}&rsquo;s processing dates fill on a first-come basis.</p>
   <p><strong>If you have questions before deciding:</strong> hit reply. I read every email and answer same-day.</p>
   <div style="text-align:center;margin:24px 0;">
-    <a href="${args.depositUrl}" style="display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:bold;font-size:13px;letter-spacing:1px;text-transform:uppercase;">Reserve your slot →</a>
+    <a href="${args.ctaUrl}" style="display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:bold;font-size:13px;letter-spacing:1px;text-transform:uppercase;">${esc(args.ctaLabel)} →</a>
   </div>
   <p style="font-size:13px;color:#6B4F3F;">— Benjamin, BuyHalfCow</p>
 </div>
@@ -158,6 +162,21 @@ async function realHandler(_request: Request): Promise<CronResult> {
     const state = String(c['State'] || '');
     const rancherName = ref['Suggested Rancher Name'] || ref['Rancher Name'] || 'your rancher';
 
+    // Deposit CTA only when the deposit rail can actually take this buyer's
+    // money (rancher is tier_v2 + Connect active). Rancher lookup failure
+    // falls back to the /member CTA — safe for every rancher type.
+    let depositCapable = false;
+    const rancherId: string =
+      (Array.isArray(ref['Rancher']) && ref['Rancher'][0]) ||
+      (Array.isArray(ref['Suggested Rancher']) && ref['Suggested Rancher'][0]) ||
+      '';
+    if (rancherId) {
+      try {
+        const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
+        depositCapable = isRancherOnConnect(rancher);
+      } catch {}
+    }
+
     // Claim BEFORE sending: stamp the dedup note first so a stamp failure skips
     // + retries next run rather than re-nudging. This cron runs hourly with a
     // ~3.5h eligibility window (multiple ticks), and the template isn't
@@ -173,12 +192,16 @@ async function realHandler(_request: Request): Promise<CronResult> {
       continue;
     }
 
-    // One-tap deposit deep link for THIS referral (cookie-setting magic hop).
-    const depositUrl = buildDepositMagicLink(buyerId, email, ref.id);
+    // One-tap deep link for THIS referral (cookie-setting magic hop):
+    // deposit page when the rail can take money, member dashboard otherwise.
+    const ctaUrl = depositCapable
+      ? buildNudgeMagicLink(buyerId, email, `/checkout/${ref.id}/deposit`)
+      : buildNudgeMagicLink(buyerId, email, '/member');
+    const ctaLabel = depositCapable ? 'Reserve your slot' : 'View your match';
 
     // Email
     try {
-      const { subject, html } = buildEmailHtml({ firstName, rancherName, state, depositUrl });
+      const { subject, html } = buildEmailHtml({ firstName, rancherName, state, ctaUrl, ctaLabel });
       const r: any = await sendEmail({
         to: email,
         subject,
@@ -203,7 +226,9 @@ async function realHandler(_request: Request): Promise<CronResult> {
       try {
         const ok = await sendSMSToConsumer({
           consumer: c,
-          body: `Hey ${firstName} — your match with ${rancherName} is still open. Lock your slot: ${depositUrl} — Ben @ BuyHalfCow (reply STOP to opt out)`,
+          body: depositCapable
+            ? `Hey ${firstName} — your match with ${rancherName} is still open. Lock your slot: ${ctaUrl} — Ben @ BuyHalfCow (reply STOP to opt out)`
+            : `Hey ${firstName} — your match with ${rancherName} is still open. See your match: ${ctaUrl} — Ben @ BuyHalfCow (reply STOP to opt out)`,
           reason: 'qualified-no-action-nudge',
         });
         if (ok) nudgedSms++;
