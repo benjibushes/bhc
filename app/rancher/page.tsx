@@ -24,6 +24,7 @@ import ProductsTab from './ProductsTab';
 import TodayQueue from './components/TodayQueue';
 import NetworkPulseCard from './components/NetworkPulseCard';
 import ProgressRibbon from './components/ProgressRibbon';
+import BillingSection from './components/BillingSection';
 
 interface RancherInfo {
   id: string;
@@ -195,11 +196,14 @@ interface NetworkBenefit {
 
 // Cockpit (Wave A, 2026-06-22): 'home' is the new triage default. The spine
 // nav surfaces Home / Deals (= 'referrals') / My Page (= 'my_page') and links
-// out to Messages (/rancher/inbox) + Money (/rancher/billing).
+// out to Messages (/rancher/inbox).
 // 'marketing'/'earnings'/'benefits' stay reachable under the secondary "More"
 // affordance. SLICE F: the legacy 'overview' tab is gone — it duplicated
 // Home/Deals; its capacity + pause controls live in Home's Buyer slots card.
-type Tab = 'home' | 'referrals' | 'marketing' | 'earnings' | 'benefits' | 'my_page' | 'customers' | 'products';
+// Settings merge (2026-07-15): 'settings' replaces the old Money nav link —
+// one spine stop for billing (shared BillingSection, the exact
+// /rancher/billing content) + account (moved from the Earnings tail).
+type Tab = 'home' | 'referrals' | 'marketing' | 'earnings' | 'benefits' | 'my_page' | 'customers' | 'products' | 'settings';
 
 // WAVE 3a (2026-06-30): localStorage key for activity-feed read-state. No
 // Airtable field exists for per-rancher read receipts, so mark-as-read is
@@ -465,9 +469,27 @@ export default function RancherDashboardPage() {
       // Products tab deep link — the monthly stock check-in email + docs
       // point ranchers at /rancher#products.
       products: 'products',
+      // Settings merge (2026-07-15): billing + account live in one Settings
+      // tab. #billing / #account are aliases that land on the tab AND scroll
+      // to their section; #money keeps old muscle memory working.
+      settings: 'settings',
+      billing: 'settings',
+      account: 'settings',
+      money: 'settings',
     };
     const next = hashToTab[hash];
     if (next) setActiveTab(next);
+    // Scroll #billing / #account into view once the Settings tab has data to
+    // render. Best-effort with a retry — the dashboard payload gates the tab
+    // body, so the section may not exist yet on the first attempt.
+    if (hash === 'billing' || hash === 'account') {
+      const tryScroll = (attempt: number) => {
+        const el = document.getElementById(hash);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        else if (attempt < 5) setTimeout(() => tryScroll(attempt + 1), 600);
+      };
+      setTimeout(() => tryScroll(0), 400);
+    }
   }, []);
 
   // Cockpit side-loads — payouts + unread count. Kept out of fetchDashboard so
@@ -1844,6 +1866,10 @@ export default function RancherDashboardPage() {
     // A revenue surface, so it earns a primary spine slot, not the More drawer.
     { key: 'products', label: `Products${newOrderCount > 0 ? ` (${newOrderCount} to ship)` : ''}` },
     { key: 'my_page', label: 'My Page' },
+    // Settings merge (2026-07-15): billing + account in one stop — replaces
+    // the old Money link out to /rancher/billing (route still alive for
+    // deep links + the Stripe onboarding return URL).
+    { key: 'settings', label: 'Settings' },
   ];
   const moreTabs: { key: Tab; label: string }[] = [
     { key: 'marketing', label: 'Marketing' },
@@ -2592,10 +2618,11 @@ export default function RancherDashboardPage() {
           })()}
 
           {/* ── Cockpit nav spine ──────────────────────────────────────────
-              Home · Deals · My Page · Messages · Money. Big tap targets,
-              mobile-first (wraps on narrow screens). Messages + Money route to
-              the inbox + billing pages (previously orphaned). "More" holds the
-              marketing / earnings / benefits tab content. */}
+              Home · Deals · Customers · Products · My Page · Settings ·
+              Messages. Big tap targets, mobile-first (wraps on narrow
+              screens). Messages routes to the inbox page; Settings (2026-07-15)
+              is the merged billing + account tab that replaced the old Money
+              link. "More" holds the marketing / earnings / benefits content. */}
           <div className="flex flex-wrap gap-2">
             {spineTabs.map((tab) => (
               <button
@@ -2622,14 +2649,6 @@ export default function RancherDashboardPage() {
                   {unreadCount}
                 </span>
               )}
-            </Link>
-
-            {/* Money — links to billing (payouts + tier context) */}
-            <Link
-              href="/rancher/billing"
-              className="px-4 py-2.5 min-h-[44px] flex items-center text-sm font-medium tracking-wider uppercase border border-dust hover:bg-charcoal hover:text-bone transition-colors"
-            >
-              Money
             </Link>
 
             {/* More — secondary affordance keeping marketing/earnings/benefits
@@ -3541,17 +3560,43 @@ export default function RancherDashboardPage() {
                 </div>
               )}
 
+            </div>
+          )}
+
+          {/* Settings Tab — billing + account merged (2026-07-15). Two
+              sections, internals untouched beyond the grouping:
+                • #billing — the exact /rancher/billing content via the shared
+                  BillingSection (that route stays alive for deep links + the
+                  Stripe onboarding return URL).
+                • #account — AccountSettingsSection, moved from the tail of
+                  the Earnings tab (WAVE 3b) where nobody looked for it. */}
+          {activeTab === 'settings' && (
+            <div className="space-y-8">
+              <div>
+                <h2 className="font-serif text-2xl">settings</h2>
+                <p className="text-sm text-saddle mt-1">
+                  your plan, payouts, and bank — plus your account details.
+                </p>
+              </div>
+
+              <section id="billing" aria-label="Billing" className="scroll-mt-24 space-y-4">
+                <h3 className="font-serif text-xl">money</h3>
+                <BillingSection justOnboarded={false} />
+              </section>
+
               <Divider />
 
-              {/* WAVE 3b — account / profile settings. Operator name, ranch name,
-                  login email, phone — previously not editable from the dashboard. */}
-              <h3 className="font-serif text-xl">settings</h3>
-              <AccountSettingsSection
-                rancher={rancherInfo}
-                onSaved={(next) =>
-                  setRancherInfo((prev) => (prev ? { ...prev, ...next } : prev))
-                }
-              />
+              <section id="account" aria-label="Account" className="scroll-mt-24 space-y-4">
+                {/* WAVE 3b — account / profile settings. Operator name, ranch
+                    name, login email, phone. AccountSettingsSection renders
+                    its own "account" header. */}
+                <AccountSettingsSection
+                  rancher={rancherInfo}
+                  onSaved={(next) =>
+                    setRancherInfo((prev) => (prev ? { ...prev, ...next } : prev))
+                  }
+                />
+              </section>
             </div>
           )}
 
