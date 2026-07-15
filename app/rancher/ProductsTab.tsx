@@ -102,6 +102,7 @@ export default function ProductsTab({
   // to the products that generate them — see it, ship it, paste tracking.
   const [orders, setOrders] = useState<RancherOrder[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(true);
+  const [ordersErr, setOrdersErr] = useState('');
   const [shippingId, setShippingId] = useState<string | null>(null);
   const [trackingDraft, setTrackingDraft] = useState<Record<string, string>>({});
   // Stock-only inline editor for deposit-style rows (full edit is ops-fenced,
@@ -131,18 +132,34 @@ export default function ProductsTab({
         setLoading(false);
       }
     })();
-    (async () => {
-      try {
-        const res = await fetch('/api/rancher/orders');
-        const data = await res.json().catch(() => ({}));
-        if (res.ok) setOrders(data.orders || []);
-      } catch {
-        /* orders section just stays empty; products still work */
-      } finally {
-        setOrdersLoading(false);
-      }
-    })();
+    loadOrders();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // FALSE-EMPTY FIX (Wave A 2026-07-14, same class as the inbox 401 bug in
+  // #374): a non-OK /api/rancher/orders used to be swallowed by an empty
+  // catch, so a 500 or expired session rendered exactly like "no orders" —
+  // a rancher clicking through the SLA nudge during a blip concluded there
+  // was nothing to ship. Now: 401/403 → login redirect (like inbox), any
+  // other failure → visible error card with a retry button.
+  async function loadOrders() {
+    setOrdersLoading(true);
+    setOrdersErr('');
+    try {
+      const res = await fetch('/api/rancher/orders');
+      if (res.status === 401 || res.status === 403) {
+        window.location.href = '/rancher/login';
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || `could not load your orders (${res.status})`);
+      setOrders(data.orders || []);
+    } catch (e: any) {
+      setOrdersErr(e?.message || 'could not load your orders — refresh in a minute.');
+    } finally {
+      setOrdersLoading(false);
+    }
+  }
 
   async function markShipped(o: RancherOrder) {
     setShippingId(o.id);
@@ -403,31 +420,13 @@ export default function ProductsTab({
     setShowForm(true);
   }
 
-  // ── Connect gate — a form they can't submit is worse than a clear next step.
-  if (!connectActive) {
-    return (
-      <div className="space-y-4">
-        <h2 className="font-serif text-2xl">Products</h2>
-        <div className="border border-dust bg-bone-warm p-6 max-w-xl">
-          <p className="text-sm leading-relaxed mb-4">
-            list jerky, boxes and bundles on the buyhalfcow marketplace — buyers pay online, you
-            ship, the payout lands in your Stripe account automatically.
-          </p>
-          <p className="text-sm text-saddle mb-4">
-            finish your Stripe setup first so there&rsquo;s an account to pay you on — takes a few
-            minutes.
-          </p>
-          <Link
-            href="/rancher/billing"
-            className="inline-block px-5 py-3 bg-charcoal text-bone text-sm font-medium uppercase tracking-wider hover:bg-saddle transition-colors"
-          >
-            finish stripe setup &rarr;
-          </Link>
-        </div>
-      </div>
-    );
-  }
-
+  // ── Connect gate (Wave A 2026-07-14: SCOPED to product management only).
+  // This used to be a whole-tab early return — a Connect downgrade
+  // (active→restricted, routine Stripe re-KYC) removed the entire ship UI,
+  // hiding PAID unshipped orders behind the "finish stripe setup" card while
+  // 48h chargeback escalations fired. Orders (below) now render
+  // unconditionally — mark-shipped has no Connect gate server-side either —
+  // and only the add/edit form + product list sit behind the nudge.
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
@@ -441,7 +440,7 @@ export default function ProductsTab({
             in seconds. buyers pay online, you ship, your payout lands automatically.
           </p>
         </div>
-        {!showForm && (
+        {connectActive && !showForm && (
           <button
             onClick={startAdd}
             className="px-5 py-3 bg-charcoal text-bone text-sm font-medium uppercase tracking-wider hover:bg-saddle transition-colors whitespace-nowrap"
@@ -462,7 +461,7 @@ export default function ProductsTab({
       )}
 
       {/* ── Add / edit form ── */}
-      {showForm && (
+      {connectActive && showForm && (
         <div className="border border-dust bg-bone-warm p-5 space-y-4 max-w-2xl">
           <div className="font-serif text-lg">{editingId ? 'edit product' : 'add a product'}</div>
 
@@ -808,8 +807,21 @@ export default function ProductsTab({
 
       {/* ── Orders (Phase 10 — the loop that was missing: an order used to be
              one email, then gone. Now: see it, ship it, paste tracking, buyer
-             gets the email automatically.) ── */}
-      {!ordersLoading && orders.length > 0 && (
+             gets the email automatically.) Rendered UNCONDITIONALLY — a
+             Connect downgrade must never hide paid unshipped orders. ── */}
+      {ordersErr && (
+        <div className="border border-weathered/40 bg-bone-warm p-4 space-y-2">
+          <p className="text-sm text-weathered">{ordersErr}</p>
+          <button
+            onClick={loadOrders}
+            disabled={ordersLoading}
+            className="px-4 py-2 border border-dust text-xs uppercase tracking-wider hover:bg-charcoal hover:text-bone transition-colors disabled:opacity-50"
+          >
+            {ordersLoading ? 'retrying…' : 'retry loading orders'}
+          </button>
+        </div>
+      )}
+      {!ordersLoading && !ordersErr && orders.length > 0 && (
         <div className="space-y-2">
           <h3 className="font-serif text-lg border-b border-dust pb-1.5">
             orders{orders.filter((o) => o.status === 'New').length > 0
@@ -874,17 +886,38 @@ export default function ProductsTab({
         </div>
       )}
 
+      {/* ── Product management — Connect-gated (a form they can't submit is
+             worse than a clear next step). ── */}
+      {!connectActive && (
+        <div className="border border-dust bg-bone-warm p-6 max-w-xl">
+          <p className="text-sm leading-relaxed mb-4">
+            list jerky, boxes and bundles on the buyhalfcow marketplace — buyers pay online, you
+            ship, the payout lands in your Stripe account automatically.
+          </p>
+          <p className="text-sm text-saddle mb-4">
+            finish your Stripe setup first so there&rsquo;s an account to pay you on — takes a few
+            minutes.
+          </p>
+          <Link
+            href="/rancher/billing"
+            className="inline-block px-5 py-3 bg-charcoal text-bone text-sm font-medium uppercase tracking-wider hover:bg-saddle transition-colors"
+          >
+            finish stripe setup &rarr;
+          </Link>
+        </div>
+      )}
+
       {/* ── My products ── */}
-      {loading && <p className="text-saddle text-sm">loading your products…</p>}
-      {loadErr && <p className="text-weathered text-sm">{loadErr}</p>}
-      {!loading && !loadErr && products.length === 0 && !showForm && (
+      {connectActive && loading && <p className="text-saddle text-sm">loading your products…</p>}
+      {connectActive && loadErr && <p className="text-weathered text-sm">{loadErr}</p>}
+      {connectActive && !loading && !loadErr && products.length === 0 && !showForm && (
         <p className="text-sm text-saddle">
           no products yet — jerky and snack sticks are the easiest first listing (shelf-stable, ships
           anywhere).
         </p>
       )}
 
-      {products.length > 0 && (
+      {connectActive && products.length > 0 && (
         <div className="space-y-2">
           {products.map((p) => (
             <div
@@ -998,12 +1031,14 @@ export default function ProductsTab({
 
       {/* Cross-link: shares live in My Page — one mental model, two revenue
           rails (Task 6.4). */}
-      <p className="text-sm text-saddle border-t border-dust pt-4">
-        selling a whole or half share?{' '}
-        <button onClick={onGoToMyPage} className="underline hover:text-charcoal">
-          set your share pricing in my page &rarr;
-        </button>
-      </p>
+      {connectActive && (
+        <p className="text-sm text-saddle border-t border-dust pt-4">
+          selling a whole or half share?{' '}
+          <button onClick={onGoToMyPage} className="underline hover:text-charcoal">
+            set your share pricing in my page &rarr;
+          </button>
+        </p>
+      )}
     </div>
   );
 }

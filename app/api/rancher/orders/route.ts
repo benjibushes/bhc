@@ -65,10 +65,26 @@ export async function GET(request: Request) {
   // O(this rancher's orders), not O(all orders platform-wide). Rancher Orders
   // grows 1:1 with ad-driven product sales; the full scan burned the shared
   // 5 req/s Airtable budget on every Products-tab open. JS belt stays.
-  const rows = ((await getAllRecords(
-    TABLES.RANCHER_ORDERS,
-    `{Rancher Record ID} = "${escapeAirtableValue(session.rancherId)}"`,
-  ).catch(() => [])) as any[])
+  //
+  // FALSE-EMPTY FIX (Wave A 2026-07-14, mirror of the #374 inbox fix): the
+  // old `.catch(() => [])` converted an Airtable outage into 200-empty — a
+  // rancher clicking through the SLA nudge during a blip saw "no orders" and
+  // concluded there was nothing to ship. Fail loud so the client can render
+  // a retry instead of a lie.
+  let raw: any[];
+  try {
+    raw = (await getAllRecords(
+      TABLES.RANCHER_ORDERS,
+      `{Rancher Record ID} = "${escapeAirtableValue(session.rancherId)}"`,
+    )) as any[];
+  } catch (e: any) {
+    console.error('[rancher/orders] GET Airtable read failed:', e?.message);
+    return NextResponse.json(
+      { error: 'could not load your orders — refresh in a minute.' },
+      { status: 502 },
+    );
+  }
+  const rows = raw
     .filter((row) => ownerOf(row) === session.rancherId)
     .map(toClientOrder)
     .sort((a, b) => (b.orderedAt || '').localeCompare(a.orderedAt || ''));
