@@ -92,6 +92,8 @@ beats a great ranch in a zero-demand state. The waitlist is the scoreboard.
 
 ## 3. The four lanes (work them in this order)
 
+> **Update 2026-07-15:** Ashcraft Beef (TX) was removed from the platform — excluded from every lane below. Connect-stuck lane is now 4 (was 5). Their 36 open leads were released back to the routing pool; TX's active catcher is Lazy Bar 3.
+
 Your queue lives in the **prospects dashboard** (bhc-prospects.vercel.app —
 Ben hands you the login directly; the password is never written down).
 Every prospect falls into one of four lanes.
@@ -143,7 +145,7 @@ take a dollar.
 > I'll stay on the phone while you tap through it, and the moment it flips
 > active I can start routing [state] families to you.
 
-**Connect-stuck (5) — they started Stripe and stalled partway:**
+**Connect-stuck (4) — they started Stripe and stalled partway:**
 > you're 90% through the payout setup — it stalled partway. takes about 5
 > more minutes to finish. I'll walk it with you screen by screen right now.
 
