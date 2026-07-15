@@ -263,6 +263,28 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   // on the touch that crosses ESCALATE_AFTER_TOUCHES, never retried) — a
   // cap-suppress means the rancher never learns the balance is outstanding.
   'sendDunningEscalation',
+  // Wave C (2026-07-14) — no-silent-lifecycle notices. Each fires at most
+  // once per real lifecycle event (admin action / Stripe webhook), so the
+  // 3/week cap can only ever suppress a legitimate, rancher-critical notice:
+  // Admin paused new-lead routing — the pause also mutes the other email
+  // rails (followup/reactivation exclude Paused), so THIS mail is the only
+  // way a non-logging-in rancher learns their lead flow stopped.
+  'sendRancherPauseNotice',
+  // Full deposit refund reverted a deal — funds were pulled back from the
+  // rancher's Connect balance and the deal left every dashboard bucket;
+  // suppressing this means they keep working a dead deal.
+  'deposit_refunded_rancher',
+  // Chargeback on the rancher's OWN connected account — the evidence window
+  // is ticking and the winning evidence (tracking/photos/texts) lives with
+  // the rancher. One send per dispute lifecycle event (created/closed).
+  'sendRancherDispute',
+  // Tier subscription terminally cancelled — routing + deposits shut off
+  // instantly; the dunning mails promised the plan 'keeps from lapsing',
+  // so the lapse itself must not land silently.
+  'sendRancherSubscriptionEnded',
+  // Pickup-order completion note to the buyer (sibling of the whitelisted
+  // product_shipped) — 1:1, customer-expected, fires once per order.
+  'product_picked_up',
 ]);
 
 // T1 (2026-06-10): dynamic-name templates whose names contain a stage

@@ -940,6 +940,123 @@ async function handleDispute(event: any): Promise<void> {
     result: { status, amount, reason, paymentRecordId },
     reverseAction: { type: 'noop', reason: 'Stripe-driven dispute — cannot un-dispute via Airtable' },
   }).catch(e => console.error('[audit] connect dispute log failed:', e));
+
+  // ── Wave C (2026-07-14): tell the RANCHER, not just Ben. ─────────────────
+  // tier_v2 deposits/final invoices are DIRECT charges — the dispute
+  // withdraws funds from the RANCHER's balance, and the winning evidence
+  // (tracking, photos, texts) lives with the rancher. Express-platform setup
+  // means Stripe won't reliably tell them either; until now they discovered
+  // a 4-figure debit on a bank statement. Mirror handlePayoutFailed's
+  // rancher lookup by event.account. Fires on 'created' (evidence ask +
+  // push) and 'closed' (won/lost outcome); 'funds_withdrawn' skips — the
+  // created email already warned them, and each event type reaches this
+  // handler at most once (webhook event dedupe upstream). All best-effort
+  // after the row stamp.
+  const notifyPhase =
+    eventType === 'charge.dispute.created'
+      ? 'created'
+      : eventType === 'charge.dispute.closed'
+        ? 'closed'
+        : null;
+  const disputeAccountId: string = (event as any)?.account || '';
+  if (notifyPhase && disputeAccountId) {
+    try {
+      const safeAcct = disputeAccountId.replace(/"/g, '\\"');
+      const rancher: any = await getFirstRecord(
+        TABLES.RANCHERS,
+        `{Stripe Connect Account Id} = "${safeAcct}"`,
+      );
+      if (rancher) {
+        const rancherEmail = String(rancher['Email'] || '').trim();
+        const firstName =
+          String(rancher['Operator Name'] || rancher['Ranch Name'] || '').split(/\s+/)[0] || 'there';
+        // Buyer name — best-effort: Payments row → Referral → Buyer Name.
+        let buyerName = '';
+        if (paymentRecordId) {
+          try {
+            const paymentRow: any = await getRecordById(PAYMENTS_TABLE, paymentRecordId);
+            const refIds: string[] = (paymentRow?.['Referral'] || []) as string[];
+            if (Array.isArray(refIds) && refIds[0]) {
+              const ref: any = await getRecordById(TABLES.REFERRALS, refIds[0]);
+              buyerName = String(ref?.['Buyer Name'] || '').trim();
+            }
+          } catch {
+            /* buyer name is a nicety — never block the notice */
+          }
+        }
+        const dueBySecs = Number(dispute?.evidence_details?.due_by || 0);
+        const dueDate = dueBySecs
+          ? new Date(dueBySecs * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+          : '';
+        const amountStr = `$${amount.toLocaleString('en-US')}`;
+
+        if (rancherEmail) {
+          const emailResult =
+            notifyPhase === 'created'
+              ? await sendEmail({
+                  to: rancherEmail,
+                  subject: `a buyer disputed a ${amountStr} charge${dueDate ? ` — respond by ${dueDate}` : ' — quick response needed'}`,
+                  templateName: 'sendRancherDispute',
+                  html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC;line-height:1.6;color:#0E0E0E">
+                    <p>hey ${firstName},</p>
+                    <p>${buyerName ? `<strong>${buyerName}</strong>` : 'A buyer'} disputed a <strong>${amountStr}</strong> charge with their bank (reason on file: ${reason}). While the dispute is open, that money is held out of your Stripe balance.</p>
+                    <p><strong>We can win this — but the clock is ticking${dueDate ? ` (evidence due ${dueDate})` : ''}.</strong> Reply to this email with whatever proof of fulfillment you have and we'll submit it for you:</p>
+                    <ul style="font-size:15px;line-height:1.8">
+                      <li>tracking number or delivery confirmation</li>
+                      <li>photos of the order / pickup</li>
+                      <li>texts or emails with the buyer</li>
+                      <li>anything showing what they agreed to</li>
+                    </ul>
+                    <p><a href="${process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com'}/rancher#deals">Open your dashboard &rarr;</a></p>
+                    <p style="font-size:12px;color:#A7A29A;">— Ben<br>BuyHalfCow</p>
+                  </div>`,
+                })
+              : await sendEmail({
+                  to: rancherEmail,
+                  subject:
+                    status === 'won'
+                      ? `good news — you won the ${amountStr} dispute`
+                      : status === 'lost'
+                        ? `the ${amountStr} dispute was lost`
+                        : `the ${amountStr} dispute was closed (${status})`,
+                  templateName: 'sendRancherDispute',
+                  html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC;line-height:1.6;color:#0E0E0E">
+                    <p>hey ${firstName},</p>
+                    ${
+                      status === 'won'
+                        ? `<p>the <strong>${amountStr}</strong> dispute${buyerName ? ` from ${buyerName}` : ''} was resolved in your favor — the funds are back in your Stripe balance.</p>`
+                        : status === 'lost'
+                          ? `<p>the <strong>${amountStr}</strong> dispute${buyerName ? ` from ${buyerName}` : ''} was decided for the buyer's bank — the funds stay withdrawn. Reply if you want to walk through what happened and how to protect the next one.</p>`
+                          : `<p>the <strong>${amountStr}</strong> dispute${buyerName ? ` from ${buyerName}` : ''} was closed with status: ${status}.</p>`
+                    }
+                    <p style="font-size:12px;color:#A7A29A;">— Ben<br>BuyHalfCow</p>
+                  </div>`,
+                });
+          if (!emailResult?.success) {
+            console.error(
+              `[stripe-connect dispute] rancher email suppressed (${emailResult?.reason || 'unknown'}) — rancher NOT notified of ${notifyPhase} dispute`,
+            );
+          }
+        }
+
+        // Push — dark-safe, only for the created moment (the actionable one).
+        if (notifyPhase === 'created') {
+          try {
+            const { sendRancherPush } = await import('@/lib/rancherPush');
+            await sendRancherPush(rancher.id, {
+              title: `⚠️ ${amountStr} chargeback${dueDate ? ` — evidence due ${dueDate}` : ''}`,
+              body: 'a buyer disputed a charge. reply to our email with tracking/photos/texts and we\'ll fight it.',
+              url: '/rancher#deals',
+            });
+          } catch (pushErr: any) {
+            console.warn('[stripe-connect dispute] rancher push skipped (non-fatal):', pushErr?.message);
+          }
+        }
+      }
+    } catch (e: any) {
+      console.error('[stripe-connect dispute] rancher notify failed (non-fatal):', e?.message);
+    }
+  }
 }
 
 // ============================================================================

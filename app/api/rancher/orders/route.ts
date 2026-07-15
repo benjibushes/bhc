@@ -53,6 +53,11 @@ function toClientOrder(r: any) {
     // Deposit-style orders carry the marker settlement stamped into the ref —
     // the UI must say "confirm details first", never "ship it".
     depositStyle: ref.startsWith('DEPOSIT — '),
+    // Wave C (2026-07-14): pickup orders carry their own marker — the UI must
+    // say "mark picked up" (no tracking) and the buyer email must say
+    // picked-up, never "just shipped + you'll get tracking". .includes
+    // because the markers compound ('DEPOSIT — PICKUP — ').
+    pickup: ref.includes('PICKUP — '),
   };
 }
 
@@ -130,14 +135,21 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Already in flight — give it a second.' }, { status: 409 });
   }
 
+  // Wave C: a pickup order has no tracking — the buyer already drove (or is
+  // driving) out. Writing a tracking number + sending "just shipped, you'll
+  // get tracking" read like a duplicate order to a buyer who's already home
+  // with the beef. Same parsing as toClientOrder.
+  const isPickup = String(order['Order Ref'] || '').includes('PICKUP — ');
+
   await updateRecord(TABLES.RANCHER_ORDERS, orderId, {
     Status: 'Shipped',
     'Shipped At': new Date().toISOString(),
-    ...(trackingNumber ? { 'Tracking Number': trackingNumber } : {}),
+    ...(trackingNumber && !isPickup ? { 'Tracking Number': trackingNumber } : {}),
   });
 
-  // The tracking email the receipt promised. Transactional (whitelisted in
-  // emailFrequencyGuard) — best-effort, never blocks the status update.
+  // The buyer email the receipt promised — tracking for shipped orders, a
+  // picked-up note for pickups. Transactional (both templateNames whitelisted
+  // in emailFrequencyGuard) — best-effort, never blocks the status update.
   const buyerEmail = String(order['Buyer Email'] || '').trim();
   const buyerFirst = escapeHtml(String(order['Buyer Name'] || '').trim().split(/\s+/)[0] || 'there');
   const productName = escapeHtml(String(order['Product Name'] || 'your order'));
@@ -146,15 +158,24 @@ export async function POST(request: Request) {
   if (buyerEmail) {
     await sendEmail({
       to: buyerEmail,
-      subject: `on the way — ${String(order['Product Name'] || 'your order')}`,
-      html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
+      subject: isPickup
+        ? `all set — ${String(order['Product Name'] || 'your order')}`
+        : `on the way — ${String(order['Product Name'] || 'your order')}`,
+      html: isPickup
+        ? `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
+        <p>hey ${buyerFirst},</p>
+        <p>hope the pickup went smooth — your <strong>${productName}</strong> order with <strong>${ranchName}</strong> is complete.</p>
+        <p style="font-size:14px;color:#5A5752">if anything's off with your order, we make it right — just reply to this email.</p>
+        <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow</p>
+      </div>`
+        : `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
         <p>hey ${buyerFirst},</p>
         <p>your <strong>${productName}</strong> just shipped from <strong>${ranchName}</strong>.</p>
         ${trackingSafe ? `<p style="font-size:14px;color:#2A2A2A">tracking: <strong>${trackingSafe}</strong></p>` : ''}
         <p style="font-size:14px;color:#5A5752">if anything shows up wrong or freezer-burned, we make it right — just reply to this email.</p>
         <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow</p>
       </div>`,
-      templateName: 'product_shipped',
+      templateName: isPickup ? 'product_picked_up' : 'product_shipped',
     }).catch(() => {});
   }
 

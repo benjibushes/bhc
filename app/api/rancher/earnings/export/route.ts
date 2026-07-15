@@ -13,7 +13,7 @@
 // (Rancher or Suggested Rancher).
 
 import { NextResponse } from 'next/server';
-import { TABLES, getAllRecords, getRecordById } from '@/lib/airtable';
+import { TABLES, getAllRecords, getRecordById, escapeAirtableValue } from '@/lib/airtable';
 import { requireRancher } from '@/lib/rancherAuth';
 import { fetchReferralRowsForRancher } from '@/lib/referralReads';
 import {
@@ -83,6 +83,44 @@ export async function GET(request: Request) {
       }));
   } catch (e: any) {
     console.error('[rancher/earnings/export] referrals load failed:', e?.message || e);
+    return NextResponse.json({ error: 'Could not load earnings.' }, { status: 500 });
+  }
+
+  // Wave C (2026-07-14): blend PRODUCT orders into the bookkeeping file.
+  // Rancher Orders money previously existed only as per-order lines inside
+  // the Products tab — deposit-style product orders never create a Referral,
+  // so a jerky/box-heavy rancher downloaded an EMPTY "export for taxes" CSV
+  // while Stripe showed real payouts. Same ownership filter as
+  // /api/rancher/orders GET; Refunded rows excluded (money went back).
+  // FAIL LOUD like the loads above — a bookkeeping file silently missing the
+  // product side is worse than no file.
+  try {
+    const orderRows = (await getAllRecords(
+      TABLES.RANCHER_ORDERS,
+      `{Rancher Record ID} = "${escapeAirtableValue(rancherId)}"`,
+    )) as any[];
+    for (const o of orderRows) {
+      if (String(o['Rancher Record ID'] || '').trim() !== rancherId) continue;
+      if (String(o['Status'] || '') === 'Refunded') continue;
+      const buyerPaid = Number(o['Buyer Paid'] || 0);
+      const payout = Number(o['Rancher Payout'] || 0);
+      rows.push({
+        id: String(o['Order Ref'] || o.id),
+        buyerName: String(o['Buyer Name'] || ''),
+        orderType: String(o['Product Name'] || ''),
+        saleAmount: buyerPaid,
+        // BHC margin — kept in the Commission column so Sale − Commission =
+        // Net holds for product rows exactly like share rows.
+        commissionDue: Math.max(0, buyerPaid - payout),
+        closedAt: String(o['Ordered At'] || o['_createdTime'] || ''),
+        introSentAt: '',
+        kind: 'product',
+        // Exact settlement-stamped payout — wins over any rail computation.
+        netOverride: payout,
+      });
+    }
+  } catch (e: any) {
+    console.error('[rancher/earnings/export] orders load failed:', e?.message || e);
     return NextResponse.json({ error: 'Could not load earnings.' }, { status: 500 });
   }
 

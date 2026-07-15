@@ -8,7 +8,7 @@
 // lib/productFulfillmentSla.ts.
 
 import { getAllRecords, getRecordById, updateRecord, TABLES } from '@/lib/airtable';
-import { slaDecisions, NUDGE_DAYS, ESCALATE_DAYS } from '@/lib/productFulfillmentSla';
+import { slaDecisions, NUDGE_DAYS, ESCALATE_DAYS, SLOW_NUDGE_DAYS, SLOW_ESCALATE_DAYS } from '@/lib/productFulfillmentSla';
 import { sendEmail } from '@/lib/email';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { withCronRun } from '@/lib/cronRun';
@@ -32,6 +32,9 @@ async function realHandler(_request: Request): Promise<SlaResult> {
       status: String(o['Status'] || ''),
       orderedAt: String(o['Ordered At'] || ''),
       slaNudgedAt: String(o['SLA Nudged At'] || ''),
+      // Wave C: the DEPOSIT/PICKUP markers live only in Order Ref — without
+      // it the cron told ranchers to SHIP deposit-style orders on day 3.
+      orderRef: String(o['Order Ref'] || ''),
     })),
     new Date().toISOString(),
   );
@@ -63,16 +66,40 @@ async function realHandler(_request: Request): Promise<SlaResult> {
           errors.push(`${d.id}: no rancher email`);
           continue;
         }
+        // Wave C — kind-specific copy. A deposit order must NEVER be told to
+        // "ship it" (the settle email said the opposite); a pickup order's
+        // next step is setting the pickup time, not tracking numbers.
+        const nudge =
+          d.kind === 'deposit'
+            ? {
+                subject: `⏰ ${buyer}'s ${product} deposit is waiting on you`,
+                headline: `quick heads up — <strong>${buyer}</strong> put a deposit down on <strong>${product}</strong> ${d.ageDays} days ago and it's still sitting untouched.`,
+                body: `Reach out to confirm their size and settle the remaining balance — do NOT ship anything yet. Their contact info is on the order:`,
+                footer: `Already talked to them? Great — once the balance settles the order moves along on its own. Problem with the order? Reply here — a real person reads it.`,
+              }
+            : d.kind === 'pickup'
+              ? {
+                  subject: `⏰ ${buyer}'s ${product} pickup still isn't scheduled`,
+                  headline: `quick heads up — <strong>${buyer}</strong> paid for <strong>${product}</strong> ${d.ageDays} days ago and the order is still marked New.`,
+                  body: `They're picking this one up — reach out and set the pickup time, then mark the order complete once they've come by:`,
+                  footer: `Already handed it over? Just mark it complete so our records match. Problem with the order? Reply here — a real person reads it.`,
+                }
+              : {
+                  subject: `⏰ ${buyer}'s ${product} order is waiting to ship`,
+                  headline: `quick heads up — <strong>${buyer}</strong> paid for <strong>${product}</strong> ${d.ageDays} days ago and the order is still marked New.`,
+                  body: `They're expecting it. When it ships, add the tracking number in your dashboard and we'll tell them automatically:`,
+                  footer: `Already shipped it? Just mark it Shipped so the buyer gets their tracking. Problem with the order? Reply here — a real person reads it.`,
+                };
         await sendEmail({
           to,
-          subject: `⏰ ${buyer}'s ${product} order is waiting to ship`,
+          subject: nudge.subject,
           templateName: 'product_sla_nudge',
           html: `
             <div style="font-family:Georgia,serif;max-width:560px;margin:0 auto;color:#26251E;">
-              <p style="font-size:19px;">quick heads up — <strong>${buyer}</strong> paid for <strong>${product}</strong> ${d.ageDays} days ago and the order is still marked New.</p>
-              <p style="font-size:15px;line-height:1.6;">They're expecting it. When it ships, add the tracking number in your dashboard and we'll tell them automatically:</p>
+              <p style="font-size:19px;">${nudge.headline}</p>
+              <p style="font-size:15px;line-height:1.6;">${nudge.body}</p>
               <p><a href="${SITE_URL}/rancher#products" style="display:inline-block;background:#26251E;color:#F4F0E7;padding:12px 22px;text-decoration:none;border-radius:2px;">Open your orders &rarr;</a></p>
-              <p style="font-size:14px;color:#6B5D4A;">Already shipped it? Just mark it Shipped so the buyer gets their tracking. Problem with the order? Reply here — a real person reads it.</p>
+              <p style="font-size:14px;color:#6B5D4A;">${nudge.footer}</p>
             </div>`,
         });
         await updateRecord(TABLES.RANCHER_ORDERS, d.id, { 'SLA Nudged At': new Date().toISOString() });
@@ -82,15 +109,31 @@ async function realHandler(_request: Request): Promise<SlaResult> {
       }
     } else {
       // Escalation re-screams every 48h until the order leaves 'New'.
+      // Wave C: deposit/pickup escalations say "stalled", never "chargeback
+      // forming" — those orders dwell in New by design and crying wolf
+      // trains ops to ignore the one alarm that matters.
       try {
+        const summary =
+          d.kind === 'deposit'
+            ? `STALLED DEPOSIT ${d.ageDays}d: ${product} (${rancherName})`
+            : d.kind === 'pickup'
+              ? `STALLED PICKUP ${d.ageDays}d: ${product} (${rancherName})`
+              : `UNSHIPPED ${d.ageDays}d: ${product} (${rancherName})`;
+        const detail =
+          d.kind === 'deposit'
+            ? `${buyer} put a deposit on ${product} ${d.ageDays} days ago and the size/balance confirm still hasn't happened ` +
+              `(deposit SLA: nudge @${SLOW_NUDGE_DAYS}d, escalate @${SLOW_ESCALATE_DAYS}d). Nudge the rancher to call the buyer.`
+            : d.kind === 'pickup'
+              ? `${buyer} paid for ${product} ${d.ageDays} days ago and the pickup still isn't done/scheduled ` +
+                `(pickup SLA: nudge @${SLOW_NUDGE_DAYS}d, escalate @${SLOW_ESCALATE_DAYS}d). Nudge the rancher to set a pickup time.`
+              : `${buyer} paid for ${product} ${d.ageDays} days ago; ${rancherName} still hasn't marked it Shipped ` +
+                `(SLA: nudge @${NUDGE_DAYS}d, escalate @${ESCALATE_DAYS}d). Call the rancher or refund the buyer — ` +
+                `a paid order this old is a chargeback forming.`;
         await sendOperatorSignal({
           urgency: 'loud',
           kind: 'system-error',
-          summary: `UNSHIPPED ${d.ageDays}d: ${product} (${rancherName})`,
-          detail:
-            `${buyer} paid for ${product} ${d.ageDays} days ago; ${rancherName} still hasn't marked it Shipped ` +
-            `(SLA: nudge @${NUDGE_DAYS}d, escalate @${ESCALATE_DAYS}d). Call the rancher or refund the buyer — ` +
-            `a paid order this old is a chargeback forming.`,
+          summary,
+          detail,
           dedupeKey: `product-sla-escalate:${d.id}`,
           dedupeWindowMs: 48 * 60 * 60 * 1000,
         });

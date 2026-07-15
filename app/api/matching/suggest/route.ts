@@ -201,27 +201,54 @@ export async function POST(request: Request) {
     // /api/buyer/reconfirm and the lead routes with a same-day stamp.
     // Operator override bypasses; the base unqualified gate above is untouched.
     if (hasQualified && !isOperatorOverride && !isQualificationFresh(buyerRecForGate['Qualified At'], Date.now())) {
-      try {
-        const buyerEmailForReconfirm = String(buyerRecForGate['Email'] || '').trim().toLowerCase();
-        if (buyerEmailForReconfirm && !buyerRecForGate['Unsubscribed'] && !buyerRecForGate['Bounced'] && !buyerRecForGate['Complained']) {
-          const { sendStillLookingReconfirm } = await import('@/lib/emailMinimal');
-          const { generateMemberLoginToken } = await import('@/lib/secrets');
-          const token = generateMemberLoginToken(buyerId, buyerEmailForReconfirm);
-          await sendStillLookingReconfirm({
-            buyerEmail: buyerEmailForReconfirm,
-            buyerName: String(buyerRecForGate['Full Name'] || 'there').split(/\s+/)[0],
-            state: String(buyerRecForGate['State'] || '').trim() || undefined,
-            confirmUrl: `${process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com'}/api/buyer/reconfirm?token=${token}`,
-          });
+      // Wave C (2026-07-14) — DEDUPE the "still looking?" email. This branch
+      // used to fire the send on EVERY 412: batch-approve re-pulls the same
+      // stale buyers daily, so a buyer whose email promises "no more nags"
+      // (emailMinimal.ts) got the identical mail up to 3x/week forever — the
+      // cohort most likely to spam-report. Skip re-sends within 14 days via
+      // a 'Reconfirm Sent At' stamp on Consumers; the stamp is written
+      // BEFORE the send (stamp-first house pattern) and is best-effort — if
+      // the field doesn't exist yet the write fails silently and behavior
+      // degrades to the old always-send (routing is unaffected either way).
+      const RECONFIRM_RESEND_DAYS = 14;
+      const lastReconfirmMs = Date.parse(String(buyerRecForGate['Reconfirm Sent At'] || ''));
+      const reconfirmRecentlySent =
+        !Number.isNaN(lastReconfirmMs) &&
+        Date.now() - lastReconfirmMs < RECONFIRM_RESEND_DAYS * 24 * 60 * 60 * 1000;
+      if (!reconfirmRecentlySent) {
+        try {
+          const buyerEmailForReconfirm = String(buyerRecForGate['Email'] || '').trim().toLowerCase();
+          if (buyerEmailForReconfirm && !buyerRecForGate['Unsubscribed'] && !buyerRecForGate['Bounced'] && !buyerRecForGate['Complained']) {
+            try {
+              await updateRecord(TABLES.CONSUMERS, buyerId, {
+                'Reconfirm Sent At': new Date().toISOString(),
+              });
+            } catch (stampErr: any) {
+              // Field may not exist in older Airtable schemas — degrade to
+              // the pre-dedupe behavior rather than blocking the send.
+              console.warn('[matching/suggest] Reconfirm Sent At stamp failed (best-effort):', stampErr?.message);
+            }
+            const { sendStillLookingReconfirm } = await import('@/lib/emailMinimal');
+            const { generateMemberLoginToken } = await import('@/lib/secrets');
+            const token = generateMemberLoginToken(buyerId, buyerEmailForReconfirm);
+            await sendStillLookingReconfirm({
+              buyerEmail: buyerEmailForReconfirm,
+              buyerName: String(buyerRecForGate['Full Name'] || 'there').split(/\s+/)[0],
+              state: String(buyerRecForGate['State'] || '').trim() || undefined,
+              confirmUrl: `${process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com'}/api/buyer/reconfirm?token=${token}`,
+            });
+          }
+        } catch (e: any) {
+          console.warn('[matching/suggest] re-confirm email failed (non-fatal):', e?.message);
         }
-      } catch (e: any) {
-        console.warn('[matching/suggest] re-confirm email failed (non-fatal):', e?.message);
       }
       return NextResponse.json({
         error: 'stale_qualification',
         buyer: buyerLabel,
         qualifiedAt: buyerRecForGate['Qualified At'],
-        hint: 'Qualified >28 days ago — one-click re-confirm emailed; lead routes as soon as they confirm (or pass operatorOverride to route now).',
+        hint: reconfirmRecentlySent
+          ? `Qualified >28 days ago — re-confirm already emailed within ${RECONFIRM_RESEND_DAYS}d, not re-sent; lead routes as soon as they confirm (or pass operatorOverride to route now).`
+          : 'Qualified >28 days ago — one-click re-confirm emailed; lead routes as soon as they confirm (or pass operatorOverride to route now).',
       }, { status: 412 });
     }
 
@@ -1443,6 +1470,25 @@ export async function POST(request: Request) {
               });
             } catch (pushErr: any) {
               console.warn('[matching/suggest] routed-lead push skipped (non-fatal):', pushErr?.message);
+            }
+            // Wave C (2026-07-14) — SMS alongside the intro email + push. The
+            // routed-lead moment was single-channel-to-inbox for ranchers with
+            // no PWA install: intro-to-spam is invisible (rollback fires only
+            // on hard errors) and 'Intro Sent' leads rot for weeks. Rides the
+            // proven deposit-paid rail: ENABLE_SMS gate + phone validation
+            // live inside fireRancherSMSEvent (dark-safe), own try/catch so it
+            // can never disturb the routed state.
+            try {
+              const { fireRancherSMSEvent } = await import('@/lib/smsEvents');
+              const rancherPhoneForSms = String(topMatch['Phone'] || '').trim();
+              const buyerFirstNameForSms = String(buyerName || '').trim().split(/\s+/)[0] || 'A buyer';
+              await fireRancherSMSEvent({
+                type: 'new_lead_rancher',
+                phone: rancherPhoneForSms,
+                vars: { buyerFirstName: buyerFirstNameForSms, state: buyerState, cut: orderType },
+              });
+            } catch (smsErr: any) {
+              console.warn('[matching/suggest] routed-lead SMS skipped (non-fatal):', smsErr?.message);
             }
           }
         }

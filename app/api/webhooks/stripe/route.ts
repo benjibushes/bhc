@@ -8,7 +8,7 @@ import {
   escapeAirtableValue,
   TABLES,
 } from '@/lib/airtable';
-import { sendBrandListingConfirmation, sendFoundingHerdWelcome, sendPostPurchaseWelcome } from '@/lib/email';
+import { sendEmail, sendBrandListingConfirmation, sendFoundingHerdWelcome, sendPostPurchaseWelcome } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { commissionRateForTier, TierSlug } from '@/lib/tiers';
@@ -1698,6 +1698,74 @@ async function handleTierSubscriptionDeleted(sub: any): Promise<void> {
     // — keep as historical record of the rancher's last tier.
   });
   console.log(`[stripe webhook] tier sub deleted: rancher ${rancherRecordId} marked canceled`);
+
+  // ── Wave C (2026-07-14): the terminal lapse must not land silently. ──────
+  // The consequences enforce INSTANTLY (routing excludes canceled —
+  // lib/rancherEligibility; deposits 409 — checkout/deposit), and the #376
+  // payment-failed dunning email literally promised paying 'keeps your plan
+  // from lapsing' — yet the lapse itself fired no email, no push, no ops
+  // signal. Churn completed invisibly. All best-effort after the row write.
+  const rancherRow: any = matches[0];
+  const ranchName = String(rancherRow['Ranch Name'] || rancherRow['Operator Name'] || rancherRecordId);
+  try {
+    await sendOperatorSignal({
+      urgency: 'loud',
+      kind: 'sale',
+      summary: `TIER SUB CANCELLED — ${ranchName}`,
+      detail:
+        `${ranchName}'s tier subscription is terminally cancelled (Tier → None). ` +
+        `Routing now excludes them and buyer deposits are blocked. ` +
+        `Rancher was emailed a reactivation CTA — a save call beats the email.`,
+      refs: [{ type: 'rancher', id: rancherRecordId }],
+      dedupeKey: `tier-sub-deleted:${sub?.id || rancherRecordId}`,
+      dedupeWindowMs: 24 * 60 * 60 * 1000,
+    });
+  } catch (e: any) {
+    console.warn('[stripe webhook] tier sub deleted: operator signal failed:', e?.message);
+  }
+  const rancherEmail = String(rancherRow['Email'] || '').trim();
+  if (rancherEmail) {
+    try {
+      const firstName =
+        String(rancherRow['Operator Name'] || rancherRow['Ranch Name'] || '').split(/\s+/)[0] || 'there';
+      const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
+      const r = await sendEmail({
+        to: rancherEmail,
+        subject: 'your BuyHalfCow plan has ended — here\'s what changes',
+        templateName: 'sendRancherSubscriptionEnded',
+        html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC;line-height:1.6;color:#0E0E0E">
+          <p>hey ${firstName},</p>
+          <p>your BuyHalfCow plan for <strong>${ranchName}</strong> has ended. Here's what that changes, effective now:</p>
+          <ul style="font-size:15px;line-height:1.8">
+            <li>new buyer routing to you is <strong>paused</strong></li>
+            <li>buyers can't place deposits on your page</li>
+            <li>your page and your existing conversations stay up</li>
+          </ul>
+          <p>Getting back on takes about a minute — pick a plan and everything switches back on:</p>
+          <p><a href="${siteUrl}/rancher/billing" style="display:inline-block;background:#26251E;color:#F4F0E7;padding:12px 22px;text-decoration:none;">Re-pick a plan &rarr;</a></p>
+          <p style="font-size:14px;color:#5A5752">If this wasn't intentional (card expired, bank hiccup) or you want to talk it through first, just reply — a real person reads this.</p>
+          <p style="font-size:12px;color:#A7A29A;">— Ben<br>BuyHalfCow</p>
+        </div>`,
+      });
+      if (!r?.success) {
+        console.error(
+          `[stripe webhook] tier sub deleted: rancher email suppressed (${(r as any)?.reason || 'unknown'}) — rancher NOT notified their plan ended`,
+        );
+      }
+    } catch (e: any) {
+      console.warn('[stripe webhook] tier sub deleted: rancher email failed (non-fatal):', e?.message);
+    }
+  }
+  try {
+    const { sendRancherPush } = await import('@/lib/rancherPush');
+    await sendRancherPush(rancherRecordId, {
+      title: 'your BHC plan ended',
+      body: 'new leads + deposits are paused. tap to reactivate — takes 1 minute.',
+      url: '/rancher/billing',
+    });
+  } catch (e: any) {
+    console.warn('[stripe webhook] tier sub deleted: rancher push skipped (non-fatal):', e?.message);
+  }
 }
 
 // ============================================================================

@@ -117,6 +117,49 @@ test('buildEarningsCsv RAIL-PER-ROW: depositPaidAt decides net, overriding the f
   assert.match(depositRow.trimEnd().split('\r\n')[1], /2000\.00,200\.00,2000\.00/);
 });
 
+// Wave C (2026-07-14) — product-order rows in the bookkeeping CSV. Product
+// orders (Rancher Orders) never create a Referral, so they carry kind:
+// 'product' and an exact netOverride (the settlement-stamped Rancher Payout)
+// instead of riding the referral-rail net computation.
+test('buildEarningsCsv leads with a Type column defaulting to share', () => {
+  const csv = buildEarningsCsv([row()]);
+  const lines = csv.trimEnd().split('\r\n');
+  assert.equal(lines[0].split(',')[0], 'Type');
+  assert.ok(lines[1].startsWith('share,'));
+});
+
+test('buildEarningsCsv product row: Type=product, netOverride wins over any rail', () => {
+  const csv = buildEarningsCsv(
+    [
+      row({
+        id: 'ORD-1234',
+        kind: 'product',
+        orderType: 'Beef Jerky 3-pack',
+        saleAmount: 45,
+        commissionDue: 6.75,
+        netOverride: 38.25,
+        // Even a deposit-paid stamp (tier_v2 rail → net = full sale) must not
+        // override the known payout — product money never rode the rail.
+        depositPaidAt: '2026-07-01',
+      }),
+    ],
+    'tier_v2',
+  );
+  const lines = csv.trimEnd().split('\r\n');
+  assert.ok(lines[1].startsWith('product,ORD-1234,'));
+  assert.match(lines[1], /45\.00,6\.75,38\.25/); // net = payout, not sale
+});
+
+test('buildEarningsCsv mixes share + product rows without cross-contamination', () => {
+  const csv = buildEarningsCsv([
+    row({ id: 'refA', saleAmount: 2000, commissionDue: 200 }),
+    row({ id: 'ORD-9', kind: 'product', saleAmount: 100, commissionDue: 15, netOverride: 85 }),
+  ]);
+  const lines = csv.trimEnd().split('\r\n');
+  assert.match(lines[1], /^share,refA,.*2000\.00,200\.00,1800\.00/);
+  assert.match(lines[2], /^product,ORD-9,.*100\.00,15\.00,85\.00/);
+});
+
 test('filterByClosedDate: no bounds returns a copy of all rows', () => {
   const rows = [row({ id: 'a' }), row({ id: 'b' })];
   const out = filterByClosedDate(rows);

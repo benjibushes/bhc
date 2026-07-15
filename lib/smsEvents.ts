@@ -38,7 +38,11 @@ export type SMSEventType =
 // marketing consumer. These skip the buyer TCPA SMS-Opt-In consent gate
 // (which applies to consumers) and use the raw transactional sender — still
 // flag-gated by ENABLE_SMS so nothing fires until Twilio is live.
-export type RancherSMSEventType = 'deposit_paid_rancher';
+// Wave C (2026-07-14): 'new_lead_rancher' — the routed-lead moment was the
+// platform's most time-sensitive rancher notification yet rode email (spam-
+// blind) + opt-in push only, while the deposit-paid SMS rail sat proven right
+// next to it. Fired from matching/suggest + bulkRoute alongside the intro.
+export type RancherSMSEventType = 'deposit_paid_rancher' | 'new_lead_rancher';
 
 // F3 (2026-07-01): gate unified into lib/smsFlag's smsEnabled() — this file
 // used to require ENABLE_SMS === '1' while the demand-router/orphan-reaper
@@ -121,6 +125,8 @@ function buildRancherBody(type: RancherSMSEventType, vars: RancherSMSEventVars):
   switch (type) {
     case 'deposit_paid_rancher':
       return `BuyHalfCow: ${who}${where} just PAID a deposit for a ${cut}${amt}. They're expecting your call today. Accept + details in your dashboard: ${process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com'}/rancher`;
+    case 'new_lead_rancher':
+      return `New BuyHalfCow buyer: ${who}${vars.state ? ` (${vars.state})` : ''}${vars.cut ? ` — ${vars.cut.toLowerCase()}` : ''}. Contact info in your email + dashboard: ${process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com'}/rancher`;
   }
 }
 

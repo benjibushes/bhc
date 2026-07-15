@@ -32,6 +32,9 @@ interface RancherInfo {
   email?: string;
   phone?: string;
   activeStatus: string;
+  // Wave C — Verification Status==='Removed' (self-serve closure). Swaps the
+  // Paused banner + Resume toggle for a distinct closed-account card.
+  accountClosed?: boolean;
   onboardingStatus: string;
   agreementSigned: boolean;
   commissionRate?: number;
@@ -211,6 +214,21 @@ interface PayoutsInfo {
   nextPayoutDateISO: string | null;
 }
 
+// Wave C (2026-07-14): minimal shape of a Rancher Orders row as returned by
+// /api/rancher/orders. Fetched on dashboard mount (not just when the Products
+// tab opens) so a paid order the rancher hasn't seen gets a spine badge + a
+// Home triage card — previously the ONLY dashboard surface was inside the
+// Products tab, which mounts only when clicked.
+interface ProductOrderSummary {
+  id: string;
+  status: string;
+  buyerName: string;
+  productName: string;
+  buyerPaid: number;
+  payout: number;
+  orderedAt: string;
+}
+
 // Brand-token status colors. Semantic mapping preserved:
 // neutral/info → bone+saddle, caution → amber, positive → sage, dead → dust.
 const statusStyles: Record<string, string> = {
@@ -223,6 +241,10 @@ const statusStyles: Record<string, string> = {
   // Deposit-gate statuses — set by Airtable typecast on first write (no schema change needed).
   'Awaiting Payment': 'bg-amber/20 text-amber-dark',
   'Slot Locked': 'bg-bone-warm text-saddle',
+  // Wave C (2026-07-14): a fully-refunded deal used to match NO bucket and no
+  // style — it evaporated from the dashboard while the refund debited the
+  // rancher's Stripe balance. Now it stays visible with an honest badge.
+  'Refunded': 'bg-dust/20 text-saddle',
 };
 
 export default function RancherDashboardPage() {
@@ -245,6 +267,10 @@ export default function RancherDashboardPage() {
   // Stripe payouts ("you got paid $X") — fetched separately so a slow/needs-
   // Connect Stripe read never blocks the dashboard render. Null until loaded.
   const [payouts, setPayouts] = useState<PayoutsInfo | null>(null);
+  // Wave C — product orders side-load (see ProductOrderSummary). Null until
+  // loaded; degrades silently (badge + card simply hidden). Kept fresh by
+  // ProductsTab via onOrdersChanged so marking one shipped clears the badge.
+  const [productOrders, setProductOrders] = useState<ProductOrderSummary[] | null>(null);
   // Unread buyer messages count — sourced from /api/rancher/inbox (a thread is
   // "unread" when its latest message came from the buyer). Drives the Messages
   // nav badge + the Home "N unread" action card.
@@ -462,6 +488,23 @@ export default function RancherDashboardPage() {
         if (!cancelled) setUnreadCount(n);
       } catch {
         /* leave unread at 0 — Messages badge + card simply hidden */
+      }
+    })();
+    // Wave C — new-order salience: a paid marketplace order used to be
+    // invisible until the rancher happened to click Products (the only
+    // consumer of /api/rancher/orders). Fetch on mount so the spine badge +
+    // Home card can't be missed. Also feeds the Earnings tab product-sales
+    // blend so dashboard and Stripe agree for product-heavy ranchers.
+    (async () => {
+      try {
+        const res = await fetch('/api/rancher/orders', { credentials: 'include' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled && Array.isArray(data?.orders)) {
+          setProductOrders(data.orders as ProductOrderSummary[]);
+        }
+      } catch {
+        /* leave null — orders badge/card/earnings-blend simply hidden */
       }
     })();
     return () => {
@@ -1629,7 +1672,9 @@ export default function RancherDashboardPage() {
   if (!rancherInfo || !stats) return null;
 
   const activeRefs = referrals.filter(r => ['Intro Sent', 'Rancher Contacted', 'Negotiation'].includes(r.status));
-  const closedRefs = referrals.filter(r => ['Closed Won', 'Closed Lost'].includes(r.status));
+  // Wave C: 'Refunded' rides the closed bucket so a refunded deal stays
+  // visible (previously it matched no bucket and vanished from the dashboard).
+  const closedRefs = referrals.filter(r => ['Closed Won', 'Closed Lost', 'Refunded'].includes(r.status));
 
   // ── WAVE 3a: find/awareness layer (derived from already-loaded referrals) ──
   // The dashboard payload IS the complete set of this rancher's referrals, so
@@ -1758,13 +1803,24 @@ export default function RancherDashboardPage() {
   // Money are nav links that route to the (previously orphaned) inbox + billing
   // pages. "More" tucks the marketing / earnings / benefits tab CONTENT — all
   // still reachable, nothing deleted.
+  // Wave C — paid orders still sitting in 'New'. Drives the Products spine
+  // badge + the Home "waiting to ship" card so a paid order can't be missed.
+  const newOrderCount = (productOrders || []).filter((o) => o.status === 'New').length;
+  // Wave C — product-order money for the Earnings blend. Every earnings
+  // surface was built exclusively from Closed Won referrals, so a jerky/box-
+  // heavy rancher saw "No completed sales yet" while Stripe showed real
+  // payouts. Refunded orders excluded (money went back to the buyer).
+  const productPaidOrders = (productOrders || []).filter((o) => o.status !== 'Refunded');
+  const productRevenue = productPaidOrders.reduce((s, o) => s + (Number(o.buyerPaid) || 0), 0);
+  const productNet = productPaidOrders.reduce((s, o) => s + (Number(o.payout) || 0), 0);
+
   const spineTabs: { key: Tab; label: string }[] = [
     { key: 'home', label: 'Home' },
     { key: 'referrals', label: `Deals${activeRefs.length > 0 ? ` (${activeRefs.length})` : ''}` },
     { key: 'customers', label: `Customers${customersList.length > 0 ? ` (${customersList.length})` : ''}` },
     // Products — the self-serve marketplace rail (journey overhaul Phase 6).
     // A revenue surface, so it earns a primary spine slot, not the More drawer.
-    { key: 'products', label: 'Products' },
+    { key: 'products', label: `Products${newOrderCount > 0 ? ` (${newOrderCount} to ship)` : ''}` },
     { key: 'my_page', label: 'My Page' },
   ];
   const moreTabs: { key: Tab; label: string }[] = [
@@ -1783,6 +1839,11 @@ export default function RancherDashboardPage() {
     payouts?.paidCents != null ? Math.round(payouts.paidCents / 100) : null;
   const availableDollars =
     payouts?.availableCents != null ? Math.round(payouts.availableCents / 100) : null;
+  // Wave C (2026-07-14): pendingCents was fetched + typed but never rendered —
+  // right after a first deposit the money sits pending ~2 business days while
+  // the strip showed "Ready to pay out $0", the exact moment trust is thinnest.
+  const pendingDollars =
+    payouts?.pendingCents != null ? Math.round(payouts.pendingCents / 100) : null;
   const nextPayoutLabel = payouts?.nextPayoutDateISO
     ? new Date(payouts.nextPayoutDateISO).toLocaleDateString(undefined, {
         month: 'short',
@@ -1902,9 +1963,20 @@ export default function RancherDashboardPage() {
       {/* E4b — self-serve pause/resume. Pausing flips Active Status to
           'Paused' (routing excludes them); their page stays live and
           in-flight deals are untouched. Confirm-first so a stray tap
-          can't cut off their leads. */}
+          can't cut off their leads.
+          Wave C: a CLOSED account (Verification Status='Removed') must not
+          see the pause/resume toggle at all — the server 403s the flip and
+          the page-level closed card owns the messaging. */}
       <div className="pt-3 border-t border-dust space-y-2">
-        {rancherInfo.activeStatus === 'Paused' ? (
+        {rancherInfo.accountClosed ? (
+          <p className="text-xs text-saddle">
+            This account is closed — email{' '}
+            <a href="mailto:hello@buyhalfcow.com" className="underline underline-offset-2">
+              hello@buyhalfcow.com
+            </a>{' '}
+            to reopen it.
+          </p>
+        ) : rancherInfo.activeStatus === 'Paused' ? (
           <div className="flex items-center justify-between gap-3">
             <p className="text-xs font-medium text-amber-dark">New leads paused</p>
             <button
@@ -2091,12 +2163,14 @@ export default function RancherDashboardPage() {
               </div>
 
               <span className={`px-3 py-1 text-xs font-medium uppercase tracking-wider ${
+                rancherInfo.accountClosed ? 'bg-dust/20 text-saddle' :
                 rancherInfo.activeStatus === 'Active' ? 'bg-sage/15 text-sage-dark' :
                 rancherInfo.activeStatus === 'At Capacity' ? 'bg-amber/20 text-amber-dark' :
                 rancherInfo.activeStatus === 'Paused' ? 'bg-amber/20 text-amber-dark' :
                 'bg-bone-warm text-saddle'
               }`}>
-                {rancherInfo.activeStatus || 'Pending'}
+                {/* Wave C — a closed account is 'Closed', never merely 'Paused'. */}
+                {rancherInfo.accountClosed ? 'Closed' : rancherInfo.activeStatus || 'Pending'}
               </span>
               {rancherInfo.slug && rancherInfo.pageLive && (
                 <a
@@ -2238,10 +2312,33 @@ export default function RancherDashboardPage() {
             );
           })()}
 
+          {/* Wave C — CLOSED-account card. Self-serve closure sets
+              Verification Status='Removed' + Active Status='Paused'; pre-fix
+              this rendered the ordinary amber Paused banner (indistinguishable
+              from vacation mode) whose one-tap Resume re-activated routing for
+              an account whose public page 404s. Distinct card, no Resume —
+              reopening goes through a human. */}
+          {rancherInfo.accountClosed && (
+            <div className="p-4 border-l-4 border-charcoal bg-dust/10 space-y-1">
+              <p className="text-sm text-charcoal">
+                <strong>Your account is closed.</strong>{' '}
+                New buyers aren&apos;t routed to you and your public page is offline.
+              </p>
+              <p className="text-sm text-saddle">
+                Changed your mind? Email{' '}
+                <a href="mailto:hello@buyhalfcow.com" className="underline underline-offset-2">
+                  hello@buyhalfcow.com
+                </a>{' '}
+                and we&apos;ll reopen it with you.
+              </p>
+            </div>
+          )}
+
           {/* E4b — persistent paused banner. Renders on every tab while
               Active Status === 'Paused' (rancher used the self-serve pause in
-              the capacity card). One-tap Resume; errors surface inline. */}
-          {rancherInfo.activeStatus === 'Paused' && (
+              the capacity card). One-tap Resume; errors surface inline.
+              Wave C: suppressed for closed accounts — the card above owns it. */}
+          {rancherInfo.activeStatus === 'Paused' && !rancherInfo.accountClosed && (
             <div className="p-4 border-l-4 border-amber-dark bg-amber/10 space-y-2">
               <div className="flex items-center justify-between gap-4 flex-wrap">
                 <p className="text-sm text-charcoal">
@@ -2559,15 +2656,19 @@ export default function RancherDashboardPage() {
               uncontactedRefs={uncontactedRefs}
               activeRefs={activeRefs}
               unreadCount={unreadCount}
+              newOrderCount={newOrderCount}
               setupSteps={setupSteps}
               setupDone={setupDone}
               setupRemaining={setupRemaining}
               paidDollars={paidDollars}
               availableDollars={availableDollars}
+              pendingDollars={pendingDollars}
+              productRevenue={productRevenue}
               nextPayoutLabel={nextPayoutLabel}
               payoutsLoginUrl={payouts?.loginUrl || null}
               onGoToDeals={() => setActiveTab('referrals')}
               onGoToMyPage={() => setActiveTab('my_page')}
+              onGoToProducts={() => setActiveTab('products')}
               slotsPanel={buyerSlotsPanel}
             />
           )}
@@ -2580,6 +2681,7 @@ export default function RancherDashboardPage() {
             <ProductsTab
               connectActive={depositEligible}
               onGoToMyPage={() => setActiveTab('my_page')}
+              onOrdersChanged={(orders) => setProductOrders(orders)}
             />
           )}
 
@@ -3266,7 +3368,19 @@ export default function RancherDashboardPage() {
               <h2 className="font-serif text-2xl">earnings summary</h2>
 
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <StatCard label="Total Revenue" value={`$${stats.totalRevenue.toLocaleString()}`} />
+                {/* Wave C — Total Revenue/Your Net now include PRODUCT sales
+                    (Rancher Orders) so the dashboard and Stripe agree for
+                    product-heavy ranchers. Sub-copy shows the split whenever
+                    product money exists. */}
+                <StatCard
+                  label="Total Revenue"
+                  value={`$${(stats.totalRevenue + productRevenue).toLocaleString()}`}
+                  sub={
+                    productRevenue > 0
+                      ? `shares $${stats.totalRevenue.toLocaleString()} · products $${productRevenue.toLocaleString()}`
+                      : ''
+                  }
+                />
                 {/* SLICE E — netEarnings is rail-split server-side. tier_v2:
                     BHC's commission was charged on top of the rancher's price
                     at deposit (the buyer paid it) → Your Net = Total Revenue,
@@ -3285,9 +3399,20 @@ export default function RancherDashboardPage() {
                 />
                 <StatCard
                   label="Your Net"
-                  value={`$${stats.netEarnings.toLocaleString()}`}
-                  sub={rancherInfo.pricingModel === 'tier_v2' && stats.unpaidCommission === 0 ? 'no BHC fee owed' : ''}
+                  value={`$${(stats.netEarnings + productNet).toLocaleString()}`}
+                  sub={
+                    productNet > 0
+                      ? `shares $${stats.netEarnings.toLocaleString()} · products $${productNet.toLocaleString()}`
+                      : rancherInfo.pricingModel === 'tier_v2' && stats.unpaidCommission === 0 ? 'no BHC fee owed' : ''
+                  }
                 />
+                {productNet > 0 && (
+                  <StatCard
+                    label="Product Sales"
+                    value={`$${productNet.toLocaleString()}`}
+                    sub={`your payout on ${productPaidOrders.length} order${productPaidOrders.length === 1 ? '' : 's'}`}
+                  />
+                )}
                 {/* Unpaid card is now driven by the real balance, not the tier
                     flag: any owed commission (legacy OR off-rail tier_v2 close)
                     shows a payable balance; zero owed shows "Collected". */}
@@ -3306,7 +3431,7 @@ export default function RancherDashboardPage() {
               <EarningsCsvExport />
 
               <h3 className="font-serif text-xl">completed sales</h3>
-              {referrals.filter(r => r.status === 'Closed Won').length > 0 ? (
+              {referrals.filter(r => r.status === 'Closed Won').length > 0 || productPaidOrders.length > 0 ? (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
@@ -3357,6 +3482,24 @@ export default function RancherDashboardPage() {
                                 )}
                               </>
                             )}
+                          </td>
+                        </tr>
+                      ))}
+                      {/* Wave C — product orders in the completed-sales table.
+                          Sale = what the buyer paid, Commission = BHC margin,
+                          Net = the settlement-stamped payout — so every column
+                          reads the same as a share row and Sale − Commission =
+                          Net still holds. */}
+                      {productPaidOrders.map((o) => (
+                        <tr key={o.id} className="border-b border-bone-deep">
+                          <td className="py-3 pr-4">{o.buyerName || '—'}</td>
+                          <td className="py-3 pr-4">${Number(o.buyerPaid || 0).toLocaleString()}</td>
+                          <td className="py-3 pr-4">${Math.max(0, Number(o.buyerPaid || 0) - Number(o.payout || 0)).toLocaleString()}</td>
+                          <td className="py-3 pr-4 font-medium">${Number(o.payout || 0).toLocaleString()}</td>
+                          <td className="py-3">
+                            <span className="px-2 py-0.5 text-xs bg-bone-warm text-saddle">
+                              Product · {o.productName || 'order'}
+                            </span>
                           </td>
                         </tr>
                       ))}
@@ -5390,15 +5533,19 @@ function HomeTab({
   uncontactedRefs,
   activeRefs,
   unreadCount,
+  newOrderCount,
   setupSteps,
   setupDone,
   setupRemaining,
   paidDollars,
   availableDollars,
+  pendingDollars,
+  productRevenue,
   nextPayoutLabel,
   payoutsLoginUrl,
   onGoToDeals,
   onGoToMyPage,
+  onGoToProducts,
   slotsPanel,
 }: {
   rancherInfo: RancherInfo;
@@ -5408,15 +5555,19 @@ function HomeTab({
   uncontactedRefs: Referral[];
   activeRefs: Referral[];
   unreadCount: number;
+  newOrderCount: number;
   setupSteps: { key: string; label: string; done: boolean; target: Tab }[];
   setupDone: number;
   setupRemaining: number;
   paidDollars: number | null;
   availableDollars: number | null;
+  pendingDollars: number | null;
+  productRevenue: number;
   nextPayoutLabel: string | null;
   payoutsLoginUrl: string | null;
   onGoToDeals: () => void;
   onGoToMyPage: () => void;
+  onGoToProducts: () => void;
   // SLICE F — the capacity editor + pause/resume controls (moved from the
   // deleted Overview tab). Rendered when the Buyer slots card is tapped open.
   slotsPanel: React.ReactNode;
@@ -5456,6 +5607,23 @@ function HomeTab({
           ? `Collect the rest of the money${amt}`
           : `Collect the rest from ${collectBalanceRefs.length} buyers${amt}`,
       onClick: onGoToDeals,
+    });
+  }
+
+  // Wave C — a PAID product order waiting to ship outranks everything except
+  // money to collect: the buyer's card was already charged and the day-3 SLA
+  // nudge rides a possibly-dead email channel. This card is the in-dashboard
+  // surface the orders API never had outside the Products tab.
+  if (newOrderCount > 0) {
+    cards.push({
+      key: 'orders-to-ship',
+      accent: 'border-rust',
+      label: 'Paid orders',
+      headline:
+        newOrderCount === 1
+          ? '1 paid order waiting to ship'
+          : `${newOrderCount} paid orders waiting to ship`,
+      onClick: onGoToProducts,
     });
   }
 
@@ -5509,9 +5677,11 @@ function HomeTab({
   const hasMoney =
     paidDollars != null ||
     availableDollars != null ||
+    (pendingDollars != null && pendingDollars > 0) ||
     depositsCollected > 0 ||
     collectBalanceTotal > 0 ||
-    stats.totalRevenue > 0;
+    stats.totalRevenue > 0 ||
+    productRevenue > 0;
 
   return (
     <div className="space-y-8">
@@ -5602,6 +5772,21 @@ function HomeTab({
                 </p>
               </div>
             )}
+            {/* Wave C — fresh deposit money sits in Stripe's pending balance
+                ~2 business days before it's payable. Without this tile the
+                strip said "Ready to pay out $0" right after a first deposit —
+                the top "where is my money?" support ping. */}
+            {pendingDollars != null && pendingDollars > 0 && (
+              <div>
+                <p className="font-serif text-2xl text-charcoal">
+                  ${pendingDollars.toLocaleString()}
+                </p>
+                <p className="text-xs text-saddle mt-0.5 uppercase tracking-wider">
+                  On its way to your bank — settles in ~2 business days
+                  {nextPayoutLabel ? ` · arrives ~${nextPayoutLabel}` : ''}
+                </p>
+              </div>
+            )}
             {depositsCollected > 0 && (
               <div>
                 <p className="font-serif text-2xl text-charcoal">
@@ -5622,14 +5807,22 @@ function HomeTab({
                 </p>
               </div>
             )}
-            {stats.totalRevenue > 0 && (
+            {(stats.totalRevenue > 0 || productRevenue > 0) && (
               <div>
                 <p className="font-serif text-2xl text-charcoal">
-                  ${stats.totalRevenue.toLocaleString()}
+                  ${(stats.totalRevenue + productRevenue).toLocaleString()}
                 </p>
                 <p className="text-xs text-saddle mt-0.5 uppercase tracking-wider">
                   Sales all-time
                 </p>
+                {/* Wave C — product sales (Rancher Orders) now count. Split
+                    shown only when both kinds of money exist. */}
+                {productRevenue > 0 && stats.totalRevenue > 0 && (
+                  <p className="text-xs text-saddle mt-0.5">
+                    shares ${stats.totalRevenue.toLocaleString()} · products $
+                    {productRevenue.toLocaleString()}
+                  </p>
+                )}
               </div>
             )}
           </div>

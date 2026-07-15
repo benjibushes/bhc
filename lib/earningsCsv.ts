@@ -25,6 +25,15 @@ export interface EarningsRow {
    *  the tier_v2 deposit rail (net = full sale); blank ⇒ legacy/off-rail (net
    *  = sale − commission). Optional so older callers still compile. */
   depositPaidAt?: string;
+  /** Wave C (2026-07-14): row source — 'share' (Referral, the default) or
+   *  'product' (Rancher Orders). Product orders never create a Referral, so
+   *  without them the "export for taxes" file was materially incomplete for
+   *  jerky/box-heavy ranchers. Optional so existing callers are unchanged. */
+  kind?: 'share' | 'product';
+  /** Wave C: exact net for rows whose payout is already known (product rows
+   *  carry the settlement-stamped Rancher Payout). When set, it wins over the
+   *  referral-rail net computation — product orders never rode either rail. */
+  netOverride?: number;
 }
 
 /**
@@ -69,6 +78,9 @@ export function dateOnly(s: string | undefined | null): string {
 }
 
 export const EARNINGS_CSV_HEADERS = [
+  // Wave C: leading Type column ('share' | 'product') — product orders now
+  // ride the same bookkeeping file, and a sheet needs to tell them apart.
+  'Type',
   'Referral ID',
   'Buyer',
   'Cut',
@@ -116,15 +128,23 @@ export function buildEarningsCsv(rows: EarningsRow[], fallbackRail: string = 'le
   const lines: string[] = [];
   lines.push(EARNINGS_CSV_HEADERS.map(csvEscape).join(','));
   for (const r of rows) {
-    // RAIL-PER-ROW "Net to You": a deposit-paid row nets 100% of the sale
-    // (commission skimmed at deposit); a legacy/off-rail row nets it out. Row
-    // rail wins over the caller's fallback whenever depositPaidAt is known.
-    const rowRail =
-      r.depositPaidAt !== undefined
-        ? referralRail({ deposit_paid_at: r.depositPaidAt })
-        : fallbackRail;
-    const net = netEarningsFor(rowRail, Number(r.saleAmount) || 0, Number(r.commissionDue) || 0);
+    // Wave C: a known payout (product rows) wins outright — product orders
+    // never rode a referral rail, their net is the settlement-stamped payout.
+    // RAIL-PER-ROW "Net to You" otherwise: a deposit-paid row nets 100% of the
+    // sale (commission skimmed at deposit); a legacy/off-rail row nets it out.
+    // Row rail wins over the caller's fallback whenever depositPaidAt is known.
+    let net: number;
+    if (typeof r.netOverride === 'number' && isFinite(r.netOverride)) {
+      net = r.netOverride;
+    } else {
+      const rowRail =
+        r.depositPaidAt !== undefined
+          ? referralRail({ deposit_paid_at: r.depositPaidAt })
+          : fallbackRail;
+      net = netEarningsFor(rowRail, Number(r.saleAmount) || 0, Number(r.commissionDue) || 0);
+    }
     lines.push([
+      csvEscape(r.kind || 'share'),
       csvEscape(r.id),
       csvEscape(csvNeutralizeFormula(r.buyerName)),
       csvEscape(csvNeutralizeFormula(r.orderType)),
