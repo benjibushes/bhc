@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Container from '../components/Container';
 import Divider from '../components/Divider';
 import Link from 'next/link';
+import { REFUND_POLICY_SHORT, REFUND_POLICY_LONG } from '@/lib/refundPolicy';
 
 // /faq — real questions buyers, ranchers, backers, and brand partners
 // actually ask. Honest answers. Voice: lowercase, founder-direct, no
@@ -132,6 +133,60 @@ const sections: Section[] = [
               Balance due at pickup or delivery is paid directly to the rancher in whatever method
               they prefer (check, cash, Venmo, Zelle &mdash; varies by rancher). The two of you sort
               that in your message thread before pickup.
+            </p>
+          </>
+        ),
+      },
+      {
+        q: 'Is my deposit safe?',
+        a: (
+          <>
+            <p className="mb-3">
+              Yes. Your deposit runs through Stripe &mdash; the same processor behind millions of
+              businesses &mdash; so you get full card-fraud protection on the payment itself. And the
+              deposit is {REFUND_POLICY_SHORT}. {REFUND_POLICY_LONG}
+            </p>
+            <p>
+              After acceptance, the BHC Promise still backs you: if your beef arrives thawed, short,
+              or mishandled in transit, we make you whole &mdash; and if a rancher cancels or fails to
+              deliver, we mediate directly. Full policy:{' '}
+              <Link href="/promise" className="underline">/promise</Link>.
+            </p>
+          </>
+        ),
+      },
+      {
+        q: 'What happens if the rancher never contacts me?',
+        a: (
+          <>
+            <p className="mb-3">
+              The rancher is notified the moment you reserve, and we watch every open match. Most
+              ranchers accept within 24&ndash;48 hours. Until they accept, your deposit is fully
+              refundable &mdash; so a slow rancher never traps your money.
+            </p>
+            <p>
+              Gone quiet longer than that? Go to <Link href="/support" className="underline">/support</Link>{' '}
+              or reply to your confirmation email. We chase the rancher down or refund you in full
+              &mdash; your call.
+            </p>
+          </>
+        ),
+      },
+      {
+        q: 'How long until I get my beef?',
+        a: (
+          <>
+            <p className="mb-3">
+              Honest answer: it depends on your rancher&rsquo;s processing date, which is shown on
+              their page before you reserve. Beef is processed to order at a USDA-inspected facility,
+              so most buyers get their share within a few weeks to a couple of months of the rancher
+              accepting &mdash; timing runs on the ranch&rsquo;s processing calendar, not a warehouse.
+            </p>
+            <p>
+              Pickup and delivery details get sorted in your message thread with the rancher. If your
+              order ships, tracking shows up on your{' '}
+              <Link href="/member" className="underline">/member</Link> page the moment it&rsquo;s on
+              the truck.
             </p>
           </>
         ),
