@@ -80,9 +80,20 @@ test('rancherForCoast: WEST→Foodstead, EAST/CENTRAL→Silverline', () => {
 
 // ─── tier ordering ───────────────────────────────────────────────────────
 
-test('stranded-qualified: Qualified At + score>=75 + no active referral', () => {
+test('stranded-qualified: Qualified At + no active referral', () => {
   assert.equal(
     classifyTier({ 'Qualified At': daysAgo(30), 'Qualification Score': 90 }),
+    'stranded-qualified',
+  );
+});
+
+test('stranded-qualified has NO score floor (#359 parity): sub-75 Qualified At still classifies', () => {
+  assert.equal(
+    classifyTier({ 'Qualified At': daysAgo(30), 'Qualification Score': 55 }),
+    'stranded-qualified',
+  );
+  assert.equal(
+    classifyTier({ 'Qualified At': daysAgo(30) }), // no score at all
     'stranded-qualified',
   );
 });

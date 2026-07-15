@@ -240,8 +240,72 @@ export async function POST(request: Request) {
       );
     }
 
-    // Compute fields to set, preserving existing values where present
+    // ── Legacy content/payment go-live gate (Wave A 2026-07-14) ────────────
+    // This was the ONLY go-live rail with no price/payment-link check: every
+    // other rail requires them (sign-agreement's readyToGoLive, batch-approve's
+    // canCollectPayment, rancher-go-live-sync). The deposit endpoint 409s
+    // legacy ranchers, so a legacy page's only purchase path is Payment Links
+    // — flipping Live without them creates an Active rancher who literally
+    // cannot collect a dollar (live proof: JC's Ranch NC, 12 active referrals,
+    // no price, no link). tier_v2 readiness = price + active Connect (gated
+    // above); legacy readiness = price + at least one Payment Link.
+    //
+    // Not ready → still stamp the agreement (they consented) but hold
+    // Onboarding Status at 'Agreement Signed' — NOT Live/Active/Page Live —
+    // and hand them a fresh setup link. The signed-no-page bucket in the
+    // onboarding-stuck cron then chases them automatically.
     const today = new Date().toISOString().split('T')[0];
+    const hasPrice = !!(
+      rancher['Quarter Price'] ||
+      rancher['Half Price'] ||
+      rancher['Whole Price']
+    );
+    const hasPaymentLink = !!(
+      rancher['Quarter Payment Link'] ||
+      rancher['Half Payment Link'] ||
+      rancher['Whole Payment Link']
+    );
+    const missing: string[] = [];
+    if (!hasPrice) missing.push('a price on at least one share size (quarter, half, or whole)');
+    if (!isTierV2 && !hasPaymentLink) missing.push('a payment link on at least one share size (so buyers can actually pay you)');
+    if (missing.length > 0) {
+      // Stamp consent without going live — idempotent, and keeps the
+      // onboarding-stuck chase loop aware of them.
+      try {
+        const notes = rancher['Custom Notes'] || '';
+        const holdLine = `[${today}] Clicked push-live but held pre-Live — missing: ${missing.join('; ')}. Agreement stamped; Onboarding Status=Agreement Signed.`;
+        await updateRecord(TABLES.RANCHERS, payload.rancherId, {
+          'Agreement Signed': true,
+          'Agreement Signed At': rancher['Agreement Signed At'] || today,
+          'Onboarding Status': 'Agreement Signed',
+          'Custom Notes': notes ? `${notes}\n${holdLine}` : holdLine,
+        });
+      } catch (e: any) {
+        console.error('[activate] agreement-only stamp failed:', e?.message);
+      }
+      const setupToken = jwt.sign(
+        { type: 'rancher-setup', rancherId: payload.rancherId },
+        JWT_SECRET,
+        { expiresIn: '60d' },
+      );
+      const setupUrl = `${SITE_URL}/rancher/setup?token=${setupToken}`;
+      return new NextResponse(
+        htmlPage({
+          title: 'Almost there',
+          heading: '🔒',
+          body:
+            `<h1>Almost there, ${operatorFirst}</h1>` +
+            `<p>Your agreement is locked in — but ${ranchName} can't go live yet, because your page is missing:</p>` +
+            `<div class="box">${missing.map((m) => `<p style="margin:4px 0;">• ${m}</p>`).join('')}</div>` +
+            `<p>Without ${missing.length > 1 ? 'these' : 'this'}, buyers land on your page with no way to buy — and every lead we send you dead-ends.</p>` +
+            `<p style="margin-top:24px;"><a href="${setupUrl}" style="display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px;">Finish my setup →</a></p>` +
+            `<p>Takes about 5 minutes. The moment it's done, click your push-live link again and you're live instantly. Stuck? Reply to my email and I'll do it with you on a call.</p>`,
+        }),
+        { status: 409, headers: { 'Content-Type': 'text/html' } }
+      );
+    }
+
+    // Compute fields to set, preserving existing values where present
     const fields: Record<string, any> = {
       'Agreement Signed': true,
       'Agreement Signed At': today,

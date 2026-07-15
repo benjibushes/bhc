@@ -570,11 +570,20 @@ async function syncRancherConnectStatus(accountId: string): Promise<void> {
   }
 
   // Live read — never trust the thin event payload for capability state.
-  const { status } = await getConnectAccountStatus(accountId);
+  const acctStatus = await getConnectAccountStatus(accountId);
+  const { status } = acctStatus;
 
   const currentStatus = String(rancher['Stripe Connect Status'] || '');
   const wasActive = currentStatus === 'active';
   const isNowActive = status === 'active';
+  // DOWNGRADE (Wave A 2026-07-14): a LIVE rancher flipping active →
+  // restricted/onboarding (routine Stripe re-KYC after volume, expired doc).
+  // Deposits/routing gate off correctly and buyers are steered away — but
+  // every email/Telegram in this file used to gate on isNowActive, so the
+  // rancher got zero proactive signal and ops saw only an unnamed daily
+  // "Connect stuck: N" count. This edge manufactures the dominant
+  // stuck-rancher failure bucket; handled after the status write below.
+  const isDowngrade = wasActive && (status === 'restricted' || status === 'onboarding');
 
   // Persistent dedupe key: the `Stripe Connect Connected At` stamp.
   // Two webhook events firing back-to-back (e.g. requirements.updated +
@@ -640,6 +649,87 @@ async function syncRancherConnectStatus(accountId: string): Promise<void> {
   }
 
   await updateRecord(TABLES.RANCHERS, rancher.id, writeFields);
+
+  // ── CONNECT DOWNGRADE — tell the rancher + name it for ops ──────────────
+  // (Wave A 2026-07-14 — wasActive was computed above but previously dead.)
+  if (isDowngrade) {
+    const label = String(
+      rancher['Ranch Name'] || rancher['Operator Name'] || rancher['Email'] || accountId,
+    );
+
+    // (1) Named, loud ops signal — replaces learning about it ~24h later via
+    // the unnamed "Connect stuck: N" count / mislabeled day-14 escalation.
+    // sendOperatorSignal never throws (catches internally).
+    await sendOperatorSignal({
+      urgency: 'loud',
+      kind: 'connect',
+      summary: `CONNECT DOWNGRADED — ${label} can no longer take deposits`,
+      detail:
+        `Status: active → ${status}\n` +
+        `Requirements: ${acctStatus.requirementsStatus || 'unknown'} · currently due: ${acctStatus.currentlyDueCount}\n` +
+        `Rancher was emailed the fix-payout-setup link (/rancher/billing). Deposits + routing are gated off until Stripe shows active again.`,
+      refs: [{ type: 'rancher', id: rancher.id, label }],
+      dedupeKey: `connect-downgrade:${accountId}`,
+      dedupeWindowMs: 24 * 3600 * 1000,
+    });
+
+    // (2) Rancher email — what happened + the fix link. /rancher/billing's
+    // resolveRestricted flow re-mints the correct onboarding link vs portal.
+    // Best-effort: a send failure never blocks the status sync.
+    try {
+      const rancherEmail = rancher['Email'];
+      if (rancherEmail) {
+        const operatorName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
+        const { sendRancherConnectAttention } = await import('@/lib/email');
+        await sendRancherConnectAttention({
+          operatorName: String(operatorName),
+          ranchName: String(rancher['Ranch Name'] || operatorName),
+          email: String(rancherEmail),
+        });
+      }
+    } catch (e: any) {
+      console.warn('[stripe-connect webhook] downgrade email failed (non-fatal):', e?.message);
+    }
+
+    // (3) Push — fastest channel to the pocket; dark-safe, never throws hard.
+    try {
+      const { sendRancherPush } = await import('@/lib/rancherPush');
+      await sendRancherPush(rancher.id, {
+        title: '⚠️ Stripe paused your payout setup',
+        body: 'buyers can\'t put deposits down until it\'s fixed — usually a 5-minute form. tap to sort it.',
+        url: '/rancher/billing',
+      });
+    } catch (e: any) {
+      console.warn('[stripe-connect webhook] downgrade push failed (non-fatal):', e?.message);
+    }
+
+    // (4) Stamp the downgrade moment — possibly-missing-field pattern (same
+    // as 'Connect Detached At' / 'Fraud Warning At'): Airtable either strips
+    // unknown fields or 422s; either way best-effort, never aborts.
+    try {
+      await updateRecord(TABLES.RANCHERS, rancher.id, {
+        'Connect Restricted At': new Date().toISOString(),
+      });
+    } catch (e: any) {
+      console.warn(
+        '[stripe-connect webhook] Connect Restricted At stamp failed — TODO: add `Connect Restricted At` (dateTime) field to Ranchers table:',
+        e?.message,
+      );
+    }
+  }
+
+  // Clear the downgrade stamp when Connect returns to active so flaps don't
+  // re-alarm off a stale stamp (and day-N chase logic reads a clean slate).
+  // Same possibly-missing-field pattern — best-effort.
+  if (isNowActive && rancher['Connect Restricted At']) {
+    try {
+      await updateRecord(TABLES.RANCHERS, rancher.id, {
+        'Connect Restricted At': null,
+      });
+    } catch (e: any) {
+      console.warn('[stripe-connect webhook] Connect Restricted At clear failed (non-fatal):', e?.message);
+    }
+  }
 
   // ── AUTO-GO-LIVE (2026-06-18) ─────────────────────────────────────
   // Self-submitted tier_v2 ranchers who finish Connect AFTER signing their

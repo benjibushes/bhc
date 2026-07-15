@@ -2172,6 +2172,70 @@ export async function sendRancherBankConnected(data: {
 }
 
 // =====================================================
+// CONNECT ATTENTION EMAIL (Wave A 2026-07-14)
+//
+// The active→restricted/onboarding downgrade branch of the Connect webhook:
+// Stripe paused the rancher's payout setup (routine re-KYC after volume,
+// expired doc, etc). Deposits/routing already gate off correctly and buyers
+// are steered away — but the rancher previously got ZERO proactive signal
+// and only learned when they opened the dashboard. This is the transition
+// that manufactures the dominant stuck-rancher failure bucket.
+// Links /rancher/billing — its resolveRestricted flow re-mints the correct
+// onboarding link vs portal. One-shot per downgrade transition (fires only
+// on the wasActive→restricted edge, deduped upstream), whitelisted so the
+// frequency cap can never eat it.
+// =====================================================
+export async function sendRancherConnectAttention(data: {
+  operatorName: string;
+  ranchName: string;
+  email: string;
+}) {
+  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
+  const billingUrl = `${baseUrl}/rancher/billing`;
+  const firstName = String(data.operatorName || '').trim().split(/\s+/)[0] || 'there';
+  const subject = `⚠️ Stripe needs updated info before ${data.ranchName} can take deposits`;
+  return guardedSend({
+    templateName: 'sendRancherConnectAttention',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #0E0E0E; background: #F4F1EC; margin: 0; padding: 20px; }
+            .container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border: 1px solid #A7A29A; }
+            h1 { font-family: Georgia, serif; font-size: 28px; margin: 0 0 20px 0; }
+            p { margin: 16px 0; color: #6B4F3F; }
+            .button { display: inline-block; padding: 12px 24px; background: #2A2A2A; color: white; text-decoration: none; font-weight: 600; margin: 16px 0; }
+            .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #A7A29A; font-size: 12px; color: #A7A29A; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>Stripe paused your payout setup</h1>
+            <p>Hi ${esc(firstName)},</p>
+            <p><strong>Stripe just flagged ${esc(data.ranchName)}'s account as needing updated information</strong> — this happens routinely (an ID re-check, a document that expired, a verification after your sales volume grew). It is almost always a 5-minute fix.</p>
+            <p>Until it's resolved, buyers can't put deposits down with you and new leads pause — so the sooner it's handled, the sooner money flows again.</p>
+            <p><a href="${esc(billingUrl)}" class="button">Fix my payout setup &rarr;</a></p>
+            <p>That page shows exactly what Stripe needs and takes you straight into their secure form. Stuck on any step? Just reply to this email and I'll walk you through it.</p>
+            <div class="footer">
+              <p>— Ben<br>BuyHalfCow<br>Questions? Email ${ADMIN_EMAIL}</p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `,
+    }),
+  });
+}
+
+// =====================================================
 // PILOT UPSELL EMAIL
 //
 // Fires once per rancher when their lifetime Closed Won count reaches

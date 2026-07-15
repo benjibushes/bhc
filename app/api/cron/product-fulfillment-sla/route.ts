@@ -71,7 +71,7 @@ async function realHandler(_request: Request): Promise<SlaResult> {
             <div style="font-family:Georgia,serif;max-width:560px;margin:0 auto;color:#26251E;">
               <p style="font-size:19px;">quick heads up — <strong>${buyer}</strong> paid for <strong>${product}</strong> ${d.ageDays} days ago and the order is still marked New.</p>
               <p style="font-size:15px;line-height:1.6;">They're expecting it. When it ships, add the tracking number in your dashboard and we'll tell them automatically:</p>
-              <p><a href="${SITE_URL}/rancher" style="display:inline-block;background:#26251E;color:#F4F0E7;padding:12px 22px;text-decoration:none;border-radius:2px;">Open your orders &rarr;</a></p>
+              <p><a href="${SITE_URL}/rancher#products" style="display:inline-block;background:#26251E;color:#F4F0E7;padding:12px 22px;text-decoration:none;border-radius:2px;">Open your orders &rarr;</a></p>
               <p style="font-size:14px;color:#6B5D4A;">Already shipped it? Just mark it Shipped so the buyer gets their tracking. Problem with the order? Reply here — a real person reads it.</p>
             </div>`,
         });

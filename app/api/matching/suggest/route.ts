@@ -144,7 +144,10 @@ export async function POST(request: Request) {
     // → matching/suggest → nationwide fallback → 39 cross-state misroutes).
     //
     // Allowed paths through:
-    //   1. Quiz completed (Qualified At set, Score >= 75) — normal flow
+    //   1. Funnel completed (Qualified At set) — normal flow. FUNNEL = QUALIFIED
+    //      (founder rule 2026-07-08, #359): NO score floor — /api/qualify holds
+    //      explicit "Not Sure" tier / "Just exploring" timing BEFORE stamping
+    //      Qualified At, so a stamped Qualified At == a real funnel completion.
     //   2. operatorOverride=true + reason — admin explicit override (audit-logged)
     //
     // Buyer record lookup is mandatory — no buyerId resolution = 404.
@@ -162,13 +165,16 @@ export async function POST(request: Request) {
     }
 
     // QUIZ-REQUIRED QUALIFICATION (locked rule, confirmed 2026-06-28): routing
-    // selects ONLY on `Qualified At` (the /qualify quiz stamp) + score, NEVER on
+    // selects ONLY on `Qualified At` (the /qualify quiz stamp), NEVER on
     // Buyer Stage='READY'. This is deliberate — there are ~846 legacy READY-but-
     // unquizzed consumers that must never be routed; gating on `Qualified At`
     // (below) excludes them by construction. Do not relax this to Buyer Stage.
+    // NO score floor (#359 parity — the old `qualScore >= 75` conjunct here
+    // stranded sub-75 Qualified-At buyers in a daily 412 retry loop, the exact
+    // class #359 released). qualScore is kept for logging/display only.
     const buyerLabel = buyerRecForGate['Full Name'] || buyerRecForGate['Email'] || buyerId;
     const qualScore = Number(buyerRecForGate['Qualification Score'] || 0);
-    const hasQualified = !!buyerRecForGate['Qualified At'] && qualScore >= 75;
+    const hasQualified = !!buyerRecForGate['Qualified At'];
     if (!hasQualified && !isOperatorOverride) {
       // NOISE CUT (2026-07-05): this fired on EVERY unqualified routing attempt,
       // including the daily waitlist-retry cron re-hitting the same unqualified

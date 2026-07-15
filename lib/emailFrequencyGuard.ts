@@ -37,6 +37,12 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   // deposits on"). Fires at most once per rancher (gated on the Connected At
   // stamp in the Connect webhook), so whitelisting cannot cause volume.
   'sendRancherBankConnected',
+  // Downgrade twin of sendRancherBankConnected (Wave A 2026-07-14): Connect
+  // flipped active→restricted/onboarding and the rancher must fix their
+  // payout setup before deposits work again. Money-critical + one-shot per
+  // downgrade edge (webhook fires it only on the wasActive transition,
+  // deduped), so whitelisting cannot cause volume.
+  'sendRancherConnectAttention',
   'sendRancherSelfSubmitWelcome',
   'sendProspectClaimMagicLink',
   // Customer-expected order confirmation after wholesale checkout.
@@ -147,6 +153,12 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   'quiz_complete_deposit_invite',
   'buyer_deposit_invoice',
   'buyer_refund_notice',
+  // Rancher twin of buyer_refund_notice (Wave A 2026-07-14): the STOP-SHIP
+  // notice when a product order is refunded/charged back. Money-critical —
+  // suppressing it means the rancher ships a box whose funds were already
+  // pulled from their Connect account. One-shot per PI (reconcile's
+  // Refunded early-return), so whitelisting cannot cause volume.
+  'sendRancherStopShip',
   'slot_locked_confirmation',
   // 2026-06-30 audit: two funnel-critical 1:1 triggers the buyer is actively
   // waiting on. sendQuizInvite is the backup quiz link when the client redirect
