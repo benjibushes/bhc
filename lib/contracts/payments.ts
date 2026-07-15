@@ -787,6 +787,68 @@ async function restoreReferralAfterRefund(
     await updateRecord(TABLES.REFERRALS, referralId, fallback);
   }
 
+  // 1b. Wave C (2026-07-14) — tell the RANCHER. The refund physically debits
+  // their Connect balance (reverse_transfer / on-account refund), yet until
+  // now only the admin Telegram fired: a rancher holding a butcher date kept
+  // working a dead deal while earnings silently shrank. Email + push, both
+  // best-effort (never fail the restore), one-shot per referral via the
+  // Status==='Refunded' early-return above. Whitelisted templateName so the
+  // 3/week cap can't eat a money notice.
+  if (rancherId) {
+    const buyerName = String(referral['Buyer Name'] || '').trim();
+    const buyerFirst = buyerName.split(/\s+/)[0] || 'Your buyer';
+    // Refunded dollars: the in-memory payment row predates the Refunded
+    // Amount Cents write, so fall back through the captured-total chain the
+    // full-refund gate itself uses (total charged → deposit+fee → deposit).
+    const refundedCents =
+      Number(payment['Refunded Amount Cents'] || 0) ||
+      Number(payment['Total Charged Cents'] || 0) ||
+      (Number(payment['Amount Cents'] || 0) + Number(payment['Platform Fee Cents'] || 0)) ||
+      Number(payment['Amount Cents'] || 0);
+    const refundedDollars = Math.round(refundedCents / 100);
+    try {
+      const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
+      if (rancher) {
+        const { resolveRancherEmail, rancherFirstName } = await import('@/lib/rancherNotify');
+        const rancherEmail = resolveRancherEmail(rancher);
+        if (rancherEmail) {
+          const { sendEmail } = await import('@/lib/email');
+          const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
+          const r = await sendEmail({
+            to: rancherEmail,
+            subject: `${buyerFirst}'s deposit was refunded — deal closed`,
+            templateName: 'deposit_refunded_rancher',
+            html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC;line-height:1.6;color:#0E0E0E">
+              <p>hey ${rancherFirstName(rancher) || 'there'},</p>
+              <p>heads up — <strong>${buyerName || 'your buyer'}</strong>'s deposit${refundedDollars > 0 ? ` ($${refundedDollars.toLocaleString('en-US')})` : ''} was fully refunded and the deal is closed.</p>
+              <p><strong>Do not fulfill this order.</strong> The refund was returned out of your Stripe balance, their slot has been freed, and the deal now shows as Refunded in your dashboard.</p>
+              <p><a href="${siteUrl}/rancher#deals">See your deals &rarr;</a></p>
+              <p style="font-size:14px;color:#5A5752">Questions about why? Just reply — a real person reads this.</p>
+              <p style="font-size:12px;color:#A7A29A;">— Ben<br>BuyHalfCow</p>
+            </div>`,
+          });
+          if (!r?.success) {
+            console.warn(
+              `[restoreReferralAfterRefund] rancher refund email suppressed (${r?.reason || 'unknown'}) — rancher not notified by email`,
+            );
+          }
+        }
+      }
+    } catch (e: any) {
+      console.warn('[restoreReferralAfterRefund] rancher refund email failed (non-fatal):', e?.message);
+    }
+    try {
+      const { sendRancherPush } = await import('@/lib/rancherPush');
+      await sendRancherPush(rancherId, {
+        title: `${buyerFirst}'s deposit was refunded`,
+        body: 'the deal was cancelled — do not fulfill. slot freed. tap for details.',
+        url: '/rancher#deals',
+      });
+    } catch (e: any) {
+      console.warn('[restoreReferralAfterRefund] rancher refund push skipped (non-fatal):', e?.message);
+    }
+  }
+
   // 2. Rancher capacity — gated, never unconditional (C4 fix). recordClose
   // already freed the slot when the deal transitioned to Closed Won, so
   // decrementing again here pushed the counter BELOW the true held count and

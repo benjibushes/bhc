@@ -238,6 +238,10 @@ const statusStyles: Record<string, string> = {
   // Deposit-gate statuses — set by Airtable typecast on first write (no schema change needed).
   'Awaiting Payment': 'bg-amber/20 text-amber-dark',
   'Slot Locked': 'bg-bone-warm text-saddle',
+  // Wave C (2026-07-14): a fully-refunded deal used to match NO bucket and no
+  // style — it evaporated from the dashboard while the refund debited the
+  // rancher's Stripe balance. Now it stays visible with an honest badge.
+  'Refunded': 'bg-dust/20 text-saddle',
 };
 
 export default function RancherDashboardPage() {
@@ -1665,7 +1669,9 @@ export default function RancherDashboardPage() {
   if (!rancherInfo || !stats) return null;
 
   const activeRefs = referrals.filter(r => ['Intro Sent', 'Rancher Contacted', 'Negotiation'].includes(r.status));
-  const closedRefs = referrals.filter(r => ['Closed Won', 'Closed Lost'].includes(r.status));
+  // Wave C: 'Refunded' rides the closed bucket so a refunded deal stays
+  // visible (previously it matched no bucket and vanished from the dashboard).
+  const closedRefs = referrals.filter(r => ['Closed Won', 'Closed Lost', 'Refunded'].includes(r.status));
 
   // ── WAVE 3a: find/awareness layer (derived from already-loaded referrals) ──
   // The dashboard payload IS the complete set of this rancher's referrals, so
