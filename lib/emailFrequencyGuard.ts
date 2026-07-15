@@ -76,6 +76,11 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   'sendInquiryAlertToAdmin',
   // Auth-critical: magic-link login. Capping this locks members out.
   'sendMagicLink',
+  // Auth-critical: self-serve setup-link re-mint (wave B). For a pre-signed
+  // rancher the setup token IS their only auth — capping this re-strands the
+  // exact cohort the expired-link recovery exists for. Cadence is owned by
+  // the endpoint's own 3/15m per-email + strict per-IP limiter.
+  'sendRancherSetupLink',
   // Revenue-critical: tier_v2 final invoice. Capping this would silently
   // suppress the rancher's final-payment email to the buyer — money lost.
   // Added 2026-06-04 after audit found this was missing.

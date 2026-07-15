@@ -989,6 +989,33 @@ export default function RancherSetupWizard() {
     setStep(1);
   };
 
+  // Expired/invalid-token recovery — self-serve re-mint (wave B). The old
+  // card dead-ended at "email ben@buyhalfcow.com"; now the rancher enters
+  // their email and POST /api/rancher/setup/resend-link mails a fresh 60-day
+  // link (rate-limited, no enumeration — the response is identical whether or
+  // not the email matches, so the UI always shows the same neutral copy).
+  const [resendEmail, setResendEmail] = useState('');
+  const [resendStatus, setResendStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+  async function requestFreshSetupLink() {
+    const email = resendEmail.trim();
+    if (!email || !email.includes('@')) {
+      setResendStatus('error');
+      return;
+    }
+    setResendStatus('sending');
+    try {
+      const res = await fetch('/api/rancher/setup/resend-link', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      if (!res.ok) throw new Error('resend failed');
+      setResendStatus('sent');
+    } catch {
+      setResendStatus('error');
+    }
+  }
+
   function canSkipBooking(): boolean {
     if (selfServeChosen) return true;
     const status = (rancher?.onboardingStatus || '').toString();
@@ -1018,12 +1045,60 @@ export default function RancherSetupWizard() {
         <div className="py-24 max-w-xl mx-auto text-center space-y-4">
           <h1 className="font-serif text-3xl text-charcoal">Couldn’t load your setup</h1>
           <p className="text-saddle">{error}</p>
+          {resendStatus === 'sent' ? (
+            <div className="border border-dust bg-bone-warm px-4 py-4 text-left">
+              <p className="text-sm text-charcoal font-medium">Check your inbox</p>
+              <p className="text-sm text-saddle mt-1">
+                If that email matches a rancher account, a fresh setup link is on its
+                way. Your progress is saved — you’ll pick up where you left off.
+              </p>
+            </div>
+          ) : (
+            <div className="border border-dust bg-bone-warm px-4 py-4 text-left space-y-3">
+              <p className="text-sm text-charcoal font-medium">
+                Links expire after 60 days — get a fresh one:
+              </p>
+              <input
+                type="email"
+                value={resendEmail}
+                onChange={(e) => {
+                  setResendEmail(e.target.value);
+                  if (resendStatus === 'error') setResendStatus('idle');
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && resendStatus !== 'sending') requestFreshSetupLink();
+                }}
+                placeholder="you@yourranch.com"
+                className="w-full px-3 py-3 border border-dust bg-bone text-base text-charcoal transition-base focus:outline-none focus:border-charcoal hover:border-saddle"
+              />
+              <button
+                type="button"
+                onClick={requestFreshSetupLink}
+                disabled={resendStatus === 'sending'}
+                className="w-full px-4 py-3 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:opacity-90 disabled:opacity-50"
+              >
+                {resendStatus === 'sending' ? 'Sending…' : 'Email me a fresh setup link'}
+              </button>
+              {resendStatus === 'error' && (
+                <p className="text-sm text-saddle">
+                  That didn’t go through — check the email address and try again.
+                </p>
+              )}
+            </div>
+          )}
           <p className="text-sm text-dust">
-            If your link is older than 60 days, email{' '}
+            Already signed your agreement?{' '}
+            <a className="underline" href="/rancher/login">
+              Log in to your dashboard
+            </a>{' '}
+            instead.
+          </p>
+          <p className="text-sm text-dust">
+            Stuck? Email{' '}
             <a className="underline" href="mailto:ben@buyhalfcow.com">
               ben@buyhalfcow.com
-            </a>{' '}
-            for a fresh one.
+            </a>
+            .
           </p>
         </div>
       </Container>
