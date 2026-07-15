@@ -285,8 +285,9 @@ export function activeDealBuyerKeys(
  * Classify the buyer's warm-back tier, or null if the buyer doesn't qualify
  * for ANY tier (no intent signal at all → not contacted this round).
  *
- * stranded-qualified: passed the quiz (Qualified At + score>=75) AND has no
- *   active referral — the highest-value "we dropped the ball" cohort.
+ * stranded-qualified: completed the funnel (Qualified At stamped — NO score
+ *   floor, #359 parity) AND has no active referral — the highest-value
+ *   "we dropped the ball" cohort.
  * hot: explicit purchase intent — Ready to Buy OR Warmup Engaged At.
  * warm: any other still-contactable lead with a usable intent score.
  *
@@ -304,8 +305,7 @@ export function classifyTier(
   const inDeal = hasActiveReferral(buyer);
 
   const qualifiedAt = buyer['Qualified At'];
-  const qualScore = num(buyer['Qualification Score']);
-  if (qualifiedAt && qualScore >= 75 && !inDeal) {
+  if (qualifiedAt && !inDeal) {
     return 'stranded-qualified';
   }
 
