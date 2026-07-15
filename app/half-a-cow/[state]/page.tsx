@@ -24,7 +24,10 @@ import Container from '../../components/Container';
 import Button from '../../components/Button';
 import Divider from '../../components/Divider';
 import ProofStrip from '../../components/ProofStrip';
+import ProductCard from '../../components/ProductCard';
 import base, { TABLES, escapeAirtableValue, withTimeout, resolveAirtableTimeoutMs } from '@/lib/airtable';
+import { getMarketProductsCached } from '@/lib/stateMarket';
+import { marketStripFor } from '@/lib/marketStands';
 import { jsonLdSafe } from '@/lib/jsonLdSafe';
 import {
   SEO_STATES,
@@ -162,6 +165,17 @@ export default async function HalfACowStatePage({ params }: Props) {
   const { liveRanchers, waitlistCount } = await fetchStateCounts(resolved);
   const r = typicalShareRanges();
   const faqs = stateFaqs(name);
+
+  // "the {State} market" strip (farmers-market cross-wiring 2026-07-15):
+  // up to 3 products a buyer in this state can actually get — nationwide
+  // products from ranches covering the state + pickup products from ranches
+  // homed here. Same build-safety contract as fetchStateCounts: the cached
+  // read fails soft to null → the strip degrades honestly (see below),
+  // never a throw, never a fabricated market.
+  const marketProducts = await getMarketProductsCached();
+  const stripProducts =
+    marketProducts === null ? [] : marketStripFor(marketProducts, code).slice(0, 3);
+  const marketKnown = marketProducts !== null;
 
   const hasSupply = liveRanchers !== null && liveRanchers > 0;
   const knownNoSupply = liveRanchers === 0;
@@ -317,6 +331,74 @@ export default async function HalfACowStatePage({ params }: Props) {
                 start the 90-second quiz →
               </Button>
             </div>
+          </div>
+        </Container>
+      </section>
+
+      {/* ── THE {STATE} MARKET (farmers-market cross-wiring 2026-07-15) ──
+          Up to 3 real local products deep-linking to /shop?state={code}
+          (the shop's picker honors the param, so the buyer lands with their
+          local market already first). HONESTY three-way: products → cards;
+          known-zero supply → the waitlist truth; unknown → neutral copy
+          with no numbers and no claims. */}
+      <section className="pb-12 md:pb-20">
+        <Container>
+          <div className="max-w-4xl mx-auto space-y-5">
+            <div className="text-center space-y-2">
+              <h2 className="font-serif text-3xl md:text-4xl lowercase">the {name} market</h2>
+              <p className="text-saddle text-[15px]">
+                {stripProducts.length > 0
+                  ? `from ranches serving ${name} — shipped frozen, or picked up at the ranch.`
+                  : marketKnown && knownNoSupply
+                    ? `no ranch stand in ${name} yet.`
+                    : `real beef from verified family ranches, shipped to your door.`}
+              </p>
+            </div>
+            {stripProducts.length > 0 ? (
+              <>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-5 max-w-2xl mx-auto">
+                  {stripProducts.map((p) => (
+                    <ProductCard key={p.id} p={p} compact />
+                  ))}
+                </div>
+                <p className="text-center text-[13.5px] text-saddle">
+                  <Link
+                    href={`/shop?state=${code}`}
+                    className="underline hover:text-charcoal transition-colors"
+                  >
+                    walk the full {name} market →
+                  </Link>
+                </p>
+              </>
+            ) : marketKnown && knownNoSupply ? (
+              <div className="text-center space-y-3">
+                <p className="text-[14.5px] text-saddle max-w-[54ch] mx-auto">
+                  {waitlist ? `${waitlist} ` : ''}join the list and you&rsquo;re matched first
+                  the moment a verified {name} ranch goes live.
+                </p>
+                <Button href={accessHref} variant="secondary" size="sm">
+                  join the {name} list →
+                </Button>
+                <p className="text-[13px] text-saddle">
+                  meanwhile —{' '}
+                  <Link
+                    href={`/shop?state=${code}`}
+                    className="underline hover:text-charcoal transition-colors"
+                  >
+                    every stand in the market ships to {name} →
+                  </Link>
+                </p>
+              </div>
+            ) : (
+              <p className="text-center text-[13.5px] text-saddle">
+                <Link
+                  href={`/shop?state=${code}`}
+                  className="underline hover:text-charcoal transition-colors"
+                >
+                  browse the market — jerky, boxes &amp; shares, shipped →
+                </Link>
+              </p>
+            )}
           </div>
         </Container>
       </section>

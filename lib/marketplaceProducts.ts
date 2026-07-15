@@ -17,7 +17,7 @@
 // downsell entry but is NOT how the marketplace organizes itself.
 
 import { getAllRecords, getRecordById, TABLES } from '@/lib/airtable';
-import { normalizeState } from '@/lib/states';
+import { normalizeState, normalizeStates } from '@/lib/states';
 
 export interface MarketplaceProduct {
   id: string;
@@ -77,6 +77,21 @@ export interface MarketplaceProduct {
   // checkout (the buy route 409s without it). Defaults true where the join
   // didn't run — surfaces without the join must gate separately.
   rancherConnectActive: boolean;
+  // LOCAL MARKET (2026-07-15) — ranch-stand metadata, joined from Ranchers
+  // with withStates only; single-product loaders leave them empty. All
+  // PRESENTATION-ONLY reads (the farmers-market layout on /shop).
+  //
+  // Every state the ranch covers: home {State} ∪ normalized {States Served}.
+  // [] when the join didn't run or the ranch has no usable state data —
+  // callers must treat [] as UNKNOWN, never as "serves nowhere" claims.
+  rancherServesStates: string[];
+  // Public page slug — '' unless the ranch page is actually reachable
+  // (Page Live, not Public Map Hidden, not Removed — mirrors
+  // getActiveRancherPages so a stand never links to a soft-404).
+  rancherSlug: string;
+  // Ranch cover photo (Gallery Photos[0], same source as the ranch page
+  // hero). '' when none — the stand renders without a photo.
+  rancherPhoto: string;
 }
 
 const sel = (v: any) => (v && typeof v === 'object' ? v.name : v) || '';
@@ -155,12 +170,36 @@ export async function loadMarketplaceProducts(
   // the local rail simply doesn't render.
   const stateByRancher: Record<string, string> = {};
   const connectActiveByRancher: Record<string, boolean> = {};
+  const servesByRancher: Record<string, string[]> = {};
+  const slugByRancher: Record<string, string> = {};
+  const photoByRancher: Record<string, string> = {};
   let joined = false;
   if (opts?.withStates === true) {
     try {
       for (const r of (await getAllRecords(TABLES.RANCHERS)) as any[]) {
-        stateByRancher[r.id] = normalizeState(r['State']) || '';
+        const home = normalizeState(r['State']) || '';
+        stateByRancher[r.id] = home;
         connectActiveByRancher[r.id] = String(r['Stripe Connect Status'] || '') === 'active';
+        // Local-market coverage = home state ∪ States Served (both normalized;
+        // 'Montana' and 'MT' both count — the classic silent-mismatch trap).
+        const serves = new Set<string>(normalizeStates(r['States Served']));
+        if (home) serves.add(home);
+        servesByRancher[r.id] = Array.from(serves);
+        // Stand link only when the public page actually resolves — mirror
+        // getActiveRancherPages' visibility gates exactly.
+        const publiclyLive =
+          r['Page Live'] === true &&
+          r['Public Map Hidden'] !== true &&
+          String(r['Verification Status'] || '') !== 'Removed';
+        slugByRancher[r.id] = publiclyLive ? String(r['Slug'] || '').trim() : '';
+        // Cover photo = Gallery Photos[0] (same JSON field + first-entry rule
+        // as the ranch page hero). Bad JSON → no photo, never a throw.
+        let photo = '';
+        try {
+          const gallery = JSON.parse(String(r['Gallery Photos'] || '[]'));
+          if (Array.isArray(gallery) && typeof gallery[0] === 'string') photo = gallery[0];
+        } catch { /* stand renders photo-less */ }
+        photoByRancher[r.id] = photo;
       }
       joined = true;
     } catch { /* rail degrades to nationwide-only */ }
@@ -200,6 +239,9 @@ export async function loadMarketplaceProducts(
       rancherConnectActive: joined
         ? connectActiveByRancher[String(r['Rancher Record ID'] || '').trim()] === true
         : true,
+      rancherServesStates: servesByRancher[String(r['Rancher Record ID'] || '').trim()] || [],
+      rancherSlug: slugByRancher[String(r['Rancher Record ID'] || '').trim()] || '',
+      rancherPhoto: photoByRancher[String(r['Rancher Record ID'] || '').trim()] || '',
     }))
     .sort((a, b) => a.price - b.price);
 }
@@ -304,6 +346,9 @@ export async function loadMarketplaceProductAnyStock(
       externalCheckoutUrl: String(r['External Checkout URL'] || '').trim(),
       rancherState: '',
       rancherConnectActive: true,
+      rancherServesStates: [],
+      rancherSlug: '',
+      rancherPhoto: '',
     },
     soldOut: !hasStock(r),
   };
@@ -342,6 +387,17 @@ export const MARKETPLACE_GROUPS: {
     categories: ['Eighth Share'],
   },
 ];
+
+/**
+ * Browse-group key for one Category value ('Jerky' → 'jerky', unmapped →
+ * 'more'). Pure — the /shop server page uses it to stamp a chip-filterable
+ * group onto every serialized product (pickup rows included) before handing
+ * the payload to the client market layout.
+ */
+export function groupKeyForCategory(category: string): string {
+  const g = MARKETPLACE_GROUPS.find((g) => g.categories.includes(category));
+  return g ? g.key : 'more';
+}
 
 /**
  * Funnel picks — the ≤3-product low-ticket rail shown on the /access reveal's
