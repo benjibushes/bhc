@@ -300,13 +300,31 @@ export async function bulkRouteStateToRancher(opts: {
         }
       }
 
-      // Send rancher intro email (scheduled if scheduledAt provided)
+      // Send rancher intro email (scheduled if scheduledAt provided).
+      //
+      // TRUTH FIX (Wave A 2026-07-14, port of the matching/suggest P0 from
+      // 2026-06-02): this send used to run as a capped generic 'sendEmail'
+      // (3/week rolling) with no result check — guardedSend returns
+      // {suppressed:true} WITHOUT throwing, so emails_sent_rancher counted
+      // phantom sends and the referral stayed Intro Sent while the rancher
+      // never learned the lead existed (~60% silent drop during volume
+      // spikes; worst trigger: the go-live auto-route fanning ALL stuck
+      // buyers in served states to one newly-Live rancher). Now:
+      // whitelisted templateName, {suppressed}/{success:false}/throw all
+      // roll the referral + consumer back to Pending Approval (batch-approve
+      // retries), the counter only increments on a real send, and a PWA push
+      // fires alongside — mirroring matching/suggest's gold-standard block.
+      let rancherIntroSendOk = false;
       if (!dryRun && rancherEmail) {
+        let introSendErr = '';
         try {
-          await sendEmail({
+          const emailResult: any = await sendEmail({
             to: rancherEmail,
             subject: `BuyHalfCow Introduction: ${buyerName} in ${buyerState}`,
             scheduledAt,
+            // Whitelisted transactional template — exempt from the rolling
+            // 3/week generic frequency cap (P0 pattern from matching/suggest).
+            templateName: 'sendRancherIntroNotification',
             html: `<div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;">
               <h1 style="font-family:Georgia,serif;">New Qualified Buyer Lead</h1>
               <p>Hi ${rancherName},</p>
@@ -319,12 +337,55 @@ export async function bulkRouteStateToRancher(opts: {
               ${budgetRange ? `<p><strong>Budget:</strong> ${budgetRange}</p>` : ''}
               ${notes ? `<p><strong>Notes:</strong> ${notes}</p>` : ''}
               <p>Reach out within 24 hours to close the sale. Reply-all to keep me in the loop.</p>
+              <p><a href="${SITE_URL}/rancher/inbox">View in your inbox</a></p>
               <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Benjamin, BuyHalfCow | 10% commission on BHC referral sales.</p>
             </div>`,
-          });
-          summary.emails_sent_rancher++;
+          } as any);
+          if (emailResult && (emailResult.suppressed || emailResult.success === false)) {
+            introSendErr = emailResult.reason ?? emailResult.error ?? 'suppressed';
+          } else {
+            rancherIntroSendOk = true;
+          }
         } catch (e: any) {
-          summary.errors.push(`Rancher email for ${buyerEmail}: ${e.message}`);
+          introSendErr = e?.message || 'unknown error';
+        }
+
+        if (rancherIntroSendOk) {
+          summary.emails_sent_rancher++;
+          // PWA push alongside the intro email — best-effort + dark-safe
+          // (sendRancherPush no-ops without VAPID env or subscriptions).
+          try {
+            const { sendRancherPush } = await import('./rancherPush');
+            const buyerFirstNameForPush = String(buyerName || '').trim().split(/\s+/)[0] || 'A buyer';
+            await sendRancherPush(rancherId, {
+              title: `new buyer routed — ${buyerFirstNameForPush}${buyerState ? ` (${buyerState})` : ''}`,
+              body: `${buyerFirstNameForPush} was just matched to you${orderType ? ` for a ${orderType}` : ''}. contact info in your email + dashboard.`,
+              url: '/rancher',
+            });
+          } catch (pushErr: any) {
+            console.warn('[bulkRoute] routed-lead push skipped (non-fatal):', pushErr?.message);
+          }
+        } else {
+          summary.errors.push(`Rancher intro email FAILED for ${buyerEmail} → ${rancherEmail}: ${introSendErr} (referral rolled back to Pending Approval)`);
+          // Roll BOTH the referral AND the consumer back so state stays
+          // consistent — batch-approve's waitlist-retry picks it back up.
+          if (targetReferralId && targetReferralId !== 'dry-run') {
+            try {
+              await updateRecord(TABLES.REFERRALS, targetReferralId, {
+                'Status': 'Pending Approval',
+                'Notes': `[intro-email-failed ${new Date().toISOString().slice(0, 16)}] bulkRoute rancher intro failed: ${String(introSendErr).slice(0, 200)}. Auto-rolled back from Intro Sent — batch-approve retry path will pick this up.`,
+              });
+            } catch (e: any) {
+              summary.errors.push(`Rollback referral ${targetReferralId}: ${e.message}`);
+            }
+          }
+          try {
+            await updateRecord(TABLES.CONSUMERS, buyerId, {
+              'Referral Status': 'Pending Approval',
+            });
+          } catch (e: any) {
+            summary.errors.push(`Rollback consumer ${buyerId}: ${e.message}`);
+          }
         }
       }
 
