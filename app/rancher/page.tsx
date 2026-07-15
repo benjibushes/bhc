@@ -1783,6 +1783,11 @@ export default function RancherDashboardPage() {
     payouts?.paidCents != null ? Math.round(payouts.paidCents / 100) : null;
   const availableDollars =
     payouts?.availableCents != null ? Math.round(payouts.availableCents / 100) : null;
+  // Wave C (2026-07-14): pendingCents was fetched + typed but never rendered —
+  // right after a first deposit the money sits pending ~2 business days while
+  // the strip showed "Ready to pay out $0", the exact moment trust is thinnest.
+  const pendingDollars =
+    payouts?.pendingCents != null ? Math.round(payouts.pendingCents / 100) : null;
   const nextPayoutLabel = payouts?.nextPayoutDateISO
     ? new Date(payouts.nextPayoutDateISO).toLocaleDateString(undefined, {
         month: 'short',
@@ -2564,6 +2569,7 @@ export default function RancherDashboardPage() {
               setupRemaining={setupRemaining}
               paidDollars={paidDollars}
               availableDollars={availableDollars}
+              pendingDollars={pendingDollars}
               nextPayoutLabel={nextPayoutLabel}
               payoutsLoginUrl={payouts?.loginUrl || null}
               onGoToDeals={() => setActiveTab('referrals')}
@@ -5395,6 +5401,7 @@ function HomeTab({
   setupRemaining,
   paidDollars,
   availableDollars,
+  pendingDollars,
   nextPayoutLabel,
   payoutsLoginUrl,
   onGoToDeals,
@@ -5413,6 +5420,7 @@ function HomeTab({
   setupRemaining: number;
   paidDollars: number | null;
   availableDollars: number | null;
+  pendingDollars: number | null;
   nextPayoutLabel: string | null;
   payoutsLoginUrl: string | null;
   onGoToDeals: () => void;
@@ -5509,6 +5517,7 @@ function HomeTab({
   const hasMoney =
     paidDollars != null ||
     availableDollars != null ||
+    (pendingDollars != null && pendingDollars > 0) ||
     depositsCollected > 0 ||
     collectBalanceTotal > 0 ||
     stats.totalRevenue > 0;
@@ -5599,6 +5608,21 @@ function HomeTab({
                 </p>
                 <p className="text-xs text-saddle mt-0.5 uppercase tracking-wider">
                   Ready to pay out
+                </p>
+              </div>
+            )}
+            {/* Wave C — fresh deposit money sits in Stripe's pending balance
+                ~2 business days before it's payable. Without this tile the
+                strip said "Ready to pay out $0" right after a first deposit —
+                the top "where is my money?" support ping. */}
+            {pendingDollars != null && pendingDollars > 0 && (
+              <div>
+                <p className="font-serif text-2xl text-charcoal">
+                  ${pendingDollars.toLocaleString()}
+                </p>
+                <p className="text-xs text-saddle mt-0.5 uppercase tracking-wider">
+                  On its way to your bank — settles in ~2 business days
+                  {nextPayoutLabel ? ` · arrives ~${nextPayoutLabel}` : ''}
                 </p>
               </div>
             )}
