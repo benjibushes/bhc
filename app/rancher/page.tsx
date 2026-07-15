@@ -1846,9 +1846,21 @@ export default function RancherDashboardPage() {
   //     the collect-balance card's invoiceSent check exactly). Once an invoice
   //     is out it's the buyer's move, so it leaves the action queue — the
   //     money strip's "Still to collect" keeps tracking it.
-  const depositAwaitRefs = collectBalanceRefs.filter((r) => !r.rancher_accepted_at);
+  // Both are scoped to IN-FLIGHT deals: a Closed Won row with an unpaid
+  // balance (the mistakenly-closed-early edge) stays fully served by the
+  // Deals-tab collect-balance card, but "accept the slot" / "send the
+  // invoice" is not a today-action on a deal already marked won.
+  const todayTerminal = (r: Referral) =>
+    r.status === 'Closed Won' || r.status === 'Closed Lost' || r.status === 'Refunded';
+  const depositAwaitRefs = collectBalanceRefs.filter(
+    (r) => !r.rancher_accepted_at && !todayTerminal(r),
+  );
   const invoiceDueRefs = collectBalanceRefs.filter(
-    (r) => !!r.rancher_accepted_at && !r.final_invoice_sent_at && !r.final_invoice_url,
+    (r) =>
+      !!r.rancher_accepted_at &&
+      !r.final_invoice_sent_at &&
+      !r.final_invoice_url &&
+      !todayTerminal(r),
   );
   // Wave C — product-order money for the Earnings blend. Every earnings
   // surface was built exclusively from Closed Won referrals, so a jerky/box-
