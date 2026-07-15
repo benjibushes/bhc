@@ -1797,6 +1797,13 @@ export default function RancherDashboardPage() {
   // Wave C — paid orders still sitting in 'New'. Drives the Products spine
   // badge + the Home "waiting to ship" card so a paid order can't be missed.
   const newOrderCount = (productOrders || []).filter((o) => o.status === 'New').length;
+  // Wave C — product-order money for the Earnings blend. Every earnings
+  // surface was built exclusively from Closed Won referrals, so a jerky/box-
+  // heavy rancher saw "No completed sales yet" while Stripe showed real
+  // payouts. Refunded orders excluded (money went back to the buyer).
+  const productPaidOrders = (productOrders || []).filter((o) => o.status !== 'Refunded');
+  const productRevenue = productPaidOrders.reduce((s, o) => s + (Number(o.buyerPaid) || 0), 0);
+  const productNet = productPaidOrders.reduce((s, o) => s + (Number(o.payout) || 0), 0);
 
   const spineTabs: { key: Tab; label: string }[] = [
     { key: 'home', label: 'Home' },
@@ -2611,6 +2618,7 @@ export default function RancherDashboardPage() {
               paidDollars={paidDollars}
               availableDollars={availableDollars}
               pendingDollars={pendingDollars}
+              productRevenue={productRevenue}
               nextPayoutLabel={nextPayoutLabel}
               payoutsLoginUrl={payouts?.loginUrl || null}
               onGoToDeals={() => setActiveTab('referrals')}
@@ -3315,7 +3323,19 @@ export default function RancherDashboardPage() {
               <h2 className="font-serif text-2xl">earnings summary</h2>
 
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <StatCard label="Total Revenue" value={`$${stats.totalRevenue.toLocaleString()}`} />
+                {/* Wave C — Total Revenue/Your Net now include PRODUCT sales
+                    (Rancher Orders) so the dashboard and Stripe agree for
+                    product-heavy ranchers. Sub-copy shows the split whenever
+                    product money exists. */}
+                <StatCard
+                  label="Total Revenue"
+                  value={`$${(stats.totalRevenue + productRevenue).toLocaleString()}`}
+                  sub={
+                    productRevenue > 0
+                      ? `shares $${stats.totalRevenue.toLocaleString()} · products $${productRevenue.toLocaleString()}`
+                      : ''
+                  }
+                />
                 {/* SLICE E — netEarnings is rail-split server-side. tier_v2:
                     BHC's commission was charged on top of the rancher's price
                     at deposit (the buyer paid it) → Your Net = Total Revenue,
@@ -3334,9 +3354,20 @@ export default function RancherDashboardPage() {
                 />
                 <StatCard
                   label="Your Net"
-                  value={`$${stats.netEarnings.toLocaleString()}`}
-                  sub={rancherInfo.pricingModel === 'tier_v2' && stats.unpaidCommission === 0 ? 'no BHC fee owed' : ''}
+                  value={`$${(stats.netEarnings + productNet).toLocaleString()}`}
+                  sub={
+                    productNet > 0
+                      ? `shares $${stats.netEarnings.toLocaleString()} · products $${productNet.toLocaleString()}`
+                      : rancherInfo.pricingModel === 'tier_v2' && stats.unpaidCommission === 0 ? 'no BHC fee owed' : ''
+                  }
                 />
+                {productNet > 0 && (
+                  <StatCard
+                    label="Product Sales"
+                    value={`$${productNet.toLocaleString()}`}
+                    sub={`your payout on ${productPaidOrders.length} order${productPaidOrders.length === 1 ? '' : 's'}`}
+                  />
+                )}
                 {/* Unpaid card is now driven by the real balance, not the tier
                     flag: any owed commission (legacy OR off-rail tier_v2 close)
                     shows a payable balance; zero owed shows "Collected". */}
@@ -3355,7 +3386,7 @@ export default function RancherDashboardPage() {
               <EarningsCsvExport />
 
               <h3 className="font-serif text-xl">completed sales</h3>
-              {referrals.filter(r => r.status === 'Closed Won').length > 0 ? (
+              {referrals.filter(r => r.status === 'Closed Won').length > 0 || productPaidOrders.length > 0 ? (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
@@ -3406,6 +3437,24 @@ export default function RancherDashboardPage() {
                                 )}
                               </>
                             )}
+                          </td>
+                        </tr>
+                      ))}
+                      {/* Wave C — product orders in the completed-sales table.
+                          Sale = what the buyer paid, Commission = BHC margin,
+                          Net = the settlement-stamped payout — so every column
+                          reads the same as a share row and Sale − Commission =
+                          Net still holds. */}
+                      {productPaidOrders.map((o) => (
+                        <tr key={o.id} className="border-b border-bone-deep">
+                          <td className="py-3 pr-4">{o.buyerName || '—'}</td>
+                          <td className="py-3 pr-4">${Number(o.buyerPaid || 0).toLocaleString()}</td>
+                          <td className="py-3 pr-4">${Math.max(0, Number(o.buyerPaid || 0) - Number(o.payout || 0)).toLocaleString()}</td>
+                          <td className="py-3 pr-4 font-medium">${Number(o.payout || 0).toLocaleString()}</td>
+                          <td className="py-3">
+                            <span className="px-2 py-0.5 text-xs bg-bone-warm text-saddle">
+                              Product · {o.productName || 'order'}
+                            </span>
                           </td>
                         </tr>
                       ))}
@@ -5446,6 +5495,7 @@ function HomeTab({
   paidDollars,
   availableDollars,
   pendingDollars,
+  productRevenue,
   nextPayoutLabel,
   payoutsLoginUrl,
   onGoToDeals,
@@ -5467,6 +5517,7 @@ function HomeTab({
   paidDollars: number | null;
   availableDollars: number | null;
   pendingDollars: number | null;
+  productRevenue: number;
   nextPayoutLabel: string | null;
   payoutsLoginUrl: string | null;
   onGoToDeals: () => void;
@@ -5584,7 +5635,8 @@ function HomeTab({
     (pendingDollars != null && pendingDollars > 0) ||
     depositsCollected > 0 ||
     collectBalanceTotal > 0 ||
-    stats.totalRevenue > 0;
+    stats.totalRevenue > 0 ||
+    productRevenue > 0;
 
   return (
     <div className="space-y-8">
@@ -5710,14 +5762,22 @@ function HomeTab({
                 </p>
               </div>
             )}
-            {stats.totalRevenue > 0 && (
+            {(stats.totalRevenue > 0 || productRevenue > 0) && (
               <div>
                 <p className="font-serif text-2xl text-charcoal">
-                  ${stats.totalRevenue.toLocaleString()}
+                  ${(stats.totalRevenue + productRevenue).toLocaleString()}
                 </p>
                 <p className="text-xs text-saddle mt-0.5 uppercase tracking-wider">
                   Sales all-time
                 </p>
+                {/* Wave C — product sales (Rancher Orders) now count. Split
+                    shown only when both kinds of money exist. */}
+                {productRevenue > 0 && stats.totalRevenue > 0 && (
+                  <p className="text-xs text-saddle mt-0.5">
+                    shares ${stats.totalRevenue.toLocaleString()} · products $
+                    {productRevenue.toLocaleString()}
+                  </p>
+                )}
               </div>
             )}
           </div>
