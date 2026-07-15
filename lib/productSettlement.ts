@@ -517,9 +517,52 @@ export async function reconcileProductOrderRefund(
     summary: `PRODUCT ${opts.kind === 'dispute' ? 'DISPUTED' : 'REFUNDED'} — ${product}${amt}`,
     detail:
       `Order for ${product} from ${rancher} was ${opts.kind === 'dispute' ? 'disputed (chargeback)' : 'refunded'}.\n` +
-      `Order flipped to Refunded. If ${rancher} hasn't shipped yet — TELL THEM TO STOP.`,
+      `Order flipped to Refunded. Stop-ship push + email just went straight to ${rancher} too.`,
     dedupeKey: `product-${opts.kind}:${piId}`,
   }).catch(() => {});
+
+  // Tell the RANCHER — the one person who can actually stop the box (Wave A
+  // 2026-07-14). The ops Telegram literally said "TELL THEM TO STOP", i.e.
+  // stop-ship depended on Ben manually relaying it; and the settle email
+  // invites email-only fulfillment ("just reply here with the tracking"), so
+  // the dashboard's 409-on-refunded guard only helps if they check first.
+  // Push + email, both best-effort (a notify failure must never fail the
+  // reconcile); skipped on the partial-refund branch above (order stays
+  // live); idempotent via the Status==='Refunded' early-return.
+  const stopShipRancherId = String(order['Rancher Record ID'] || '').trim();
+  const buyerNameForStopShip = String(order['Buyer Name'] || '').trim() || 'the buyer';
+  if (stopShipRancherId) {
+    try {
+      const { sendRancherPush } = await import('@/lib/rancherPush');
+      await sendRancherPush(stopShipRancherId, {
+        title: '🛑 DO NOT SHIP — order refunded',
+        body: `${product} for ${buyerNameForStopShip} was ${opts.kind === 'dispute' ? 'charged back' : 'refunded'} — do not ship. Marked Refunded in your dashboard.`,
+        url: '/rancher#products',
+      });
+    } catch (e: any) {
+      console.warn('[productSettlement] stop-ship push failed (non-fatal):', e?.message);
+    }
+    try {
+      const rancherRec: any = await getRecordById(TABLES.RANCHERS, stopShipRancherId).catch(() => null);
+      const rancherEmail = String(rancherRec?.['Email'] || '').trim();
+      if (rancherEmail) {
+        const { sendRancherStopShip } = await import('@/lib/emailMinimal');
+        await sendRancherStopShip({
+          rancherEmail,
+          rancherFirstName: String(rancherRec?.['Operator Name'] || '').trim().split(/\s+/)[0],
+          productName: product,
+          buyerName: buyerNameForStopShip,
+          kind: opts.kind,
+        });
+      } else {
+        console.warn('[productSettlement] stop-ship email skipped — rancher has no email:', stopShipRancherId);
+      }
+    } catch (e: any) {
+      console.warn('[productSettlement] stop-ship email failed (non-fatal):', e?.message);
+    }
+  } else {
+    console.warn('[productSettlement] stop-ship notify skipped — order has no Rancher Record ID (pre-stamp legacy row)');
+  }
 
   // Tell the BUYER (checkout audit 2026-07-14): refunding in silence was a
   // trust hole — money moved with zero confirmation from BuyHalfCow. Best-

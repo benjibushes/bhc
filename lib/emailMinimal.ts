@@ -318,6 +318,40 @@ function escape(s: string): string {
     .replace(/'/g, '&#39;');
 }
 
+// ── Rancher STOP-SHIP notice (Wave A 2026-07-14) ────────────────────────────
+// reconcileProductOrderRefund flipped the order, restored stock, told ops
+// ("If {rancher} hasn't shipped yet — TELL THEM TO STOP") and (since #375)
+// told the buyer — but never told the RANCHER, the one person who can stop
+// the box. The settle email even invites email-only fulfillment ("just reply
+// here with the tracking"), so the dashboard's 409-on-refunded guard only
+// helps if they check first. A rancher shipping a charged-back box eats the
+// meat + shipping with funds already pulled from their Connect account.
+// Template whitelisted transactional (money event, one-shot per PI via the
+// reconcile's Refunded early-return — cannot cause volume).
+export async function sendRancherStopShip(opts: {
+  rancherEmail: string;
+  rancherFirstName?: string;
+  productName: string;
+  buyerName: string;
+  kind: 'refund' | 'dispute';
+}) {
+  const first = (opts.rancherFirstName || '').trim() || 'there';
+  const what = opts.kind === 'dispute' ? 'charged back by the buyer’s bank' : 'refunded';
+  return sendEmail({
+    to: opts.rancherEmail,
+    subject: `🛑 DO NOT SHIP — ${opts.productName} order was ${opts.kind === 'dispute' ? 'charged back' : 'refunded'}`,
+    templateName: 'sendRancherStopShip',
+    html: `
+      <div style="font-family:Georgia,serif;max-width:560px;margin:0 auto;color:#26251E;">
+        <p style="font-size:20px;">hey ${escape(first)} — <strong>do not ship this order.</strong></p>
+        <p style="font-size:15px;line-height:1.6;">The <strong>${escape(opts.productName)}</strong> order for ${escape(opts.buyerName || 'the buyer')} was just ${what}. The money has already moved back — if you ship it now, you're out the meat and the shipping.</p>
+        <p style="font-size:15px;line-height:1.6;">It's already marked <strong>Refunded</strong> in your dashboard, and if the box hasn't left yet there's nothing else you need to do. If it HAS already shipped, reply to this email right away and we'll sort it out together.</p>
+        <p style="font-size:15px;line-height:1.6;"><a href="${SITE_URL}/rancher#products" style="color:#26251E;">See the order in your dashboard &rarr;</a></p>
+        <p style="font-size:15px;">&mdash; Ben, BuyHalfCow</p>
+      </div>`,
+  });
+}
+
 // ── Buyer refund/dispute notice (checkout audit 2026-07-14) ─────────────────
 // reconcileProductOrderRefund flipped the order + rang the operator but told
 // the BUYER nothing — money moved back in silence, a trust and support-ticket
