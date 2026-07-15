@@ -2,10 +2,14 @@
 
 // ShopGrid — the farmers-market surface (local-first overhaul 2026-07-15).
 //
-// The old grid was a SKU aisle. A farmers market has a PLACE first: "where's
+// The old grid was a SKU aisle. A farmers market has a PLACE first ("where's
 // your freezer?" at the top; pick a state and the ranches serving it become
-// "your local market" ahead of everything else, with the rest under "shipped
-// nationwide". No pick (or unknown geo) → the whole market, exactly as before.
+// "your local market" ahead of everything else, the rest under "shipped
+// nationwide") and FACES second: products group into a stall per ranch —
+// cover photo, name, home state, an honest closed-deals badge, a link to
+// their page — so the market reads as stalls, not aisles. Category chips +
+// price sort still work: they filter/sort WITHIN each stall, and a stall
+// with nothing left simply doesn't render.
 //
 // State resolution order: ?state=XX deep-link (state pages link in) →
 // localStorage (remembered pick) → /api/geo soft hint (never persisted).
@@ -23,8 +27,11 @@
 // existing best-effort /api/geo hint).
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import ProductCard from '../components/ProductCard';
+import ProductImage from './ProductImage';
 import Button from '../components/Button';
+import Pill from '../components/Pill';
 import { US_STATES, normalizeState, stateName } from '@/lib/states';
 import { waitlistLine } from '@/lib/stateSeo';
 import {
@@ -116,14 +123,21 @@ export default function ShopGrid({
     [stands, st, geoKnown],
   );
 
-  // Chip + sort applied WITHIN each side of the market; pickup products only
-  // ever surface for same-home-state buyers (inside visibleStandProducts).
-  const localItems = useMemo(
-    () => sortFlat(local.flatMap((s) => visibleStandProducts(s, st, active, sort)), sort),
+  // Chip + sort apply WITHIN each stall; a stall the filter empties is
+  // hidden. Pickup products only ever surface for same-home-state buyers
+  // (inside visibleStandProducts).
+  const localStalls = useMemo(
+    () =>
+      local
+        .map((stand) => ({ stand, items: visibleStandProducts(stand, st, active, sort) }))
+        .filter((x) => x.items.length > 0),
     [local, st, active, sort],
   );
-  const nationwideItems = useMemo(
-    () => sortFlat(nationwide.flatMap((s) => visibleStandProducts(s, st, active, sort)), sort),
+  const nationwideStalls = useMemo(
+    () =>
+      nationwide
+        .map((stand) => ({ stand, items: visibleStandProducts(stand, st, active, sort) }))
+        .filter((x) => x.items.length > 0),
     [nationwide, st, active, sort],
   );
 
@@ -200,10 +214,10 @@ export default function ShopGrid({
             <p className="text-[12.5px] text-saddle mt-0.5">
               ranches serving {stateLabel} — shipped from nearby, pickup where you see it
             </p>
-            {localItems.length > 0 ? (
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-5 mt-3">
-                {localItems.map((p) => (
-                  <ProductCard key={p.id} p={p} compact />
+            {localStalls.length > 0 ? (
+              <div className="space-y-4 mt-3">
+                {localStalls.map(({ stand, items }) => (
+                  <RanchStall key={stand.key} stand={stand} items={items} />
                 ))}
               </div>
             ) : (
@@ -239,21 +253,21 @@ export default function ShopGrid({
       )}
 
       {/* ── SHIPPED NATIONWIDE (the rest of the market — or all of it) ── */}
-      {st && geoKnown && local.length > 0 && nationwideItems.length > 0 && (
+      {st && geoKnown && local.length > 0 && nationwideStalls.length > 0 && (
         <div className="mt-8">
           <h2 className="font-serif text-xl lowercase">shipped nationwide</h2>
           <p className="text-[12.5px] text-saddle mt-0.5">every other ranch ships frozen to your door</p>
         </div>
       )}
-      {nationwideItems.length > 0 && (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5 md:gap-7 mt-4">
-          {nationwideItems.map((p) => (
-            <ProductCard key={p.id} p={p} compact />
+      {nationwideStalls.length > 0 && (
+        <div className="space-y-4 mt-4">
+          {nationwideStalls.map(({ stand, items }) => (
+            <RanchStall key={stand.key} stand={stand} items={items} />
           ))}
         </div>
       )}
 
-      {localItems.length === 0 && nationwideItems.length === 0 && (
+      {localStalls.length === 0 && nationwideStalls.length === 0 && (
         <p className="text-center text-saddle py-16 text-sm">
           nothing in this section yet — check back after the next drop.
         </p>
@@ -262,7 +276,50 @@ export default function ShopGrid({
   );
 }
 
-/** Re-sort a flattened cross-stand list so the global grid stays price-ordered. */
-function sortFlat(items: StandProduct[], sort: StandSort): StandProduct[] {
-  return [...items].sort((a, b) => (sort === 'price-asc' ? a.price - b.price : b.price - a.price));
+/**
+ * One ranch stall: the ranch's face (photo, name, home state, honest deal
+ * badge, page link) over its products. The deal badge renders only when the
+ * count is a real Closed Won number > 0 — never a zero-claim. The page link
+ * renders only when the ranch's public page actually resolves (gated slug).
+ */
+function RanchStall({ stand, items }: { stand: ShopStand; items: StandProduct[] }) {
+  return (
+    <section className="border border-dust bg-bone-warm/60 p-3.5 md:p-5">
+      <div className="flex items-center gap-3 flex-wrap">
+        {stand.photo && (
+          <div className="h-11 w-11 shrink-0 overflow-hidden bg-bone-deep">
+            <ProductImage
+              src={stand.photo}
+              alt={`${stand.name} ranch`}
+              className="w-full h-full object-cover block"
+            />
+          </div>
+        )}
+        <div className="flex-1 min-w-[160px]">
+          <div className="font-serif text-lg leading-tight">{stand.name}</div>
+          <div className="text-[12px] text-saddle mt-0.5">
+            {stand.state ? stateName(stand.state) : 'family ranch'}
+          </div>
+        </div>
+        {stand.deals > 0 && (
+          <Pill tone="positive">
+            {stand.deals} {stand.deals === 1 ? 'deal' : 'deals'} closed
+          </Pill>
+        )}
+        {stand.slug && (
+          <Link
+            href={`/ranchers/${stand.slug}`}
+            className="text-[12.5px] underline text-charcoal hover:text-saddle transition-colors"
+          >
+            visit the ranch →
+          </Link>
+        )}
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-5 mt-3">
+        {items.map((p) => (
+          <ProductCard key={p.id} p={p} compact />
+        ))}
+      </div>
+    </section>
+  );
 }
