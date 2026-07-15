@@ -12,12 +12,17 @@
 // Row types + ordering (money first, hottest at the very top):
 //   1. deposit paid, slot NOT accepted   → the money-on-table row (hottest)
 //   2. accepted deals with no final invoice sent yet
+//   2b. needs first call — intro sent, NO real rancher activity yet (the
+//       same-day auto-stamp counts as no touch; lib/untouchedIntros is the
+//       shared rule). Oldest-waiting buyer first, age badge, tap-to-call/text.
 //   3. paid product orders in 'New' (ship / mark picked up — Wave C pickup flag)
-//   4. new leads still at Intro Sent (say hi)
+//   4. new leads still at Intro Sent (say hi) — minus rows already in 2b
 //   5. unread buyer messages (parity with the old "what needs you" card)
 //   6. finish-setup (only when the go-live ribbon isn't already showing it)
 //
 // Empty state is calm, not blank — "nothing needs you" is a feature.
+
+import { introAgeLabel } from '@/lib/untouchedIntros';
 
 // Structural subsets of the page's Referral / ProductOrderSummary shapes —
 // only the fields a row actually renders. The page's richer objects satisfy
@@ -39,6 +44,12 @@ export interface TodayOrder {
   pickup?: boolean;
 }
 
+/** Needs-first-call rows carry the intro stamp (age badge) + buyer phone. */
+export interface TodayCallReferral extends TodayReferral {
+  buyer_phone?: string;
+  intro_sent_at?: string;
+}
+
 interface TodayRow {
   key: string;
   /** Small uppercase kicker, e.g. "money on the table". */
@@ -47,6 +58,10 @@ interface TodayRow {
   line: string;
   /** Visual heat: 'hot' = deposit money waiting (amber wash), 'warm' = plain. */
   heat: 'hot' | 'warm';
+  /** Compact age badge next to the kicker (needs-first-call rows). */
+  badge?: string;
+  /** When present, the row renders tap-to-call / tap-to-text affordances. */
+  phone?: string;
   onClick: () => void;
 }
 
@@ -58,6 +73,7 @@ const fmtMoney = (n: number) =>
 export default function TodayQueue({
   depositAwaitRefs,
   invoiceDueRefs,
+  needsFirstCallRefs = [],
   newOrders,
   newLeadRefs,
   unreadCount,
@@ -72,6 +88,11 @@ export default function TodayQueue({
   depositAwaitRefs: TodayReferral[];
   /** Slot accepted + deposit paid, final invoice not sent yet. */
   invoiceDueRefs: TodayReferral[];
+  /**
+   * Intro sent, no REAL rancher activity yet (same-day stamp = auto-stamp
+   * artifact) — pre-selected + oldest-first via lib/untouchedIntros.
+   */
+  needsFirstCallRefs?: TodayCallReferral[];
   /** Product orders still in Status='New' (paid, not shipped/picked up). */
   newOrders: TodayOrder[];
   /** Referrals still at Intro Sent — leads awaiting a first response. */
@@ -115,6 +136,24 @@ export default function TodayQueue({
     });
   }
 
+  // 2b — needs first call. Intro went out, the rancher has never come back
+  // to the lead (touch accountability, 2026-07-15 — real touch rate was 38%).
+  // Oldest-waiting buyer on top; call/text affordances when we have a phone.
+  const nowMs = Date.now();
+  const needsCallIds = new Set(needsFirstCallRefs.map((r) => r.id));
+  for (const r of needsFirstCallRefs) {
+    const detail = [r.order_type, r.buyer_state].filter(Boolean).join(' · ');
+    rows.push({
+      key: `firstcall-${r.id}`,
+      kicker: 'needs first call',
+      line: `call ${r.buyer_name || 'your buyer'}${detail ? ` (${detail})` : ''}`,
+      heat: 'warm',
+      badge: r.intro_sent_at ? `waiting ${introAgeLabel(r.intro_sent_at, nowMs)}` : undefined,
+      phone: r.buyer_phone || undefined,
+      onClick: () => onJumpToReferral(r.id),
+    });
+  }
+
   // 3 — paid product orders waiting on fulfillment. Wave C pickup flag: a
   // pickup order never "ships" — say the true action.
   for (const o of newOrders) {
@@ -129,8 +168,9 @@ export default function TodayQueue({
     });
   }
 
-  // 4 — new leads awaiting a first response.
-  for (const r of newLeadRefs) {
+  // 4 — new leads awaiting a first response (minus rows already surfaced in
+  // the needs-first-call group — same referral must not appear twice).
+  for (const r of newLeadRefs.filter((r) => !needsCallIds.has(r.id))) {
     const detail = [r.order_type, r.buyer_state].filter(Boolean).join(' · ');
     rows.push({
       key: `lead-${r.id}`,
@@ -186,30 +226,62 @@ export default function TodayQueue({
         </div>
       ) : (
         <div className="space-y-2">
-          {visible.map((row) => (
-            <button
-              key={row.key}
-              type="button"
-              onClick={row.onClick}
-              className={`w-full text-left rounded-sm border border-l-4 transition-colors p-4 min-h-[56px] flex items-center justify-between gap-3 ${
-                row.heat === 'hot'
-                  ? 'border-dust border-l-amber-dark bg-amber/10 hover:bg-amber/20'
-                  : 'border-dust border-l-charcoal bg-white hover:bg-bone-warm'
-              }`}
-            >
+          {visible.map((row) => {
+            const rowInner = (
               <div className="min-w-0">
                 <p className="text-[11px] uppercase tracking-widest text-saddle font-semibold">
                   {row.kicker}
+                  {row.badge && (
+                    <span className="ml-2 inline-block px-1.5 py-0.5 text-[10px] normal-case tracking-normal bg-amber/20 text-amber-dark rounded-sm">
+                      {row.badge}
+                    </span>
+                  )}
                 </p>
                 <p className="font-serif text-base sm:text-lg text-charcoal mt-0.5 truncate">
                   {row.line}
                 </p>
               </div>
-              <span aria-hidden className="text-xl text-saddle shrink-0">
-                →
-              </span>
-            </button>
-          ))}
+            );
+            const rowClasses = `w-full text-left rounded-sm border border-l-4 transition-colors p-4 min-h-[56px] flex items-center justify-between gap-3 ${
+              row.heat === 'hot'
+                ? 'border-dust border-l-amber-dark bg-amber/10 hover:bg-amber/20'
+                : 'border-dust border-l-charcoal bg-white hover:bg-bone-warm'
+            }`;
+            // Phone rows can't be a single <button> (nested links are invalid
+            // HTML) — the main tap still jumps to the referral card; call /
+            // text are direct tel:/sms: links like the deposit modal uses.
+            if (row.phone) {
+              return (
+                <div key={row.key} className={rowClasses}>
+                  <button type="button" onClick={row.onClick} className="flex-1 min-w-0 text-left">
+                    {rowInner}
+                  </button>
+                  <span className="flex gap-2 shrink-0">
+                    <a
+                      href={`tel:${row.phone}`}
+                      className="rounded-sm border border-charcoal px-3 py-2 text-xs uppercase tracking-wider text-charcoal hover:bg-charcoal hover:text-bone transition-colors"
+                    >
+                      call
+                    </a>
+                    <a
+                      href={`sms:${row.phone}`}
+                      className="rounded-sm border border-charcoal px-3 py-2 text-xs uppercase tracking-wider text-charcoal hover:bg-charcoal hover:text-bone transition-colors"
+                    >
+                      text
+                    </a>
+                  </span>
+                </div>
+              );
+            }
+            return (
+              <button key={row.key} type="button" onClick={row.onClick} className={rowClasses}>
+                {rowInner}
+                <span aria-hidden className="text-xl text-saddle shrink-0">
+                  →
+                </span>
+              </button>
+            );
+          })}
           {overflow > 0 && (
             <button
               type="button"

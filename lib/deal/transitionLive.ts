@@ -33,6 +33,20 @@ async function alarmAuditWriteFailure(err: unknown): Promise<void> {
   }
 }
 
+// Shared Deal Events audit writer. transition() uses it for machine-routed
+// state changes; close paths that go through recordClose() instead (the email
+// quick-action rail) call it directly so rancher-initiated Closed Lost rows
+// land in the same audit table with the same non-blocking + loud-on-failure
+// semantics. Row shape mirrors applyTransition's audit callback:
+//   { Referral: [id], From, To, Actor, Reason, At }
+export async function logDealAudit(row: Record<string, any>): Promise<void> {
+  try {
+    await createRecord('Deal Events', row);
+  } catch (err) {
+    await alarmAuditWriteFailure(err);
+  }
+}
+
 export async function transition(referralId: string, input: TransitionInput) {
   return applyTransition(referralId, '', input, {
     getReferral: async (id) => {
@@ -45,13 +59,7 @@ export async function transition(referralId: string, input: TransitionInput) {
     updateReferral: async (id, fields) => { await updateRecord(TABLES.REFERRALS, id, fields); },
     // Graceful audit: a failed audit write never blocks a close — but it is
     // no longer silent (see alarmAuditWriteFailure above; deduped 24h).
-    audit: async (row) => {
-      try {
-        await createRecord('Deal Events', row);
-      } catch (err) {
-        await alarmAuditWriteFailure(err);
-      }
-    },
+    audit: logDealAudit,
     dispatch: dispatchDealEvent,
     nowIso: () => new Date().toISOString(),
   });
