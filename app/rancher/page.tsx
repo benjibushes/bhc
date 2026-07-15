@@ -22,6 +22,7 @@ import {
 } from '@/lib/rancherCrm';
 import ProductsTab from './ProductsTab';
 import TodayQueue from './components/TodayQueue';
+import NetworkPulseCard from './components/NetworkPulseCard';
 
 interface RancherInfo {
   id: string;
@@ -5668,6 +5669,11 @@ function HomeTab({
           }
         }}
       />
+
+      {/* 1b — NETWORK PULSE. "This week on BHC" from the same public
+          social-proof aggregates the buyer pages render. Renders nothing on
+          an empty network or fetch failure — never a dead zero. */}
+      <NetworkPulseCard />
 
       {/* 2 — MONEY STRIP */}
       {hasMoney && (

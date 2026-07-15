@@ -13,6 +13,7 @@ import {
   formatGmvLabel,
   buildLatestWinLabel,
   summarizeClosedWonRefs,
+  summarizeClosedWonRefsInWindow,
 } from './socialProof';
 
 // ── formatGmvLabel ──────────────────────────────────────────────────────────
@@ -111,4 +112,79 @@ test('summarize: empty input → zeroed stats (components gate on deals > 0)', (
   assert.equal(s.gmv, 0);
   assert.equal(s.latestWinLabel, null);
   assert.deepEqual(s.dealsByRancher, {});
+});
+
+// ── summarizeClosedWonRefsInWindow (network pulse, 2026-07-15) ──────────────
+
+const NOW = Date.parse('2026-07-15T12:00:00.000Z');
+const DAY = 24 * 60 * 60 * 1000;
+
+test('window: only rows with Closed At inside the trailing 7 days count', () => {
+  const s = summarizeClosedWonRefsInWindow(
+    [
+      ref({ 'Closed At': new Date(NOW - 2 * DAY).toISOString(), 'Sale Amount': 1950 }),
+      ref({ 'Closed At': new Date(NOW - 6 * DAY).toISOString(), 'Sale Amount': 1050 }),
+      ref({ 'Closed At': new Date(NOW - 8 * DAY).toISOString(), 'Sale Amount': 3700 }), // out
+      ref({ 'Closed At': new Date(NOW - 40 * DAY).toISOString(), 'Sale Amount': 900 }), // out
+    ],
+    NOW,
+  );
+  assert.equal(s.deals, 2);
+  assert.equal(s.gmv, 3000);
+  assert.equal(s.gmvLabel, '$3k+');
+});
+
+test('window: exact-boundary close (cutoff instant) still counts — 7 full days', () => {
+  const s = summarizeClosedWonRefsInWindow(
+    [ref({ 'Closed At': new Date(NOW - 7 * DAY).toISOString() })],
+    NOW,
+  );
+  assert.equal(s.deals, 1);
+});
+
+test('window: missing/unparseable Closed At is excluded — cannot prove recency', () => {
+  const s = summarizeClosedWonRefsInWindow(
+    [ref({ 'Closed At': '' }), ref({ 'Closed At': 'not-a-date' })],
+    NOW,
+  );
+  assert.equal(s.deals, 0);
+  assert.equal(s.gmvLabel, '');
+});
+
+test('window: slightly-future Closed At counts (date-only stamps parse to midnight UTC)', () => {
+  const s = summarizeClosedWonRefsInWindow(
+    [ref({ 'Closed At': new Date(NOW + 6 * 60 * 60 * 1000).toISOString() })],
+    NOW,
+  );
+  assert.equal(s.deals, 1);
+});
+
+test('window: zero-deal week → deals 0 with empty label (caller falls back to all-time)', () => {
+  const s = summarizeClosedWonRefsInWindow(
+    [ref({ 'Closed At': new Date(NOW - 30 * DAY).toISOString() })],
+    NOW,
+  );
+  assert.equal(s.deals, 0);
+  assert.equal(s.gmvLabel, '');
+});
+
+test('window: same hygiene filter as all-time — no rancher link / no sale never counts', () => {
+  const s = summarizeClosedWonRefsInWindow(
+    [
+      ref({
+        'Closed At': new Date(NOW - DAY).toISOString(),
+        Rancher: undefined,
+        'Suggested Rancher': undefined,
+      }),
+      ref({ 'Closed At': new Date(NOW - DAY).toISOString(), 'Sale Amount': 0 }),
+    ],
+    NOW,
+  );
+  assert.equal(s.deals, 0);
+});
+
+test('window: custom window length is honored (30-day window picks up older closes)', () => {
+  const rows = [ref({ 'Closed At': new Date(NOW - 20 * DAY).toISOString() })];
+  assert.equal(summarizeClosedWonRefsInWindow(rows, NOW, 7).deals, 0);
+  assert.equal(summarizeClosedWonRefsInWindow(rows, NOW, 30).deals, 1);
 });
