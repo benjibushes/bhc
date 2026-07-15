@@ -9,7 +9,8 @@ import Card from '../../components/Card';
 import ProspectClaimBanner from '../../components/ProspectClaimBanner';
 import BHCPromiseBadge from '../../components/BHCPromiseBadge';
 import StickyMobileCTA from '../../components/StickyMobileCTA';
-import { getRancherOrProspectBySlug, getRancherByPreviousSlug, getActiveRancherPages, getAllRecords, escapeAirtableValue, TABLES } from '@/lib/airtable';
+import { connection } from 'next/server';
+import { getRancherOrProspectBySlug, getRancherByPreviousSlug, getActiveRancherPages, getAllRecords, escapeAirtableValue, TABLES, AirtableTimeoutError } from '@/lib/airtable';
 import { isRancherOnConnect } from '@/lib/rancherEligibility';
 import { depositDisplay } from '@/lib/pricing';
 import { tierFor, depositCommissionRate } from '@/lib/tiers';
@@ -50,6 +51,40 @@ import { jsonLdSafe } from '@/lib/jsonLdSafe';
 
 export const revalidate = 600;
 
+// ── Build-safe fetch (bulletproof walkthrough 2026-07-15) ────────────────────
+// The known red-deploy class: ~1-in-3 Vercel builds died when a transient
+// AirtableTimeoutError hit one of this page's per-slug prerender fetches
+// (generateStaticParams already guards itself; the PAGE + generateMetadata
+// fetches did not — one 10s Airtable blip on one slug failed the whole build).
+// Strategy: retry a timed-out read once (the blips are transient); if it times
+// out AGAIN during the production build, bail this route out of static
+// generation via connection() — Next marks the route dynamic and the deploy
+// SURVIVES (pages render on demand; ISR returns on the next deploy) instead of
+// going red. At runtime a double-timeout still rethrows → app/error.tsx.
+async function buildSafe<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (!(err instanceof AirtableTimeoutError)) throw err;
+    try {
+      return await fn();
+    } catch (err2) {
+      if (
+        err2 instanceof AirtableTimeoutError &&
+        process.env.NEXT_PHASE === 'phase-production-build'
+      ) {
+        console.warn(
+          `[rancher-page] ${label} timed out twice during build prerender — ` +
+            'falling back to dynamic rendering instead of failing the deploy',
+        );
+        // Throws Next's static-generation bailout — must NOT be caught here.
+        await connection();
+      }
+      throw err2;
+    }
+  }
+}
+
 export async function generateStaticParams() {
   try {
     const ranchers = await getActiveRancherPages();
@@ -65,7 +100,9 @@ export async function generateMetadata(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<Metadata> {
   const { slug } = await params;
-  const rancher: any = await getRancherOrProspectBySlug(slug);
+  const rancher: any = await buildSafe('generateMetadata rancher fetch', () =>
+    getRancherOrProspectBySlug(slug),
+  );
   if (!rancher) return { title: 'Rancher Not Found' };
 
   const name = rancher['Ranch Name'] || rancher['Operator Name'] || 'Ranch';
@@ -131,7 +168,9 @@ export default async function RancherPage(
   { params }: { params: Promise<{ slug: string }> }
 ) {
   const { slug } = await params;
-  const rancherRaw: any = await getRancherOrProspectBySlug(slug);
+  const rancherRaw: any = await buildSafe('page rancher fetch', () =>
+    getRancherOrProspectBySlug(slug),
+  );
   if (!rancherRaw) {
     // Slug-rename safety (dashboard-audit rank 10): before 404ing, check the
     // 'Previous Slugs' history — a rancher who renamed their live page keeps
@@ -140,7 +179,9 @@ export default async function RancherPage(
     // Airtable field doesn't exist yet, so this stays a plain 404 until the
     // long-text field is created). permanentRedirect throws NEXT_REDIRECT —
     // deliberately OUTSIDE any try/catch.
-    const renamed: any = await getRancherByPreviousSlug(slug);
+    const renamed: any = await buildSafe('previous-slug fetch', () =>
+      getRancherByPreviousSlug(slug),
+    );
     const currentSlug = renamed ? String(renamed['Slug'] || '').trim() : '';
     if (currentSlug && currentSlug !== slug) {
       permanentRedirect(`/ranchers/${currentSlug}`);
