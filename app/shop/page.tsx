@@ -26,6 +26,7 @@ import Card from '../components/Card';
 import Button from '../components/Button';
 import ShopGrid from './ShopGrid';
 import TrustStrip from '../components/TrustStrip';
+import ProofStrip from '../components/ProofStrip';
 
 export const revalidate = 300;
 
@@ -109,6 +110,12 @@ export default async function MarketplacePage() {
         <p className="text-[12.5px] text-sage mb-4">
           verified ranches · secured by stripe · wrong or freezer-burned? we make it right — no forms. &mdash; Ben
         </p>
+        {/* Social proof under the hero — live Closed Won aggregates (trust gap
+            2026-07-14: real wins rendered only on /wins). Renders nothing when
+            Airtable is unavailable — never a zero-claim on the money page.
+            Negative top margin tucks it under the trust line; when the strip
+            doesn't render the layout is byte-identical to before. */}
+        <ProofStrip className="-mt-2.5 mb-4" />
 
         {gridProducts.length === 0 ? (
           <p className="text-saddle">the shop is stocking up — check back shortly.</p>

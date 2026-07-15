@@ -25,6 +25,7 @@ import FaqSection, { parseFaq, type FaqItem } from './FaqSection';
 import FulfillmentSection, { parseFulfillment } from './FulfillmentSection';
 import ProductCard from '../../components/ProductCard';
 import { loadProductsForRancher, type MarketplaceProduct } from '@/lib/marketplaceProducts';
+import { getClosedWonDealCountForRancher } from '@/lib/socialProof';
 import { jsonLdSafe } from '@/lib/jsonLdSafe';
 
 // Public rancher landing page — the unit of conversion. Verified partners
@@ -275,6 +276,15 @@ export default async function RancherPage(
   } catch (e) {
     console.error(`[rancher-page] buyer reviews fetch failed for ${slug}:`, e);
   }
+
+  // Social proof (2026-07-14 trust gap): live Closed Won count for THIS
+  // ranch → the "N deals closed on BHC" hero badge. Honest count only —
+  // lib/socialProof fails soft to 0 on any Airtable error, and 0 hides the
+  // badge entirely (never a zero-claim). Prospects skip the read: an
+  // unclaimed listing can't have platform deals.
+  const closedWonDeals = isProspect
+    ? 0
+    : await getClosedWonDealCountForRancher(String(r.id || ''));
 
   let galleryPhotos: string[] = [];
   try {
@@ -574,6 +584,20 @@ export default async function RancherPage(
                   >
                     <span aria-hidden className="text-amber">★</span>
                     {avgRating.toFixed(1)} · {reviewCount} {reviewCount === 1 ? 'review' : 'reviews'}
+                  </a>
+                )}
+                {/* Deals-closed badge (2026-07-14 social proof) — live Closed
+                    Won count for this ranch, next to the verified pill. Honest
+                    only: hidden at 0. Links to the public /wins wall where
+                    every one of those deals is verifiable. Styled to match the
+                    rating chip (solid-enough over the hero cover). */}
+                {closedWonDeals > 0 && (
+                  <a
+                    href="/wins"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] uppercase tracking-widest font-semibold bg-bone/15 text-bone border border-bone/25 transition-base hover:bg-bone/25"
+                  >
+                    <span aria-hidden className="text-sage">✓</span>
+                    {closedWonDeals} {closedWonDeals === 1 ? 'deal' : 'deals'} closed on BHC
                   </a>
                 )}
                 {/* Scarcity (P1 #6) — remaining capacity this round. */}

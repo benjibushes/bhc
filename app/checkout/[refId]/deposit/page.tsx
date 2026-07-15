@@ -10,6 +10,7 @@ import Link from 'next/link';
 import { trackEvent, metaEventId } from '@/lib/analytics';
 import { CutBreakdown, type Tier } from '@/app/components/CutBreakdown';
 import DepositCheckoutMount, { depositEmbeddedAvailable } from './DepositCheckoutMount';
+import ProofStripClient from '@/app/components/ProofStripClient';
 import { BEN_SALES_CAL_URL } from '@/lib/salesContact';
 import { REFUND_POLICY_SHORT } from '@/lib/refundPolicy';
 import { closedReferralUiState } from '@/lib/referralClosedState';
@@ -464,6 +465,16 @@ function DepositPageContent() {
               </li>
             </ul>
           </div>
+
+          {/* Social proof at the anxiety point — live Closed Won aggregates
+              (fetched client-side from /api/social-proof; this page is 'use
+              client' so the server ProofStrip can't mount here). Renders
+              NOTHING until real data arrives and nothing on any failure. No
+              /wins link — never hand a paying buyer an exit ramp. */}
+          <ProofStripClient
+            linkToWins={false}
+            className="bg-white border border-dust p-3 md:p-4 mb-3 block"
+          />
 
           {/* Per-rancher refund policy is intentionally NOT surfaced to buyers
               (founder directive 2026-07-02: the rancher's own refund policy is
