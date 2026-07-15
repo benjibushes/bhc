@@ -37,6 +37,10 @@ interface RancherOrder {
   shippedAt: string;
   trackingNumber: string;
   depositStyle: boolean;
+  // Wave C (2026-07-14): pickup orders ('PICKUP — ' Order Ref marker) get
+  // "mark picked up" with no tracking input — the buyer drives out, nothing
+  // ships. Optional-safe read below so stale caches can't crash the tab.
+  pickup?: boolean;
 }
 
 interface RancherProduct {
@@ -174,7 +178,11 @@ export default function ProductsTab({
       const res = await fetch('/api/rancher/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId: o.id, trackingNumber: (trackingDraft[o.id] || '').trim() }),
+        // Pickup orders carry no tracking — the server ignores it anyway.
+        body: JSON.stringify({
+          orderId: o.id,
+          trackingNumber: o.pickup ? '' : (trackingDraft[o.id] || '').trim(),
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || 'update failed');
@@ -188,7 +196,9 @@ export default function ProductsTab({
       setOrders(next);
       // Wave C — keep the dashboard shell's "N to ship" badge honest.
       onOrdersChanged?.(next);
-      setSavedNote('marked shipped — the buyer just got the tracking email.');
+      // Honest copy: never claim "the buyer just got the tracking email" —
+      // that's false whenever the send fails or the buyer email is blank.
+      setSavedNote(o.pickup ? 'marked complete.' : 'marked shipped.');
     } catch (e: any) {
       setSaveErr(e?.message || 'could not mark shipped');
     } finally {
@@ -848,6 +858,11 @@ export default function ProductsTab({
                     deposit — confirm size + balance first
                   </span>
                 )}
+                {o.pickup && (
+                  <span className="text-[10px] uppercase tracking-wider bg-saddle text-bone px-1.5 py-0.5">
+                    pickup
+                  </span>
+                )}
                 <span
                   className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 ${
                     o.status === 'Shipped'
@@ -857,7 +872,9 @@ export default function ProductsTab({
                         : 'bg-charcoal text-bone'
                   }`}
                 >
-                  {o.status}
+                  {/* A pickup order never "ships" — the Airtable status enum
+                      stays 'Shipped', but the badge tells the truth. */}
+                  {o.pickup && o.status === 'Shipped' ? 'picked up' : o.status}
                 </span>
                 <span className="text-xs text-saddle ml-auto">
                   {o.orderedAt ? new Date(o.orderedAt).toLocaleDateString() : ''}
@@ -873,19 +890,24 @@ export default function ProductsTab({
               )}
               {o.status === 'New' && (
                 <div className="flex gap-2 flex-wrap items-center">
-                  <input
-                    type="text"
-                    placeholder="tracking number (optional)"
-                    value={trackingDraft[o.id] || ''}
-                    onChange={(e) => setTrackingDraft((d) => ({ ...d, [o.id]: e.target.value }))}
-                    className="flex-1 min-w-[180px] p-2.5 border border-dust bg-bone-warm text-sm"
-                  />
+                  {/* Pickup orders: no tracking input — nothing ships. The
+                      settle email promised a "mark complete" affordance;
+                      this is it. */}
+                  {!o.pickup && (
+                    <input
+                      type="text"
+                      placeholder="tracking number (optional)"
+                      value={trackingDraft[o.id] || ''}
+                      onChange={(e) => setTrackingDraft((d) => ({ ...d, [o.id]: e.target.value }))}
+                      className="flex-1 min-w-[180px] p-2.5 border border-dust bg-bone-warm text-sm"
+                    />
+                  )}
                   <button
                     onClick={() => markShipped(o)}
                     disabled={shippingId === o.id}
                     className="px-4 py-2.5 bg-charcoal text-bone text-xs uppercase tracking-wider hover:bg-saddle transition-colors disabled:opacity-50"
                   >
-                    {shippingId === o.id ? 'sending…' : 'mark shipped →'}
+                    {shippingId === o.id ? 'saving…' : o.pickup ? 'mark picked up →' : 'mark shipped →'}
                   </button>
                 </div>
               )}
