@@ -517,6 +517,60 @@ const DEMO_RANCHER_ORDERS: Ref[] = [
   },
 ];
 
+// ── Demo products (Rancher Products) ──────────────────────────────────────
+// Demo coherence (walkthrough 2026-07-15): the two demo orders above sold
+// "Smoked beef jerky — 3 pack" and "Ground beef box — 20 lb", but the store
+// had NO Rancher Products rows — the Products tab rendered empty next to
+// orders for products that didn't exist. Two fixtures matching the orders:
+// jerky ships nationwide (its order shipped), the ground box is local
+// pickup (its order carries the 'PICKUP — ' marker) and has FINITE stock
+// (Orders Left) so the stock UI renders on camera. Prices mirror the
+// orders: Display Price = Buyer Paid, Rancher Base = Rancher Payout.
+const DEMO_RANCHER_PRODUCTS: Ref[] = [
+  {
+    id: 'recDEMOproduct001',
+    'Product Name': 'Smoked beef jerky — 3 pack',
+    'Rancher Name': 'Demo Creek Cattle Co',
+    'Rancher Record ID': DEMO_RANCHER_ID,
+    Category: 'Jerky',
+    'Display Price': 42,
+    'Rancher Base': 36,
+    'Shelf Stable': true,
+    'Ships Nationwide': true,
+    'Weight / Size': '3 × 2.5 oz bags',
+    Active: true,
+    'Image URL': 'https://picsum.photos/seed/democreekjerky/800/600',
+    Description:
+      'Small-batch jerky from our own Black Angus, smoked low and slow over Montana cherrywood. No nitrates, no corn syrup — beef, salt, smoke.',
+    "What's Included": '3 × 2.5 oz bags — original, peppered, and sweet heat',
+    'Ships In Days': 3,
+    Packaging: 'Resealable bags, ships in a padded mailer',
+    Feeds: 'Snacks for a week (or one road trip)',
+    _createdTime: daysAgo(30),
+  },
+  {
+    id: 'recDEMOproduct002',
+    'Product Name': 'Ground beef box — 20 lb',
+    'Rancher Name': 'Demo Creek Cattle Co',
+    'Rancher Record ID': DEMO_RANCHER_ID,
+    Category: 'Ground Box',
+    'Display Price': 95,
+    'Rancher Base': 85,
+    'Shelf Stable': false,
+    'Ships Nationwide': false, // local pickup — matches the 'PICKUP — ' order
+    'Weight / Size': '20 × 1 lb packs',
+    Active: true,
+    'Orders Left': 7, // finite stock → the stock UI has something to show
+    'Image URL': 'https://picsum.photos/seed/democreekground/800/600',
+    Description:
+      '100% grass-fed ground beef from the same herd as our shares — 20 one-pound packs, frozen at the processor. Pickup in Bozeman.',
+    "What's Included": '20 × 1 lb vacuum-sealed packs, 85/15',
+    Packaging: 'Vacuum-sealed, packed in a freezer box',
+    Feeds: 'A family of four for about a month',
+    _createdTime: daysAgo(25),
+  },
+];
+
 // ── Demo threads + messages (so the inbox shows unread buyer messages) ────
 const DEMO_THREADS: Ref[] = [
   {
@@ -610,6 +664,7 @@ const _seed = (): Record<string, Ref[]> => ({
   [TABLES.CONSUMERS]: DEMO_CONSUMERS,
   [TABLES.PAYMENTS]: DEMO_PAYMENTS,
   [TABLES.RANCHER_ORDERS]: DEMO_RANCHER_ORDERS,
+  [TABLES.RANCHER_PRODUCTS]: DEMO_RANCHER_PRODUCTS,
   ['Threads']: DEMO_THREADS,
   ['Thread Messages']: DEMO_THREAD_MESSAGES,
   [TABLES.BRANDS]: [],

@@ -3067,6 +3067,19 @@ export default function RancherDashboardPage() {
                         ? (ref.total_sale_amount! - ref.deposit_amount!)
                         : null;
                       const slotLocked = !!ref.rancher_accepted_at;
+                      // Terminal deals (walkthrough 2026-07-15): a Closed Won
+                      // row with no acceptance stamp (ops-closed deals hit
+                      // this — every demo Closed Won row too) was rendering
+                      // the 'Accept Slot first' chip + the Accept CTA on a
+                      // DONE deal. Accepting exists to lock a slot before
+                      // fulfillment; on a terminal deal it's meaningless —
+                      // hide the chip + CTA, keep Send Final Invoice (the
+                      // reason terminal rows surface here at all).
+                      const isTerminal =
+                        ref.status === 'Closed Won' ||
+                        ref.status === 'Closed Lost' ||
+                        ref.status === 'Refunded' ||
+                        ref.status === 'Dormant';
                       const invoiceSent = !!ref.final_invoice_sent_at || !!ref.final_invoice_url;
                       // Badge state (brand tokens): paid → sage, sent → amber, not sent → dust.
                       const badgeClass = ref.final_paid_at
@@ -3099,11 +3112,11 @@ export default function RancherDashboardPage() {
                                   <span className="inline-block px-2 py-0.5 text-xs font-medium bg-saddle/15 text-saddle" title={`Slot accepted ${ref.rancher_accepted_at}`}>
                                     🔒 Slot locked
                                   </span>
-                                ) : (
+                                ) : !isTerminal ? (
                                   <span className="inline-block px-2 py-0.5 text-xs font-medium bg-amber/20 text-amber-dark">
                                     Accept Slot first
                                   </span>
-                                )}
+                                ) : null}
                               </div>
                               <p className="font-medium">{ref.buyer_name}</p>
                               <p className="text-xs text-dust">{ref.order_type}</p>
@@ -3124,7 +3137,7 @@ export default function RancherDashboardPage() {
                                   </strong>
                                 </span>
                               </div>
-                              {!slotLocked && (
+                              {!slotLocked && !isTerminal && (
                                 <p className="mt-1.5 text-xs text-saddle">
                                   Accepting locks the buyer&apos;s slot and makes their deposit non-refundable — do this once you&apos;ve confirmed you can fulfill.
                                 </p>
@@ -3145,7 +3158,7 @@ export default function RancherDashboardPage() {
                                 status + Deposit Paid At — acceptance is NOT a
                                 server precondition, so we don't invent one. */}
                             <div className="flex-shrink-0 flex flex-col items-stretch sm:items-end gap-2">
-                              {!slotLocked && (
+                              {!slotLocked && !isTerminal && (
                                 <button
                                   onClick={() => handleAcceptSlot(ref)}
                                   disabled={updating === ref.id}
