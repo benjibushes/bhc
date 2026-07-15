@@ -240,6 +240,12 @@ export async function GET(request: Request) {
         email: rancher['Email'] || '',
         phone: rancher['Phone'] || '',
         activeStatus: rancher['Active Status'] || 'Pending',
+        // Wave C (2026-07-14): closed accounts (self-serve removal) must not
+        // render as merely 'Paused' — the dashboard swaps the Paused banner +
+        // Resume toggle for a distinct closed-account card off this flag.
+        accountClosed:
+          String((rancher['Verification Status'] as any)?.name || rancher['Verification Status'] || '') ===
+          'Removed',
         onboardingStatus: rancher['Onboarding Status'] || '',
         agreementSigned: rancher['Agreement Signed'] || false,
         // Per-rancher commission rate, locked at sign-agreement time

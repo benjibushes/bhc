@@ -33,6 +33,21 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Account not found' }, { status: 404 });
     }
 
+    // Wave C (2026-07-14): CLOSED accounts must not log back in. Self-serve
+    // closure (/api/rancher/remove) sets Verification Status='Removed' +
+    // Active Status='Paused' — pre-fix, the Paused carve-out below let a
+    // closed rancher magic-link straight back into an ordinary dashboard and
+    // one-click Resume routing for an account whose public page 404s.
+    const verificationStatus = String(
+      (rancher['Verification Status'] as any)?.name || rancher['Verification Status'] || '',
+    );
+    if (verificationStatus === 'Removed') {
+      return NextResponse.json(
+        { error: 'This account was closed. Email hello@buyhalfcow.com to reopen it.', accountClosed: true },
+        { status: 403 },
+      );
+    }
+
     // Block login for ranchers who've been explicitly deactivated. Allowed
     // statuses (per schema): Active, At Capacity, Paused, Pending Onboarding,
     // Non-Compliant. Only Non-Compliant should block login outright (they're

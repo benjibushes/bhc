@@ -32,6 +32,9 @@ interface RancherInfo {
   email?: string;
   phone?: string;
   activeStatus: string;
+  // Wave C — Verification Status==='Removed' (self-serve closure). Swaps the
+  // Paused banner + Resume toggle for a distinct closed-account card.
+  accountClosed?: boolean;
   onboardingStatus: string;
   agreementSigned: boolean;
   commissionRate?: number;
@@ -1960,9 +1963,20 @@ export default function RancherDashboardPage() {
       {/* E4b — self-serve pause/resume. Pausing flips Active Status to
           'Paused' (routing excludes them); their page stays live and
           in-flight deals are untouched. Confirm-first so a stray tap
-          can't cut off their leads. */}
+          can't cut off their leads.
+          Wave C: a CLOSED account (Verification Status='Removed') must not
+          see the pause/resume toggle at all — the server 403s the flip and
+          the page-level closed card owns the messaging. */}
       <div className="pt-3 border-t border-dust space-y-2">
-        {rancherInfo.activeStatus === 'Paused' ? (
+        {rancherInfo.accountClosed ? (
+          <p className="text-xs text-saddle">
+            This account is closed — email{' '}
+            <a href="mailto:hello@buyhalfcow.com" className="underline underline-offset-2">
+              hello@buyhalfcow.com
+            </a>{' '}
+            to reopen it.
+          </p>
+        ) : rancherInfo.activeStatus === 'Paused' ? (
           <div className="flex items-center justify-between gap-3">
             <p className="text-xs font-medium text-amber-dark">New leads paused</p>
             <button
@@ -2149,12 +2163,14 @@ export default function RancherDashboardPage() {
               </div>
 
               <span className={`px-3 py-1 text-xs font-medium uppercase tracking-wider ${
+                rancherInfo.accountClosed ? 'bg-dust/20 text-saddle' :
                 rancherInfo.activeStatus === 'Active' ? 'bg-sage/15 text-sage-dark' :
                 rancherInfo.activeStatus === 'At Capacity' ? 'bg-amber/20 text-amber-dark' :
                 rancherInfo.activeStatus === 'Paused' ? 'bg-amber/20 text-amber-dark' :
                 'bg-bone-warm text-saddle'
               }`}>
-                {rancherInfo.activeStatus || 'Pending'}
+                {/* Wave C — a closed account is 'Closed', never merely 'Paused'. */}
+                {rancherInfo.accountClosed ? 'Closed' : rancherInfo.activeStatus || 'Pending'}
               </span>
               {rancherInfo.slug && rancherInfo.pageLive && (
                 <a
@@ -2296,10 +2312,33 @@ export default function RancherDashboardPage() {
             );
           })()}
 
+          {/* Wave C — CLOSED-account card. Self-serve closure sets
+              Verification Status='Removed' + Active Status='Paused'; pre-fix
+              this rendered the ordinary amber Paused banner (indistinguishable
+              from vacation mode) whose one-tap Resume re-activated routing for
+              an account whose public page 404s. Distinct card, no Resume —
+              reopening goes through a human. */}
+          {rancherInfo.accountClosed && (
+            <div className="p-4 border-l-4 border-charcoal bg-dust/10 space-y-1">
+              <p className="text-sm text-charcoal">
+                <strong>Your account is closed.</strong>{' '}
+                New buyers aren&apos;t routed to you and your public page is offline.
+              </p>
+              <p className="text-sm text-saddle">
+                Changed your mind? Email{' '}
+                <a href="mailto:hello@buyhalfcow.com" className="underline underline-offset-2">
+                  hello@buyhalfcow.com
+                </a>{' '}
+                and we&apos;ll reopen it with you.
+              </p>
+            </div>
+          )}
+
           {/* E4b — persistent paused banner. Renders on every tab while
               Active Status === 'Paused' (rancher used the self-serve pause in
-              the capacity card). One-tap Resume; errors surface inline. */}
-          {rancherInfo.activeStatus === 'Paused' && (
+              the capacity card). One-tap Resume; errors surface inline.
+              Wave C: suppressed for closed accounts — the card above owns it. */}
+          {rancherInfo.activeStatus === 'Paused' && !rancherInfo.accountClosed && (
             <div className="p-4 border-l-4 border-amber-dark bg-amber/10 space-y-2">
               <div className="flex items-center justify-between gap-4 flex-wrap">
                 <p className="text-sm text-charcoal">

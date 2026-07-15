@@ -411,6 +411,21 @@ export async function PATCH(request: Request) {
       }
 
       const rancher = await getRecordById(TABLES.RANCHERS, session.rancherId) as any;
+
+      // Wave C (2026-07-14): a CLOSED account (self-serve removal sets
+      // Verification Status='Removed' + Active Status='Paused') must never
+      // one-click Resume routing — 'Paused' is an allowed transition source,
+      // so without this gate the transition guard below happily re-activated
+      // closed accounts whose public page 404s (and Resume even fires the
+      // launch-warmup buyer YES emails).
+      const verificationStatusRaw = rancher?.['Verification Status'];
+      if (String((verificationStatusRaw as any)?.name || verificationStatusRaw || '') === 'Removed') {
+        return NextResponse.json(
+          { error: 'This account was closed. Email hello@buyhalfcow.com to reopen it.' },
+          { status: 403 },
+        );
+      }
+
       const currentStatus = String(rancher?.['Active Status'] || '');
       const transition = validatePauseTransition(currentStatus, parsed.value);
       if (!transition.ok) {

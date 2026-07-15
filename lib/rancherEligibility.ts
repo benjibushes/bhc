@@ -49,6 +49,7 @@ export type RancherFields = Record<string, unknown> & {
   'Stripe Connect Status'?: unknown;
   'State'?: unknown;
   'States Served'?: unknown;
+  'Verification Status'?: unknown;
 };
 
 function readEnumOrString(v: unknown): string {
@@ -77,6 +78,13 @@ function readEnumOrString(v: unknown): string {
  *     active → buyer dead-ends at deposit time).
  */
 export function isRancherOperationalForBuyers(rancher: RancherFields): boolean {
+  // Wave C (2026-07-14) — defense in depth for CLOSED accounts. Self-serve
+  // closure sets Verification Status='Removed' + Active Status='Paused';
+  // the Active gate below already excludes them, but a one-click Resume (or
+  // any future path that flips Active Status back) must never re-open buyer
+  // routing for a closed account whose public page 404s.
+  if (readEnumOrString(rancher['Verification Status']) === 'Removed') return false;
+
   const active = readEnumOrString(rancher['Active Status']);
   if (active !== 'Active') return false;
 
