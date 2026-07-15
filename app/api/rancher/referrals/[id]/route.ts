@@ -74,6 +74,32 @@ export async function PATCH(
       return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
     }
 
+    // ── MONEY LOCK (dashboard parity with the email quick-action rail) ───
+    // Once the deposit has settled (Deposit Paid At stamped by the Stripe
+    // webhook), the dashboard must not let the rancher pass, close Lost, or
+    // regress the deal — the buyer's money is sitting in the rancher's
+    // Stripe. Pre-fix, _action='pass' or status='Closed Lost' here closed a
+    // PAID deal, freed the slot, flipped the buyer to Unmatched, re-fired
+    // matching excluding this rancher, and emailed the buyer "we're finding
+    // you another rancher" — with the deposit un-refunded. Mirrors the
+    // quick-action money lock (Blocker-3, lib/referralLock.isDepositLocked).
+    // Forward progress stays open: Closed Won + Awaiting Payment, sale-
+    // amount/notes-only updates, and the accept/final-invoice endpoints.
+    {
+      const { isDashboardExitBlocked, DEPOSIT_LOCKED_MESSAGE } = await import('@/lib/referralLock');
+      if (isDashboardExitBlocked(referral['Deposit Paid At'], { action: body._action, status })) {
+        console.log(
+          `[referrals/PATCH] money-lock refusal: referral=${id} rancher=${decoded.rancherId} ` +
+          `action=${body._action || `status→${status}`} (Deposit Paid At stamped)`,
+        );
+        return NextResponse.json({
+          error:
+            DEPOSIT_LOCKED_MESSAGE +
+            ' To exit a paid deal, refund the deposit first (contact hello@buyhalfcow.com).',
+        }, { status: 409 });
+      }
+    }
+
     // ── PASS-ON-LEAD ACTION ──────────────────────────────────────────────
     // Rancher explicitly passes on this lead from their dashboard. We:
     //   1) close the current referral as Closed Lost with a structured note

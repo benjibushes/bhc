@@ -120,6 +120,28 @@ export const DEPOSIT_LOCKED_MESSAGE =
   "This deal has a paid deposit on it, so quick links from email are locked to protect it. Everything's safe — use your dashboard to make any changes.";
 
 /**
+ * MONEY LOCK — dashboard flavor (Wave A 2026-07-14, parity with the
+ * quick-action lock above). The dashboard PATCH must not let a rancher
+ * pass, close Lost, or regress a referral once the deposit is paid: the
+ * buyer's money is sitting in the rancher's Stripe, and pre-fix the pass
+ * path freed the slot and re-routed the paying buyer toward a SECOND
+ * deposit. Forward progress stays open (Closed Won / Awaiting Payment),
+ * as do sale-amount/notes-only updates (no status in the PATCH body).
+ * Pure: decides from the stamp + requested mutation alone; pinned in
+ * lib/referralLock.test.ts.
+ */
+export function isDashboardExitBlocked(
+  depositPaidAt: unknown,
+  mutation: { action?: string | null; status?: string | null },
+): boolean {
+  if (!isDepositLocked(depositPaidAt)) return false;
+  if (mutation.action === 'pass') return true;
+  const s = String(mutation.status || '');
+  if (!s) return false; // sale-amount / notes-only update — allowed
+  return s !== 'Closed Won' && s !== 'Awaiting Payment';
+}
+
+/**
  * Tiny audit-log helper: format a one-line reason describing what was
  * blocked and why. Use in Notes append + Telegram detail strings so the
  * lock surfaces consistently across surfaces.

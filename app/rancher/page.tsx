@@ -6033,6 +6033,11 @@ function ReferralCard({
     !!onConfirmPayment &&
     referral.status === 'Awaiting Payment' &&
     !(referral.deposit_requested_at && !depositPaid);
+  // MONEY LOCK (dashboard parity with the email quick-action rail): once the
+  // buyer's deposit is paid, Mark Lost / Pass on Lead disappear — exiting a
+  // paid deal requires refunding the deposit first. The PATCH route enforces
+  // the same rule server-side (409), this just keeps the UI honest.
+  const depositLockedUi = depositPaid && !isTerminal;
   return (
     // id anchor lets global-search / activity-feed results scroll-jump to a card.
     <div id={`ref-${referral.id}`} className="p-6 border border-dust bg-white space-y-4 scroll-mt-24">
@@ -6137,20 +6142,29 @@ function ReferralCard({
             Close as Won
           </button>
         )}
-        <button
-          onClick={onLost}
-          className="px-4 min-h-[44px] py-2 text-sm border border-saddle text-saddle hover:bg-saddle hover:text-bone transition-colors"
-          title="Mark this lead as closed lost — they're out (price/timing/etc). Won't re-route."
-        >
-          Mark Lost
-        </button>
-        <button
-          onClick={onPass}
-          className="px-4 min-h-[44px] py-2 text-sm border border-dust text-dust hover:bg-dust hover:text-bone transition-colors"
-          title="Pass on this lead — we'll auto-reassign the buyer to another rancher"
-        >
-          Pass on Lead
-        </button>
+        {!depositLockedUi && (
+          <button
+            onClick={onLost}
+            className="px-4 min-h-[44px] py-2 text-sm border border-saddle text-saddle hover:bg-saddle hover:text-bone transition-colors"
+            title="Mark this lead as closed lost — they're out (price/timing/etc). Won't re-route."
+          >
+            Mark Lost
+          </button>
+        )}
+        {!depositLockedUi && (
+          <button
+            onClick={onPass}
+            className="px-4 min-h-[44px] py-2 text-sm border border-dust text-dust hover:bg-dust hover:text-bone transition-colors"
+            title="Pass on this lead — we'll auto-reassign the buyer to another rancher"
+          >
+            Pass on Lead
+          </button>
+        )}
+        {depositLockedUi && (
+          <p className="text-xs text-saddle basis-full pt-1">
+            buyer has money down — to exit this deal the deposit must be refunded first (hello@buyhalfcow.com)
+          </p>
+        )}
       </div>
     </div>
   );

@@ -7,6 +7,7 @@ import {
   LOCKED_STATUSES,
   isReferralLocked,
   isDepositLocked,
+  isDashboardExitBlocked,
   DEPOSIT_LOCKED_MESSAGE,
 } from './referralLock';
 
@@ -73,4 +74,44 @@ test('quick-action TERMINAL_STATUSES includes Slot Locked (route-shape pin)', ()
 test('quick-action gates every mutation behind the money lock (route-shape pin)', () => {
   assert.match(routeSrc, /isDepositLocked/, 'route must consult the deposit lock');
   assert.match(routeSrc, /DEPOSIT_LOCKED_MESSAGE/, 'route must render the shared friendly refusal');
+});
+
+// ── Dashboard money lock (Wave A 2026-07-14) ─────────────────────────────────
+// The dashboard PATCH was the remaining unlocked mutation surface: a rancher
+// could pass / Mark Lost a PAID deal, free the slot, and re-route the paying
+// buyer toward a second deposit. isDashboardExitBlocked is the pure decision.
+
+test('dashboard lock: pass + Closed Lost + regressions blocked when deposit paid', () => {
+  const paid = '2026-06-20T09:30:00.000Z';
+  assert.equal(isDashboardExitBlocked(paid, { action: 'pass' }), true, 'pass must block');
+  assert.equal(isDashboardExitBlocked(paid, { status: 'Closed Lost' }), true, 'Closed Lost must block');
+  assert.equal(isDashboardExitBlocked(paid, { status: 'Rancher Contacted' }), true, 'regression must block');
+  assert.equal(isDashboardExitBlocked(paid, { status: 'Negotiation' }), true, 'regression must block');
+});
+
+test('dashboard lock: forward progress + non-status updates stay open', () => {
+  const paid = '2026-06-20T09:30:00.000Z';
+  assert.equal(isDashboardExitBlocked(paid, { status: 'Closed Won' }), false, 'Closed Won progression stays open');
+  assert.equal(isDashboardExitBlocked(paid, { status: 'Awaiting Payment' }), false, 'Awaiting Payment progression stays open');
+  assert.equal(isDashboardExitBlocked(paid, {}), false, 'sale-amount/notes-only update stays open');
+});
+
+test('dashboard lock: no deposit stamp — everything stays open', () => {
+  for (const v of [null, undefined, '', '   ']) {
+    assert.equal(isDashboardExitBlocked(v, { action: 'pass' }), false);
+    assert.equal(isDashboardExitBlocked(v, { status: 'Closed Lost' }), false);
+  }
+});
+
+// Route-shape pin: the dashboard PATCH must consult the lock and 409 —
+// same pattern as the quick-action pin above (route files can't be imported).
+const dashboardRouteSrc = readFileSync(
+  fileURLToPath(new URL('../app/api/rancher/referrals/[id]/route.ts', import.meta.url)),
+  'utf8',
+);
+
+test('dashboard PATCH gates pass/Closed Lost behind the money lock (route-shape pin)', () => {
+  assert.match(dashboardRouteSrc, /isDashboardExitBlocked/, 'route must consult the dashboard deposit lock');
+  assert.match(dashboardRouteSrc, /DEPOSIT_LOCKED_MESSAGE/, 'route must render the shared friendly refusal');
+  assert.match(dashboardRouteSrc, /status:\s*409/, 'refusal must be a 409');
 });
