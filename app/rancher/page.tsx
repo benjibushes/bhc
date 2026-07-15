@@ -211,6 +211,21 @@ interface PayoutsInfo {
   nextPayoutDateISO: string | null;
 }
 
+// Wave C (2026-07-14): minimal shape of a Rancher Orders row as returned by
+// /api/rancher/orders. Fetched on dashboard mount (not just when the Products
+// tab opens) so a paid order the rancher hasn't seen gets a spine badge + a
+// Home triage card — previously the ONLY dashboard surface was inside the
+// Products tab, which mounts only when clicked.
+interface ProductOrderSummary {
+  id: string;
+  status: string;
+  buyerName: string;
+  productName: string;
+  buyerPaid: number;
+  payout: number;
+  orderedAt: string;
+}
+
 // Brand-token status colors. Semantic mapping preserved:
 // neutral/info → bone+saddle, caution → amber, positive → sage, dead → dust.
 const statusStyles: Record<string, string> = {
@@ -245,6 +260,10 @@ export default function RancherDashboardPage() {
   // Stripe payouts ("you got paid $X") — fetched separately so a slow/needs-
   // Connect Stripe read never blocks the dashboard render. Null until loaded.
   const [payouts, setPayouts] = useState<PayoutsInfo | null>(null);
+  // Wave C — product orders side-load (see ProductOrderSummary). Null until
+  // loaded; degrades silently (badge + card simply hidden). Kept fresh by
+  // ProductsTab via onOrdersChanged so marking one shipped clears the badge.
+  const [productOrders, setProductOrders] = useState<ProductOrderSummary[] | null>(null);
   // Unread buyer messages count — sourced from /api/rancher/inbox (a thread is
   // "unread" when its latest message came from the buyer). Drives the Messages
   // nav badge + the Home "N unread" action card.
@@ -462,6 +481,23 @@ export default function RancherDashboardPage() {
         if (!cancelled) setUnreadCount(n);
       } catch {
         /* leave unread at 0 — Messages badge + card simply hidden */
+      }
+    })();
+    // Wave C — new-order salience: a paid marketplace order used to be
+    // invisible until the rancher happened to click Products (the only
+    // consumer of /api/rancher/orders). Fetch on mount so the spine badge +
+    // Home card can't be missed. Also feeds the Earnings tab product-sales
+    // blend so dashboard and Stripe agree for product-heavy ranchers.
+    (async () => {
+      try {
+        const res = await fetch('/api/rancher/orders', { credentials: 'include' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled && Array.isArray(data?.orders)) {
+          setProductOrders(data.orders as ProductOrderSummary[]);
+        }
+      } catch {
+        /* leave null — orders badge/card/earnings-blend simply hidden */
       }
     })();
     return () => {
@@ -1758,13 +1794,17 @@ export default function RancherDashboardPage() {
   // Money are nav links that route to the (previously orphaned) inbox + billing
   // pages. "More" tucks the marketing / earnings / benefits tab CONTENT — all
   // still reachable, nothing deleted.
+  // Wave C — paid orders still sitting in 'New'. Drives the Products spine
+  // badge + the Home "waiting to ship" card so a paid order can't be missed.
+  const newOrderCount = (productOrders || []).filter((o) => o.status === 'New').length;
+
   const spineTabs: { key: Tab; label: string }[] = [
     { key: 'home', label: 'Home' },
     { key: 'referrals', label: `Deals${activeRefs.length > 0 ? ` (${activeRefs.length})` : ''}` },
     { key: 'customers', label: `Customers${customersList.length > 0 ? ` (${customersList.length})` : ''}` },
     // Products — the self-serve marketplace rail (journey overhaul Phase 6).
     // A revenue surface, so it earns a primary spine slot, not the More drawer.
-    { key: 'products', label: 'Products' },
+    { key: 'products', label: `Products${newOrderCount > 0 ? ` (${newOrderCount} to ship)` : ''}` },
     { key: 'my_page', label: 'My Page' },
   ];
   const moreTabs: { key: Tab; label: string }[] = [
@@ -2564,6 +2604,7 @@ export default function RancherDashboardPage() {
               uncontactedRefs={uncontactedRefs}
               activeRefs={activeRefs}
               unreadCount={unreadCount}
+              newOrderCount={newOrderCount}
               setupSteps={setupSteps}
               setupDone={setupDone}
               setupRemaining={setupRemaining}
@@ -2574,6 +2615,7 @@ export default function RancherDashboardPage() {
               payoutsLoginUrl={payouts?.loginUrl || null}
               onGoToDeals={() => setActiveTab('referrals')}
               onGoToMyPage={() => setActiveTab('my_page')}
+              onGoToProducts={() => setActiveTab('products')}
               slotsPanel={buyerSlotsPanel}
             />
           )}
@@ -2586,6 +2628,7 @@ export default function RancherDashboardPage() {
             <ProductsTab
               connectActive={depositEligible}
               onGoToMyPage={() => setActiveTab('my_page')}
+              onOrdersChanged={(orders) => setProductOrders(orders)}
             />
           )}
 
@@ -5396,6 +5439,7 @@ function HomeTab({
   uncontactedRefs,
   activeRefs,
   unreadCount,
+  newOrderCount,
   setupSteps,
   setupDone,
   setupRemaining,
@@ -5406,6 +5450,7 @@ function HomeTab({
   payoutsLoginUrl,
   onGoToDeals,
   onGoToMyPage,
+  onGoToProducts,
   slotsPanel,
 }: {
   rancherInfo: RancherInfo;
@@ -5415,6 +5460,7 @@ function HomeTab({
   uncontactedRefs: Referral[];
   activeRefs: Referral[];
   unreadCount: number;
+  newOrderCount: number;
   setupSteps: { key: string; label: string; done: boolean; target: Tab }[];
   setupDone: number;
   setupRemaining: number;
@@ -5425,6 +5471,7 @@ function HomeTab({
   payoutsLoginUrl: string | null;
   onGoToDeals: () => void;
   onGoToMyPage: () => void;
+  onGoToProducts: () => void;
   // SLICE F — the capacity editor + pause/resume controls (moved from the
   // deleted Overview tab). Rendered when the Buyer slots card is tapped open.
   slotsPanel: React.ReactNode;
@@ -5464,6 +5511,23 @@ function HomeTab({
           ? `Collect the rest of the money${amt}`
           : `Collect the rest from ${collectBalanceRefs.length} buyers${amt}`,
       onClick: onGoToDeals,
+    });
+  }
+
+  // Wave C — a PAID product order waiting to ship outranks everything except
+  // money to collect: the buyer's card was already charged and the day-3 SLA
+  // nudge rides a possibly-dead email channel. This card is the in-dashboard
+  // surface the orders API never had outside the Products tab.
+  if (newOrderCount > 0) {
+    cards.push({
+      key: 'orders-to-ship',
+      accent: 'border-rust',
+      label: 'Paid orders',
+      headline:
+        newOrderCount === 1
+          ? '1 paid order waiting to ship'
+          : `${newOrderCount} paid orders waiting to ship`,
+      onClick: onGoToProducts,
     });
   }
 

@@ -90,9 +90,14 @@ const EMPTY_FORM = {
 export default function ProductsTab({
   connectActive,
   onGoToMyPage,
+  onOrdersChanged,
 }: {
   connectActive: boolean;
   onGoToMyPage: () => void;
+  // Wave C — lets the dashboard shell keep its "N to ship" spine badge + Home
+  // card in sync when orders load here or one gets marked shipped. Optional
+  // so the component stays drop-in anywhere else.
+  onOrdersChanged?: (orders: RancherOrder[]) => void;
 }) {
   const [products, setProducts] = useState<RancherProduct[]>([]);
   const [loading, setLoading] = useState(true);
@@ -154,6 +159,7 @@ export default function ProductsTab({
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || `could not load your orders (${res.status})`);
       setOrders(data.orders || []);
+      onOrdersChanged?.(data.orders || []);
     } catch (e: any) {
       setOrdersErr(e?.message || 'could not load your orders — refresh in a minute.');
     } finally {
@@ -172,11 +178,16 @@ export default function ProductsTab({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || 'update failed');
-      if (data.order?.productName) {
-        setOrders((list) => list.map((x) => (x.id === o.id ? data.order : x)));
-      } else {
-        setOrders((list) => list.map((x) => (x.id === o.id ? { ...x, status: 'Shipped' } : x)));
-      }
+      const next = orders.map((x) =>
+        x.id === o.id
+          ? data.order?.productName
+            ? (data.order as RancherOrder)
+            : { ...x, status: 'Shipped' }
+          : x,
+      );
+      setOrders(next);
+      // Wave C — keep the dashboard shell's "N to ship" badge honest.
+      onOrdersChanged?.(next);
       setSavedNote('marked shipped — the buyer just got the tracking email.');
     } catch (e: any) {
       setSaveErr(e?.message || 'could not mark shipped');
