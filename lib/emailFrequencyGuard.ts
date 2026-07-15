@@ -37,6 +37,12 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   // deposits on"). Fires at most once per rancher (gated on the Connected At
   // stamp in the Connect webhook), so whitelisting cannot cause volume.
   'sendRancherBankConnected',
+  // Downgrade twin of sendRancherBankConnected (Wave A 2026-07-14): Connect
+  // flipped active→restricted/onboarding and the rancher must fix their
+  // payout setup before deposits work again. Money-critical + one-shot per
+  // downgrade edge (webhook fires it only on the wasActive transition,
+  // deduped), so whitelisting cannot cause volume.
+  'sendRancherConnectAttention',
   'sendRancherSelfSubmitWelcome',
   'sendProspectClaimMagicLink',
   // Customer-expected order confirmation after wholesale checkout.
