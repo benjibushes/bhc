@@ -79,6 +79,9 @@ export const EXPECTED_CRONS_24H = [
   'send-scheduled',
   'stuck-buyer-recovery',
   'stuck-referral-reaper',
+  // nightly Stripe↔Airtable truth sync (subscriptions + Connect status) —
+  // dry-run by default, so a daily Cron Runs row is written either way.
+  'stripe-reconcile',
   'synthetic-e2e',
   'testimonial-collection',
 ] as const;
