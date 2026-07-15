@@ -21,6 +21,7 @@ import {
   type CrmReferral,
 } from '@/lib/rancherCrm';
 import ProductsTab from './ProductsTab';
+import TodayQueue from './components/TodayQueue';
 
 interface RancherInfo {
   id: string;
@@ -227,6 +228,10 @@ interface ProductOrderSummary {
   buyerPaid: number;
   payout: number;
   orderedAt: string;
+  // Today queue (2026-07-15): Wave C pickup marker ('PICKUP — ' in Order Ref,
+  // decoded server-side by /api/rancher/orders). A pickup order never
+  // "ships" — the Today row must say "mark picked up", not "ship".
+  pickup?: boolean;
 }
 
 // Brand-token status colors. Semantic mapping preserved:
@@ -1804,8 +1809,23 @@ export default function RancherDashboardPage() {
   // pages. "More" tucks the marketing / earnings / benefits tab CONTENT — all
   // still reachable, nothing deleted.
   // Wave C — paid orders still sitting in 'New'. Drives the Products spine
-  // badge + the Home "waiting to ship" card so a paid order can't be missed.
-  const newOrderCount = (productOrders || []).filter((o) => o.status === 'New').length;
+  // badge + the Home Today queue rows so a paid order can't be missed.
+  const newOrders = (productOrders || []).filter((o) => o.status === 'New');
+  const newOrderCount = newOrders.length;
+  // ── Today queue splits (2026-07-15) — pure re-slices of collectBalanceRefs
+  // (deposit paid + final balance uncollected + not dead), which is itself
+  // derived from the already-fetched dashboard referrals. No new reads.
+  //   • depositAwaitRefs — deposit landed but the slot is NOT accepted yet
+  //     (Deposit Paid At set, Rancher Accepted At empty): the money-on-table
+  //     rows, hottest thing in the queue.
+  //   • invoiceDueRefs — slot accepted, no final invoice created yet (mirrors
+  //     the collect-balance card's invoiceSent check exactly). Once an invoice
+  //     is out it's the buyer's move, so it leaves the action queue — the
+  //     money strip's "Still to collect" keeps tracking it.
+  const depositAwaitRefs = collectBalanceRefs.filter((r) => !r.rancher_accepted_at);
+  const invoiceDueRefs = collectBalanceRefs.filter(
+    (r) => !!r.rancher_accepted_at && !r.final_invoice_sent_at && !r.final_invoice_url,
+  );
   // Wave C — product-order money for the Earnings blend. Every earnings
   // surface was built exclusively from Closed Won referrals, so a jerky/box-
   // heavy rancher saw "No completed sales yet" while Stripe showed real
@@ -2656,7 +2676,10 @@ export default function RancherDashboardPage() {
               uncontactedRefs={uncontactedRefs}
               activeRefs={activeRefs}
               unreadCount={unreadCount}
-              newOrderCount={newOrderCount}
+              depositAwaitRefs={depositAwaitRefs}
+              invoiceDueRefs={invoiceDueRefs}
+              newOrders={newOrders}
+              onJumpToReferral={jumpToReferral}
               setupSteps={setupSteps}
               setupDone={setupDone}
               setupRemaining={setupRemaining}
@@ -3024,7 +3047,11 @@ export default function RancherDashboardPage() {
                           ? 'Invoice sent'
                           : 'Not sent';
                       return (
-                        <div key={ref.id} className="border border-dust bg-white">
+                        // Today queue (2026-07-15): ref-<id> anchor so the
+                        // accept-slot / send-invoice rows can deep-scroll here
+                        // (jumpToReferral targets ref-<id>; these deposit-paid
+                        // rows render ONLY in this card, which had no anchor).
+                        <div key={ref.id} id={`ref-${ref.id}`} className="border border-dust bg-white scroll-mt-24">
                           <div className="p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                             {/* Left: buyer info + deposit details */}
                             <div className="min-w-0 flex-1">
@@ -5533,7 +5560,10 @@ function HomeTab({
   uncontactedRefs,
   activeRefs,
   unreadCount,
-  newOrderCount,
+  depositAwaitRefs,
+  invoiceDueRefs,
+  newOrders,
+  onJumpToReferral,
   setupSteps,
   setupDone,
   setupRemaining,
@@ -5555,7 +5585,12 @@ function HomeTab({
   uncontactedRefs: Referral[];
   activeRefs: Referral[];
   unreadCount: number;
-  newOrderCount: number;
+  // Today queue inputs (2026-07-15) — pure re-slices of already-fetched data,
+  // derived on the page component (see depositAwaitRefs / invoiceDueRefs).
+  depositAwaitRefs: Referral[];
+  invoiceDueRefs: Referral[];
+  newOrders: ProductOrderSummary[];
+  onJumpToReferral: (id: string) => void;
   setupSteps: { key: string; label: string; done: boolean; target: Tab }[];
   setupDone: number;
   setupRemaining: number;
@@ -5582,97 +5617,12 @@ function HomeTab({
     0,
   );
 
-  // Build the action-card list. Order = money first, then people, then setup.
-  // Each entry renders as a tappable card; we only push cards that have work.
-  type ActionCard = {
-    key: string;
-    accent: string; // left border token class
-    label: string; // small uppercase kicker
-    headline: string; // the "what + $ + →" line
-    onClick: () => void;
-  };
-  const cards: ActionCard[] = [];
-
-  if (collectBalanceRefs.length > 0) {
-    const amt =
-      collectBalanceTotal > 0
-        ? ` ($${collectBalanceTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })})`
-        : '';
-    cards.push({
-      key: 'collect',
-      accent: 'border-sage',
-      label: 'Money to collect',
-      headline:
-        collectBalanceRefs.length === 1
-          ? `Collect the rest of the money${amt}`
-          : `Collect the rest from ${collectBalanceRefs.length} buyers${amt}`,
-      onClick: onGoToDeals,
-    });
-  }
-
-  // Wave C — a PAID product order waiting to ship outranks everything except
-  // money to collect: the buyer's card was already charged and the day-3 SLA
-  // nudge rides a possibly-dead email channel. This card is the in-dashboard
-  // surface the orders API never had outside the Products tab.
-  if (newOrderCount > 0) {
-    cards.push({
-      key: 'orders-to-ship',
-      accent: 'border-rust',
-      label: 'Paid orders',
-      headline:
-        newOrderCount === 1
-          ? '1 paid order waiting to ship'
-          : `${newOrderCount} paid orders waiting to ship`,
-      onClick: onGoToProducts,
-    });
-  }
-
-  if (uncontactedRefs.length > 0) {
-    cards.push({
-      key: 'new-buyers',
-      accent: 'border-charcoal',
-      label: 'New buyers',
-      headline:
-        uncontactedRefs.length === 1
-          ? '1 new buyer — say hi'
-          : `${uncontactedRefs.length} new buyers — say hi`,
-      onClick: onGoToDeals,
-    });
-  }
-
-  if (unreadCount > 0) {
-    cards.push({
-      key: 'unread',
-      accent: 'border-rust',
-      label: 'Messages',
-      headline:
-        unreadCount === 1 ? '1 unread message' : `${unreadCount} unread messages`,
-      onClick: () => {
-        window.location.href = '/rancher/inbox';
-      },
-    });
-  }
-
-  if (setupRemaining > 0) {
-    const nextStep = setupSteps.find((s) => !s.done);
-    cards.push({
-      key: 'setup',
-      accent: 'border-amber-dark',
-      label: 'Finish setup',
-      headline: `Finish setup: ${setupDone} of ${setupSteps.length} done${
-        nextStep ? ` — ${nextStep.label.toLowerCase()}` : ''
-      }`,
-      onClick: () => {
-        // Bank-connect step lives on the Money (billing) page; everything else
-        // is on My Page.
-        if (nextStep?.key === 'bank') {
-          window.location.href = '/rancher/billing';
-        } else {
-          onGoToMyPage();
-        }
-      },
-    });
-  }
+  // Today queue (2026-07-15) — replaces the old aggregate "what needs you"
+  // cards with per-item rows that deep-link straight to the card/tab where
+  // the action button lives. Same inputs, finer grain: the old "collect"
+  // aggregate becomes per-buyer accept-slot + send-invoice rows; orders and
+  // new leads become per-item rows; messages + setup keep their rows.
+  const setupNextStep = setupSteps.find((s) => !s.done);
 
   const hasMoney =
     paidDollars != null ||
@@ -5685,37 +5635,39 @@ function HomeTab({
 
   return (
     <div className="space-y-8">
-      {/* 1 — ACTION CARDS (or calm empty state) */}
-      {cards.length > 0 ? (
-        <div className="space-y-3">
-          <h2 className="font-serif text-2xl">what needs you</h2>
-          {cards.map((c) => (
-            <button
-              key={c.key}
-              onClick={c.onClick}
-              className={`w-full text-left border border-dust ${c.accent} border-l-4 bg-white hover:bg-bone-warm transition-colors p-5 min-h-[64px] flex items-center justify-between gap-4`}
-            >
-              <div className="min-w-0">
-                <p className="text-[11px] uppercase tracking-widest text-saddle font-semibold">
-                  {c.label}
-                </p>
-                <p className="font-serif text-lg text-charcoal mt-0.5">{c.headline}</p>
-              </div>
-              <span aria-hidden className="text-2xl text-saddle shrink-0">
-                →
-              </span>
-            </button>
-          ))}
-        </div>
-      ) : (
-        <div className="border border-dust bg-white p-8 text-center">
-          <p className="font-serif text-2xl text-charcoal">You&rsquo;re all caught up.</p>
-          <p className="text-sm text-saddle mt-2">
-            No buyers waiting, no money to collect. We&rsquo;ll surface the next thing
-            here the moment it needs you.
-          </p>
-        </div>
-      )}
+      {/* 1 — TODAY ACTION QUEUE (or calm empty state). First thing on a
+          phone: the unified per-item list that tells the rancher their day. */}
+      <TodayQueue
+        depositAwaitRefs={depositAwaitRefs}
+        invoiceDueRefs={invoiceDueRefs}
+        newOrders={newOrders}
+        newLeadRefs={uncontactedRefs}
+        unreadCount={unreadCount}
+        setupRow={
+          setupRemaining > 0
+            ? {
+                done: setupDone,
+                total: setupSteps.length,
+                nextLabel: setupNextStep?.label || 'finish setup',
+              }
+            : null
+        }
+        onJumpToReferral={onJumpToReferral}
+        onGoToProducts={onGoToProducts}
+        onGoToDeals={onGoToDeals}
+        onOpenInbox={() => {
+          window.location.href = '/rancher/inbox';
+        }}
+        onSetupClick={() => {
+          // Bank-connect step lives on the Money (billing) page; everything
+          // else is on My Page. (Same routing the old setup card used.)
+          if (setupNextStep?.key === 'bank') {
+            window.location.href = '/rancher/billing';
+          } else {
+            onGoToMyPage();
+          }
+        }}
+      />
 
       {/* 2 — MONEY STRIP */}
       {hasMoney && (

@@ -242,6 +242,30 @@ const DEMO_REFERRALS: Ref[] = [
     'Last Rancher Activity At': daysAgo(8),
     _createdTime: daysAgo(14),
   }),
+  // Today-queue coverage (2026-07-15): deposit PAID but slot NOT accepted —
+  // the money-on-table state the Home "today" queue styles hottest. Status
+  // 'Awaiting Payment' + Deposit Paid At is exactly what the live webhook
+  // writes when a deposit settles before the rancher accepts. NO Sale Amount,
+  // so the closed-won economics pins above stay untouched.
+  ref({
+    id: 'recDEMOreferral15',
+    Status: 'Awaiting Payment',
+    'Buyer Name': 'P.J. — MT',
+    'Buyer Email': 'pj.mt@buyers.example',
+    'Buyer Phone': '(406) 555-0215',
+    'Buyer State': 'MT',
+    'Order Type': 'Half',
+    'Budget Range': '$2,100',
+    Notes: 'Paid the deposit overnight — waiting on the ranch to accept the slot.',
+    Buyer: ['recDEMObuyer0000015'],
+    'Intro Sent At': daysAgo(9),
+    'Deposit Requested At': daysAgo(3),
+    'Deposit Paid At': daysAgo(2),
+    'Deposit Amount': 550,
+    'Total Sale Amount': 2100,
+    'Last Rancher Activity At': daysAgo(3),
+    _createdTime: daysAgo(9),
+  }),
   // ── Closed Won (6 rows, ~$18,050 revenue) ──
   ref({
     id: 'recDEMOreferral07',
@@ -455,6 +479,44 @@ const DEMO_PAYMENTS: Ref[] = DEMO_REFERRALS.filter((r) => r['Deposit Paid At']).
   }),
 );
 
+// ── Demo product orders (Rancher Orders) ─────────────────────────────────
+// Today-queue coverage (2026-07-15): two paid orders still in 'New' — one to
+// ship, one local pickup (the Wave C 'PICKUP — ' Order Ref marker) — so the
+// Home "today" queue + Products tab + spine badge all have something real to
+// show on camera. Owner key mirrors what settlement stamps.
+const DEMO_RANCHER_ORDERS: Ref[] = [
+  {
+    id: 'recDEMOorder0001x',
+    'Order Ref': 'BHC-DEMO-1001',
+    'Product Name': 'Smoked beef jerky — 3 pack',
+    'Buyer Name': 'L.R. — MT',
+    'Buyer Email': 'lr.mt@buyers.example',
+    'Ship To Address': '412 Bridger Canyon Rd, Bozeman, MT 59715',
+    'Buyer Paid': 42,
+    'Rancher Payout': 36,
+    Status: 'New',
+    'Ordered At': hoursAgo(20),
+    'Rancher Record ID': DEMO_RANCHER_ID,
+    Rancher: [DEMO_RANCHER_ID],
+    _createdTime: hoursAgo(20),
+  },
+  {
+    id: 'recDEMOorder0002x',
+    'Order Ref': 'PICKUP — BHC-DEMO-1002',
+    'Product Name': 'Ground beef box — 20 lb',
+    'Buyer Name': 'D.F. — MT',
+    'Buyer Email': 'df.mt@buyers.example',
+    'Ship To Address': '',
+    'Buyer Paid': 95,
+    'Rancher Payout': 85,
+    Status: 'New',
+    'Ordered At': hoursAgo(44),
+    'Rancher Record ID': DEMO_RANCHER_ID,
+    Rancher: [DEMO_RANCHER_ID],
+    _createdTime: hoursAgo(44),
+  },
+];
+
 // ── Demo threads + messages (so the inbox shows unread buyer messages) ────
 const DEMO_THREADS: Ref[] = [
   {
@@ -547,6 +609,7 @@ const _seed = (): Record<string, Ref[]> => ({
   [TABLES.REFERRALS]: DEMO_REFERRALS,
   [TABLES.CONSUMERS]: DEMO_CONSUMERS,
   [TABLES.PAYMENTS]: DEMO_PAYMENTS,
+  [TABLES.RANCHER_ORDERS]: DEMO_RANCHER_ORDERS,
   ['Threads']: DEMO_THREADS,
   ['Thread Messages']: DEMO_THREAD_MESSAGES,
   [TABLES.BRANDS]: [],
