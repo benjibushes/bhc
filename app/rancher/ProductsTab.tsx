@@ -213,6 +213,14 @@ export default function ProductsTab({
     priceCents >= MIN_PRODUCT_PRICE_CENTS && form.category
       ? deriveProductPricing({ displayCents: priceCents, category: form.category })
       : null;
+  // Walkthrough 2026-07-15: below the $5 floor (or with no category) the
+  // preview silently vanished — the rancher had no idea why. Say why.
+  const previewHint =
+    priceCents > 0 && priceCents < MIN_PRODUCT_PRICE_CENTS
+      ? `minimum price is $${(MIN_PRODUCT_PRICE_CENTS / 100).toFixed(0)}`
+      : priceCents >= MIN_PRODUCT_PRICE_CENTS && !form.category
+        ? 'pick a category to see your net'
+        : '';
 
   function startAdd() {
     setForm({ ...EMPTY_FORM });
@@ -661,6 +669,11 @@ export default function ProductsTab({
               gets partial or zero absorption — the shortfall comes out of the
               rancher. absorptionPreview (lib/feeMath, same math as checkout's
               computeProductCharge at qty 1) decides which sentence renders. */}
+          {!preview && previewHint && (
+            <p className="text-[12px] text-saddle bg-bone border-l-2 border-l-dust px-3.5 py-2">
+              {previewHint}
+            </p>
+          )}
           {preview && (() => {
             const shipNum = Number(form.shippingCost);
             const ship = Number.isFinite(shipNum) && shipNum > 0 ? shipNum : 0;
