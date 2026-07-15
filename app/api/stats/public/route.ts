@@ -2,11 +2,34 @@ import { NextResponse } from 'next/server';
 import { getAllRecords, getRecordById, TABLES } from '@/lib/airtable';
 import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
 import { FOUNDING_BRAND_PARTNER_CAP } from '@/lib/tiers';
+import { cacheGet as sharedCacheGet, cacheSet as sharedCacheSet } from '@/lib/sharedCache';
 
 export const runtime = 'nodejs';
 // Cache 5 minutes — public stats don't need to be real-time. ISR
 // + edge cache means most requests hit cache, not Airtable.
 export const revalidate = 300;
+
+// ── Shared-cache layer (bulletproof walkthrough 2026-07-15) ────────────────
+// Prod showed intermittent 10s AirtableTimeoutErrors here: every uncached hit
+// ran live full-table scans of Consumers + Referrals (+Ranchers +Brands).
+// `revalidate = 300` alone wasn't protecting us (the Upstash no-store fetch
+// inside the allowlisted Ranchers read flipped the route dynamic at runtime —
+// fixed in lib/sharedCache — and any cache-miss/timing gap still paid the full
+// scan). Defense in depth, same L1/L2 pattern as /api/funnel/stats:
+//   L1: in-process, 10-min TTL, single-flight so a cold-instance burst
+//       computes ONCE instead of N parallel full scans.
+//   L2: shared Redis (fail-open no-op without Upstash env) so the whole
+//       fleet shares one compute per TTL window.
+//   Stale-on-error: the last good payload is kept for 24h (L1 reference +
+//       a long-TTL Redis key) and served when Airtable times out — a public
+//       page should get slightly-old truth, never a hardcoded guess.
+const STATS_TTL_MS = 10 * 60 * 1000;
+const STATS_REDIS_KEY = 'publicstats:cache:v1';
+const STATS_STALE_REDIS_KEY = 'publicstats:stale:v1';
+const STATS_STALE_TTL_MS = 24 * 60 * 60 * 1000;
+let _statsCache: { at: number; data: Record<string, any> } | null = null;
+let _statsLastGood: Record<string, any> | null = null;
+let _statsInFlight: Promise<Record<string, any>> | null = null;
 
 const FOUNDERS_CAP = 100;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -43,8 +66,10 @@ interface PublicStats {
   brandPartnersRemaining: number;
 }
 
-export async function GET() {
-  try {
+// The live compute — full-table reads. Throws on Airtable failure; the GET
+// wrapper below owns caching + stale-on-error + the last-ditch fallback.
+async function computeStats(): Promise<Record<string, any>> {
+  {
     const [ranchers, consumers, referrals, brands] = await Promise.all([
       getAllRecords(TABLES.RANCHERS) as Promise<any[]>,
       getAllRecords(TABLES.CONSUMERS) as Promise<any[]>,
@@ -189,13 +214,57 @@ export async function GET() {
       verifiedStateCount: stateCount,
     };
 
-    return NextResponse.json(stats, {
-      headers: {
-        'Cache-Control': 'public, max-age=300, s-maxage=300, stale-while-revalidate=60',
-      },
-    });
+    return stats;
+  }
+}
+
+function statsResponse(stats: Record<string, any>): NextResponse {
+  return NextResponse.json(stats, {
+    headers: {
+      'Cache-Control': 'public, max-age=300, s-maxage=300, stale-while-revalidate=60',
+    },
+  });
+}
+
+export async function GET() {
+  try {
+    // L1 — in-process, fresh.
+    if (_statsCache && Date.now() - _statsCache.at < STATS_TTL_MS) {
+      return statsResponse(_statsCache.data);
+    }
+    // L2 — shared Redis (no-op MISS when Upstash env is unset).
+    const shared = await sharedCacheGet<Record<string, any>>(STATS_REDIS_KEY);
+    if (shared !== undefined) {
+      _statsCache = { at: Date.now(), data: shared };
+      _statsLastGood = shared;
+      return statsResponse(shared);
+    }
+    // Single-flight live compute — a cold-instance burst pays ONE scan set.
+    if (!_statsInFlight) {
+      _statsInFlight = computeStats().finally(() => {
+        _statsInFlight = null;
+      });
+    }
+    const stats = await _statsInFlight;
+    _statsCache = { at: Date.now(), data: stats };
+    _statsLastGood = stats;
+    // Both writes are fail-safe no-ops without Redis. The long-TTL stale key
+    // is the fleet-wide stale-on-error copy.
+    await sharedCacheSet(STATS_REDIS_KEY, stats, STATS_TTL_MS);
+    await sharedCacheSet(STATS_STALE_REDIS_KEY, stats, STATS_STALE_TTL_MS);
+    return statsResponse(stats);
   } catch (error: any) {
     console.error('/api/stats/public error:', error?.message);
+    // Stale-on-error: last good beats a hardcoded guess. In-process first,
+    // then the fleet-wide 24h Redis copy.
+    const stale =
+      _statsLastGood ??
+      (await sharedCacheGet<Record<string, any>>(STATS_STALE_REDIS_KEY));
+    if (stale) {
+      return NextResponse.json(stale, {
+        headers: { 'Cache-Control': 'public, max-age=60' },
+      });
+    }
     const fallback = {
       ranchersActive: 17,
       familiesMatched: 1533,
