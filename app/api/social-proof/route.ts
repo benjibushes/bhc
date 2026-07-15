@@ -15,7 +15,7 @@
 // not create console noise on a checkout page.
 
 import { NextResponse } from 'next/server';
-import { getSocialProofStats } from '@/lib/socialProof';
+import { getSocialProofStats, getWeeklySocialProofStats } from '@/lib/socialProof';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,11 +28,17 @@ export async function GET() {
   if (!stats || stats.deals <= 0) {
     return NextResponse.json({ deals: 0 }, { headers: CACHE_HEADERS });
   }
+  // Network pulse (2026-07-15): trailing-7-day slice from the SAME cached
+  // rows (getWeeklySocialProofStats never issues a second Airtable query).
+  // weeklyDeals: 0 is an honest zero-week — clients fall back to all-time.
+  const weekly = await getWeeklySocialProofStats();
   return NextResponse.json(
     {
       deals: stats.deals,
       gmvLabel: stats.gmvLabel,
       latestWinLabel: stats.latestWinLabel,
+      weeklyDeals: weekly?.deals ?? 0,
+      weeklyGmvLabel: weekly?.gmvLabel ?? '',
     },
     { headers: CACHE_HEADERS },
   );

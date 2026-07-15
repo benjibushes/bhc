@@ -21,6 +21,10 @@ import {
   type CrmReferral,
 } from '@/lib/rancherCrm';
 import ProductsTab from './ProductsTab';
+import TodayQueue from './components/TodayQueue';
+import NetworkPulseCard from './components/NetworkPulseCard';
+import ProgressRibbon from './components/ProgressRibbon';
+import BillingSection from './components/BillingSection';
 
 interface RancherInfo {
   id: string;
@@ -192,11 +196,14 @@ interface NetworkBenefit {
 
 // Cockpit (Wave A, 2026-06-22): 'home' is the new triage default. The spine
 // nav surfaces Home / Deals (= 'referrals') / My Page (= 'my_page') and links
-// out to Messages (/rancher/inbox) + Money (/rancher/billing).
+// out to Messages (/rancher/inbox).
 // 'marketing'/'earnings'/'benefits' stay reachable under the secondary "More"
 // affordance. SLICE F: the legacy 'overview' tab is gone — it duplicated
 // Home/Deals; its capacity + pause controls live in Home's Buyer slots card.
-type Tab = 'home' | 'referrals' | 'marketing' | 'earnings' | 'benefits' | 'my_page' | 'customers' | 'products';
+// Settings merge (2026-07-15): 'settings' replaces the old Money nav link —
+// one spine stop for billing (shared BillingSection, the exact
+// /rancher/billing content) + account (moved from the Earnings tail).
+type Tab = 'home' | 'referrals' | 'marketing' | 'earnings' | 'benefits' | 'my_page' | 'customers' | 'products' | 'settings';
 
 // WAVE 3a (2026-06-30): localStorage key for activity-feed read-state. No
 // Airtable field exists for per-rancher read receipts, so mark-as-read is
@@ -227,6 +234,10 @@ interface ProductOrderSummary {
   buyerPaid: number;
   payout: number;
   orderedAt: string;
+  // Today queue (2026-07-15): Wave C pickup marker ('PICKUP — ' in Order Ref,
+  // decoded server-side by /api/rancher/orders). A pickup order never
+  // "ships" — the Today row must say "mark picked up", not "ship".
+  pickup?: boolean;
 }
 
 // Brand-token status colors. Semantic mapping preserved:
@@ -458,9 +469,27 @@ export default function RancherDashboardPage() {
       // Products tab deep link — the monthly stock check-in email + docs
       // point ranchers at /rancher#products.
       products: 'products',
+      // Settings merge (2026-07-15): billing + account live in one Settings
+      // tab. #billing / #account are aliases that land on the tab AND scroll
+      // to their section; #money keeps old muscle memory working.
+      settings: 'settings',
+      billing: 'settings',
+      account: 'settings',
+      money: 'settings',
     };
     const next = hashToTab[hash];
     if (next) setActiveTab(next);
+    // Scroll #billing / #account into view once the Settings tab has data to
+    // render. Best-effort with a retry — the dashboard payload gates the tab
+    // body, so the section may not exist yet on the first attempt.
+    if (hash === 'billing' || hash === 'account') {
+      const tryScroll = (attempt: number) => {
+        const el = document.getElementById(hash);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        else if (attempt < 5) setTimeout(() => tryScroll(attempt + 1), 600);
+      };
+      setTimeout(() => tryScroll(0), 400);
+    }
   }, []);
 
   // Cockpit side-loads — payouts + unread count. Kept out of fetchDashboard so
@@ -1804,8 +1833,35 @@ export default function RancherDashboardPage() {
   // pages. "More" tucks the marketing / earnings / benefits tab CONTENT — all
   // still reachable, nothing deleted.
   // Wave C — paid orders still sitting in 'New'. Drives the Products spine
-  // badge + the Home "waiting to ship" card so a paid order can't be missed.
-  const newOrderCount = (productOrders || []).filter((o) => o.status === 'New').length;
+  // badge + the Home Today queue rows so a paid order can't be missed.
+  const newOrders = (productOrders || []).filter((o) => o.status === 'New');
+  const newOrderCount = newOrders.length;
+  // ── Today queue splits (2026-07-15) — pure re-slices of collectBalanceRefs
+  // (deposit paid + final balance uncollected + not dead), which is itself
+  // derived from the already-fetched dashboard referrals. No new reads.
+  //   • depositAwaitRefs — deposit landed but the slot is NOT accepted yet
+  //     (Deposit Paid At set, Rancher Accepted At empty): the money-on-table
+  //     rows, hottest thing in the queue.
+  //   • invoiceDueRefs — slot accepted, no final invoice created yet (mirrors
+  //     the collect-balance card's invoiceSent check exactly). Once an invoice
+  //     is out it's the buyer's move, so it leaves the action queue — the
+  //     money strip's "Still to collect" keeps tracking it.
+  // Both are scoped to IN-FLIGHT deals: a Closed Won row with an unpaid
+  // balance (the mistakenly-closed-early edge) stays fully served by the
+  // Deals-tab collect-balance card, but "accept the slot" / "send the
+  // invoice" is not a today-action on a deal already marked won.
+  const todayTerminal = (r: Referral) =>
+    r.status === 'Closed Won' || r.status === 'Closed Lost' || r.status === 'Refunded';
+  const depositAwaitRefs = collectBalanceRefs.filter(
+    (r) => !r.rancher_accepted_at && !todayTerminal(r),
+  );
+  const invoiceDueRefs = collectBalanceRefs.filter(
+    (r) =>
+      !!r.rancher_accepted_at &&
+      !r.final_invoice_sent_at &&
+      !r.final_invoice_url &&
+      !todayTerminal(r),
+  );
   // Wave C — product-order money for the Earnings blend. Every earnings
   // surface was built exclusively from Closed Won referrals, so a jerky/box-
   // heavy rancher saw "No completed sales yet" while Stripe showed real
@@ -1822,6 +1878,10 @@ export default function RancherDashboardPage() {
     // A revenue surface, so it earns a primary spine slot, not the More drawer.
     { key: 'products', label: `Products${newOrderCount > 0 ? ` (${newOrderCount} to ship)` : ''}` },
     { key: 'my_page', label: 'My Page' },
+    // Settings merge (2026-07-15): billing + account in one stop — replaces
+    // the old Money link out to /rancher/billing (route still alive for
+    // deep links + the Stripe onboarding return URL).
+    { key: 'settings', label: 'Settings' },
   ];
   const moreTabs: { key: Tab; label: string }[] = [
     { key: 'marketing', label: 'Marketing' },
@@ -2570,10 +2630,11 @@ export default function RancherDashboardPage() {
           })()}
 
           {/* ── Cockpit nav spine ──────────────────────────────────────────
-              Home · Deals · My Page · Messages · Money. Big tap targets,
-              mobile-first (wraps on narrow screens). Messages + Money route to
-              the inbox + billing pages (previously orphaned). "More" holds the
-              marketing / earnings / benefits tab content. */}
+              Home · Deals · Customers · Products · My Page · Settings ·
+              Messages. Big tap targets, mobile-first (wraps on narrow
+              screens). Messages routes to the inbox page; Settings (2026-07-15)
+              is the merged billing + account tab that replaced the old Money
+              link. "More" holds the marketing / earnings / benefits content. */}
           <div className="flex flex-wrap gap-2">
             {spineTabs.map((tab) => (
               <button
@@ -2600,14 +2661,6 @@ export default function RancherDashboardPage() {
                   {unreadCount}
                 </span>
               )}
-            </Link>
-
-            {/* Money — links to billing (payouts + tier context) */}
-            <Link
-              href="/rancher/billing"
-              className="px-4 py-2.5 min-h-[44px] flex items-center text-sm font-medium tracking-wider uppercase border border-dust hover:bg-charcoal hover:text-bone transition-colors"
-            >
-              Money
             </Link>
 
             {/* More — secondary affordance keeping marketing/earnings/benefits
@@ -2656,7 +2709,10 @@ export default function RancherDashboardPage() {
               uncontactedRefs={uncontactedRefs}
               activeRefs={activeRefs}
               unreadCount={unreadCount}
-              newOrderCount={newOrderCount}
+              depositAwaitRefs={depositAwaitRefs}
+              invoiceDueRefs={invoiceDueRefs}
+              newOrders={newOrders}
+              onJumpToReferral={jumpToReferral}
               setupSteps={setupSteps}
               setupDone={setupDone}
               setupRemaining={setupRemaining}
@@ -3024,7 +3080,11 @@ export default function RancherDashboardPage() {
                           ? 'Invoice sent'
                           : 'Not sent';
                       return (
-                        <div key={ref.id} className="border border-dust bg-white">
+                        // Today queue (2026-07-15): ref-<id> anchor so the
+                        // accept-slot / send-invoice rows can deep-scroll here
+                        // (jumpToReferral targets ref-<id>; these deposit-paid
+                        // rows render ONLY in this card, which had no anchor).
+                        <div key={ref.id} id={`ref-${ref.id}`} className="border border-dust bg-white scroll-mt-24">
                           <div className="p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                             {/* Left: buyer info + deposit details */}
                             <div className="min-w-0 flex-1">
@@ -3512,17 +3572,43 @@ export default function RancherDashboardPage() {
                 </div>
               )}
 
+            </div>
+          )}
+
+          {/* Settings Tab — billing + account merged (2026-07-15). Two
+              sections, internals untouched beyond the grouping:
+                • #billing — the exact /rancher/billing content via the shared
+                  BillingSection (that route stays alive for deep links + the
+                  Stripe onboarding return URL).
+                • #account — AccountSettingsSection, moved from the tail of
+                  the Earnings tab (WAVE 3b) where nobody looked for it. */}
+          {activeTab === 'settings' && (
+            <div className="space-y-8">
+              <div>
+                <h2 className="font-serif text-2xl">settings</h2>
+                <p className="text-sm text-saddle mt-1">
+                  your plan, payouts, and bank — plus your account details.
+                </p>
+              </div>
+
+              <section id="billing" aria-label="Billing" className="scroll-mt-24 space-y-4">
+                <h3 className="font-serif text-xl">money</h3>
+                <BillingSection justOnboarded={false} />
+              </section>
+
               <Divider />
 
-              {/* WAVE 3b — account / profile settings. Operator name, ranch name,
-                  login email, phone — previously not editable from the dashboard. */}
-              <h3 className="font-serif text-xl">settings</h3>
-              <AccountSettingsSection
-                rancher={rancherInfo}
-                onSaved={(next) =>
-                  setRancherInfo((prev) => (prev ? { ...prev, ...next } : prev))
-                }
-              />
+              <section id="account" aria-label="Account" className="scroll-mt-24 space-y-4">
+                {/* WAVE 3b — account / profile settings. Operator name, ranch
+                    name, login email, phone. AccountSettingsSection renders
+                    its own "account" header. */}
+                <AccountSettingsSection
+                  rancher={rancherInfo}
+                  onSaved={(next) =>
+                    setRancherInfo((prev) => (prev ? { ...prev, ...next } : prev))
+                  }
+                />
+              </section>
             </div>
           )}
 
@@ -5533,7 +5619,10 @@ function HomeTab({
   uncontactedRefs,
   activeRefs,
   unreadCount,
-  newOrderCount,
+  depositAwaitRefs,
+  invoiceDueRefs,
+  newOrders,
+  onJumpToReferral,
   setupSteps,
   setupDone,
   setupRemaining,
@@ -5555,7 +5644,12 @@ function HomeTab({
   uncontactedRefs: Referral[];
   activeRefs: Referral[];
   unreadCount: number;
-  newOrderCount: number;
+  // Today queue inputs (2026-07-15) — pure re-slices of already-fetched data,
+  // derived on the page component (see depositAwaitRefs / invoiceDueRefs).
+  depositAwaitRefs: Referral[];
+  invoiceDueRefs: Referral[];
+  newOrders: ProductOrderSummary[];
+  onJumpToReferral: (id: string) => void;
   setupSteps: { key: string; label: string; done: boolean; target: Tab }[];
   setupDone: number;
   setupRemaining: number;
@@ -5582,97 +5676,24 @@ function HomeTab({
     0,
   );
 
-  // Build the action-card list. Order = money first, then people, then setup.
-  // Each entry renders as a tappable card; we only push cards that have work.
-  type ActionCard = {
-    key: string;
-    accent: string; // left border token class
-    label: string; // small uppercase kicker
-    headline: string; // the "what + $ + →" line
-    onClick: () => void;
-  };
-  const cards: ActionCard[] = [];
+  // Today queue (2026-07-15) — replaces the old aggregate "what needs you"
+  // cards with per-item rows that deep-link straight to the card/tab where
+  // the action button lives. Same inputs, finer grain: the old "collect"
+  // aggregate becomes per-buyer accept-slot + send-invoice rows; orders and
+  // new leads become per-item rows; messages + setup keep their rows.
+  const setupNextStep = setupSteps.find((s) => !s.done);
 
-  if (collectBalanceRefs.length > 0) {
-    const amt =
-      collectBalanceTotal > 0
-        ? ` ($${collectBalanceTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })})`
-        : '';
-    cards.push({
-      key: 'collect',
-      accent: 'border-sage',
-      label: 'Money to collect',
-      headline:
-        collectBalanceRefs.length === 1
-          ? `Collect the rest of the money${amt}`
-          : `Collect the rest from ${collectBalanceRefs.length} buyers${amt}`,
-      onClick: onGoToDeals,
-    });
-  }
-
-  // Wave C — a PAID product order waiting to ship outranks everything except
-  // money to collect: the buyer's card was already charged and the day-3 SLA
-  // nudge rides a possibly-dead email channel. This card is the in-dashboard
-  // surface the orders API never had outside the Products tab.
-  if (newOrderCount > 0) {
-    cards.push({
-      key: 'orders-to-ship',
-      accent: 'border-rust',
-      label: 'Paid orders',
-      headline:
-        newOrderCount === 1
-          ? '1 paid order waiting to ship'
-          : `${newOrderCount} paid orders waiting to ship`,
-      onClick: onGoToProducts,
-    });
-  }
-
-  if (uncontactedRefs.length > 0) {
-    cards.push({
-      key: 'new-buyers',
-      accent: 'border-charcoal',
-      label: 'New buyers',
-      headline:
-        uncontactedRefs.length === 1
-          ? '1 new buyer — say hi'
-          : `${uncontactedRefs.length} new buyers — say hi`,
-      onClick: onGoToDeals,
-    });
-  }
-
-  if (unreadCount > 0) {
-    cards.push({
-      key: 'unread',
-      accent: 'border-rust',
-      label: 'Messages',
-      headline:
-        unreadCount === 1 ? '1 unread message' : `${unreadCount} unread messages`,
-      onClick: () => {
-        window.location.href = '/rancher/inbox';
-      },
-    });
-  }
-
-  if (setupRemaining > 0) {
-    const nextStep = setupSteps.find((s) => !s.done);
-    cards.push({
-      key: 'setup',
-      accent: 'border-amber-dark',
-      label: 'Finish setup',
-      headline: `Finish setup: ${setupDone} of ${setupSteps.length} done${
-        nextStep ? ` — ${nextStep.label.toLowerCase()}` : ''
-      }`,
-      onClick: () => {
-        // Bank-connect step lives on the Money (billing) page; everything else
-        // is on My Page.
-        if (nextStep?.key === 'bank') {
-          window.location.href = '/rancher/billing';
-        } else {
-          onGoToMyPage();
-        }
-      },
-    });
-  }
+  // Go-live ribbon (2026-07-15): visible while the page isn't live or (for
+  // tier_v2) payouts aren't active. While it shows, it OWNS the setup story —
+  // the Today queue's finish-setup row is suppressed so the same work isn't
+  // nagged twice on one screen.
+  const profileDone = setupSteps
+    .filter((s) => s.key === 'price' || s.key === 'photo')
+    .every((s) => s.done);
+  const ribbonVisible =
+    !rancherInfo.pageLive ||
+    (String(rancherInfo.pricingModel || '').toLowerCase() === 'tier_v2' &&
+      String(rancherInfo.connectStatus || '').toLowerCase() !== 'active');
 
   const hasMoney =
     paidDollars != null ||
@@ -5685,37 +5706,57 @@ function HomeTab({
 
   return (
     <div className="space-y-8">
-      {/* 1 — ACTION CARDS (or calm empty state) */}
-      {cards.length > 0 ? (
-        <div className="space-y-3">
-          <h2 className="font-serif text-2xl">what needs you</h2>
-          {cards.map((c) => (
-            <button
-              key={c.key}
-              onClick={c.onClick}
-              className={`w-full text-left border border-dust ${c.accent} border-l-4 bg-white hover:bg-bone-warm transition-colors p-5 min-h-[64px] flex items-center justify-between gap-4`}
-            >
-              <div className="min-w-0">
-                <p className="text-[11px] uppercase tracking-widest text-saddle font-semibold">
-                  {c.label}
-                </p>
-                <p className="font-serif text-lg text-charcoal mt-0.5">{c.headline}</p>
-              </div>
-              <span aria-hidden className="text-2xl text-saddle shrink-0">
-                →
-              </span>
-            </button>
-          ))}
-        </div>
-      ) : (
-        <div className="border border-dust bg-white p-8 text-center">
-          <p className="font-serif text-2xl text-charcoal">You&rsquo;re all caught up.</p>
-          <p className="text-sm text-saddle mt-2">
-            No buyers waiting, no money to collect. We&rsquo;ll surface the next thing
-            here the moment it needs you.
-          </p>
-        </div>
+      {/* 0 — GO-LIVE RIBBON. Not-yet-live ranchers only: their day IS getting
+          live, so the ribbon leads. Hidden entirely once live + active. */}
+      {ribbonVisible && (
+        <ProgressRibbon
+          pricingModel={rancherInfo.pricingModel}
+          connectStatus={rancherInfo.connectStatus}
+          tier={rancherInfo.tier}
+          pageLive={!!rancherInfo.pageLive}
+          profileDone={profileDone}
+          onGoToMyPage={onGoToMyPage}
+        />
       )}
+
+      {/* 1 — TODAY ACTION QUEUE (or calm empty state). First thing on a
+          phone: the unified per-item list that tells the rancher their day. */}
+      <TodayQueue
+        depositAwaitRefs={depositAwaitRefs}
+        invoiceDueRefs={invoiceDueRefs}
+        newOrders={newOrders}
+        newLeadRefs={uncontactedRefs}
+        unreadCount={unreadCount}
+        setupRow={
+          setupRemaining > 0 && !ribbonVisible
+            ? {
+                done: setupDone,
+                total: setupSteps.length,
+                nextLabel: setupNextStep?.label || 'finish setup',
+              }
+            : null
+        }
+        onJumpToReferral={onJumpToReferral}
+        onGoToProducts={onGoToProducts}
+        onGoToDeals={onGoToDeals}
+        onOpenInbox={() => {
+          window.location.href = '/rancher/inbox';
+        }}
+        onSetupClick={() => {
+          // Bank-connect step lives on the Money (billing) page; everything
+          // else is on My Page. (Same routing the old setup card used.)
+          if (setupNextStep?.key === 'bank') {
+            window.location.href = '/rancher/billing';
+          } else {
+            onGoToMyPage();
+          }
+        }}
+      />
+
+      {/* 1b — NETWORK PULSE. "This week on BHC" from the same public
+          social-proof aggregates the buyer pages render. Renders nothing on
+          an empty network or fetch failure — never a dead zero. */}
+      <NetworkPulseCard />
 
       {/* 2 — MONEY STRIP */}
       {hasMoney && (

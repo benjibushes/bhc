@@ -33,7 +33,15 @@ export interface SocialProofStats {
 }
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
-let _cache: { ts: number; stats: SocialProofStats } | null = null;
+// Cache keeps the RAW Closed Won rows alongside the all-time summary so the
+// windowed "this week" variant (network pulse, 2026-07-15) is computed from
+// the SAME cached rows — never a second Airtable query. Closed Won rows are
+// a small set (dozens), so holding them in-process is cheap.
+let _cache: {
+  ts: number;
+  stats: SocialProofStats;
+  refs: Array<Record<string, any>>;
+} | null = null;
 
 /**
  * Honest GMV label: floor to the nearest $1k with a "+" ($30,800 → "$30k+")
@@ -128,12 +136,41 @@ export function summarizeClosedWonRefs(
 }
 
 /**
- * Fetch + summarize Closed Won referrals. Returns null on ANY failure so
- * callers render nothing rather than a zero-claim lie. Serves a stale cached
- * value over null when Airtable blips mid-TTL-expiry.
+ * PURE windowed variant (network pulse, 2026-07-15): summarize only the
+ * Closed Won rows whose Closed At falls inside the trailing window. Same
+ * hygiene filter as summarizeClosedWonRefs (it does the filtering); this
+ * only decides WHICH rows are in the window.
+ *
+ * Honesty notes:
+ *   • A row with a missing/unparseable Closed At can't prove it's recent, so
+ *     it is EXCLUDED from the window (understate, never overstate).
+ *   • No upper bound on Closed At — a same-day close stamped a few hours
+ *     "ahead" of the caller's clock (date-only fields parse to midnight UTC)
+ *     is still a real closed deal this week.
  */
-export async function getSocialProofStats(): Promise<SocialProofStats | null> {
-  if (_cache && Date.now() - _cache.ts < CACHE_TTL_MS) return _cache.stats;
+export function summarizeClosedWonRefsInWindow(
+  refs: Array<Record<string, any>>,
+  nowMs: number = Date.now(),
+  windowDays: number = 7,
+): SocialProofStats {
+  const cutoff = nowMs - windowDays * 24 * 60 * 60 * 1000;
+  const windowed = refs.filter((ref) => {
+    const t = Date.parse(String(ref['Closed At'] || ''));
+    return Number.isFinite(t) && t >= cutoff;
+  });
+  return summarizeClosedWonRefs(windowed);
+}
+
+/**
+ * Shared fetch+cache for the Closed Won rows. Every public getter goes
+ * through here so the all-time stats and the weekly window always come from
+ * the same single Airtable read (5-min TTL, stale-if-error).
+ */
+async function loadClosedWonCache(): Promise<{
+  stats: SocialProofStats;
+  refs: Array<Record<string, any>>;
+} | null> {
+  if (_cache && Date.now() - _cache.ts < CACHE_TTL_MS) return _cache;
   try {
     // withTimeout — ProofStrip renders inside statically prerendered pages
     // (/shop + all 50 /half-a-cow/[state]); a stalled Airtable read here
@@ -145,13 +182,35 @@ export async function getSocialProofStats(): Promise<SocialProofStats | null> {
       'socialProof closed-won referrals',
     )) as Array<Record<string, any>>;
     const stats = summarizeClosedWonRefs(refs);
-    _cache = { ts: Date.now(), stats };
-    return stats;
+    _cache = { ts: Date.now(), stats, refs };
+    return _cache;
   } catch (err) {
     console.error('[socialProof] fetch failed:', err);
     // Stale-if-error: an expired cache entry beats rendering nothing.
-    return _cache ? _cache.stats : null;
+    return _cache;
   }
+}
+
+/**
+ * Fetch + summarize Closed Won referrals. Returns null on ANY failure so
+ * callers render nothing rather than a zero-claim lie. Serves a stale cached
+ * value over null when Airtable blips mid-TTL-expiry.
+ */
+export async function getSocialProofStats(): Promise<SocialProofStats | null> {
+  const cached = await loadClosedWonCache();
+  return cached ? cached.stats : null;
+}
+
+/**
+ * "This week on BHC" — last-7-days Closed Won count + GMV label, computed
+ * from the SAME cached rows as getSocialProofStats (no extra Airtable
+ * query). null on any failure — callers fall back / render nothing, never a
+ * zero-claim. A genuine zero-deal week returns { deals: 0 } and callers are
+ * expected to fall back to the all-time numbers (never render a dead zero).
+ */
+export async function getWeeklySocialProofStats(): Promise<SocialProofStats | null> {
+  const cached = await loadClosedWonCache();
+  return cached ? summarizeClosedWonRefsInWindow(cached.refs) : null;
 }
 
 /**

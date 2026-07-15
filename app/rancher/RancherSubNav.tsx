@@ -22,7 +22,11 @@ const SECTIONS: { key: SectionKey; label: string; href: string }[] = [
   { key: 'customers', label: 'Customers', href: '/rancher#customers' },
   { key: 'my_page', label: 'My Page', href: '/rancher#my_page' },
   { key: 'messages', label: 'Messages', href: '/rancher/inbox' },
-  { key: 'money', label: 'Money', href: '/rancher/billing' },
+  // Settings merge (2026-07-15): billing + account live in the dashboard's
+  // Settings tab now. The key stays 'money' so the standalone /rancher/billing
+  // page (still alive for deep links + the Stripe onboarding return URL)
+  // keeps its active highlight without churning its callers.
+  { key: 'money', label: 'Settings', href: '/rancher#settings' },
 ];
 
 export default function RancherSubNav({ active }: { active: SectionKey }) {
