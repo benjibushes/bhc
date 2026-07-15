@@ -25,10 +25,11 @@ import { getAllRecords, TABLES, escapeAirtableValue } from './airtable';
  *  - demand-router: dark until CAMPAIGN_ROUTER_ENABLED='true', but the gate
  *    sits INSIDE realHandler — a daily Cron Runs row is written either way,
  *    so the watchdog stays quiet while it's dark and catches a real missed run.
- *  - email-sequences: EMAIL_SEQUENCES_ENABLED gate returns BEFORE withCronRun
- *    (no Cron Runs row while the nurture engine is off) — it predates F4 in
- *    this list and is kept for visibility: the daily "no run" line is a
- *    truthful reminder that the engine is off.
+ *  - email-sequences: the EMAIL_SEQUENCES_ENABLED gate sits INSIDE
+ *    withCronRun (moved 2026-07-15 — it used to return before it, writing
+ *    ZERO Cron Runs rows for 36 days and reading as a dead cron). A daily
+ *    'skipped: engine off' row is written while the engine is dark, same
+ *    pattern as demand-router, so a missing row now means a REAL missed run.
  */
 export const EXPECTED_CRONS_24H = [
   // stale capacity-hold expiry — frees dead-intro slots before the 14:30
