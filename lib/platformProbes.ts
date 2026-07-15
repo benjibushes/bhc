@@ -140,6 +140,18 @@ export function probeEnvPresence(): ProbeResult[] {
       fix: 'set INTERNAL_API_SECRET in Vercel env',
     },
     {
+      name: 'env:BLOB_READ_WRITE_TOKEN',
+      present: !!process.env.BLOB_READ_WRITE_TOKEN,
+      blast: 'rancher photo uploads 503 — every new rancher hits it on day one of onboarding',
+      fix: 'Vercel → Storage → Blob → create/reconnect store, or paste the token into the env',
+    },
+    {
+      name: 'env:NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY',
+      present: !!process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY,
+      blast: 'brand-owned Payment Element cannot mount — checkouts degrade to the legacy rail',
+      fix: 'set NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY in Vercel env + redeploy',
+    },
+    {
       name: 'env:STRIPE_CONNECT_ENABLED',
       present: process.env.STRIPE_CONNECT_ENABLED === 'true',
       blast: 'entire deposit/Connect rail 403s (bit us 2026-07-08 as a blank value)',
