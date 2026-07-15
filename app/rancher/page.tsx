@@ -23,6 +23,7 @@ import {
 import ProductsTab from './ProductsTab';
 import TodayQueue from './components/TodayQueue';
 import NetworkPulseCard from './components/NetworkPulseCard';
+import ProgressRibbon from './components/ProgressRibbon';
 
 interface RancherInfo {
   id: string;
@@ -5625,6 +5626,18 @@ function HomeTab({
   // new leads become per-item rows; messages + setup keep their rows.
   const setupNextStep = setupSteps.find((s) => !s.done);
 
+  // Go-live ribbon (2026-07-15): visible while the page isn't live or (for
+  // tier_v2) payouts aren't active. While it shows, it OWNS the setup story —
+  // the Today queue's finish-setup row is suppressed so the same work isn't
+  // nagged twice on one screen.
+  const profileDone = setupSteps
+    .filter((s) => s.key === 'price' || s.key === 'photo')
+    .every((s) => s.done);
+  const ribbonVisible =
+    !rancherInfo.pageLive ||
+    (String(rancherInfo.pricingModel || '').toLowerCase() === 'tier_v2' &&
+      String(rancherInfo.connectStatus || '').toLowerCase() !== 'active');
+
   const hasMoney =
     paidDollars != null ||
     availableDollars != null ||
@@ -5636,6 +5649,19 @@ function HomeTab({
 
   return (
     <div className="space-y-8">
+      {/* 0 — GO-LIVE RIBBON. Not-yet-live ranchers only: their day IS getting
+          live, so the ribbon leads. Hidden entirely once live + active. */}
+      {ribbonVisible && (
+        <ProgressRibbon
+          pricingModel={rancherInfo.pricingModel}
+          connectStatus={rancherInfo.connectStatus}
+          tier={rancherInfo.tier}
+          pageLive={!!rancherInfo.pageLive}
+          profileDone={profileDone}
+          onGoToMyPage={onGoToMyPage}
+        />
+      )}
+
       {/* 1 — TODAY ACTION QUEUE (or calm empty state). First thing on a
           phone: the unified per-item list that tells the rancher their day. */}
       <TodayQueue
@@ -5645,7 +5671,7 @@ function HomeTab({
         newLeadRefs={uncontactedRefs}
         unreadCount={unreadCount}
         setupRow={
-          setupRemaining > 0
+          setupRemaining > 0 && !ribbonVisible
             ? {
                 done: setupDone,
                 total: setupSteps.length,
