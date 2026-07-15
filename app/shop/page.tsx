@@ -19,8 +19,10 @@
 
 import Link from 'next/link';
 import type { Metadata } from 'next';
-import { loadMarketplaceProducts, groupProducts } from '@/lib/marketplaceProducts';
-import type { LocalMarketProduct } from './ShopGrid';
+import { loadMarketplaceProducts, groupKeyForCategory } from '@/lib/marketplaceProducts';
+import { buildShopStands, type MarketProductInput } from '@/lib/marketStands';
+import { getSocialProofStats } from '@/lib/socialProof';
+import { getWaitlistCountsByState } from '@/lib/stateWaitlist';
 import Container from '../components/Container';
 import Card from '../components/Card';
 import Button from '../components/Button';
@@ -42,51 +44,48 @@ export const metadata: Metadata = {
 };
 
 export default async function MarketplacePage() {
-  // FARMERS MARKET (2026-07-08): includeLocal pulls pickup-only products too.
-  // They are split OUT of the nationwide grid below and rendered only in the
-  // location-matched "near you" rail — a TX buyer still never sees an MT
-  // pickup product. ISR stays intact: the full (small) set ships in the
-  // payload and the client matches it to the buyer's state.
-  const all = await loadMarketplaceProducts({ includeLocal: true, withStates: true });
+  // LOCAL MARKET (2026-07-15): the market reads as ranch stands, local-first.
+  // includeLocal pulls pickup-only products too — they render ONLY inside
+  // their home-state ranch's stall for a same-state buyer (the TX-buyer-
+  // never-sees-an-MT-pickup invariant, enforced in lib/marketStands). ISR
+  // stays intact: the full (small) set ships in the payload and the client
+  // reorders it around the buyer's state. The two proof reads are best-
+  // effort + lib-cached: socialProof (same 5-min cache ProofStrip shares —
+  // no extra Airtable read) and the per-state waitlist counts for the
+  // honest-empty fallback (null = unknown → neutral copy, no numbers).
+  const [all, proofStats, waitlistByState] = await Promise.all([
+    loadMarketplaceProducts({ includeLocal: true, withStates: true }),
+    getSocialProofStats(),
+    getWaitlistCountsByState(),
+  ]);
   // A ranch that can't take a direct charge yet (Connect != active) never
   // lists on /shop — the buy route would 409 and dead-end the buyer.
   const chargeable = all.filter((p) => p.rancherConnectActive !== false);
   const products = chargeable.filter((p) => !p.localOnly);
-  const localProducts: LocalMarketProduct[] = chargeable
-    .filter((p) => p.localOnly && p.rancherState)
-    .map((p) => ({
-      id: p.id,
-      name: p.name,
-      price: p.price,
-      rancher: p.rancher,
-      weight: p.weight,
-      image: p.image,
-      shelfStable: p.shelfStable,
-      depositStyle: p.depositStyle,
-      priceRange: p.priceRange,
-      ordersLeft: p.ordersLeft,
-      localOnly: true,
-      rancherState: p.rancherState,
-    }));
-  const groups = groupProducts(products);
-  // Flatten group membership onto each product for the client grid's chips
-  // (ShopGrid can't import lib/marketplaceProducts — it's server-only).
-  const gridProducts = groups.flatMap((g) =>
-    g.items.map((p) => ({
-      id: p.id,
-      name: p.name,
-      price: p.price,
-      rancher: p.rancher,
-      weight: p.weight,
-      image: p.image,
-      shelfStable: p.shelfStable,
-      depositStyle: p.depositStyle,
-      priceRange: p.priceRange,
-      ordersLeft: p.ordersLeft,
-      shippingCost: p.shippingCost,
-      group: g.key,
-    })),
-  );
+  // Serialize for the client market (ShopGrid can't import
+  // lib/marketplaceProducts — it's server-only): every product gets its
+  // browse-group key + the ranch-stand metadata the stalls render.
+  const flat: MarketProductInput[] = chargeable.map((p) => ({
+    id: p.id,
+    name: p.name,
+    price: p.price,
+    rancher: p.rancher,
+    weight: p.weight,
+    image: p.image,
+    shelfStable: p.shelfStable,
+    depositStyle: p.depositStyle,
+    priceRange: p.priceRange,
+    ordersLeft: p.ordersLeft,
+    shippingCost: p.shippingCost,
+    group: groupKeyForCategory(p.category),
+    localOnly: p.localOnly,
+    rancherId: p.rancherId,
+    rancherState: p.rancherState,
+    rancherServesStates: p.rancherServesStates,
+    rancherSlug: p.rancherSlug,
+    rancherPhoto: p.rancherPhoto,
+  }));
+  const stands = buildShopStands(flat, proofStats?.dealsByRancher || {});
 
   return (
     <main className="min-h-screen bg-bone text-charcoal py-10 md:py-14">
@@ -100,7 +99,7 @@ export default async function MarketplacePage() {
             where the buying decision actually happens. */}
         <div className="flex items-baseline justify-between gap-3 flex-wrap mb-1">
           <h1 className="font-serif text-[clamp(26px,5vw,40px)] lowercase">shop the ranches</h1>
-          <span className="text-xs text-dust tabular-nums">{products.length} products · {new Set(products.map((p) => p.rancher)).size} ranches</span>
+          <span className="text-xs text-dust tabular-nums">{products.length} products · {stands.length} ranch {stands.length === 1 ? 'stand' : 'stands'}</span>
         </div>
         <p className="text-charcoal/85 text-[15px] max-w-[58ch] leading-normal mb-2">
           real beef from the family that raised it — shipped frozen to your door.
@@ -117,11 +116,11 @@ export default async function MarketplacePage() {
             doesn't render the layout is byte-identical to before. */}
         <ProofStrip className="-mt-2.5 mb-4" />
 
-        {gridProducts.length === 0 ? (
+        {stands.length === 0 ? (
           <p className="text-saddle">the shop is stocking up — check back shortly.</p>
         ) : (
           <>
-            <ShopGrid products={gridProducts} localProducts={localProducts} />
+            <ShopGrid stands={stands} waitlistByState={waitlistByState} />
 
             {/* SHARE ANCHOR — last, as the graduation. De-emphasized (secondary
                 Button) so the product Buy buttons stay the loudest thing on the

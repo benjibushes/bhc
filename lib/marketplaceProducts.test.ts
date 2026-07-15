@@ -35,6 +35,7 @@ const mk = (id: string, category: string): MarketplaceProduct => ({
   depositStyle: false, priceRange: '', ordersLeft: null,
   whatsIncluded: '', shipsInDays: null, packaging: '', feeds: '',
   rancherId: '', shippingCost: 0, localOnly: false, rancherState: '', externalCheckoutUrl: '', rancherConnectActive: true,
+  rancherServesStates: [], rancherSlug: '', rancherPhoto: '',
 });
 
 test('groupProducts: collapses categories into display groups, in order', () => {
