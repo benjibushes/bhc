@@ -101,12 +101,22 @@ export default function ProductCard({ p, compact = false }: { p: ProductCardProd
         </div>
 
         {/* Real scarcity only — the grid never shows sold-out rows, so any
-            count here is a true remaining-batch number. */}
-        {p.ordersLeft != null && p.ordersLeft > 0 && p.ordersLeft <= 10 && (
-          <div className="text-[11px] text-saddle">
-            {p.ordersLeft} {p.ordersLeft === 1 ? 'order' : 'orders'} left from this batch
+            count here is a true remaining-batch number ('Orders Left' in
+            Airtable; blank = unlimited and renders NOTHING). At ≤5 it earns
+            the louder farmers-market chip; 6–10 keeps the quiet line. A
+            <span>, not an <a>/<button> — the globals.css pill-rule only
+            targets interactive elements, but rounded-sm is set anyway. */}
+        {p.ordersLeft != null && p.ordersLeft > 0 && p.ordersLeft <= 5 ? (
+          <div>
+            <span className="inline-block text-[11px] font-medium text-amber-dark bg-amber/15 border border-amber/40 rounded-sm px-1.5 py-0.5">
+              only {p.ordersLeft} left this cycle
+            </span>
           </div>
-        )}
+        ) : p.ordersLeft != null && p.ordersLeft > 0 && p.ordersLeft <= 10 ? (
+          <div className="text-[11px] text-saddle">
+            {p.ordersLeft} orders left from this batch
+          </div>
+        ) : null}
 
         <div className="mt-auto pt-1">
           {p.externalHref ? (
