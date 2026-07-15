@@ -20,18 +20,45 @@
 // prod to ship this code with the flag off until canary (Task 16).
 
 import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
+import jwt from 'jsonwebtoken';
 import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { createConnectAccount, createOnboardingLink } from '@/lib/stripeConnect';
 import { requireRancher } from '@/lib/rancherAuth';
+import { JWT_SECRET } from '@/lib/secrets';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
+// Same cookie the magic-link verify flow + setup GET mint (lib/rancherAuth.ts).
+const BHC_RANCHER_COOKIE = 'bhc-rancher-auth';
 
 interface MintOptions {
   fromWizard: boolean;
   wizardToken: string;
+}
+
+/**
+ * Verify a rancher-setup JWT (the wizard's 60-day link token) and return the
+ * rancherId it vouches for, or null. This is the SAME trust the wizard itself
+ * grants — /api/rancher/setup GET accepts this exact token and even mints the
+ * session cookie from it — so honoring it here just extends that trust to the
+ * Connect re-entry path. Without it, Stripe's refresh_url GET (fired when the
+ * hosted account-link expires) 401'd any rancher whose cookie wasn't present:
+ * mid-KYC return on ANOTHER DEVICE (admin migration tools text raw 24h Stripe
+ * URLs) or a cleared cookie dead-ended at the login wall while a perfectly
+ * valid wizardToken sat ignored in the query string.
+ */
+function verifySetupToken(token: string): string | null {
+  if (!token) return null;
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET) as any;
+    if (decoded?.type !== 'rancher-setup' || !decoded.rancherId) return null;
+    return String(decoded.rancherId);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -52,13 +79,58 @@ async function mintOnboardingUrl(
     };
   }
 
+  // Cookie session first; fall back to the wizardToken when the caller came
+  // from the setup wizard. A valid rancher-setup JWT authenticates the
+  // re-entry with the same trust the wizard grants (see verifySetupToken).
   const r = await requireRancher(req);
-  if (r instanceof NextResponse) return { ok: false, response: r };
-  const { session } = r;
+  let rancherId: string;
+  let authedViaWizardToken = false;
+  if (r instanceof NextResponse) {
+    const tokenRancherId = options.fromWizard ? verifySetupToken(options.wizardToken) : null;
+    if (!tokenRancherId) return { ok: false, response: r };
+    rancherId = tokenRancherId;
+    authedViaWizardToken = true;
+  } else {
+    rancherId = r.session.rancherId;
+  }
 
-  const rancher: any = await getRecordById(TABLES.RANCHERS, session.rancherId);
+  const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
   if (!rancher) {
     return { ok: false, response: NextResponse.json({ error: 'Rancher not found' }, { status: 404 }) };
+  }
+
+  // Wizard-token re-entry: re-mint the session cookie exactly like setup GET
+  // does, so every downstream call this browser makes (connect/status POST on
+  // return from Stripe, tier/select, the dashboard) works without another
+  // login wall. Best-effort — the Connect link mint below must not fail on a
+  // cookie edge case.
+  if (authedViaWizardToken) {
+    try {
+      const sessionToken = jwt.sign(
+        {
+          type: 'rancher-session',
+          rancherId: rancher.id,
+          email: rancher['Email'] || '',
+          name: rancher['Operator Name'] || rancher['Ranch Name'] || '',
+          ranchName: rancher['Ranch Name'] || '',
+          state: rancher['State'] || '',
+        },
+        JWT_SECRET,
+        { expiresIn: '60d' },
+      );
+      const cookieStore = await cookies();
+      cookieStore.set({
+        name: BHC_RANCHER_COOKIE,
+        value: sessionToken,
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        path: '/',
+        maxAge: 60 * 24 * 60 * 60, // 60 days — same ceiling as the setup token
+      });
+    } catch (e: any) {
+      console.warn('[connect/start] session cookie re-mint failed (continuing):', e?.message);
+    }
   }
 
   let accountId: string = String(rancher['Stripe Connect Account Id'] || '');
@@ -79,7 +151,7 @@ async function mintOnboardingUrl(
       const result = await createConnectAccount({
         email,
         displayName,
-        rancherId: session.rancherId,
+        rancherId: rancherId,
       });
       accountId = result.accountId;
     } catch (e: any) {
@@ -93,8 +165,8 @@ async function mintOnboardingUrl(
           urgency: 'loud',
           kind: 'system-error',
           summary: 'Rancher stuck at Stripe Connect start (account create failed)',
-          detail: `rancher=${session.rancherId} (${String(rancher['Operator Name'] || rancher['Ranch Name'] || '')}) — ${e?.message?.slice(0, 200) || 'unknown'}`,
-          dedupeKey: `connect-start-fail-${session.rancherId}`,
+          detail: `rancher=${rancherId} (${String(rancher['Operator Name'] || rancher['Ranch Name'] || '')}) — ${e?.message?.slice(0, 200) || 'unknown'}`,
+          dedupeKey: `connect-start-fail-${rancherId}`,
           dedupeWindowMs: 30 * 60 * 1000,
         });
       } catch {}
@@ -113,7 +185,7 @@ async function mintOnboardingUrl(
     // onboarding-stuck recovery-nudge cron, which targets ranchers who began Stripe
     // Connect and abandoned KYC.
     try {
-      await updateRecord(TABLES.RANCHERS, session.rancherId, {
+      await updateRecord(TABLES.RANCHERS, rancherId, {
         'Stripe Connect Account Id': accountId,
         'Stripe Connect Status': 'onboarding',
         'Connect Started At': new Date().toISOString(),
@@ -156,8 +228,8 @@ async function mintOnboardingUrl(
         urgency: 'loud',
         kind: 'system-error',
         summary: 'Rancher stuck at Stripe Connect start (onboarding link failed)',
-        detail: `rancher=${session.rancherId} acct=${accountId} — ${e?.message?.slice(0, 200) || 'unknown'}`,
-        dedupeKey: `connect-link-fail-${session.rancherId}`,
+        detail: `rancher=${rancherId} acct=${accountId} — ${e?.message?.slice(0, 200) || 'unknown'}`,
+        dedupeKey: `connect-link-fail-${rancherId}`,
         dedupeWindowMs: 30 * 60 * 1000,
       });
     } catch {}
@@ -197,9 +269,10 @@ export async function POST(req: Request) {
  * Stripe redirects to `refresh_url` (this endpoint) when their hosted
  * account-link expires (24h default). The redirect is a GET with no body,
  * so we can't accept the wizard params via JSON — we read them from the
- * query string instead. The rancher's session cookie is still valid (the
- * Stripe-side link expiry is independent of our auth), so requireRancher
- * still works.
+ * query string instead. Auth: the session cookie when present, else a valid
+ * wizardToken from the query string (cross-device / cleared-cookie re-entry —
+ * see verifySetupToken; the token also re-mints the cookie so downstream
+ * calls work).
  *
  * Outcome: rancher who clicks a stale link gets a 302 to a freshly-minted
  * Stripe onboarding URL. They never see a 4xx or "session expired" page.
@@ -218,15 +291,26 @@ export async function GET(req: Request) {
   // GET reaches here via Stripe's refresh_url browser redirect (or a stale
   // email link). The shared mint path returns JSON errors aimed at the POST/API
   // caller — but a browser navigating here would just see raw JSON, a dead-end.
-  // For a human-facing GET, turn the two recoverable cases into friendly
+  // For a human-facing GET, turn the recoverable cases into friendly
   // redirects instead:
-  //   • 401 (session expired) → /rancher/login (password + "email me a link"
-  //     fallback both live there) so the rancher can re-auth, then pick up the
-  //     "finish payout setup" banner on the dashboard. No raw-JSON wall.
+  //   • 401 with wizard context → back to /rancher/setup?token=<wizardToken>.
+  //     Reaching 401 here means BOTH the cookie and the wizardToken failed
+  //     (a valid wizardToken authenticates above), so the token is expired —
+  //     the wizard's expired card offers the self-serve re-mint, and a rancher
+  //     who re-auths there resumes the WIZARD, not billing.
+  //   • 401 without wizard context → /rancher/login (password + "email me a
+  //     link" fallback both live there) so the rancher can re-auth, then pick
+  //     up the "finish payout setup" banner on the dashboard. No raw-JSON wall.
   //   • anything else (Connect disabled, account-create failure) → /rancher/billing
   //     where the Connect card explains what's left + offers the resume button.
   const status = result.response.status;
   if (status === 401) {
+    if (fromWizard && wizardToken) {
+      return NextResponse.redirect(
+        `${SITE_URL}/rancher/setup?token=${encodeURIComponent(wizardToken)}`,
+        302,
+      );
+    }
     return NextResponse.redirect(
       `${SITE_URL}/rancher/login?relogin=1&next=${encodeURIComponent('/rancher/billing')}`,
       302,

@@ -19,8 +19,12 @@ import { JWT_SECRET } from '@/lib/secrets';
 //   - Agreement Signed = true AND Page Live = false (signed but didn't finish
 //     pricing / about / logo / payment link → batch-approve gate not met)
 //
-// Cadence per rancher: day 3, day 7, day 14 since the relevant timestamp.
-// After day 14 we stop emailing and Telegram-ping admin for manual outreach.
+// Cadence per rancher: day 3, day 7, day 14 since the relevant timestamp
+// (every bucket carries a fallback anchor chain so a missing stamp can never
+// hide a rancher from this rail).
+// After day 14 we stop emailing and Telegram-ping admin for manual outreach —
+// ONCE per rancher per bucket ('Stuck Escalated At' + 'Stuck Escalated
+// Bucket' terminal markers; a bucket change re-arms exactly one escalation).
 // Uses a per-rancher "Last Onboarding Nudge At" stamp to throttle.
 //
 // Why this exists: 31 ranchers currently stuck mid-funnel with zero
@@ -143,11 +147,18 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
         missing.push('At least one payment link (Square / Stripe / PayPal)');
       }
     } else if (onboarding === 'Call Complete') {
-      anchorISO = r['Call Completed At'] || null;
+      // Fallback chain (mirrors the connect buckets above): the status is
+      // routinely hand-set in Airtable WITHOUT its timestamp — a stampless
+      // rancher previously got days=null → continue → invisible to this rail
+      // forever. Every fallback is at-or-before the true anchor, so the nudge
+      // can only fire LATER than day 3, never early.
+      anchorISO = r['Call Completed At'] || r['Docs Sent At'] || r._createdTime || null;
       bucketLabel = 'call-complete';
       missing.push('Sign the partner agreement (1 click in the setup wizard)');
     } else if (onboarding === 'Docs Sent') {
-      anchorISO = r['Docs Sent At'] || null;
+      // Same fallback rationale — send-onboarding's own failure path even
+      // instructs hand-setting 'Docs Sent' without the timestamp.
+      anchorISO = r['Docs Sent At'] || r['Call Completed At'] || r._createdTime || null;
       bucketLabel = 'docs-sent';
       missing.push('Open your setup link and finish the wizard');
     } else {
@@ -185,16 +196,47 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
     if (bucket === 'day14') {
       // Hand off to admin instead of emailing again. Manual outreach
       // beats automation past 2 weeks of silence.
+      //
+      // TERMINAL STATE: this branch used to re-Telegram the SAME rancher
+      // every 4 days forever (the throttle only spaces the pings) — eating
+      // MAX_PER_RUN slots and training ops to ignore the channel. Escalate
+      // ONCE per rancher per bucket: stamp 'Stuck Escalated At' + the bucket
+      // label, then skip while the stamp matches. A rancher who PROGRESSES
+      // (bucket changes) earns exactly one fresh escalation for the new
+      // bucket. A stamped record with no bucket on file (field created after
+      // the stamp, or bucket field missing in the base) is treated as
+      // terminal — conservative: stopping the spam is the point.
+      const escalatedBucket = String(r['Stuck Escalated Bucket'] || '');
+      if (r['Stuck Escalated At'] && (!escalatedBucket || escalatedBucket === bucketLabel)) {
+        continue; // already escalated for this bucket — terminal, no re-ping
+      }
       try {
         await sendTelegramMessage(
           TELEGRAM_ADMIN_CHAT_ID,
-          `🚨 <b>STUCK ONBOARDING (14d)</b>\n\n${name}\n${email}\nBucket: ${bucketLabel}\nMissing: ${missing.join('; ') || '(see record)'}\n\n<i>Bot has nudged 3x with no progress. Call them or close the loop manually.</i>`
+          `🚨 <b>STUCK ONBOARDING (14d)</b>\n\n${name}\n${email}\nBucket: ${bucketLabel}\nMissing: ${missing.join('; ') || '(see record)'}\n\n<i>Bot has nudged 3x with no progress. Call them or close the loop manually. This is the ONE escalation for this rancher/bucket — no repeats.</i>`
         );
         escalated++;
-        // Still stamp so we don't ping every day.
-        await updateRecord(TABLES.RANCHERS, r.id, {
-          'Last Onboarding Nudge At': new Date().toISOString(),
-        });
+        // Stamp throttle + terminal marker. 'Stuck Escalated At' /
+        // 'Stuck Escalated Bucket' may not exist in the Airtable base yet
+        // (possibly-missing-field pattern, cf. Previous Slugs in
+        // landing-page): retry with just the throttle stamp so the run never
+        // crashes — behavior simply degrades to the old 4-day re-ping until
+        // the fields are created.
+        try {
+          await updateRecord(TABLES.RANCHERS, r.id, {
+            'Last Onboarding Nudge At': new Date().toISOString(),
+            'Stuck Escalated At': new Date().toISOString(),
+            'Stuck Escalated Bucket': bucketLabel,
+          });
+        } catch (stampErr: any) {
+          console.warn(
+            '[onboarding-stuck] terminal-stamp failed (create Stuck Escalated At + Stuck Escalated Bucket fields on Ranchers to enable one-shot escalation):',
+            stampErr?.message
+          );
+          await updateRecord(TABLES.RANCHERS, r.id, {
+            'Last Onboarding Nudge At': new Date().toISOString(),
+          });
+        }
         results.push({ id: r.id, name, action: 'escalated-to-admin', bucket: bucketLabel });
       } catch (e: any) {
         console.error('Escalation failed:', e?.message);

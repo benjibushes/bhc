@@ -446,14 +446,13 @@ export default function RancherSetupWizard() {
     setStep(9);
   }, [tierComplete, rancher]);
 
-  // P1-2 — localStorage step persistence. Rancher returning next day with
-  // their token would always land at Step 0 even if they'd previously made it
-  // to Step 7. Now we save the current step keyed by a short token hash so
-  // the next visit picks up where they left off.
-  //
-  // Hash, don't store: the wizard token is a JWT (sensitive). We never put
-  // the full token in localStorage — just a non-reversible hash that's stable
-  // for the same token. Step number itself is non-PII so storing it is safe.
+  // P1-2 — localStorage step persistence. Rancher returning next day would
+  // always land at Step 0 even if they'd previously made it to Step 7. We save
+  // the current step keyed by the rancher RECORD ID so the next visit picks up
+  // where they left off — even when that visit arrives via a freshly-minted
+  // token from a nudge email (the original token-hash keying broke exactly
+  // there). Step number itself is non-PII so storing it is safe; the record id
+  // is already returned to this browser by GET /api/rancher/setup.
   //
   // Precedence: ?connectComplete=1 (Stripe return) overrides saved step (per
   // P0-2 fix). The Stripe useEffect runs second-ish but its setStep(8) call
@@ -470,7 +469,17 @@ export default function RancherSetupWizard() {
     }
     return `t${(h >>> 0).toString(36)}`;
   }
-  const stepStorageKey = token ? `bhc_setup_step_${tokenHashFor(token)}` : '';
+  // Key progress to the RANCHER identity (record id), not the token string.
+  // Every re-engagement path (onboarding-stuck cron, resend-setup, drips,
+  // migration-deadline) mints a FRESH setup JWT for the same rancher — the old
+  // token-hash key meant an unsigned rancher at Step 7 who clicked a day-7
+  // nudge email restored nothing and restarted at the intro. The rancher id is
+  // stable across every re-mint and is already public to this browser (GET
+  // /api/rancher/setup returns it), so it leaks nothing new.
+  const stepStorageKey = rancher?.id ? `bhc_setup_step_${rancher.id}` : '';
+  // Old token-hash key — read once for graceful migration (a rancher mid-flow
+  // on the SAME token when this ships keeps their saved step).
+  const legacyStepStorageKey = token ? `bhc_setup_step_${tokenHashFor(token)}` : '';
 
   // Restore saved step on first load after rancher data is available. Skip
   // when ?connectComplete=1 is present — the Stripe useEffect handles that.
@@ -484,22 +493,59 @@ export default function RancherSetupWizard() {
     if (!stepStorageKey) return;
     didRestoreStep.current = true;
     try {
-      const saved = localStorage.getItem(stepStorageKey);
-      if (!saved) return;
+      let saved = localStorage.getItem(stepStorageKey);
+      // Migration: no rancher-keyed progress yet, but the browser holds
+      // progress under the old token-hash key (pre-#383 visit on this same
+      // token). Copy it forward once, then retire the legacy key so future
+      // re-mints can't strand it.
+      if (!saved && legacyStepStorageKey) {
+        const legacy = localStorage.getItem(legacyStepStorageKey);
+        if (legacy) {
+          saved = legacy;
+          localStorage.setItem(stepStorageKey, legacy);
+          localStorage.removeItem(legacyStepStorageKey);
+        }
+      }
+      // Self-serve flag read synchronously from storage — the selfServeChosen
+      // STATE is set by a later effect in this same commit, so canSkipBooking()
+      // alone would see a stale `false` here and wrongly clamp a self-serve
+      // rancher's restored step back to the call gate.
+      let selfServeStored = false;
+      try {
+        selfServeStored =
+          localStorage.getItem(`bhc-selfserve-${rancher.id}`) === '1' ||
+          (!!token && localStorage.getItem(`bhc-selfserve-${token.slice(0, 32)}`) === '1');
+      } catch {
+        /* ignore */
+      }
+      const gateOpen = canSkipBooking() || selfServeStored;
+      if (!saved) {
+        // Server-informed start: a mid-flow rancher opening a FRESH token on a
+        // new browser/device has no localStorage at all — don't re-show the
+        // intro. Onboarding Status Call Complete / Docs Sent means the intro +
+        // call gate are behind them; with contact fields already on file, land
+        // them at Step 1 (Contact, pre-filled) instead of Step 0.
+        const status = String(rancher.onboardingStatus || '');
+        const hasContact = !!(String(rancher.Email || '').trim() && String(rancher.Phone || '').trim());
+        if ((status === 'Call Complete' || status === 'Docs Sent') && hasContact && gateOpen) {
+          setStep(1);
+        }
+        return;
+      }
       const n = parseInt(saved, 10);
       // Only restore valid in-range steps; 0 means "start at intro" so we
       // skip — no point setting the same state we already have.
       if (n > 0 && n <= 9) {
         // CLOSE-FIRST gate enforcement: a rancher who has NOT done the call
-        // (canSkipBooking() false) must never be restored PAST the required
-        // call into a setup step. Clamp any forward-restore to the call gate
-        // (step 4). Steps 5/6 (sign/done) imply the agreement is already in
-        // motion, so leave those alone. A rancher who HAS done the call
-        // (canSkipBooking() true) is restored exactly where they left off —
-        // this preserves mid-onboarding ranchers (Renick/Anna) so they're not
+        // (gate closed) must never be restored PAST the required call into a
+        // setup step. Clamp any forward-restore to the call gate (step 4).
+        // Steps 5/6 (sign/done) imply the agreement is already in motion, so
+        // leave those alone. A rancher whose gate is open (call done or
+        // self-serve chosen) is restored exactly where they left off — this
+        // preserves mid-onboarding ranchers (Renick/Anna) so they're not
         // stranded or re-gated.
         const restoreTarget =
-          !canSkipBooking() && (n === 1 || n === 2 || n === 3 || n === 7 || n === 8 || n === 9)
+          !gateOpen && (n === 1 || n === 2 || n === 3 || n === 7 || n === 8 || n === 9)
             ? 4
             : n;
         setStep(restoreTarget as 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9);
@@ -507,6 +553,7 @@ export default function RancherSetupWizard() {
     } catch {
       /* localStorage disabled — non-fatal, fall back to Step 0. */
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rancher, connectComplete, tierComplete, stepStorageKey]);
 
   // Persist step on every transition. Skip Step 10/6 — at "Done" we clear so
@@ -911,20 +958,64 @@ export default function RancherSetupWizard() {
   // HYBRID call-gate (Ben, 2026-06-24): the onboarding call stays the DEFAULT +
   // recommended path — most new ranchers sign up confused and need the
   // conversation. But a pre-sold rancher who knows the ropes can choose "set up
-  // myself" to bypass the booking gate. Persisted to localStorage (keyed on the
-  // setup token) so a refresh doesn't re-clamp them back to the call step.
+  // myself" to bypass the booking gate. Persisted to localStorage (keyed on
+  // the rancher record id) so a refresh doesn't re-clamp them back to the
+  // call step.
   const [selfServeChosen, setSelfServeChosen] = useState(false);
-  const selfServeKey = `bhc-selfserve-${token.slice(0, 32)}`;
+  // Keyed on the stable rancher record id (same reasoning as stepStorageKey):
+  // the old key hashed token.slice(0, 32) — the CONSTANT JWT header prefix —
+  // so it was one GLOBAL flag shared by every rancher on the browser, and a
+  // re-minted token also couldn't have scoped it anyway.
+  const selfServeKey = rancher?.id ? `bhc-selfserve-${rancher.id}` : '';
+  const legacySelfServeKey = token ? `bhc-selfserve-${token.slice(0, 32)}` : '';
   useEffect(() => {
+    if (!selfServeKey) return;
     try {
-      if (localStorage.getItem(selfServeKey) === '1') setSelfServeChosen(true);
+      let chosen = localStorage.getItem(selfServeKey) === '1';
+      // Migrate the legacy (globally-shared) flag forward once, then delete it
+      // so the cross-rancher bleed ends here.
+      if (legacySelfServeKey && localStorage.getItem(legacySelfServeKey) !== null) {
+        if (!chosen && localStorage.getItem(legacySelfServeKey) === '1') {
+          chosen = true;
+          localStorage.setItem(selfServeKey, '1');
+        }
+        localStorage.removeItem(legacySelfServeKey);
+      }
+      if (chosen) setSelfServeChosen(true);
     } catch { /* localStorage unavailable */ }
-  }, [selfServeKey]);
+  }, [selfServeKey, legacySelfServeKey]);
   const chooseSelfServe = () => {
     setSelfServeChosen(true);
-    try { localStorage.setItem(selfServeKey, '1'); } catch { /* ignore */ }
+    try { if (selfServeKey) localStorage.setItem(selfServeKey, '1'); } catch { /* ignore */ }
     setStep(1);
   };
+
+  // Expired/invalid-token recovery — self-serve re-mint (wave B). The old
+  // card dead-ended at "email ben@buyhalfcow.com"; now the rancher enters
+  // their email and POST /api/rancher/setup/resend-link mails a fresh 60-day
+  // link (rate-limited, no enumeration — the response is identical whether or
+  // not the email matches, so the UI always shows the same neutral copy).
+  const [resendEmail, setResendEmail] = useState('');
+  const [resendStatus, setResendStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+  async function requestFreshSetupLink() {
+    const email = resendEmail.trim();
+    if (!email || !email.includes('@')) {
+      setResendStatus('error');
+      return;
+    }
+    setResendStatus('sending');
+    try {
+      const res = await fetch('/api/rancher/setup/resend-link', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      if (!res.ok) throw new Error('resend failed');
+      setResendStatus('sent');
+    } catch {
+      setResendStatus('error');
+    }
+  }
 
   function canSkipBooking(): boolean {
     if (selfServeChosen) return true;
@@ -955,12 +1046,60 @@ export default function RancherSetupWizard() {
         <div className="py-24 max-w-xl mx-auto text-center space-y-4">
           <h1 className="font-serif text-3xl text-charcoal">Couldn’t load your setup</h1>
           <p className="text-saddle">{error}</p>
+          {resendStatus === 'sent' ? (
+            <div className="border border-dust bg-bone-warm px-4 py-4 text-left">
+              <p className="text-sm text-charcoal font-medium">Check your inbox</p>
+              <p className="text-sm text-saddle mt-1">
+                If that email matches a rancher account, a fresh setup link is on its
+                way. Your progress is saved — you’ll pick up where you left off.
+              </p>
+            </div>
+          ) : (
+            <div className="border border-dust bg-bone-warm px-4 py-4 text-left space-y-3">
+              <p className="text-sm text-charcoal font-medium">
+                Links expire after 60 days — get a fresh one:
+              </p>
+              <input
+                type="email"
+                value={resendEmail}
+                onChange={(e) => {
+                  setResendEmail(e.target.value);
+                  if (resendStatus === 'error') setResendStatus('idle');
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && resendStatus !== 'sending') requestFreshSetupLink();
+                }}
+                placeholder="you@yourranch.com"
+                className="w-full px-3 py-3 border border-dust bg-bone text-base text-charcoal transition-base focus:outline-none focus:border-charcoal hover:border-saddle"
+              />
+              <button
+                type="button"
+                onClick={requestFreshSetupLink}
+                disabled={resendStatus === 'sending'}
+                className="w-full px-4 py-3 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:opacity-90 disabled:opacity-50"
+              >
+                {resendStatus === 'sending' ? 'Sending…' : 'Email me a fresh setup link'}
+              </button>
+              {resendStatus === 'error' && (
+                <p className="text-sm text-saddle">
+                  That didn’t go through — check the email address and try again.
+                </p>
+              )}
+            </div>
+          )}
           <p className="text-sm text-dust">
-            If your link is older than 60 days, email{' '}
+            Already signed your agreement?{' '}
+            <a className="underline" href="/rancher/login">
+              Log in to your dashboard
+            </a>{' '}
+            instead.
+          </p>
+          <p className="text-sm text-dust">
+            Stuck? Email{' '}
             <a className="underline" href="mailto:ben@buyhalfcow.com">
               ben@buyhalfcow.com
-            </a>{' '}
-            for a fresh one.
+            </a>
+            .
           </p>
         </div>
       </Container>
