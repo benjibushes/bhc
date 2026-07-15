@@ -23,6 +23,7 @@ import Link from 'next/link';
 import Container from '../../components/Container';
 import Button from '../../components/Button';
 import Divider from '../../components/Divider';
+import ProofStrip from '../../components/ProofStrip';
 import base, { TABLES, escapeAirtableValue, withTimeout, resolveAirtableTimeoutMs } from '@/lib/airtable';
 import { jsonLdSafe } from '@/lib/jsonLdSafe';
 import {
@@ -324,6 +325,13 @@ export default async function HalfACowStatePage({ params }: Props) {
       <section className="pb-12 md:pb-20">
         <Container>
           <div className="max-w-2xl mx-auto space-y-8">
+            {/* Social proof above the FAQ — network-wide live Closed Won
+                aggregates (honest: these are network numbers, not {name}
+                numbers, and the copy claims nothing state-specific). Same
+                build-safety contract as fetchStateCounts: fails soft to
+                nothing inside the existing space-y-8 rhythm — a prerender
+                can never throw and a timeout never renders a zero. */}
+            <ProofStrip className="text-center" />
             <h2 className="font-serif text-3xl md:text-4xl lowercase text-center">
               {name} half-beef questions, answered straight
             </h2>
