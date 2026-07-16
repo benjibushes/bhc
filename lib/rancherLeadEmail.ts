@@ -19,6 +19,7 @@
 // lib/bulkRoute.
 
 import type { TierSlug } from './tiers';
+import { phoneLooksOutOfState } from './phoneHygiene';
 
 export const STORAGE_LABELS: Record<string, string> = {
   have_freezer: 'Has freezer space',
@@ -54,6 +55,13 @@ export interface LeadFacts {
   budget?: string;
   qualifiedAtIso?: string;
   responseAckAt?: unknown;
+  // PHONE HYGIENE (close-the-loop 2026-07-15): when the buyer's area code
+  // provably maps to a different state than their buyer state, one quiet
+  // "text first" line renders — a rancher cold-calling an out-of-state code
+  // reads as spam and gets screened. Unknown code / unparseable phone /
+  // matching state → no line (positive knowledge only, never a guess).
+  buyerPhone?: string;
+  buyerState?: string;
 }
 
 /**
@@ -70,15 +78,28 @@ export function leadFactsHtml(facts: LeadFacts, nowMs: number): string {
   }
   if (facts.budget) rows.push(`<p style="margin:4px 0;"><strong>Budget:</strong> ${facts.budget}</p>`);
   const ago = qualifiedAgoLabel(facts.qualifiedAtIso, nowMs);
-  if (rows.length === 0 && !ago) return '';
+  const phoneNote = phoneAreaCodeNoteHtml(facts.buyerPhone, facts.buyerState);
+  if (rows.length === 0 && !ago && !phoneNote) return '';
   const agoLine = ago
     ? `<p style="margin:8px 0 0 0;font-size:12px;color:#6B4F3F;">Completed the 4-question qualification quiz — ${ago}.</p>`
     : '';
   return `<div style="background:#F4F1EC;border:2px solid #0E0E0E;padding:14px 18px;margin:16px 0;font-size:14px;color:#0E0E0E;">
                 <p style="margin:0 0 8px 0;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">What this buyer told us</p>
                 ${rows.join('\n                ')}
-                ${agoLine}${commitmentLineHtml(facts.responseAckAt)}
+                ${agoLine}${commitmentLineHtml(facts.responseAckAt)}${phoneNote}
               </div>`;
+}
+
+/**
+ * One quiet line when the buyer's phone area code positively maps to a
+ * different state than their buyer state (movers keep numbers — the first
+ * cold CALL from a strange in-state rancher to an out-of-state code gets
+ * screened; a text lands). Renders '' on unknown code / unparseable phone /
+ * matching state — phoneLooksOutOfState only fires on positive knowledge.
+ */
+export function phoneAreaCodeNoteHtml(buyerPhone: unknown, buyerState: unknown): string {
+  if (!phoneLooksOutOfState(buyerPhone, buyerState)) return '';
+  return `<p style="margin:8px 0 0 0;font-size:12px;color:#6B4F3F;">note: phone area code looks out-of-state — text first.</p>`;
 }
 
 /**

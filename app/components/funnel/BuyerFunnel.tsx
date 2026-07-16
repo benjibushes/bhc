@@ -57,6 +57,7 @@ import { trackEvent, metaEventId } from '@/lib/analytics';
 import { BEN_SALES_CAL_URL } from '@/lib/salesContact';
 import { isDepositCapableMatch } from '@/lib/depositOptionality';
 import { REFUND_POLICY_SHORT } from '@/lib/refundPolicy';
+import { smsHref, formatPhonePretty, buyerIntroSmsBody } from '@/lib/phoneHygiene';
 import LowTicketRail from './LowTicketRail';
 import type { MarketplaceProduct } from '@/lib/marketplaceProducts';
 
@@ -117,6 +118,10 @@ interface RevealRancher {
   state: string;
   slug?: string;
   rancherTier?: string;
+  // TEXT-YOUR-RANCHER-NOW (2026-07-15): /api/qualify sends '' for Operator
+  // tier or no phone on record; a non-empty value unlocks the additive
+  // "or text them right now" sms: affordance on the matched reveals.
+  phone?: string;
 }
 
 // ── Nationwide opt-in match payload (POST /api/member/preferences) ──────────
@@ -1082,6 +1087,20 @@ function Reveal({
   // Live "family #N" line — familiesMatched + 1 (rounded, comma-formatted). Hides
   // if stats failed.
   const familyNumber = stats && stats.familiesMatched > 0 ? commas(stats.familiesMatched + 1) : null;
+  // TEXT-YOUR-RANCHER-NOW (close-the-loop 2026-07-15): additive "or text them
+  // right now" affordance on the matched reveals — lets the ready buyer open
+  // the channel instead of waiting out the 24–48h promise (the 24–48h copy
+  // stays; this is an extra door, not a new promise). Renders ONLY when the
+  // matched rancher has a normalizable phone AND isn't Operator tier
+  // (/api/qualify blanks Operator phones server-side; smsHref returning null
+  // on a junk phone is the belt — never a broken sms: link).
+  const rancherFirstName = (rancher?.name || '').trim().split(/\s+/)[0] || '';
+  const buyerFirstName = (result?.buyerName || '').trim().split(/\s+/)[0] || '';
+  const textNowHref =
+    matched && !operatorMatch && rancher?.phone
+      ? smsHref(rancher.phone, buyerIntroSmsBody(rancherFirstName, buyerFirstName, cut))
+      : null;
+  const textNowPretty = textNowHref && rancher?.phone ? formatPhonePretty(rancher.phone) : '';
 
   return (
     <section className="space-y-6 text-center">
@@ -1160,6 +1179,17 @@ function Reveal({
               ? <>no rush either way — our team has your details and will call you today to lock in your share with {rancher.name}.</>
               : <>no rush either way — {rancher.name} has your details and will call or text within 24&ndash;48 hours.</>}
           </p>
+          {/* additive text-now door (never a peer button — the deposit stays
+              the single primary). pre-filled sms so the buyer sends in one tap. */}
+          {textNowHref && (
+            <p className="text-center text-xs text-saddle">
+              or open the line yourself —{' '}
+              <a href={textNowHref} className="underline">
+                text {rancherFirstName || rancher.name} now
+              </a>{' '}
+              at {textNowPretty}.
+            </p>
+          )}
         </div>
       ) : offerOperatorCall && result?.qualified ? (
         /* ── Mode 1: operator sales call (non-deposit-capable only) ──────────────
@@ -1216,6 +1246,17 @@ function Reveal({
               ? <>keep your phone handy — our team calls to lock in your share with {rancher.name}. no payment now.</>
               : <>keep an eye on your phone — {rancher.name} calls or texts you direct, no middleman.</>}
           </p>
+          {/* additive text-now door — the 24–48h promise above stays; this
+              just lets the ready buyer make first contact in one tap. */}
+          {textNowHref && (
+            <p className="text-xs text-saddle">
+              don&apos;t feel like waiting?{' '}
+              <a href={textNowHref} className="underline">
+                text {rancherFirstName || rancher.name} right now
+              </a>{' '}
+              at {textNowPretty} — we pre-filled the message.
+            </p>
+          )}
           {/* Compact low-ticket line (Phase 8) — share intro is in motion;
               never compete with it, just leave a taste-today door open. */}
           <LowTicketRail picks={lowTicketPicks || []} variant="compact" />

@@ -1497,6 +1497,11 @@ export async function POST(request: Request) {
               budget: buyerBudget,
               qualifiedAtIso: String(buyerRec['Qualified At'] || '') || undefined,
               responseAckAt: buyerRec['Response Ack At'],
+              // PHONE HYGIENE (2026-07-15): a provably out-of-state area code
+              // appends one quiet "text first" line (movers keep numbers; a
+              // cold call from a strange code gets screened, a text lands).
+              buyerPhone: String(buyerRec['Phone'] || buyerPhone || ''),
+              buyerState: String(buyerRec['State'] || buyerState || ''),
             },
             Date.now(),
           );

@@ -6,6 +6,7 @@ import {
   leadFactsHtml,
   closeCtaHtml,
   readyBannerHtml,
+  phoneAreaCodeNoteHtml,
 } from './rancherLeadEmail';
 
 const NOW = new Date('2026-07-15T12:00:00.000Z').getTime();
@@ -88,4 +89,32 @@ test('ready banner: Operator variant never promises the rancher will call', () =
   assert.doesNotMatch(readyBannerHtml('operator'), /your call/);
   assert.match(readyBannerHtml(null), /expecting your call within 24–48 hours/);
   assert.match(readyBannerHtml('pasture'), /expecting your call/);
+});
+
+// ── phone-hygiene note (close-the-loop 2026-07-15) ──────────────────────────
+test('area-code note renders ONLY on a positive out-of-state mismatch', () => {
+  // 720 = CO, buyer in TX → note.
+  assert.match(
+    phoneAreaCodeNoteHtml('(720) 491-7819', 'TX'),
+    /area code looks out-of-state — text first/,
+  );
+  // Matching state → no note.
+  assert.equal(phoneAreaCodeNoteHtml('(720) 491-7819', 'CO'), '');
+  // Unknown area code (907/AK not in the honest table) → no note, no guess.
+  assert.equal(phoneAreaCodeNoteHtml('(907) 240-1234', 'TX'), '');
+  // Unparseable phone / unknown buyer state → no note.
+  assert.equal(phoneAreaCodeNoteHtml('junk', 'TX'), '');
+  assert.equal(phoneAreaCodeNoteHtml('(720) 491-7819', ''), '');
+});
+
+test('facts block appends the area-code note and it alone can carry the block', () => {
+  const html = leadFactsHtml(
+    { cut: 'Half', buyerPhone: '7204917819', buyerState: 'TX' },
+    NOW,
+  );
+  assert.match(html, /text first/);
+  const noteOnly = leadFactsHtml({ buyerPhone: '7204917819', buyerState: 'TX' }, NOW);
+  assert.match(noteOnly, /text first/);
+  const clean = leadFactsHtml({ cut: 'Half', buyerPhone: '7204917819', buyerState: 'CO' }, NOW);
+  assert.doesNotMatch(clean, /text first/);
 });

@@ -42,7 +42,13 @@ export type SMSEventType =
 // platform's most time-sensitive rancher notification yet rode email (spam-
 // blind) + opt-in push only, while the deposit-paid SMS rail sat proven right
 // next to it. Fired from matching/suggest + bulkRoute alongside the intro.
-export type RancherSMSEventType = 'deposit_paid_rancher' | 'new_lead_rancher';
+// Close-the-loop (2026-07-15): 'first_touch_sla_rancher' — the 48h first-call
+// SLA nudge fired by app/api/cron/first-touch-sla when an intro sits
+// untouched (lib/untouchedIntros semantics). One per referral, ever.
+export type RancherSMSEventType =
+  | 'deposit_paid_rancher'
+  | 'new_lead_rancher'
+  | 'first_touch_sla_rancher';
 
 // F3 (2026-07-01): gate unified into lib/smsFlag's smsEnabled() — this file
 // used to require ENABLE_SMS === '1' while the demand-router/orphan-reaper
@@ -110,6 +116,9 @@ interface RancherSMSEventVars {
   state?: string;
   cut?: string;        // "Quarter" | "Half" | "Whole" | freeform
   amount?: number;     // dollars paid as deposit
+  // first_touch_sla_rancher only — the buyer's number so the rancher can tap
+  // to call straight from the text (phones auto-linkify a bare number).
+  buyerPhone?: string;
 }
 
 // Body builder for rancher operational SMS. Pulled out (mirrors buildBody) so
@@ -127,6 +136,14 @@ function buildRancherBody(type: RancherSMSEventType, vars: RancherSMSEventVars):
       return `BuyHalfCow: ${who}${where} just PAID a deposit for a ${cut}${amt}. They're expecting your call today. Accept + details in your dashboard: ${process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com'}/rancher`;
     case 'new_lead_rancher':
       return `New BuyHalfCow buyer: ${who}${vars.state ? ` (${vars.state})` : ''}${vars.cut ? ` — ${vars.cut.toLowerCase()}` : ''}. Contact info in your email + dashboard: ${process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com'}/rancher`;
+    case 'first_touch_sla_rancher': {
+      // 48h first-call SLA nudge (close-the-loop 2026-07-15). Lowercase brand
+      // voice, one action, GSM-7 safe (hyphens, no emoji/em-dash). The bare
+      // buyer number auto-linkifies as tap-to-call on every handset.
+      const meta = [vars.state, cut !== 'share' ? cut : ''].filter(Boolean).join(', ');
+      const call = vars.buyerPhone ? ` tap to call: ${vars.buyerPhone}.` : '';
+      return `${who}${meta ? ` (${meta})` : ''} is waiting on your first call - 2 days now.${call} - buyhalfcow`;
+    }
   }
 }
 
