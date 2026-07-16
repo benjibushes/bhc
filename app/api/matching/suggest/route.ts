@@ -24,6 +24,7 @@ import {
   parseRoutingWeightOverride,
 } from '@/lib/routingPriority';
 import { nationwideAllowed, nationwideRoutingEnabled, NATIONWIDE_PREFERENCE_FIELD } from '@/lib/nationwidePreference';
+import { leadFactsHtml, closeCtaHtml, readyBannerHtml } from '@/lib/rancherLeadEmail';
 
 export const maxDuration = 90;
 
@@ -1286,38 +1287,42 @@ export async function POST(request: Request) {
 
         // Look up Ready-to-Buy state on the buyer record so the rancher email
         // emphasizes urgency. Don't fail the route if Airtable hiccups.
-        // Also pull qualification quiz answers so the rancher sees what the
-        // buyer committed to (tier / timing / storage / ack). Qualified buyers
-        // = much higher close rate; surfacing the gate they cleared signals
-        // quality to the rancher.
+        // FACTS over scores (rancher-feedback-loop 2026-07-15): the old block
+        // here rendered '⭐ Qualified buyer — N/100' — but N is a 3-value
+        // constant post-funnel (75/90/100), so every lead was a star — and
+        // claimed the buyer 'acknowledged commitment to respond within 24
+        // hours' while the funnel hard-coded ack:true for everyone. Now the
+        // block shows only concrete facts (cut / timing / storage / budget /
+        // quiz freshness), and the commitment line renders ONLY when the
+        // buyer's 'Response Ack At' is actually stamped (new field — older
+        // buyers lack it and get no line). Builders + gating pinned in
+        // lib/rancherLeadEmail.test.ts.
         let buyerReadyToBuy = false;
         let qualBlock = '';
         try {
           const buyerRec: any = await getRecordById(TABLES.CONSUMERS, buyerId);
           buyerReadyToBuy = !!buyerRec['Ready to Buy'];
-          const qualScore = Number(buyerRec['Qualification Score'] || 0);
-          const qualRaw = String(buyerRec['Qualification Answers'] || '');
-          if (qualScore >= 75 && qualRaw) {
-            try {
-              const qa = JSON.parse(qualRaw);
-              const storageLabels: Record<string, string> = {
-                have_freezer: 'Has freezer space',
-                need_freezer: 'Buying a freezer',
-                rancher_holds: 'Needs rancher to hold short-term',
-                cuts_only: 'Pickup cuts only',
-              };
-              qualBlock = `<div style="background:#F4F1EC;border:2px solid #0E0E0E;padding:14px 18px;margin:16px 0;font-size:14px;color:#0E0E0E;">
-                <p style="margin:0 0 8px 0;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">⭐ Qualified buyer — ${qualScore}/100</p>
-                <p style="margin:4px 0;"><strong>Tier:</strong> ${qa.tier || 'unspecified'}</p>
-                <p style="margin:4px 0;"><strong>Timing:</strong> ${qa.timing || 'unspecified'}</p>
-                <p style="margin:4px 0;"><strong>Storage:</strong> ${storageLabels[qa.storage] || qa.storage || 'unspecified'}</p>
-                <p style="margin:8px 0 0 0;font-size:12px;color:#6B4F3F;">Buyer cleared the 4-question qualification quiz and acknowledged commitment to respond within 24 hours.</p>
-              </div>`;
-            } catch {
-              // Bad JSON — show raw fallback so the data isn't lost.
-              qualBlock = `<p style="font-size:13px;color:#6B4F3F;"><strong>Qualification:</strong> ${qualScore}/100</p>`;
-            }
-          }
+          let qa: any = {};
+          try {
+            qa = JSON.parse(String(buyerRec['Qualification Answers'] || '') || '{}');
+          } catch {}
+          // Budget singleSelect can come back as a string or {name} object.
+          const rawBudget = buyerRec['Budget'];
+          const buyerBudget =
+            (rawBudget && typeof rawBudget === 'object' && 'name' in rawBudget
+              ? String(rawBudget.name)
+              : String(rawBudget || '')) || String(budgetRange || '');
+          qualBlock = leadFactsHtml(
+            {
+              cut: String(qa?.tier || orderType || ''),
+              timing: String(qa?.timing || ''),
+              storage: String(qa?.storage || ''),
+              budget: buyerBudget,
+              qualifiedAtIso: String(buyerRec['Qualified At'] || '') || undefined,
+              responseAckAt: buyerRec['Response Ack At'],
+            },
+            Date.now(),
+          );
         } catch {}
 
         // Send rancher the buyer's info. Wrap in try/catch + Telegram alert
@@ -1325,10 +1330,15 @@ export async function POST(request: Request) {
         // this: Airtable shows "Intro Sent" but the rancher's inbox is
         // empty → buyer waits for a call that never comes → ghost.
         if (rancherEmail) {
+          // Operator symmetry (B2 2026-07-15): on the Operator tier the BHC
+          // team runs the close (buyer reveal says "ben reaches out today";
+          // commission is zero) — so this email must not urge the rancher to
+          // call-and-close, and the one-click close buttons stay off (a
+          // rancher-clicked Closed Lost would fight the team mid-close).
+          const rancherTier = tierFor(topMatch);
+          const isOperatorTier = rancherTier === 'operator';
           const subjectPrefix = buyerReadyToBuy ? '🔥 READY TO BUY · ' : '';
-          const readyBanner = buyerReadyToBuy
-            ? `<div style="background:#FFF6E0;border:2px solid #C99A2E;padding:14px 18px;margin:16px 0;font-size:14px;color:#0E0E0E;"><strong>READY TO BUY in 1–2 months.</strong> Buyer just clicked YES on the Ready-to-Buy CTA. They're expecting your call within 24–48 hours.</div>`
-            : '';
+          const readyBanner = buyerReadyToBuy ? readyBannerHtml(rancherTier) : '';
 
           // Rancher quick-action JWT — 30d. Lets the rancher mark the
           // referral status with one click from this email instead of
@@ -1401,8 +1411,8 @@ export async function POST(request: Request) {
                 <p><strong>Order:</strong> ${orderType || 'Not specified'}</p>
                 ${budgetRange ? `<p><strong>Budget:</strong> ${budgetRange}</p>` : ''}
                 ${notes ? `<p><strong>Notes:</strong> ${notes}</p>` : ''}
-                <p>Reach out within 24 hours to close the sale. Reply-all to keep me in the loop.</p>
-                ${actionsBlock}
+                ${closeCtaHtml(rancherTier)}
+                ${isOperatorTier ? '' : actionsBlock}
                 <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Benjamin, BuyHalfCow</p>
               </div>` as any,
             } as any);

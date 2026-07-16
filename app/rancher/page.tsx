@@ -11,6 +11,7 @@ import Link from 'next/link';
 import { deriveLadder, deriveDeposit, checkWholePrice, MIN_TIER_PRICE } from '@/lib/pricing';
 import { netEarningsFor, referralRail } from '@/lib/commission';
 import { gradeLead, gradeSortWeight } from '@/lib/leadGrade';
+import { selectUntouchedIntros } from '@/lib/untouchedIntros';
 import {
   groupReferralsByBuyer,
   deriveActivityEvents,
@@ -303,7 +304,10 @@ export default function RancherDashboardPage() {
   const [referrals, setReferrals] = useState<Referral[]>([]);
   const [closeModal, setCloseModal] = useState<Referral | null>(null);
   const [benefits, setBenefits] = useState<NetworkBenefit[]>([]);
-  const [closeForm, setCloseForm] = useState({ status: 'Closed Won', saleAmount: '', notes: '', confirmed: false });
+  // lostReason: the close-deal modal's "No Sale (Lost)" path must carry a
+  // structured reason like the Mark Lost modal does — codes map server-side
+  // onto the Referrals 'Loss Reason' singleSelect (lib/lossReasons).
+  const [closeForm, setCloseForm] = useState({ status: 'Closed Won', saleAmount: '', notes: '', confirmed: false, lostReason: 'no_response' });
   // My Buyers tab — filter + sort. Helps ranchers triage when they have 20+
   // active leads. Defaults to all + newest-first so the latest intros surface.
   const [buyerFilter, setBuyerFilter] = useState<'all' | 'Intro Sent' | 'Rancher Contacted' | 'Negotiation' | 'stale'>('all');
@@ -333,7 +337,9 @@ export default function RancherDashboardPage() {
   // Mobile Safari renders window.prompt as a tiny native popup that ranchers
   // abandoned. Branded modal matches close + pass UX.
   const [lostModal, setLostModal] = useState<Referral | null>(null);
-  const [lostReasonCode, setLostReasonCode] = useState<'no_response' | 'price' | 'not_a_fit' | 'other'>('no_response');
+  const [lostReasonCode, setLostReasonCode] = useState<
+    'no_response' | 'price' | 'timing' | 'bought_elsewhere' | 'wrong_intent' | 'other'
+  >('no_response');
   const [lostFreeText, setLostFreeText] = useState('');
   // Revive-lead modal (admin-only) — audit replaces window.prompt() status
   // picker. Branded select matches the Mark-Lost UX. Same revive POST.
@@ -969,10 +975,14 @@ export default function RancherDashboardPage() {
 
   const submitMarkLost = async () => {
     if (!lostModal) return;
+    // Codes map server-side onto the Referrals 'Loss Reason' singleSelect
+    // (lib/lossReasons) — labels here are just the Notes stamp text.
     const reasonMap: Record<string, string> = {
-      no_response: 'Buyer ghosted',
-      price: 'Price / budget mismatch',
-      not_a_fit: 'Not a fit',
+      no_response: "Couldn't reach buyer",
+      price: 'Price too high',
+      timing: 'Timing — buying later',
+      bought_elsewhere: 'Bought elsewhere',
+      wrong_intent: 'Wrong intent (not a buyer)',
       other: 'Other',
     };
     const label = reasonMap[lostReasonCode];
@@ -1025,6 +1035,7 @@ export default function RancherDashboardPage() {
         body: JSON.stringify({
           status: closeForm.status,
           saleAmount: closeForm.status === 'Closed Won' ? parseFloat(closeForm.saleAmount) || 0 : undefined,
+          closeReason: closeForm.status === 'Closed Lost' ? closeForm.lostReason : undefined,
           notes: closeForm.notes || undefined,
         }),
       });
@@ -1034,7 +1045,7 @@ export default function RancherDashboardPage() {
         return;
       }
       setCloseModal(null);
-      setCloseForm({ status: 'Closed Won', saleAmount: '', notes: '', confirmed: false });
+      setCloseForm({ status: 'Closed Won', saleAmount: '', notes: '', confirmed: false, lostReason: 'no_response' });
       await fetchDashboard();
     } catch {
       setUpdateError('Network error. Please check your connection.');
@@ -1893,6 +1904,19 @@ export default function RancherDashboardPage() {
   // Uncontacted buyers = still at "Intro Sent" (the "Contacted ✓" action moves
   // them off it). These are the leads needing a first hello.
   const uncontactedRefs = activeRefs.filter((r) => r.status === 'Intro Sent');
+  // Touch accountability (2026-07-15): intros the rancher has never come back
+  // to — Last Rancher Activity At empty OR same-day as the intro (historical
+  // scanner auto-stamp artifact; a genuine same-day touch moves the status,
+  // which the selector honors). Shared rule with the Monday scorecard via
+  // lib/untouchedIntros; selector returns oldest-waiting first.
+  const needsFirstCallRefs = selectUntouchedIntros(
+    referrals.map((r) => ({
+      ref: r,
+      status: r.status,
+      introSentAt: r.intro_sent_at,
+      lastRancherActivityAt: r.last_rancher_activity_at,
+    })),
+  ).map((x) => x.ref);
   // Money the rancher's been paid (Stripe payouts) — drives the money strip +
   // Money card. paidCents is the last completed payout; available is balance.
   const paidDollars =
@@ -2707,6 +2731,7 @@ export default function RancherDashboardPage() {
               collectBalanceRefs={collectBalanceRefs}
               collectBalanceTotal={collectBalanceTotal}
               uncontactedRefs={uncontactedRefs}
+              needsFirstCallRefs={needsFirstCallRefs}
               activeRefs={activeRefs}
               unreadCount={unreadCount}
               depositAwaitRefs={depositAwaitRefs}
@@ -4763,13 +4788,15 @@ export default function RancherDashboardPage() {
                   onChange={(e) => setLostReasonCode(e.target.value as typeof lostReasonCode)}
                   className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal"
                 >
-                  <option value="no_response">Buyer ghosted / never responded</option>
-                  <option value="price">Price / budget mismatch</option>
-                  <option value="not_a_fit">Not a fit</option>
+                  <option value="no_response">Couldn&apos;t reach the buyer / ghosted</option>
+                  <option value="price">Price too high</option>
+                  <option value="timing">Timing — they&apos;re buying later</option>
+                  <option value="bought_elsewhere">Bought elsewhere</option>
+                  <option value="wrong_intent">Wrong intent (not actually a buyer)</option>
                   <option value="other">Other</option>
                 </select>
                 <p className="text-xs text-saddle mt-2">
-                  "Buyer ghosted" flags the buyer as Non-Responsive after 2 such marks across ranchers — helps us reroute future leads away from time-wasters.
+                  "Couldn't reach the buyer" flags them as Non-Responsive after 2 such marks across ranchers — helps us reroute future leads away from time-wasters.
                 </p>
               </div>
 
@@ -5389,6 +5416,31 @@ export default function RancherDashboardPage() {
                 </select>
               </div>
 
+              {/* Structured loss reason (2026-07-15): same codes as the Mark
+                  Lost modal — server maps them onto the Referrals 'Loss
+                  Reason' singleSelect (lib/lossReasons). Without this, every
+                  loss closed here left the field blank. */}
+              {closeForm.status === 'Closed Lost' && (
+                <div>
+                  <label className="block text-sm font-medium mb-2">Reason</label>
+                  <select
+                    value={closeForm.lostReason}
+                    onChange={(e) => setCloseForm(prev => ({ ...prev, lostReason: e.target.value }))}
+                    className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal"
+                  >
+                    <option value="no_response">Couldn&apos;t reach the buyer / ghosted</option>
+                    <option value="price">Price too high</option>
+                    <option value="timing">Timing — they&apos;re buying later</option>
+                    <option value="bought_elsewhere">Bought elsewhere</option>
+                    <option value="wrong_intent">Wrong intent (not actually a buyer)</option>
+                    <option value="other">Other</option>
+                  </select>
+                  <p className="text-xs text-saddle mt-2">
+                    "Couldn't reach the buyer" flags them as Non-Responsive after 2 such marks across ranchers — helps us reroute future leads away from time-wasters.
+                  </p>
+                </div>
+              )}
+
               {closeForm.status === 'Closed Won' && (
                 <>
                   <div>
@@ -5630,6 +5682,7 @@ function HomeTab({
   collectBalanceRefs,
   collectBalanceTotal,
   uncontactedRefs,
+  needsFirstCallRefs,
   activeRefs,
   unreadCount,
   depositAwaitRefs,
@@ -5655,6 +5708,8 @@ function HomeTab({
   collectBalanceRefs: Referral[];
   collectBalanceTotal: number;
   uncontactedRefs: Referral[];
+  /** Untouched intros (lib/untouchedIntros) — the needs-first-call queue rows. */
+  needsFirstCallRefs: Referral[];
   activeRefs: Referral[];
   unreadCount: number;
   // Today queue inputs (2026-07-15) — pure re-slices of already-fetched data,
@@ -5737,6 +5792,7 @@ function HomeTab({
       <TodayQueue
         depositAwaitRefs={depositAwaitRefs}
         invoiceDueRefs={invoiceDueRefs}
+        needsFirstCallRefs={needsFirstCallRefs}
         newOrders={newOrders}
         newLeadRefs={uncontactedRefs}
         unreadCount={unreadCount}

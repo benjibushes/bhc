@@ -3,6 +3,8 @@ import { sendEmail, sendBuyerIntroNotification } from './email';
 import { normalizeState, normalizeStates } from './states';
 import { isQualifiedForRouting } from './qualification';
 import { isRancherOperationalForBuyers, getOperationalServedStates } from '@/lib/rancherEligibility';
+import { tierFor } from './tiers';
+import { closeCtaHtml } from './rancherLeadEmail';
 import jwt from 'jsonwebtoken';
 
 import { JWT_SECRET, generateMemberLoginToken } from '@/lib/secrets';
@@ -336,7 +338,7 @@ export async function bulkRouteStateToRancher(opts: {
               <p><strong>Order:</strong> ${orderType || 'Not specified'}</p>
               ${budgetRange ? `<p><strong>Budget:</strong> ${budgetRange}</p>` : ''}
               ${notes ? `<p><strong>Notes:</strong> ${notes}</p>` : ''}
-              <p>Reach out within 24 hours to close the sale. Reply-all to keep me in the loop.</p>
+              ${closeCtaHtml(tierFor(rancher))}
               <p><a href="${SITE_URL}/rancher/inbox">View in your inbox</a></p>
               <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Benjamin, BuyHalfCow | 10% commission on BHC referral sales.</p>
             </div>`,

@@ -17,7 +17,9 @@ import {
 } from '@/lib/telegram';
 import { createCommissionInvoice } from '@/lib/stripe-commission';
 import { sendInstantCommissionInvoice } from '@/lib/email';
-import { transition } from '@/lib/deal/transitionLive';
+import { transition, logDealAudit } from '@/lib/deal/transitionLive';
+import { statusToState } from '@/lib/deal/states';
+import { lossReasonFromQuickAction, type LossReason } from '@/lib/lossReasons';
 
 // Site URL for internal calls (used by pass-action re-route → matching/suggest)
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
@@ -126,11 +128,37 @@ button[type=submit]{padding:14px 32px;background:#0E0E0E;color:#F4F1EC;border:no
 </style></head><body><div class="box">${body}${cta ? `<p><a href="${cta.href}" class="cta">${cta.label}</a></p>` : ''}</div></body></html>`;
 }
 
+// Unified loss-reason options (rancher-feedback-loop 2026-07-15). Option
+// VALUES are the exact Referrals 'Loss Reason' singleSelect choice strings —
+// identity-mapped by lib/lossReasons — so every close surface aggregates
+// into the same structured field. 'At capacity' dropped from this form: the
+// pass rail covers it, and it isn't a loss outcome.
+const LOST_REASON_OPTIONS = `<option value="">—</option>
+    <option value="Couldn't reach buyer">Couldn't reach the buyer</option>
+    <option value="Price too high">Price too high</option>
+    <option value="Timing — buying later">Timing — they're buying later</option>
+    <option value="Bought elsewhere">Bought elsewhere</option>
+    <option value="Out of service area">Out of my service area</option>
+    <option value="Wrong intent (not a buyer)">Not actually a buyer</option>
+    <option value="Other">Other</option>`;
+
+// The Closed Lost fields — shared by the GET form, the no-action picker, and
+// the POST re-render when 'Other' arrives without the required detail.
+function lostFormFields(): string {
+  return `<label>Reason (optional)</label>
+  <select name="reason">
+    ${LOST_REASON_OPTIONS}
+  </select>
+  <label>If other — what happened? (a few words)</label>
+  <input type="text" name="reasonDetail" maxlength="200" placeholder="e.g. wanted goat, not beef">`;
+}
+
 async function applyAction(
   decoded: ActionToken,
   action: string,
   saleAmount?: number,
-  reason?: string
+  reason?: string,
+  reasonDetail?: string
 ): Promise<{ ok: boolean; message: string }> {
   // Look up referral + verify rancher ownership
   let referral: any;
@@ -246,7 +274,8 @@ async function applyAction(
     updates['Closed At'] = new Date().toISOString();
     if (reason) {
       const existing = (referral['Notes'] || '').toString();
-      const stamp = `[CLOSED LOST ${new Date().toISOString().slice(0, 10)}] ${reason}`;
+      const reasonText = reasonDetail ? `${reason} — ${reasonDetail}` : reason;
+      const stamp = `[CLOSED LOST ${new Date().toISOString().slice(0, 10)}] ${reasonText}`;
       updates['Notes'] = existing ? `${stamp}\n\n${existing}` : stamp;
     }
     summary = 'Marked Closed Lost.';
@@ -298,6 +327,14 @@ async function applyAction(
   if (action === 'won' || action === 'lost' || action === 'pass') {
     const { recordClose } = await import('@/lib/contracts');
     const closeOutcome = action === 'won' ? 'won' : 'lost';
+    // Structured Loss Reason (B3 2026-07-15): the new form submits exact
+    // singleSelect choice strings (legacy in-flight values map too). A pass
+    // with no picked reason is 'Other' — the [PASSED …] Notes stamp keeps
+    // the free text. Rides recordClose's single atomic Referrals write.
+    const lossChoice: LossReason | null =
+      closeOutcome === 'lost'
+        ? lossReasonFromQuickAction(reason) ?? (action === 'pass' ? 'Other' : null)
+        : null;
     try {
       await recordClose({
         referralId: decoded.referralId,
@@ -305,9 +342,27 @@ async function applyAction(
         outcome: closeOutcome,
         saleAmount: action === 'won' ? saleAmount : undefined,
         reason,
+        ...(lossChoice ? { extraFields: { 'Loss Reason': lossChoice } } : {}),
       });
     } catch (e: any) {
       return { ok: false, message: `Couldn't update — try again. (${e?.message || 'unknown'})` };
+    }
+    // Deal Events audit row on rancher-initiated Closed Lost. Dashboard
+    // closes route through transition() which logs one automatically; this
+    // email rail closes via recordClose (no state machine), so it writes its
+    // own row through the shared non-blocking helper.
+    if (closeOutcome === 'lost') {
+      await logDealAudit({
+        Referral: [decoded.referralId],
+        From: statusToState(currentStatus),
+        To: 'CLOSED_LOST',
+        Actor: `rancher:${decoded.rancherId}`,
+        Reason:
+          action === 'pass'
+            ? `rancher passed via email link: ${reason || 'no reason given'}`
+            : `rancher closed lost via email link: ${reason || 'no reason given'}${reasonDetail ? ` — ${reasonDetail}` : ''}`,
+        At: new Date().toISOString(),
+      });
     }
     // Supplemental fields: Commission Due (won) + Notes append (lost/pass).
     // Both are non-fatal — contract already landed the core state change.
@@ -561,7 +616,7 @@ async function applyAction(
           `${action === 'pass' ? '🚫' : '✗'} <b>${action === 'pass' ? 'Rancher PASSED' : 'CLOSED LOST'}</b> via email link\n\n` +
             `Buyer: ${referral['Buyer Name'] || '?'} (${referral['Buyer State'] || '?'})\n` +
             `Rancher: ${referral['Suggested Rancher Name'] || '?'}\n` +
-            (reason ? `Reason: ${reason}\n` : '') +
+            (reason ? `Reason: ${reason}${reasonDetail ? ` — ${reasonDetail}` : ''}\n` : '') +
             `\nReferral ${decoded.referralId}`
         );
       }
@@ -610,16 +665,7 @@ export async function GET(request: Request) {
   <button type="submit">✓ Closed Won + send invoice</button>
 </form>
 <form method="post" action="${url.pathname}?token=${encodeURIComponent(token)}&action=lost">
-  <label>Reason (optional)</label>
-  <select name="reason">
-    <option value="">—</option>
-    <option value="No response">Buyer never replied</option>
-    <option value="Price">Price mismatch</option>
-    <option value="Timing">Timing didn't work</option>
-    <option value="Out of area">Out of my area</option>
-    <option value="At capacity">At capacity</option>
-    <option value="Other">Other</option>
-  </select>
+  ${lostFormFields()}
   <button type="submit">✗ Closed Lost</button>
 </form>`),
       { headers: { 'content-type': 'text/html' } }
@@ -644,16 +690,7 @@ export async function GET(request: Request) {
     return new NextResponse(
       htmlPage('Mark Closed Lost', `<h1>Closed Lost — quick reason?</h1>
 <form method="post" action="${url.pathname}?token=${encodeURIComponent(token)}&action=lost">
-  <label>Reason (optional)</label>
-  <select name="reason">
-    <option value="">—</option>
-    <option value="No response">Buyer never replied</option>
-    <option value="Price">Price mismatch</option>
-    <option value="Timing">Timing didn't work</option>
-    <option value="Out of area">Out of my area</option>
-    <option value="At capacity">At capacity</option>
-    <option value="Other">Other</option>
-  </select>
+  ${lostFormFields()}
   <button type="submit">✗ Confirm Closed Lost</button>
 </form>`),
       { headers: { 'content-type': 'text/html' } }
@@ -713,15 +750,32 @@ export async function POST(request: Request) {
 
   let saleAmount: number | undefined;
   let reason: string | undefined;
+  let reasonDetail: string | undefined;
   try {
     const body = await request.formData();
     const sa = body.get('saleAmount');
     if (sa) saleAmount = parseFloat(String(sa));
     const r = body.get('reason');
     if (r) reason = String(r);
+    const rd = body.get('reasonDetail');
+    if (rd && String(rd).trim()) reasonDetail = String(rd).trim().slice(0, 200);
   } catch {}
 
-  const result = await applyAction(decoded, action, saleAmount, reason);
+  // 'Other' needs a few words — that free text is the only signal the pick
+  // carries. Re-render the form instead of silently accepting an empty Other.
+  if (action === 'lost' && reason === 'Other' && !reasonDetail) {
+    return new NextResponse(
+      htmlPage('Add a quick note', `<h1>"Other" needs a few words.</h1>
+<p class="note">One line is plenty — it's how we stop routing you leads that don't fit.</p>
+<form method="post" action="${url.pathname}?token=${encodeURIComponent(token)}&action=lost">
+  ${lostFormFields()}
+  <button type="submit">✗ Confirm Closed Lost</button>
+</form>`),
+      { headers: { 'content-type': 'text/html' } }
+    );
+  }
+
+  const result = await applyAction(decoded, action, saleAmount, reason, reasonDetail);
   return new NextResponse(
     htmlPage(result.ok ? 'Updated' : 'Couldn\'t update', `<h1>${result.ok ? 'Done.' : 'Try again.'}</h1><p>${result.message}</p>`, {
       href: 'https://www.buyhalfcow.com/rancher',

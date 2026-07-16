@@ -23,6 +23,7 @@ import { getAllRecords, TABLES } from '@/lib/airtable';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { isRealRancherTouch, needsFirstCall } from '@/lib/untouchedIntros';
 
 export const maxDuration = 120;
 
@@ -98,6 +99,48 @@ async function realHandler(_request: Request): Promise<CronResult> {
     waiting = rows.length;
   } catch (e: any) { errors.push(`consumers: ${e?.message?.slice(0, 50)}`); }
 
+  // Touch accountability (2026-07-15) — per-rancher REAL-touch rate on intros
+  // from the last 28 days. Forensics: only 38% of 703 intros ever got a real
+  // rancher touch, and "couldn't reach buyer" is the #1 loss reason downstream.
+  // Same rule as the dashboard's needs-first-call queue (lib/untouchedIntros):
+  // a Last Rancher Activity At stamp on the intro's own UTC day is the
+  // auto-stamp artifact and counts as NO touch. Read is scale-safe: 28d
+  // server-side filter + 4 fields.
+  let touchLines: string[] = [];
+  try {
+    const intros = (await getAllRecords(
+      TABLES.REFERRALS,
+      `IS_AFTER({Intro Sent At}, DATEADD(NOW(), -28, 'days'))`,
+      { fields: ['Suggested Rancher Name', 'Intro Sent At', 'Last Rancher Activity At', 'Status'] },
+    )) as any[];
+    const byRancher = new Map<string, { intros: number; touched: number; untouched: number }>();
+    for (const r of intros) {
+      const name = String(r['Suggested Rancher Name'] || '').trim() || 'Unassigned';
+      const row = byRancher.get(name) || { intros: 0, touched: 0, untouched: 0 };
+      const introSentAt = String(r['Intro Sent At'] || '');
+      const lastActivity = String(r['Last Rancher Activity At'] || '');
+      row.intros += 1;
+      if (isRealRancherTouch(introSentAt, lastActivity)) row.touched += 1;
+      // Untouched = still awaiting a first call NOW (terminal + deposit-rail
+      // rows drop out — needsFirstCall carries the status gate).
+      if (needsFirstCall({ status: String(r['Status'] || ''), introSentAt, lastRancherActivityAt: lastActivity })) {
+        row.untouched += 1;
+      }
+      byRancher.set(name, row);
+    }
+    touchLines = [...byRancher.entries()]
+      .sort(
+        (a, b) =>
+          b[1].untouched - a[1].untouched ||
+          a[1].touched / Math.max(1, a[1].intros) - b[1].touched / Math.max(1, b[1].intros),
+      )
+      .slice(0, 10)
+      .map(([name, s]) => {
+        const pct = s.intros ? Math.round((s.touched / s.intros) * 100) : 0;
+        return ` · ${name}: <b>${pct}%</b> touched (${s.touched}/${s.intros})${s.untouched > 0 ? ` · ⚠️ ${s.untouched} awaiting first call` : ''}`;
+      });
+  } catch (e: any) { errors.push(`touch: ${e?.message?.slice(0, 50)}`); }
+
   const lines = [
     `📊 <b>MONDAY SCOREBOARD</b> — week of ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`,
     '',
@@ -106,6 +149,9 @@ async function realHandler(_request: Request): Promise<CronResult> {
     `🚚 shipped this week: <b>${shippedThisWeek}</b>${unshippedTotal > 0 ? ` · ⚠️ ${unshippedTotal} awaiting shipment` : ''}`,
     `🤠 Connect-active ranchers: <b>${activeRanchers}</b>${rancherNames ? ` (${rancherNames})` : ''}`,
     waiting >= 0 ? `🧑‍🌾 buyers WAITING for supply: <b>${waiting.toLocaleString()}</b>` : '',
+    ...(touchLines.length
+      ? ['', `📞 rancher touch rate — intros last 28d (same-day auto-stamp ≠ touch):`, ...touchLines]
+      : []),
     '',
     `the week is won on: deposits placed + orders shipped + ranchers activated.`,
   ].filter(Boolean);

@@ -12,6 +12,7 @@ import { shouldDecrementOnClose } from '@/lib/refundLifecycle';
 import jwt from 'jsonwebtoken';
 import { requireRancher } from '@/lib/rancherAuth';
 import { fetchReferralRowsForRancher } from '@/lib/referralReads';
+import { lossReasonFromCloseReason, lossReasonFromPassReason } from '@/lib/lossReasons';
 
 // Pass reasons a rancher can give when declining a lead.
 // Mutually exclusive — "Other" deliberately omitted to force a real signal.
@@ -123,7 +124,10 @@ export async function PATCH(
       const buyerName = referral['Buyer Name'] || 'Unknown';
       const buyerState = referral['Buyer State'] || '';
 
-      // 1. Close current referral as Closed Lost with reason note
+      // 1. Close current referral as Closed Lost with reason note.
+      // Structured 'Loss Reason' (B3 2026-07-15) rides the same write — the
+      // Notes stamp stays for backward compat + the specific pass label.
+      const passLossReason = lossReasonFromPassReason(passReason);
       const passNote = `[PASSED ${new Date().toISOString().slice(0, 10)} — ${decoded.name}] ${reasonLabel}`;
       const _tPass = await transition(id, {
         to: 'CLOSED_LOST',
@@ -132,6 +136,7 @@ export async function PATCH(
         extraFields: {
           'Closed At': new Date().toISOString(),
           'Notes': `${passNote}\n${referral['Notes'] || ''}`.trim(),
+          ...(passLossReason ? { 'Loss Reason': passLossReason } : {}),
         },
       });
       if (!_tPass.ok && !_tPass.noop) {
@@ -141,6 +146,7 @@ export async function PATCH(
           'Status': 'Closed Lost',
           'Closed At': new Date().toISOString(),
           'Notes': `${passNote}\n${referral['Notes'] || ''}`.trim(),
+          ...(passLossReason ? { 'Loss Reason': passLossReason } : {}),
         });
         try {
           const { sendOperatorSignal } = await import('@/lib/operatorSignal');
@@ -427,6 +433,14 @@ export async function PATCH(
 
       if (status === 'Closed Won' || status === 'Closed Lost' || status === 'Awaiting Payment') {
         fields['Closed At'] = new Date().toISOString();
+
+        // Structured 'Loss Reason' (B3 2026-07-15) — the Mark Lost modal's
+        // closeReason code maps onto the Referrals singleSelect so loss data
+        // aggregates; the modal's Notes stamp keeps the free text as before.
+        if (status === 'Closed Lost') {
+          const lossChoice = lossReasonFromCloseReason(closeReason);
+          if (lossChoice) fields['Loss Reason'] = lossChoice;
+        }
 
         // ── BUYER STATUS + HEALTH SYNC ─────────────────────────────────
         // Without this, the consumer record stays in 'Intro Sent' / 'Negotiation'
