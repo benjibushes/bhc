@@ -27,7 +27,7 @@ import {
 } from '@/lib/email';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { normalizeState, normalizeStates } from '@/lib/states';
-import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
+import { isRancherOperationalForBuyers, isRancherOnConnect } from '@/lib/rancherEligibility';
 
 import jwt from 'jsonwebtoken';
 
@@ -416,15 +416,15 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
                 const rancherEmail = rancher['Email'];
                 const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
                 if (rancherEmail && consumer['Email']) {
-                  // tier_v2 ranchers route deposits through Stripe Connect
-                  // direct charge at /checkout/<refId>/deposit, which requires
-                  // the bhc-member-auth cookie. Wrap the deposit deep-link in
-                  // a magic-link verify URL. Legacy ranchers stay on the tap-
-                  // any-tier Payment Link copy (depositMagicLinkUrl stays
-                  // undefined).
-                  const promotePricingModel = String(rancher['Pricing Model'] || 'legacy');
+                  // Connect-active (tier_v2 + Connect active) ranchers route
+                  // deposits through Stripe Connect direct charge at
+                  // /checkout/<refId>/deposit, which requires the
+                  // bhc-member-auth cookie. Wrap the deposit deep-link in a
+                  // magic-link verify URL. Legacy or not-yet-active ranchers
+                  // stay on the tap-any-tier Payment Link copy
+                  // (depositMagicLinkUrl stays undefined).
                   let promoteDepositMagicLinkUrl: string | undefined;
-                  if (promotePricingModel === 'tier_v2') {
+                  if (isRancherOnConnect(rancher)) {
                     const magicToken = generateMemberLoginToken(consumerId, consumer['Email']);
                     const nextPath = `/checkout/${stuckRef.id}/deposit`;
                     promoteDepositMagicLinkUrl = `${SITE_URL}/api/auth/member/verify?token=${magicToken}&next=${encodeURIComponent(nextPath)}`;

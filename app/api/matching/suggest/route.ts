@@ -13,7 +13,7 @@ import jwt from 'jsonwebtoken';
 import { getMaxActiveReferrals, incrementCapacity, decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { isActiveDealReferral } from '@/lib/capacityCount';
 import { equalStateSubCap } from '@/lib/stateSubCap';
-import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
+import { isRancherOperationalForBuyers, isRancherOnConnect } from '@/lib/rancherEligibility';
 import { isQualificationFresh } from '@/lib/qualification';
 import { requireAdmin } from '@/lib/adminAuth';
 import { MIN_TIER_PRICE } from '@/lib/pricing';
@@ -1535,13 +1535,17 @@ export async function POST(request: Request) {
           // Legacy ranchers stay on the old per-tier Payment Link flow (the
           // depositMagicLinkUrl stays undefined so the email helper falls back
           // to its tap-any-tier copy).
-          const rancherPricingModel = String(topMatch['Pricing Model'] || 'legacy');
           let depositMagicLinkUrl: string | undefined;
           // Guard empty buyerId/email — signing a token with `''` produces a
           // valid JWT that fails at getRecordById time on the verify handler,
           // surfacing as "expired link" in the buyer's UI. Better to skip the
           // CTA than ship a guaranteed-broken link.
-          if (rancherPricingModel === 'tier_v2' && buyerId && buyerEmail) {
+          //
+          // isRancherOnConnect (tier_v2 AND Connect active — 2026-07-15): a
+          // tier_v2 rancher mid Connect onboarding would get a primary CTA
+          // that hard-409s at checkout/deposit. Not-yet-active ranchers fall
+          // back to the tap-any-tier pricing-table copy instead.
+          if (isRancherOnConnect(topMatch) && buyerId && buyerEmail) {
             const magicToken = generateMemberLoginToken(buyerId, buyerEmail);
             const nextPath = `/checkout/${referral.id}/deposit`;
             depositMagicLinkUrl = `${SITE_URL}/api/auth/member/verify?token=${magicToken}&next=${encodeURIComponent(nextPath)}`;

@@ -2,7 +2,7 @@ import { getAllRecords, updateRecord, createRecord, createReferral, escapeAirtab
 import { sendEmail, sendBuyerIntroNotification } from './email';
 import { normalizeState, normalizeStates } from './states';
 import { isQualifiedForRouting } from './qualification';
-import { isRancherOperationalForBuyers, getOperationalServedStates } from '@/lib/rancherEligibility';
+import { isRancherOperationalForBuyers, getOperationalServedStates, isRancherOnConnect } from '@/lib/rancherEligibility';
 import { tierFor } from './tiers';
 import { closeCtaHtml } from './rancherLeadEmail';
 import jwt from 'jsonwebtoken';
@@ -416,15 +416,15 @@ export async function bulkRouteStateToRancher(opts: {
           const buyerLoginUrl = `${SITE_URL}/member/verify?token=${buyerToken}`;
           const buyerFirstName = (buyerName || '').split(' ')[0] || 'there';
 
-          // tier_v2 ranchers route deposits through Stripe Connect direct
-          // charge at /checkout/<refId>/deposit, which requires the
-          // bhc-member-auth cookie. Wrap the deposit deep-link in a magic-link
-          // verify URL so the buyer can land authenticated. Legacy ranchers
-          // stay on the tap-any-tier Payment Link copy (depositMagicLinkUrl
-          // stays undefined).
-          const pricingModel = String(rancher['Pricing Model'] || 'legacy');
+          // Connect-active (tier_v2 + Connect active) ranchers route deposits
+          // through Stripe Connect direct charge at /checkout/<refId>/deposit,
+          // which requires the bhc-member-auth cookie. Wrap the deposit
+          // deep-link in a magic-link verify URL so the buyer can land
+          // authenticated. Legacy or not-yet-active ranchers stay on the
+          // tap-any-tier Payment Link copy (depositMagicLinkUrl stays
+          // undefined).
           let depositMagicLinkUrl: string | undefined;
-          if (pricingModel === 'tier_v2' && targetReferralId && targetReferralId !== 'dry-run') {
+          if (isRancherOnConnect(rancher) && targetReferralId && targetReferralId !== 'dry-run') {
             const magicToken = generateMemberLoginToken(buyerId, buyerEmail);
             const nextPath = `/checkout/${targetReferralId}/deposit`;
             depositMagicLinkUrl = `${SITE_URL}/api/auth/member/verify?token=${magicToken}&next=${encodeURIComponent(nextPath)}`;

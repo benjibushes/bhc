@@ -23,6 +23,7 @@ import { sendBuyerFulfillmentConfirmation } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { requireRancher } from '@/lib/rancherAuth';
 import { funnelRecord } from '@/lib/funnelMetrics';
+import { referralRail } from '@/lib/commission';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -89,21 +90,23 @@ export async function POST(req: Request) {
   } catch (e: any) {
     console.warn('[fulfillment/confirm] Payments lookup failed:', e?.message);
   }
-  // Payment verification gate. Logic differs by rancher Pricing Model:
-  //   - tier_v2 MUST have a Payments row at Status='succeeded'. Legacy
-  //     Payment Confirmed At is rancher-self-attested and would let a
-  //     tier_v2 rancher bypass Stripe entirely (free fulfillment confirm
-  //     = audit security gap surfaced in 2026-05-25 Audit A).
-  //   - legacy ranchers can use either Payments row OR Payment Confirmed
-  //     At as before.
+  // Payment verification gate — RAIL-PER-REFERRAL, not per-rancher (same
+  // discriminator as every commission path: lib/commission.ts referralRail).
+  //   - Deposit-rail rows (Deposit Paid At stamped) MUST have a Payments row
+  //     at Status='succeeded' — rancher-self-attested Payment Confirmed At
+  //     would let a rail close skip Stripe evidence (2026-05-25 Audit A).
+  //   - Everything else (legacy rancher OR tier_v2 off-rail close) accepts a
+  //     Payments row OR Payment Confirmed At. Off-rail tier_v2 closes are
+  //     commission-invoiced at close time now, so self-attest no longer
+  //     bypasses commission — the old per-rancher gate 409'd those referrals
+  //     forever ("pay via the deposit link" on a deal closed off the rail).
   const rancherForGate: any = await getRecordById(TABLES.RANCHERS, rancherId).catch(() => null);
   const rancherPricingModel = String(rancherForGate?.['Pricing Model'] || 'legacy');
-  const isTierV2 = rancherPricingModel === 'tier_v2';
-  if (isTierV2) {
+  if (referralRail(referral) === 'tier_v2') {
     if (!paymentVerified) {
       return NextResponse.json({
         error: 'No settled Stripe deposit on this referral. Buyer must pay via the deposit link first.',
-        pricingModel: 'tier_v2',
+        rail: 'tier_v2',
       }, { status: 409 });
     }
   } else if (!paymentVerified && !referral['Payment Confirmed At']) {

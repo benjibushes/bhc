@@ -6,7 +6,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isRancherOperationalForBuyers } from './rancherEligibility';
+import { isRancherOperationalForBuyers, isRancherOnConnect } from './rancherEligibility';
 
 // A fully-operational legacy rancher — passes every gate.
 function operationalRancher(over: Record<string, unknown> = {}) {
@@ -47,6 +47,41 @@ test('other Verification Status values do not gate', () => {
   );
   assert.equal(
     isRancherOperationalForBuyers(operationalRancher({ 'Verification Status': '' })),
+    true,
+  );
+});
+
+// ─── isRancherOnConnect — the deposit-CTA mint gate (2026-07-15) ────────────
+// Every buyer-facing deposit-link mint (intro emails, telegram approves,
+// resend-intro, bulk routes, Pending-Approval promotion) must gate on this —
+// Pricing Model alone mints links that hard-409 at checkout/deposit when
+// Connect onboarding never finished.
+
+test('isRancherOnConnect: tier_v2 + Connect active → true', () => {
+  assert.equal(
+    isRancherOnConnect({ 'Pricing Model': 'tier_v2', 'Stripe Connect Status': 'active' }),
+    true,
+  );
+});
+
+test('isRancherOnConnect: tier_v2 but Connect not active → false (dead-CTA guard)', () => {
+  assert.equal(
+    isRancherOnConnect({ 'Pricing Model': 'tier_v2', 'Stripe Connect Status': 'onboarding' }),
+    false,
+  );
+  assert.equal(isRancherOnConnect({ 'Pricing Model': 'tier_v2' }), false);
+});
+
+test('isRancherOnConnect: legacy rancher → false regardless of Connect status', () => {
+  assert.equal(
+    isRancherOnConnect({ 'Pricing Model': 'legacy', 'Stripe Connect Status': 'active' }),
+    false,
+  );
+});
+
+test('isRancherOnConnect: case-insensitive on both fields', () => {
+  assert.equal(
+    isRancherOnConnect({ 'Pricing Model': 'Tier_V2', 'Stripe Connect Status': 'Active' }),
     true,
   );
 });

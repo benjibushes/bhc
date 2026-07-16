@@ -286,6 +286,10 @@ export async function POST(request: Request) {
   let suggestedRancher: any = null;
   let referralId: string | null = null;
   let pricingModel = 'legacy';
+  // Dead-CTA guard (2026-07-15): deposit capability additionally requires
+  // Stripe Connect Status='active' — tier_v2 alone mints links that 409 at
+  // checkout/deposit while the rancher is still mid Connect onboarding.
+  let connectStatus = '';
   let depositAmount: number | null = null;
   let routingOk = false;
   // R9 (2026-06-10): diagnostic surface for synthetic-e2e + manual debug.
@@ -357,6 +361,7 @@ export async function POST(request: Request) {
             try {
               const rancher: any = await getRecordById(TABLES.RANCHERS, suggestedRancher.id);
               pricingModel = String(rancher?.['Pricing Model'] || 'legacy');
+              connectStatus = String(rancher?.['Stripe Connect Status'] || '');
               if (pricingModel === 'tier_v2') {
                 // Pick deposit field matching the buyer's chosen tier.
                 // FEE-INVISIBLE (founder directive 2026-07-01): surface the
@@ -469,7 +474,7 @@ export async function POST(request: Request) {
     if (score >= 60 && consumer['Email']) {
       const buyerEmail = String(consumer['Email']);
       const buyerFirstName = String(consumer['Full Name'] || 'there').split(' ')[0];
-      const depositCapable = isDepositCapableMatch(pricingModel, referralId);
+      const depositCapable = isDepositCapableMatch(pricingModel, referralId, connectStatus);
       if (depositCapable) {
         try {
           const magicToken = generateMemberLoginToken(consumerId, buyerEmail);
@@ -618,6 +623,10 @@ export async function POST(request: Request) {
       : null,
     referralId,
     pricingModel,
+    // Threads the dead-CTA guard to the funnel reveal — BuyerFunnel's
+    // isDepositCapableMatch call needs it to suppress the deposit CTA for a
+    // tier_v2 rancher whose Connect onboarding isn't finished.
+    connectStatus,
     depositAmount,
     // Buyer identity for the inline Cal booker prefill on the result page —
     // makes the cal-webhook → referral link bulletproof (it matches the
