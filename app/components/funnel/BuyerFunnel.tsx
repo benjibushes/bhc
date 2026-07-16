@@ -788,12 +788,30 @@ export default function BuyerFunnel({
         {stepKey === 'commit' && (
           <div className="space-y-5">
             <div className="rounded-lg border border-dust bg-white p-5 text-left">
+              {/* Honest tense: with zero operational ranchers in-state the next
+                  screen is the waitlist — asking the buyer to commit to a call
+                  that provably isn't coming this week is the exact fabrication
+                  this step replaced. "when we match you" is true in both
+                  worlds; the confident 24–48h promise is reserved for states
+                  where a rancher actually exists. */}
               <p className="text-base leading-relaxed text-charcoal">
-                your rancher will call or text within 24&ndash;48 hours from a{' '}
-                <strong>
-                  {US_STATES.find((s) => s.code === state)?.name || 'local'}
-                </strong>{' '}
-                number — will you pick up?
+                {stats && stats.ranchesInState === 0 ? (
+                  <>
+                    when we match you, your rancher will call or text from a{' '}
+                    <strong>
+                      {US_STATES.find((s) => s.code === state)?.name || 'local'}
+                    </strong>{' '}
+                    number — will you pick up?
+                  </>
+                ) : (
+                  <>
+                    your rancher will call or text within 24&ndash;48 hours from a{' '}
+                    <strong>
+                      {US_STATES.find((s) => s.code === state)?.name || 'local'}
+                    </strong>{' '}
+                    number — will you pick up?
+                  </>
+                )}
               </p>
               <p className="mt-2 text-sm text-saddle">
                 that one call is where your cuts, price, and processing date get set.
@@ -1092,8 +1110,13 @@ function Reveal({
           {/* third path: no action required — the rancher already has the lead and
               will reach out. fills the funnel leak where a buyer who wants neither
               self-serve deposit nor a call thought it dead-ended. */}
+          {/* Single channel truth here too: Operator tier = BHC's team calls
+              today (same special-case as Mode 2 below) — a deposit-capable
+              Operator match must not promise a rancher call that BHC makes. */}
           <p className="text-center text-xs text-saddle">
-            no rush either way — {rancher.name} has your details and will call or text within 24&ndash;48 hours.
+            {operatorMatch
+              ? <>no rush either way — our team has your details and will call you today to lock in your share with {rancher.name}.</>
+              : <>no rush either way — {rancher.name} has your details and will call or text within 24&ndash;48 hours.</>}
           </p>
         </div>
       ) : offerOperatorCall && result?.qualified ? (

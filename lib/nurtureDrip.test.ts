@@ -52,6 +52,20 @@ test('drip: only WAITING/READY stages, needs email + Qualified At', () => {
   assert.equal(dueNurtureTouch({ ...base, qualifiedAt: 'garbage' }, NOW), null);
 });
 
+test('drip: held completers anchor on Funnel Completed At when Qualified At is empty', () => {
+  // Explicitly-not-ready completer: no Qualified At ever (funnel-truth PR),
+  // but the hold response promises the nurture sequence — completion anchors.
+  const held = { ...base, qualifiedAt: '', funnelCompletedAt: qualifiedDaysAgo(2.1) };
+  assert.equal(dueNurtureTouch(held, NOW)?.touch, 1);
+  assert.equal(dueNurtureTouch({ ...held, funnelCompletedAt: qualifiedDaysAgo(1) }, NOW), null);
+  // Qualified At wins when both exist (routed-eligible buyers keep their anchor).
+  const both = { ...base, qualifiedAt: qualifiedDaysAgo(1), funnelCompletedAt: qualifiedDaysAgo(30) };
+  assert.equal(dueNurtureTouch(both, NOW), null);
+  // Neither stamp (or garbage in both) = out.
+  assert.equal(dueNurtureTouch({ ...base, qualifiedAt: '', funnelCompletedAt: '' }, NOW), null);
+  assert.equal(dueNurtureTouch({ ...base, qualifiedAt: 'junk', funnelCompletedAt: 'junk' }, NOW), null);
+});
+
 test('drip: junk Nurture Touch values treated as none-sent', () => {
   assert.equal(dueNurtureTouch({ ...base, nurtureTouch: NaN }, NOW)?.touch, 1);
   assert.equal(dueNurtureTouch({ ...base, nurtureTouch: -3 }, NOW)?.touch, 1);

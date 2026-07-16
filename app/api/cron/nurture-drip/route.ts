@@ -9,7 +9,8 @@
 // SAFETY STACK (each layer independent):
 //   - NURTURE_ENABLED 3-state: unset → skip · 'dry-run' → Telegram counts,
 //     writes nothing · 'true' → live.
-//   - Pure selector gates: WAITING/READY only, Qualified At required, any
+//   - Pure selector gates: WAITING/READY only, Qualified At (or Funnel
+//     Completed At, for held not-ready completers) required, any
 //     active deal referral = out, terminal after touch 4, monotonic order.
 //   - claim-before-send per (buyer, touch) — a crashed run can't double-send.
 //   - guardedSend underneath: suppression list + 3/week frequency cap +
@@ -79,6 +80,7 @@ async function realHandler(_request: Request): Promise<DripResult> {
       {
         buyerStage: String(c['Buyer Stage'] || ''),
         qualifiedAt: String(c['Qualified At'] || ''),
+        funnelCompletedAt: String(c['Funnel Completed At'] || ''),
         email: String(c['Email'] || ''),
         nurtureTouch: Number(c['Nurture Touch'] || 0),
         hasActiveDeal: activeDealBuyers.has(c.id),

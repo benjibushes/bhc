@@ -25,12 +25,15 @@ export const metadata: Metadata = {
   },
 };
 
+// Numbers retuned 2026-07-15 (funnel truth PR) to live supply: halves
+// $3,299–3,650 — the old $1,800–3,500 / $5.50–9.50/lb understated real
+// prices 40–50% and set up sticker shock on the rancher call.
 const MATH = [
-  { k: 'all-in price (animal + processing)', v: '$1,800–3,500' },
+  { k: 'all-in price (animal + processing)', v: '$3,000–3,700' },
   { k: 'packaged beef in your freezer', v: '180–220 lbs' },
-  { k: 'your take-home price per pound', v: '$5.50–9.50/lb' },
-  { k: 'same cuts at the grocery store', v: '$10–16/lb' },
-  { k: 'real savings', v: '30–50%' },
+  { k: 'what ranchers quote (hanging weight)', v: '$8–11/lb' },
+  { k: 'blended take-home price per pound', v: '$14–20/lb' },
+  { k: 'same grass-fed cuts à la carte', v: '$9–35/lb' },
 ];
 
 export default function GuidePage() {
@@ -64,8 +67,10 @@ export default function GuidePage() {
             <p>
               <strong>the honest part:</strong> roughly 40&ndash;50% of a half beef arrives as
               ground and stew meat. you&rsquo;re stocking a freezer with a year of real dinners
-              — not buying a box of ribeyes. plan on ~8&ndash;10 cubic feet of freezer space
-              (a $200&ndash;300 chest freezer pays for itself in the first fill).
+              — not buying a box of ribeyes. the value isn&rsquo;t a discount on ground beef:
+              it&rsquo;s that every pound costs the same blended price, ribeye to chuck. plan on
+              ~8&ndash;10 cubic feet of freezer space (a $200&ndash;300 chest freezer pays for
+              itself in the first fill).
             </p>
             <p>
               <strong>how it works here:</strong> a small refundable deposit reserves your share

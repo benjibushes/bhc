@@ -14,7 +14,11 @@
 //   4 · d21 — the long-haul note: map + refer-a-ranch (demand speeds supply)
 //
 // HARD RULES (why this can't spam):
-//   - Only WAITING/READY buyers with a Qualified At and an email.
+//   - Only WAITING/READY buyers with a Qualified At OR Funnel Completed At,
+//     and an email. (Funnel Completed At added 2026-07-15: the funnel-truth
+//     PR stopped stamping Qualified At on explicitly-not-ready completers —
+//     the drip is exactly where those held buyers are promised they'll live,
+//     so completion alone must anchor the schedule.)
 //   - Any active deal referral (isActiveDealReferral) = OUT immediately —
 //     routed buyers hear from their rancher, not the drip.
 //   - Monotonic: touches send in order, at most one per run per buyer, never
@@ -28,7 +32,7 @@
 export interface NurtureTouch {
   /** 1-based touch number, stored in Consumers['Nurture Touch']. */
   touch: number;
-  /** Days after Qualified At when this touch becomes due. */
+  /** Days after the anchor (Qualified At, else Funnel Completed At) when due. */
   day: number;
 }
 
@@ -44,6 +48,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export interface NurtureCandidate {
   buyerStage: string;      // Consumers['Buyer Stage']
   qualifiedAt: string;     // Consumers['Qualified At'] (ISO; '' = never)
+  /** Consumers['Funnel Completed At'] (ISO; '' = never). Fallback schedule
+   *  anchor for held completers, who never get Qualified At. */
+  funnelCompletedAt?: string;
   email: string;           // Consumers['Email']
   nurtureTouch: number;    // Consumers['Nurture Touch'] (0/NaN = none sent)
   hasActiveDeal: boolean;  // any isActiveDealReferral row for this buyer
@@ -59,13 +66,17 @@ export function dueNurtureTouch(c: NurtureCandidate, nowMs: number): NurtureTouc
   const stage = String(c.buyerStage || '');
   if (stage !== 'WAITING' && stage !== 'READY') return null;
   if (c.hasActiveDeal) return null;
-  const qualified = Date.parse(c.qualifiedAt || '');
-  if (!Number.isFinite(qualified)) return null;
+  // Schedule anchor: Qualified At when present (routed-eligible buyers),
+  // else Funnel Completed At (explicitly-not-ready completers, who are held
+  // in nurture INSTEAD of routing — dropping them here would orphan them).
+  let anchor = Date.parse(c.qualifiedAt || '');
+  if (!Number.isFinite(anchor)) anchor = Date.parse(c.funnelCompletedAt || '');
+  if (!Number.isFinite(anchor)) return null;
 
   const sent = Number.isFinite(c.nurtureTouch) && c.nurtureTouch > 0 ? Math.floor(c.nurtureTouch) : 0;
   const next = NURTURE_TOUCHES.find((t) => t.touch === sent + 1);
   if (!next) return null; // all four sent — drip is done forever
 
-  const daysSince = (nowMs - qualified) / DAY_MS;
+  const daysSince = (nowMs - anchor) / DAY_MS;
   return daysSince >= next.day ? next : null;
 }
