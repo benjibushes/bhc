@@ -9,8 +9,15 @@
 // free-text Notes stamps in 3 incompatible formats — unqueryable. The Notes
 // stamps stay (backward compat + free text), the structured field is new.
 //
-// Writes use typecast:false — the choices already exist in the prod schema;
-// a typo here must throw, not silently mint a new select option.
+// SCHEMA DRIFT WARNING: every write path rides the shared Airtable helpers
+// (createRecord/updateRecord), which hardcode typecast:true — a string that
+// drifts from the prod schema by one byte would silently mint a new select
+// option, not throw. The guard is twofold: (1) nothing writes this field
+// except through the pinned vocabulary below (isLossReasonChoice + the
+// mapping tables), and (2) the 7 strings were verified codepoint-for-
+// codepoint against prod schema fldV4hf0ptyhMaaAA on 2026-07-15 (em-dash
+// U+2014 in 'Timing', straight apostrophe U+0027 in "Couldn't"). If you edit
+// LOSS_REASON_CHOICES, re-verify against the live schema before deploy.
 
 export const LOSS_REASON_CHOICES = [
   'Price too high',

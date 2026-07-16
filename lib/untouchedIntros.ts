@@ -7,11 +7,15 @@
 // biggest silent leak. This module is the ONE definition of "untouched" so
 // the rancher dashboard queue and the Monday scorecard can never disagree.
 //
-// The same-day artifact rule: several write paths auto-stamp Last Rancher
-// Activity At at intro time (the intro flip itself, quick-action GET
-// prefetches). An activity stamp on the SAME UTC calendar day as the intro
-// is therefore treated as NO touch — only a later-day stamp proves the
-// rancher actually came back to the lead.
+// The same-day artifact rule: pre-2026-07-01 the quick-action route mutated
+// on GET, and corporate mail scanners (SafeLinks / Mimecast) prefetched those
+// links straight out of the intro email — minting a Last Rancher Activity At
+// stamp on the intro's own day with no human involved. Historical rows in the
+// audit window carry those stamps, so a same-day stamp alone is treated as NO
+// touch. Current writers are all genuine actions (quick-action POST, dashboard
+// PATCH, inbound email reply), and a genuine touch moves Status off 'Intro
+// Sent' — the TOUCHED_STATUSES gate below keeps a real same-day call from
+// being nagged as "needs first call".
 
 export interface IntroTouchFields {
   status?: string;
@@ -21,14 +25,26 @@ export interface IntroTouchFields {
 
 // Statuses where a first call is moot: deal is terminal, or the deposit rail
 // is already in motion (Awaiting Payment / Slot Locked have their own queue
-// rows and prove heavy engagement).
+// rows and prove heavy engagement). 'Dormant' is the stale-hold expiry cron's
+// terminal — those buyers were reset READY and re-routed to another rancher,
+// so surfacing them with a tap-to-call invites double-contact. ('Refunded' is
+// not a live Airtable Status — REFUNDED maps to 'Closed Lost' in
+// lib/deal/states — kept as cheap defense if the vocabulary ever grows it.)
 const EXCLUDED_STATUSES = new Set([
   'Closed Won',
   'Closed Lost',
+  'Dormant',
   'Refunded',
   'Awaiting Payment',
   'Slot Locked',
 ]);
+
+// Statuses only a rancher action can produce (quick-action POST 'in_talks',
+// dashboard status change). Reaching one proves the first call happened even
+// when the activity stamp lands on the intro's own UTC day — without this, a
+// rancher who does exactly what the 24h CTA asks (calls same day, clicks
+// "In talks") would still be nagged as "needs first call".
+const TOUCHED_STATUSES = new Set(['Rancher Contacted', 'Negotiation']);
 
 const utcDayKey = (iso: string): string | null => {
   const t = new Date(iso).getTime();
@@ -44,8 +60,10 @@ export function isSameUtcDay(aIso: string, bIso: string): boolean {
 
 /**
  * A REAL touch = Last Rancher Activity At present AND on a later UTC day
- * than the intro. Same-day stamps are the auto-stamp artifact and count as
- * no touch.
+ * than the intro. Same-day stamps count as no touch (historical scanner
+ * artifact — see header); status-based proof of a same-day touch is handled
+ * in needsFirstCall, not here, so the scorecard's touched-% stays a
+ * conservative measure over windows containing pre-2026-07-01 rows.
  */
 export function isRealRancherTouch(
   introSentAt: string | undefined,
@@ -60,7 +78,9 @@ export function isRealRancherTouch(
 
 export function needsFirstCall(ref: IntroTouchFields): boolean {
   if (!ref.introSentAt || !utcDayKey(ref.introSentAt)) return false;
-  if (EXCLUDED_STATUSES.has(String(ref.status || ''))) return false;
+  const status = String(ref.status || '');
+  if (EXCLUDED_STATUSES.has(status)) return false;
+  if (TOUCHED_STATUSES.has(status)) return false;
   return !isRealRancherTouch(ref.introSentAt, ref.lastRancherActivityAt);
 }
 

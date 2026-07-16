@@ -68,6 +68,40 @@ test('terminal + deposit-rail statuses are excluded even when untouched', () => 
   }
 });
 
+test('Dormant is excluded — stale-hold expiry re-routed the buyer already', () => {
+  // staleHolds flips 21d-stale Intro Sent/Rancher Contacted rows to Dormant
+  // and resets the buyer READY; queuing them for a first call would invite
+  // double-contact (Silverline had 60 such rows at discovery).
+  assert.equal(needsFirstCall({ status: 'Dormant', introSentAt: INTRO }), false);
+});
+
+test('rancher-action statuses prove the touch even with a same-day stamp', () => {
+  // Only rancher actions produce these (quick-action POST in_talks, dashboard
+  // status change). Rancher calls at 11am and clicks "In talks" same day —
+  // exactly what the 24h CTA asks — must not be nagged as needing a call.
+  for (const status of ['Rancher Contacted', 'Negotiation']) {
+    assert.equal(
+      needsFirstCall({
+        status,
+        introSentAt: INTRO,
+        lastRancherActivityAt: '2026-07-10T17:00:00.000Z',
+      }),
+      false,
+      status,
+    );
+  }
+  // The historical scanner artifact stays caught: same-day stamp with status
+  // still 'Intro Sent' is NOT proof of a touch.
+  assert.equal(
+    needsFirstCall({
+      status: 'Intro Sent',
+      introSentAt: INTRO,
+      lastRancherActivityAt: '2026-07-10T17:00:00.000Z',
+    }),
+    true,
+  );
+});
+
 // ── selectUntouchedIntros ───────────────────────────────────────────────────
 test('filters to untouched and sorts oldest intro first', () => {
   const refs = [
