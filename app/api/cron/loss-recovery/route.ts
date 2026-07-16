@@ -21,13 +21,25 @@
 // NO sends, NO 'Recovery Sent At' stamps, NO Notes writes. 'true' → live.
 // Optional knob: LOSS_RECOVERY_MAX_PER_RUN (default 20).
 //
-// SEQUENCING: nothing writes 'Loss Reason' until PR #396's rancher UI lands —
-// until then every run selects 0 and no-ops. Safe to ship dark ahead of it.
+// SEQUENCING: PR #396 (the rancher-UI 'Loss Reason' writers) is MERGED — this
+// rail selects real candidates from day one, in DRY-RUN until Ben flips
+// LOSS_RECOVERY_ENABLED=true.
+//
+// ⚠ BACKFILL LANDMINE: the 14d window rides LAST_MODIFIED_TIME(), which
+// refreshes on ANY field write. Bulk-backfilling 'Loss Reason' onto the
+// ~1,460 historical Closed Lost/Dormant rows (or any mass Notes sweep) makes
+// months-old losses look fresh and they'd drip out at cap/day with "your
+// rancher tried to reach you" copy. Guards: (1) any backfill MUST pre-stamp
+// 'Recovery Sent At' on rows that should never get outreach; (2) live runs
+// REFUSE to send when the eligible pool exceeds LIVE_ELIGIBLE_SANITY_MAX —
+// a spike that size is a mass edit, not organic closes; review the dry-run
+// notes, pre-stamp, then re-enable.
 //
 // SAFETY STACK (each layer independent):
 //   - pure selector gates: Closed Lost + known reason + once-only via
 //     'Recovery Sent At' + 14d close window + suppression + no other active
-//     referral + one touch per buyer per run + cap.
+//     referral + nurture only when the re-warm rail will actually wake the
+//     buyer + one touch per buyer per run + cap.
 //   - 14d window rides the Airtable read (IS_AFTER(LAST_MODIFIED_TIME(), …))
 //     because 'Closed At' is often unstamped and Referrals has no
 //     last-modified FIELD; if the formula is rejected the selector goes
@@ -35,6 +47,11 @@
 //   - claim-before-send: 'Recovery Sent At' stamped + read-back verified
 //     BEFORE any send; if the stamp doesn't persist the run ABORTS (a crash
 //     burns one touch; a double-send is worse — the product-recovery lesson).
+//   - failed ≠ suppressed (the 2026-07-14 dead-RESEND-key lesson): a send
+//     that definitively did NOT go out ({error} from Resend) rolls the claim
+//     stamp BACK (retry tomorrow), lands in errors[], and flips the run to
+//     'partial' so the watchdogs fire. Suppression/frequency-cap keeps the
+//     stamp (correct burn — the buyer is capped or unreachable, not lost).
 //   - guardedSend underneath: suppression list + 3/7d frequency cap + Email
 //     Sends truth. SMS only via sendSMSToConsumer (TCPA gate) + isSmsWindow.
 //   - 500ms pacing (Airtable 5 req/s) + soft deadline that exits honestly.
@@ -65,6 +82,11 @@ export const maxDuration = 120;
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 const PACING_MS = 500;
 const SOFT_DEADLINE_MS = 100_000;
+// Live-mode circuit breaker: if selection finds more eligible touches than
+// this in one day, that is a mass edit / 'Loss Reason' backfill refreshing
+// LAST_MODIFIED_TIME() — not organic closes. Refuse to send; dry-run
+// reporting still works so the spike is visible and reviewable.
+const LIVE_ELIGIBLE_SANITY_MAX = 200;
 
 interface CronResult {
   status: 'success' | 'partial' | 'error' | 'maintenance-blocked';
@@ -110,7 +132,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
     candidates = (await getAllRecords(TABLES.REFERRALS, `{Status} = "Closed Lost"`)) as any[];
   }
 
-  // Pre-#396 (and most days after): nothing carries a Loss Reason yet → done.
+  // Most days: no fresh Closed Lost rows carrying a Loss Reason → done.
   if (candidates.length === 0) {
     return {
       status: 'success',
@@ -163,11 +185,54 @@ async function realHandler(_request: Request): Promise<CronResult> {
   }
 
   // ── LIVE ─────────────────────────────────────────────────────────────────
+  // Circuit breaker BEFORE any send: an eligible pool this size means a mass
+  // edit refreshed LAST_MODIFIED_TIME() (Loss Reason backfill, Notes sweep) —
+  // months-old losses masquerading as fresh. Stop loudly; nothing is stamped.
+  const eligibleTotal = sel.planned.length + sel.capped;
+  if (eligibleTotal > LIVE_ELIGIBLE_SANITY_MAX) {
+    await sendTelegramMessage(
+      TELEGRAM_ADMIN_CHAT_ID,
+      `🪃 <b>loss recovery HALTED</b> — ${eligibleTotal} eligible touches in one day ` +
+        `(sanity max ${LIVE_ELIGIBLE_SANITY_MAX}).\n\nThat's a mass edit / Loss Reason backfill, not organic closes. ` +
+        `Nothing sent. Pre-stamp '${RECOVERY_SENT_AT_FIELD}' on backfilled rows (or review via dry-run) before re-enabling.`,
+    ).catch(() => {});
+    return {
+      status: 'error',
+      recordsTouched: 0,
+      notes:
+        `HALT: eligible=${eligibleTotal} > sanity max ${LIVE_ELIGIBLE_SANITY_MAX} — mass-edit/backfill suspected ` +
+        `(LAST_MODIFIED_TIME window dissolves under bulk writes). No sends, no stamps. ` +
+        `Pre-stamp ${RECOVERY_SENT_AT_FIELD} on backfilled rows, then re-run.`,
+      skipReasonBreakdown: { ...sel.skips, 'halted-eligible-over-sanity-max': eligibleTotal },
+    };
+  }
+
   const done = { reengage: 0, downsell: 0, nurture: 0 } as Record<string, number>;
   let smsSent = 0;
   let suppressed = 0;
+  let failed = 0;
   let timeBoxed = false;
   const errors: string[] = [];
+
+  // A send that came back { success:false, suppressed:false } definitively
+  // did NOT go out (Resend RESOLVED with an error — the 2026-07-14 dead-key
+  // mode). Burning the once-ever recovery touch on it would silently drop
+  // the buyer from the rail forever while the run reported success. Roll the
+  // claim back so tomorrow retries, and record a real error so the run goes
+  // 'partial' and the watchdogs fire. If the rollback itself fails, the
+  // stamp stays — the safe direction (never risks a double-send).
+  const rollbackClaim = async (cand: LossRecoveryCandidate, why: string) => {
+    failed++;
+    errors.push(`${cand.referralId}: send-failed (${why.slice(0, 60)})`);
+    try {
+      await updateRecord(TABLES.REFERRALS, cand.referralId, {
+        [RECOVERY_SENT_AT_FIELD]: null,
+        Notes: cand.existingNotes,
+      });
+    } catch (e: any) {
+      errors.push(`${cand.referralId}: rollback-failed (touch burned) ${e?.message?.slice(0, 60) || ''}`);
+    }
+  };
 
   for (const cand of sel.planned as LossRecoveryCandidate[]) {
     if (Date.now() - runStartMs > SOFT_DEADLINE_MS) { timeBoxed = true; break; }
@@ -190,33 +255,36 @@ async function realHandler(_request: Request): Promise<CronResult> {
 
       if (cand.action === 'reengage') {
         const res = await sendLossRecoveryReengage({ firstName: cand.firstName, email: cand.email, cut: cand.cut });
-        if (res.success) done.reengage++;
-        else suppressed++;
-        // SMS leg: TCPA opt-in (re-checked by sendSMSToConsumer) + local window.
-        if (res.success && cand.smsEligible && isSmsWindow(cand.state, Date.now())) {
-          const ok = await sendSMSToConsumer({
-            consumer: consumersById.get(cand.buyerId),
-            body: renderReengageSms({ firstName: cand.firstName, cut: cand.cut, link: `${SITE_URL}/member` }),
-            reason: 'loss-recovery-reengage',
-          });
-          if (ok) smsSent++;
-        }
+        if (res.success) {
+          done.reengage++;
+          // SMS leg: TCPA opt-in (re-checked by sendSMSToConsumer) + local window.
+          if (cand.smsEligible && isSmsWindow(cand.state, Date.now())) {
+            const ok = await sendSMSToConsumer({
+              consumer: consumersById.get(cand.buyerId),
+              body: renderReengageSms({ firstName: cand.firstName, cut: cand.cut, link: `${SITE_URL}/member` }),
+              reason: 'loss-recovery-reengage',
+            });
+            if (ok) smsSent++;
+          }
+        } else if (res.suppressed) suppressed++; // frequency cap / list — correct burn
+        else await rollbackClaim(cand, res.reason || 'resend-error');
       } else if (cand.action === 'downsell') {
         const res = await sendLossRecoveryDownsell({ firstName: cand.firstName, email: cand.email, cut: cand.cut });
         if (res.success) done.downsell++;
-        else suppressed++;
+        else if (res.suppressed) suppressed++;
+        else await rollbackClaim(cand, res.reason || 'resend-error');
       } else {
         // nurture: NO email now. Single scheduled-style stamp the existing
         // rails already read: re-warm-cohort reanimates unengaged buyers 60d
         // after 'Warmup Sent At' (lifetime 2-attempt cap + suppression are
         // that cron's job); 'nudged' suppresses rancher-launch-warmup's own
-        // day-7 nudge so the buyer hears nothing until then.
-        if (cand.rewarmStamp) {
-          await updateRecord(TABLES.CONSUMERS, cand.buyerId, {
-            'Warmup Sent At': new Date().toISOString(),
-            'Warmup Stage': 'nudged',
-          });
-        }
+        // day-7 nudge so the buyer hears nothing until then. The selector
+        // only plans nurture when shouldStampRewarm passed (full re-warm
+        // filter mirror) — so the stamp is unconditional here.
+        await updateRecord(TABLES.CONSUMERS, cand.buyerId, {
+          'Warmup Sent At': new Date().toISOString(),
+          'Warmup Stage': 'nudged',
+        });
         done.nurture++;
       }
     } catch (e: any) {
@@ -231,7 +299,9 @@ async function realHandler(_request: Request): Promise<CronResult> {
       TELEGRAM_ADMIN_CHAT_ID,
       `🪃 <b>loss recovery</b> — <b>${touched}</b> recovered touch${touched === 1 ? '' : 'es'}\n\n` +
         `re-engage ${done.reengage} (+${smsSent} sms) · downsell ${done.downsell} · nurture-stamp ${done.nurture}` +
-        `${suppressed ? ` · ${suppressed} suppressed/capped` : ''}${errors.length ? ` · ${errors.length} errors` : ''}` +
+        `${suppressed ? ` · ${suppressed} suppressed/capped` : ''}` +
+        `${failed ? ` · ⚠ ${failed} SEND-FAILED (rolled back, retry tomorrow)` : ''}` +
+        `${errors.length ? ` · ${errors.length} errors` : ''}` +
         `${sel.capped ? ` · ${sel.capped} over cap (tomorrow)` : ''}${timeBoxed ? ' · time-boxed' : ''}\n` +
         `reasons seen: ${fmtCounts(sel.reasonCounts)}`,
     ).catch(() => {});
@@ -242,10 +312,14 @@ async function realHandler(_request: Request): Promise<CronResult> {
     recordsTouched: touched,
     notes:
       `pool=${candidates.length} planned=${sel.planned.length} reengage=${done.reengage} sms=${smsSent} ` +
-      `downsell=${done.downsell} nurture=${done.nurture} suppressed=${suppressed} cap=${cap} capped=${sel.capped} ` +
+      `downsell=${done.downsell} nurture=${done.nurture} suppressed=${suppressed} failed=${failed} cap=${cap} capped=${sel.capped} ` +
       `reasons={${fmtCounts(sel.reasonCounts)}} errs=${errors.length}` +
       (errors.length ? ` err1=${errors[0].slice(0, 80)}` : '') + (timeBoxed ? ' timeBoxed' : ''),
-    skipReasonBreakdown: { ...sel.skips, ...(suppressed ? { 'send-suppressed-or-capped': suppressed } : {}) },
+    skipReasonBreakdown: {
+      ...sel.skips,
+      ...(suppressed ? { 'send-suppressed-or-capped': suppressed } : {}),
+      ...(failed ? { 'send-failed-rolled-back': failed } : {}),
+    },
   };
 }
 

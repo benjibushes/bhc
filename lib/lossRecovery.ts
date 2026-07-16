@@ -13,13 +13,13 @@
 //   'Bought elsewhere' / 'Out of service area' /
 //   'Wrong intent (not a buyer)' / 'Other' → NONE (terminal; counted only)
 //
-// SEQUENCING NOTE: nothing on main writes 'Loss Reason' yet — the rancher UI
-// writers land in PR #396. Until then every run selects zero candidates and
-// no-ops gracefully; the rail goes live the moment #396 merges. The 7 choice
-// strings below are pinned byte-for-byte to the PROD schema (em-dash U+2014
-// in 'Timing — buying later', straight apostrophe U+0027 in "Couldn't reach
-// buyer") — deliberately a LOCAL copy so this branch merges cleanly whether
-// or not #396 (which ships its own lib/lossReasons vocabulary) lands first.
+// SEQUENCING NOTE: PR #396 (the rancher-UI 'Loss Reason' writers) is MERGED —
+// this rail selects real candidates from day one, in DRY-RUN until Ben flips
+// LOSS_RECOVERY_ENABLED. The 7 choice strings below are pinned byte-for-byte
+// to the PROD schema (em-dash U+2014 in 'Timing — buying later', straight
+// apostrophe U+0027 in "Couldn't reach buyer") — deliberately a LOCAL copy so
+// this branch carries its own vocabulary and merges cleanly regardless of
+// what lib/lossReasons on main evolves into.
 //
 // THE ~60-DAY NURTURE DEFERRAL (no new scheduler): the codebase's existing
 // deferred-follow-up rail is re-warm-cohort — it reanimates any Approved,
@@ -30,8 +30,15 @@
 // existing crons already read: 'Warmup Sent At' = now (60-day anchor) +
 // 'Warmup Stage' = 'nudged' (suppresses rancher-launch-warmup's own day-7
 // nudge so the buyer hears NOTHING until the re-warm rail wakes them).
-// Buyers with 'Warmup Engaged At' set are excluded by the re-warm rail's own
-// filter, so we skip the stamp for them (shouldStampRewarm).
+//
+// shouldStampRewarm MIRRORS THE FULL re-warm-cohort candidate filter (Status
+// = Approved, no 'Warmup Engaged At', 'Ready to Buy' falsy, Re-Warm Attempts
+// < 2). A buyer that filter would never pick up must NOT be stamped — the
+// stamp would remove a never-warmed buyer from rancher-launch-warmup Phase 1
+// (NOT({Warmup Sent At})) with no rail ever waking them again: permanent
+// silence, strictly worse than doing nothing. Non-stampable nurture
+// candidates are SKIPPED by the selector ('nurture-not-rewarmable'): no
+// touch, no 'Recovery Sent At' burn, honest counts.
 //
 // PURE: dependency-free decisions over plain Airtable-shaped rows (mirrors
 // lib/productRecovery / lib/replenishment) so everything unit-tests with zero
@@ -133,14 +140,30 @@ export function isSmsEligible(c: Record<string, unknown> | null | undefined): bo
   return String(c['Phone'] || '').trim().length > 0;
 }
 
+/** Mirror of re-warm-cohort's MAX_REWARM_ATTEMPTS lifetime cap. */
+export const MAX_REWARM_ATTEMPTS = 2;
+
 /**
  * Should the nurture action stamp the re-warm anchor on this buyer?
- * Engaged buyers ('Warmup Engaged At' set) are permanently outside the
- * re-warm rail's candidate filter — stamping them would be a dead write.
+ *
+ * MIRRORS THE FULL re-warm-cohort candidate filter (route + its JS filter):
+ *   Status = "Approved" AND no 'Warmup Engaged At' AND 'Ready to Buy' falsy
+ *   AND Re-Warm Attempts < 2 (suppression flags are the selector's
+ *   isBuyerContactable gate). Stamping a buyer that filter would never pick
+ *   up is worse than a dead write: 'Warmup Sent At' also removes them from
+ *   rancher-launch-warmup Phase 1 (NOT({Warmup Sent At})) — a never-warmed
+ *   buyer would go permanently silent. If this returns false the selector
+ *   SKIPS the candidate entirely (no touch, no 'Recovery Sent At' burn).
  */
 export function shouldStampRewarm(c: Record<string, unknown> | null | undefined): boolean {
   if (!c) return false;
-  return !c['Warmup Engaged At'];
+  if (c['Warmup Engaged At']) return false;
+  if (readEnumOrString(c['Status']).trim() !== 'Approved') return false;
+  // Truthy check matches re-warm-cohort line-for-line: Ready to Buy buyers
+  // route through matching/suggest on the next batch-approve run instead.
+  if (c['Ready to Buy']) return false;
+  if ((Number(c['Re-Warm Attempts']) || 0) >= MAX_REWARM_ATTEMPTS) return false;
+  return true;
 }
 
 /**
@@ -179,8 +202,6 @@ export interface LossRecoveryCandidate {
   cut: string;
   state: string;
   smsEligible: boolean;
-  /** nurture only: whether to stamp the re-warm anchor on the Consumer. */
-  rewarmStamp: boolean;
   existingNotes: string;
 }
 
@@ -262,6 +283,12 @@ export function selectLossRecovery(input: SelectLossRecoveryInput): LossRecovery
     if (activeBuyerIds.has(buyerId)) { skip('active-referral-elsewhere'); continue; }
     if (plannedBuyers.has(buyerId)) { skip('duplicate-buyer'); continue; } // one touch per buyer per run
 
+    // Nurture is ONLY worth a touch if the re-warm rail will actually wake
+    // the buyer later — otherwise the stamp is permanent silence (see
+    // shouldStampRewarm). Skip: no send, no 'Recovery Sent At' burn; the row
+    // ages out of the 14d window on its own.
+    if (action === 'nurture' && !shouldStampRewarm(buyer)) { skip('nurture-not-rewarmable'); continue; }
+
     if (planned.length >= cap) { capped++; continue; }
 
     planned.push({
@@ -274,7 +301,6 @@ export function selectLossRecovery(input: SelectLossRecoveryInput): LossRecovery
       cut: cutLabelFromOrderType(ref['Order Type']),
       state: String(buyer['State'] || '').trim(),
       smsEligible: action === 'reengage' && isSmsEligible(buyer),
-      rewarmStamp: action === 'nurture' && shouldStampRewarm(buyer),
       existingNotes: String(ref['Notes'] || ''),
     });
     plannedBuyers.add(buyerId);
@@ -293,12 +319,16 @@ export function recoveryNoteLine(action: Exclude<RecoveryAction, 'none'>, reason
 /**
  * Re-engage SMS body (opted-in buyers only; the cron additionally gates on
  * sendSMSToConsumer's TCPA check + the local SMS send-window). Always carries
- * STOP. Lowercase, one link, no fake urgency — house voice.
+ * STOP. Lowercase, ONE CTA (the link), no fake urgency — house voice.
+ *
+ * NEVER promise a "reply YES" flow here: the Twilio inbound webhook
+ * classifies YES as a START keyword (re-subscribe confirmation TwiML) — no
+ * human sees it and no call gets set up. The link is the only honest CTA.
  */
 export function renderReengageSms(ctx: { firstName: string; cut: string; link: string }): string {
   return (
     `BuyHalfCow: ${ctx.firstName}, your rancher tried to reach you about your ${ctx.cut} and couldn't get through — ` +
-    `still want it? tap ${ctx.link} or reply YES and we'll set the call up right this time.\n` +
+    `still want it? grab your spot: ${ctx.link}\n` +
     `reply STOP to opt out`
   );
 }

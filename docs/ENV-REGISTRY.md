@@ -92,7 +92,7 @@
 | `LOG_RETENTION_ENABLED` | Tri-state log-purge cron; unset → logs accumulate (Airtable row bloat) | fail-silent | ben-flips |
 | `MAINTENANCE_MODE` | 'true' → platform-wide pause (crons skip, go-live blocked); unset=normal | fail-open | ben-flips |
 | ⚠️ `MATCHING_ENABLED` | Routing kill switch with INVERTED semantics — default ON, only explicit 'false' pauses matching/intros platform-wide | fail-open | ben-flips |
-| `LOSS_RECOVERY_ENABLED` | Loss-recovery cron off Referrals 'Loss Reason' (re-engage / downsell / nurture-stamp); anything but 'true' = DRY-RUN (selection runs + logs would-send list, zero sends/stamps — the WAITING_ACTIVATION precedent) | fail-silent | ben-flips |
+| `LOSS_RECOVERY_ENABLED` | Loss-recovery cron off Referrals 'Loss Reason' (re-engage / downsell / nurture-stamp); anything but 'true' = DRY-RUN (selection runs + logs would-send list, zero sends/stamps — the WAITING_ACTIVATION precedent). ⚠️ BEFORE any bulk 'Loss Reason' backfill on historical rows: pre-stamp 'Recovery Sent At' — the 14d freshness window rides LAST_MODIFIED_TIME(), so a mass edit makes months-old losses look fresh (live runs also self-halt >200 eligible/day as a backstop) | fail-silent | ben-flips |
 | `META_CLOSE_PURCHASE_ENABLED` | Fire attributed CAPI Purchase on Closed-Won; unset=off | fail-silent | ben-flips |
 | `META_DEPOSIT_PURCHASE_ENABLED` | Fire CAPI Purchase on deposit-paid; unset=off by design | fail-silent | ben-flips |
 | `META_PRODUCT_PURCHASE_ENABLED` | Fire CAPI Purchase on low-ticket product sales; unset=off | fail-silent | ben-flips |

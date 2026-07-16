@@ -121,9 +121,18 @@ test('sms eligible: STRICT === true opt-in + phone (matches sendSMSToConsumer)',
   assert.equal(isSmsEligible(buyer({ 'SMS Opt-In': true, Unsubscribed: true })), false);
 });
 
-test('rewarm stamp: skipped for warmup-engaged buyers (dead write)', () => {
-  assert.equal(shouldStampRewarm(buyer()), true);
-  assert.equal(shouldStampRewarm(buyer({ 'Warmup Engaged At': daysAgo(90) })), false);
+test('rewarm stamp: mirrors the FULL re-warm-cohort filter, not just engagement', () => {
+  // Stampable = a buyer re-warm-cohort would actually pick up in ~60d.
+  assert.equal(shouldStampRewarm(buyer({ Status: 'Approved' })), true);
+  assert.equal(shouldStampRewarm(buyer({ Status: 'Approved', 'Re-Warm Attempts': 1 })), true);
+  // Every leg of the re-warm filter must gate the stamp:
+  assert.equal(shouldStampRewarm(buyer({ Status: 'Approved', 'Warmup Engaged At': daysAgo(90) })), false);
+  assert.equal(shouldStampRewarm(buyer()), false); // no Status — re-warm requires Approved
+  assert.equal(shouldStampRewarm(buyer({ Status: 'Waitlist' })), false);
+  assert.equal(shouldStampRewarm(buyer({ Status: 'Approved', 'Ready to Buy': true })), false); // re-warm skips truthy
+  assert.equal(shouldStampRewarm(buyer({ Status: 'Approved', 'Ready to Buy': 'Yes' })), false);
+  assert.equal(shouldStampRewarm(buyer({ Status: 'Approved', 'Re-Warm Attempts': 2 })), false); // lifetime cap
+  assert.equal(shouldStampRewarm(null), false);
 });
 
 // ── close window ─────────────────────────────────────────────────────────────
@@ -163,14 +172,35 @@ test('selector: Price too high → downsell (never sms)', () => {
   assert.equal(sel.planned[0].smsEligible, false);
 });
 
-test('selector: Timing → nurture, no email fields needed, rewarm stamp decided', () => {
-  const sel = run([lostRef({ 'Loss Reason': 'Timing — buying later' })]);
-  assert.equal(sel.planned[0].action, 'nurture');
-  assert.equal(sel.planned[0].rewarmStamp, true);
-  const engaged = run([lostRef({ 'Loss Reason': 'Timing — buying later' })], {
-    consumers: [buyer({ 'Warmup Engaged At': daysAgo(10) })],
+test('selector: Timing → nurture planned ONLY for re-warm-reachable buyers', () => {
+  const sel = run([lostRef({ 'Loss Reason': 'Timing — buying later' })], {
+    consumers: [buyer({ Status: 'Approved' })],
   });
-  assert.equal(engaged.planned[0].rewarmStamp, false);
+  assert.equal(sel.planned.length, 1);
+  assert.equal(sel.planned[0].action, 'nurture');
+});
+
+test('selector: nurture SKIPPED (no touch, no stamp burn) when re-warm would never wake the buyer', () => {
+  // Each of these buyers fails a leg of the re-warm-cohort filter — stamping
+  // them would silence a never-warmed buyer forever (rancher-launch-warmup
+  // Phase 1 filters NOT({Warmup Sent At})). They must be skips, not touches.
+  const nonRewarmable = [
+    buyer({ Status: 'Approved', 'Warmup Engaged At': daysAgo(10) }),
+    buyer(), // not Approved
+    buyer({ Status: 'Approved', 'Ready to Buy': true }),
+    buyer({ Status: 'Approved', 'Re-Warm Attempts': 2 }),
+  ];
+  for (const b of nonRewarmable) {
+    const sel = run([lostRef({ 'Loss Reason': 'Timing — buying later' })], { consumers: [b] });
+    assert.equal(sel.planned.length, 0);
+    assert.equal(sel.skips['nurture-not-rewarmable'], 1);
+  }
+  // The skip is nurture-specific: the same buyers still get reengage/downsell.
+  const sel = run([lostRef({ 'Loss Reason': 'Price too high' })], {
+    consumers: [buyer({ 'Ready to Buy': true })],
+  });
+  assert.equal(sel.planned.length, 1);
+  assert.equal(sel.planned[0].action, 'downsell');
 });
 
 test('selector: terminal reasons counted but never planned', () => {
@@ -269,9 +299,12 @@ test('note line: dated, action-labeled, no buyer name', () => {
   assert.match(recoveryNoteLine('nurture', 'Timing — buying later', NOW), /nurture stamp/);
 });
 
-test('sms render: carries cut, link and STOP', () => {
+test('sms render: carries cut, link and STOP — and never promises a reply-YES flow', () => {
   const body = renderReengageSms({ firstName: 'Amie', cut: 'half', link: 'https://x.co/member' });
   assert.match(body, /your half/);
   assert.match(body, /https:\/\/x\.co\/member/);
   assert.match(body, /reply STOP to opt out/);
+  // The Twilio inbound webhook classifies YES as a START (re-subscribe)
+  // keyword — nobody sees it, no call gets set up. The link is the only CTA.
+  assert.doesNotMatch(body, /reply yes/i);
 });
