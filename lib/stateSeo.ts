@@ -51,8 +51,11 @@ export function stateBySlug(slug: string): SeoState | null {
 // the typical whole-beef band ranchers actually publish — so if Ben retunes
 // pricing.ts, every state page's copy follows automatically.
 
-export const TYPICAL_WHOLE_LOW = 2000;
-export const TYPICAL_WHOLE_HIGH = 3500;
+// Retuned 2026-07-15 (funnel truth PR): the old 2000/3500 band published
+// half ≈ $1,100–$1,950 — 40–70% under live supply (halves $3,299–3,650,
+// wholes $6,500–6,800), so SEO entrants hit sticker shock inside one session.
+export const TYPICAL_WHOLE_LOW = 6000;
+export const TYPICAL_WHOLE_HIGH = 7000;
 
 export interface TierRange {
   low: number;
@@ -122,7 +125,7 @@ export function stateFaqs(stateName: string): FaqItem[] {
     {
       q: `How much does half a cow cost in ${stateName}?`,
       a:
-        `A typical half-beef share runs ${fmtRange(r.half)} all-in (animal + processing), depending on the ranch and final weight — about $6–$9 per pound of hanging weight. Boxed-delivery services work out to roughly $13–$17 per pound for comparable cuts. A quarter share typically runs ${fmtRange(r.quarter)}, a whole ${fmtRange(r.whole)}.`,
+        `A typical half-beef share runs ${fmtRange(r.half)} all-in (animal + processing), depending on the ranch and final weight — about $8–$11 per pound of hanging weight. Boxed-delivery services work out to roughly $13–$17 per pound for comparable cuts. A quarter share typically runs ${fmtRange(r.quarter)}, a whole ${fmtRange(r.whole)}.`,
     },
     {
       q: 'How much freezer space do I need?',

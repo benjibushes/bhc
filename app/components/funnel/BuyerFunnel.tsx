@@ -13,17 +13,25 @@
 //     (the quiz-drip resume link / an existing WAITING lead). Size/timing/contact
 //     are already on the record, so the wizard only collects storage + finalizes.
 //
-// Data lifecycle (see docs/.../2026-06-18-unified-buyer-funnel-design.md):
-//   Steps 1–2 (size, timing) → client state only. Tire-kickers leave no trace.
-//   Step 3 (contact submit)  → POST /api/consumers { quizStarted: true, … }
+// Data lifecycle (see docs/.../2026-06-18-unified-buyer-funnel-design.md,
+// budget + commit steps added 2026-07-15 funnel truth PR):
+//   Steps 1–3 (size, timing, budget) → client state only. Budget is OPTIONAL
+//                              (one skippable chip row). Tire-kickers leave no
+//                              trace.
+//   Step 4 (contact submit)  → POST /api/consumers { quizStarted: true, … }
 //                              → creates the lead (Approved + WAITING, NO
-//                                Qualified At) and returns { consumerId,
-//                                resumeToken }.
-//   Step 4 (storage select)  → POST /api/qualify { token, consumerId,
-//                                answers:{tier,timing,storage}, eventId }
+//                                Qualified At), stamps Intent Score/Budget,
+//                                and returns { consumerId, resumeToken }.
+//   Step 5 (storage select)  → client state only, advances to commit.
+//   Step 6 (commit tap)      → POST /api/qualify { token, consumerId,
+//                                answers:{tier,timing,storage,ack},
+//                                ackConfirmedAt, eventId }
 //                              → finalizes, scores, fires matching, returns the
-//                                match (or a waitlist signal).
-//   Step 5 (reveal)          → the matched rancher OR Ben's inline call (when
+//                                match (or a waitlist signal). The tap is the
+//                                REAL response commitment — ackConfirmedAt is
+//                                minted only here, and the server stamps
+//                                `Response Ack At` only when it's present.
+//   Step 7 (reveal)          → the matched rancher OR Ben's inline call (when
 //                              offerOperatorCall) OR an honest waitlist.
 //
 // Everything textual/structural reads from lib/funnelConfig.ts so future tweaks
@@ -36,6 +44,7 @@ import {
   FUNNEL_COPY,
   SIZE_OPTIONS,
   TIMING_OPTIONS,
+  BUDGET_OPTIONS,
   STORAGE_OPTIONS,
   FUNNEL_ACCENT,
   type StepKey,
@@ -83,11 +92,7 @@ interface QualifyResult {
   qualified: boolean;
   score?: number;
   routingOk?: boolean;
-  rancher?: {
-    name: string;
-    state: string;
-    slug?: string;
-  } | null;
+  rancher?: RevealRancher | null;
   // 'tier_v2' | 'legacy'. For tier_v2 matches /api/qualify fires with
   // skipBuyerIntro=true — the rancher does NOT text the buyer; Ben (the
   // operator) runs the sales call and emails a Cal link. Drives the reveal
@@ -98,6 +103,16 @@ interface QualifyResult {
   buyerEmail?: string;
   referralId?: string | null;
   message?: string;
+}
+
+// Matched-rancher subset — rancherTier drives the reveal's channel promise
+// (Operator = BHC closes → "our team will call you today"; everyone else =
+// the rancher calls or texts within 24–48 hours).
+interface RevealRancher {
+  name: string;
+  state: string;
+  slug?: string;
+  rancherTier?: string;
 }
 
 // ── Nationwide opt-in match payload (POST /api/member/preferences) ──────────
@@ -155,6 +170,8 @@ export default function BuyerFunnel({
   // Answers (client state until the relevant POST persists them).
   const [tier, setTier] = useState('');
   const [timing, setTiming] = useState('');
+  // Optional — '' means the buyer skipped the chip row ("prefer not to say").
+  const [budget, setBudget] = useState('');
   const [storage, setStorage] = useState('');
 
   // Contact fields. Phone is REQUIRED.
@@ -334,11 +351,12 @@ export default function BuyerFunnel({
     goToIndex(STEP_INDEX[stepKey] - 1);
   }
 
-  // Back is allowed on timing/contact/storage. In resume mode there's nothing
+  // Back is allowed on every mid-flow step. In resume mode there's nothing
   // before storage to go back to (size/timing/contact live on the record), so
   // Back is hidden there.
   const canGoBack =
-    (stepKey === 'timing' || stepKey === 'contact' || stepKey === 'storage') &&
+    (stepKey === 'timing' || stepKey === 'budget' || stepKey === 'contact' ||
+      stepKey === 'storage' || stepKey === 'commit') &&
     !(mode === 'resume' && stepKey === 'storage');
 
   // Tap-card select → flash the check → auto-advance. The `from` guard prevents a
@@ -380,6 +398,9 @@ export default function BuyerFunnel({
           state,
           tier,
           timing,
+          // Optional budget chip — '' when skipped; server whitelists against
+          // the Budget singleSelect choice names and skips empty.
+          budget,
           source: attribution.current.source,
           campaign: attribution.current.campaign,
           utmParams: attribution.current.utmParams,
@@ -422,15 +443,23 @@ export default function BuyerFunnel({
     }
   }
 
-  // ── Step 4: finalize (storage) → reveal ─────────────────────────────────────
-  async function submitStorage(storageValue: string) {
-    setStorage(storageValue);
-    setFlashing(storageValue);
+  // ── Step 5: storage select → commit (client state only) ─────────────────────
+  function selectStorage(storageValue: string) {
+    setError('');
+    selectAndAdvance(setStorage, storageValue, 'storage');
+  }
+
+  // ── Step 6: the real commitment tap → finalize → reveal ─────────────────────
+  // The affirm button IS the submit. ackConfirmedAt is minted here and ONLY
+  // here — the server stamps `Response Ack At` only when it's present, so a
+  // finalize without the tap can never fabricate a commitment (the old flow
+  // hard-coded ack:true for every completer and the rancher email claimed an
+  // acknowledgment that never happened).
+  async function submitCommit() {
     if (!token || !consumerId) {
       // Shouldn't happen (resume carries them; fresh minted them at contact),
       // but degrade honestly rather than POST a broken finalize.
       setError('Your session expired. Please start again.');
-      setFlashing(null);
       return;
     }
     setSubmitting(true);
@@ -447,11 +476,10 @@ export default function BuyerFunnel({
         body: JSON.stringify({
           token,
           consumerId,
-          // ack: true — completing the flow IS the commitment signal (replaces
-          // the old explicit checkbox). The server scorer awards 25 pts for it;
-          // without it every completer was capped at 75 and "Not sure" buyers
-          // wrongly failed the 75 gate.
-          answers: { tier, timing, storage: storageValue, ack: true },
+          // ack mirrors the tap (this function only runs on the tap); the
+          // server-side stamp keys on ackConfirmedAt, not this boolean.
+          answers: { tier, timing, storage, ack: true },
+          ackConfirmedAt: new Date().toISOString(),
           eventId,
           ...(attribution.current.campaign.startsWith('rancher-')
             ? { campaign: attribution.current.campaign }
@@ -586,7 +614,30 @@ export default function BuyerFunnel({
           />
         )}
 
-        {/* ── STEP 3 — CONTACT ─────────────────────────────────────────────── */}
+        {/* ── STEP 3 — BUDGET (optional, skippable) ────────────────────────── */}
+        {stepKey === 'budget' && (
+          <div className="space-y-4">
+            <CardGrid
+              options={BUDGET_OPTIONS}
+              selected={budget}
+              flashing={flashing}
+              onSelect={(v) => selectAndAdvance(setBudget, v, 'budget')}
+            />
+            {/* Skipping is the implicit "prefer not to say" — no chip for it,
+                no penalty, one tap either way. */}
+            <p className="text-center text-sm text-saddle">
+              <button
+                type="button"
+                onClick={() => { setBudget(''); advance(); }}
+                className="underline hover:text-charcoal transition-colors"
+              >
+                skip — i&apos;d rather not say
+              </button>
+            </p>
+          </div>
+        )}
+
+        {/* ── STEP 4 — CONTACT ─────────────────────────────────────────────── */}
         {stepKey === 'contact' && (
           <form
             className="space-y-4"
@@ -709,18 +760,17 @@ export default function BuyerFunnel({
           </form>
         )}
 
-        {/* ── STEP 4 — STORAGE ─────────────────────────────────────────────── */}
+        {/* ── STEP 5 — STORAGE ─────────────────────────────────────────────── */}
         {stepKey === 'storage' && (
           <div className="space-y-4">
             <CardGrid
               options={STORAGE_OPTIONS}
               selected={storage}
               flashing={flashing}
-              disabled={submitting}
-              onSelect={(v) => submitStorage(v)}
+              onSelect={(v) => selectStorage(v)}
             />
             {/* Freezer objection → help, not a dead end. Always-visible helper
-                (selecting an option auto-submits, so there's no moment to show
+                (selecting an option auto-advances, so there's no moment to show
                 per-option copy): "need freezer space" is the biggest high-ticket
                 objection — answer it with the rancher-holds option that's
                 already on this screen + the chest freezer on /gear. */}
@@ -730,14 +780,59 @@ export default function BuyerFunnel({
                 the gear page &rarr;
               </a>
             </p>
-            {submitting && (
-              <p className="text-center text-sm text-saddle">Locking in your match…</p>
-            )}
             {error && <ErrorBox>{error}</ErrorBox>}
           </div>
         )}
 
-        {/* ── STEP 5 — REVEAL ──────────────────────────────────────────────── */}
+        {/* ── STEP 6 — COMMIT (the real response ack — it IS the submit) ────── */}
+        {stepKey === 'commit' && (
+          <div className="space-y-5">
+            <div className="rounded-lg border border-dust bg-white p-5 text-left">
+              {/* Honest tense: with zero operational ranchers in-state the next
+                  screen is the waitlist — asking the buyer to commit to a call
+                  that provably isn't coming this week is the exact fabrication
+                  this step replaced. "when we match you" is true in both
+                  worlds; the confident 24–48h promise is reserved for states
+                  where a rancher actually exists. */}
+              <p className="text-base leading-relaxed text-charcoal">
+                {stats && stats.ranchesInState === 0 ? (
+                  <>
+                    when we match you, your rancher will call or text from a{' '}
+                    <strong>
+                      {US_STATES.find((s) => s.code === state)?.name || 'local'}
+                    </strong>{' '}
+                    number — will you pick up?
+                  </>
+                ) : (
+                  <>
+                    your rancher will call or text within 24&ndash;48 hours from a{' '}
+                    <strong>
+                      {US_STATES.find((s) => s.code === state)?.name || 'local'}
+                    </strong>{' '}
+                    number — will you pick up?
+                  </>
+                )}
+              </p>
+              <p className="mt-2 text-sm text-saddle">
+                that one call is where your cuts, price, and processing date get set.
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="primary"
+              size="lg"
+              fullWidth
+              onClick={submitCommit}
+              loading={submitting}
+              disabled={submitting}
+            >
+              {submitting ? 'locking in your match…' : "i'll answer or text back"}
+            </Button>
+            {error && <ErrorBox>{error}</ErrorBox>}
+          </div>
+        )}
+
+        {/* ── STEP 7 — REVEAL ──────────────────────────────────────────────── */}
         {stepKey === 'reveal' && (
           <Reveal
             result={result}
@@ -765,7 +860,7 @@ export default function BuyerFunnel({
           />
         )}
 
-        {/* ── Back nav (steps 2–4, not in resume-storage, not on reveal) ───── */}
+        {/* ── Back nav (steps 2–6, not in resume-storage, not on reveal) ───── */}
         {canGoBack && (
           <div className="mt-7">
             <Button
@@ -893,16 +988,14 @@ function ErrorBox({ children }: { children: React.ReactNode }) {
   );
 }
 
-// ── Step 5 reveal ─────────────────────────────────────────────────────────────
-// Honest outcomes:
+// ── Reveal step ───────────────────────────────────────────────────────────────
+// Honest outcomes. ONE channel truth (2026-07-15 funnel truth PR): the RANCHER
+// calls or texts within 24–48 hours — matching the commit-step promise the
+// buyer just acked — EXCEPT when the matched rancher's Tier is 'Operator'
+// (BHC closes those) → "our team will call you today".
 //   1. offerOperatorCall ON  → "Book your 15-min call with Ben" (CalInlineBooker).
-//   2. matched rancher, tier_v2 → named rancher, but Ben sets up the call + locks
-//      the share. /api/qualify suppresses the rancher intro for tier_v2 (sends
-//      skipBuyerIntro=true) and emails the buyer Ben's Cal link, so the rancher
-//      does NOT text the buyer — promising that here was a misleading dead-end.
-//   3. matched rancher, legacy → named rancher + "they'll text you today" (legacy
-//      ranchers are handled off-platform and DO reach out directly).
-//   4. no in-state match     → honest waitlist ("you're first in line"), NOT a
+//   2. matched rancher       → named rancher + the channel truth above.
+//   3. no in-state match     → honest waitlist ("you're first in line"), NOT a
 //      fake match.
 function Reveal({
   result,
@@ -926,11 +1019,14 @@ function Reveal({
 }) {
   const matched = !!(result?.routingOk && result?.rancher && result.rancher.name);
   const rancher = result?.rancher;
-  // tier_v2 match → the rancher intro was suppressed server-side (/api/qualify
-  // sends skipBuyerIntro=true for tier_v2) and Ben emails the buyer his Cal
-  // link. So for these, the buyer should expect BEN to reach out — not a text
-  // from the rancher. Legacy matches still get a direct rancher reach-out.
-  const tierV2Match = matched && (result?.pricingModel || 'legacy') === 'tier_v2';
+  // Operator-tier match → BHC runs the close, so "our team will call you
+  // today" is the truth. Every other tier: the RANCHER calls or texts within
+  // 24–48 hours — the same promise the buyer just acknowledged on the commit
+  // step. (The old copy said "ben reaches out today" for every tier_v2 match,
+  // which contradicted both the funnel's own contact step and the rancher
+  // intro email's "reach out within 24 hours".)
+  const operatorMatch =
+    matched && (rancher?.rancherTier || '').trim().toLowerCase() === 'operator';
   // DEPOSIT OPTIONALITY (2026-06-30): a tier_v2 (Stripe-Connect-active) rancher
   // with a minted referralId is deposit-capable — the buyer can one-tap deposit
   // straight to Stripe at /checkout/<refId>/deposit. For these, deposit is the
@@ -1014,8 +1110,13 @@ function Reveal({
           {/* third path: no action required — the rancher already has the lead and
               will reach out. fills the funnel leak where a buyer who wants neither
               self-serve deposit nor a call thought it dead-ended. */}
+          {/* Single channel truth here too: Operator tier = BHC's team calls
+              today (same special-case as Mode 2 below) — a deposit-capable
+              Operator match must not promise a rancher call that BHC makes. */}
           <p className="text-center text-xs text-saddle">
-            no rush either way — {rancher.name} has your details and will reach out within 24&ndash;48 hours.
+            {operatorMatch
+              ? <>no rush either way — our team has your details and will call you today to lock in your share with {rancher.name}.</>
+              : <>no rush either way — {rancher.name} has your details and will call or text within 24&ndash;48 hours.</>}
           </p>
         </div>
       ) : offerOperatorCall && result?.qualified ? (
@@ -1060,17 +1161,18 @@ function Reveal({
               className="mt-4 rounded-md px-4 py-3 text-sm font-medium text-bone"
               style={{ backgroundColor: FUNNEL_ACCENT }}
             >
-              {/* deposit-capable is handled above; here tier_v2 w/o referral →
-                  Ben sets it up; legacy → rancher texts. */}
-              {tierV2Match
-                ? <>ben reaches out today to set it up.</>
-                : <>they&apos;ll text you today.</>}
+              {/* deposit-capable is handled above; here the single channel
+                  truth applies — Operator tier = BHC closes (team calls
+                  today); every other rancher calls or texts within 24-48h. */}
+              {operatorMatch
+                ? <>our team will call you today.</>
+                : <>they&apos;ll call or text within 24&ndash;48 hours.</>}
             </div>
           </div>
           <p className="text-xs text-saddle">
-            {tierV2Match
-              ? <>check your email — ben gets in touch to lock in your share with {rancher.name}. no payment now.</>
-              : <>keep an eye on your phone — your rancher reaches out directly, no middleman.</>}
+            {operatorMatch
+              ? <>keep your phone handy — our team calls to lock in your share with {rancher.name}. no payment now.</>
+              : <>keep an eye on your phone — {rancher.name} calls or texts you direct, no middleman.</>}
           </p>
           {/* Compact low-ticket line (Phase 8) — share intro is in motion;
               never compete with it, just leave a taste-today door open. */}

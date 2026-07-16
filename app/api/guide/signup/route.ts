@@ -29,7 +29,7 @@ function guideHtml(firstName: string): string {
     <p>hey ${f},</p>
     <p>here's the honest math on a half cow — the version nobody selling you one will give you.</p>
     <h2 style="font-family:Georgia,serif;font-size:20px;margin:24px 0 8px">the real cost</h2>
-    <p style="font-size:14.5px;line-height:1.6">a half beef typically runs <strong>$1,800&ndash;3,500 all-in</strong> (animal + processing) and lands <strong>180&ndash;220 lbs</strong> of packaged beef in your freezer. that's <strong>$5.50&ndash;9.50 per pound take-home</strong> &mdash; against $10&ndash;16/lb for the same cuts at the grocery store. real savings: 30&ndash;50%.</p>
+    <p style="font-size:14.5px;line-height:1.6">a half beef typically runs <strong>$3,000&ndash;3,700 all-in</strong> (animal + processing) and lands <strong>180&ndash;220 lbs</strong> of packaged beef in your freezer. ranchers quote it at <strong>$8&ndash;11 per pound of hanging weight</strong> &mdash; blended out, about $14&ndash;20 per pound in your freezer, and every pound costs the same whether it's ground chuck or tenderloin. the same grass-fed cuts bought &agrave; la carte run $9&ndash;35/lb.</p>
     <h2 style="font-family:Georgia,serif;font-size:20px;margin:24px 0 8px">the honest part</h2>
     <p style="font-size:14.5px;line-height:1.6">roughly <strong>40&ndash;50% arrives as ground and stew</strong> &mdash; you're stocking a freezer, not buying a box of ribeyes. you'll also want <strong>~8&ndash;10 cubic feet of freezer space</strong> (a $200&ndash;300 chest freezer pays for itself in the first fill).</p>
     <h2 style="font-family:Georgia,serif;font-size:20px;margin:24px 0 8px">how it works on buyhalfcow</h2>

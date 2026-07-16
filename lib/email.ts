@@ -4992,7 +4992,7 @@ export async function sendNoBudgetFounderPitch(data: {
 </head><body><div class="container">
   <h1>Beef this year isn't in the budget? I get it.</h1>
   <p>Hi ${esc(first)},</p>
-  <p>You signed up for BuyHalfCow. You care about how cattle gets raised. You're on the right side of the food fight. But buying a Quarter is $650–$1,000 — that's not in the budget for a lot of people this year. I won't pretend otherwise.</p>
+  <p>You signed up for BuyHalfCow. You care about how cattle gets raised. You're on the right side of the food fight. But buying a Quarter is $1,500–$2,000 — that's not in the budget for a lot of people this year. I won't pretend otherwise.</p>
   <p>Here's another way to be part of this without the freezer commitment.</p>
   <div class="divider"></div>
   <p><strong>The Founding Herd.</strong> 100 numbered spots. Back the platform from $100 (Herd) to $1k (Outlaw+) to $15k (Title Founder). You get:</p>

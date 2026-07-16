@@ -117,6 +117,16 @@ export function isQualifiedForRouting(buyer: any): { ok: boolean; reason?: strin
   if (!orderType) return { ok: false, reason: 'no order type' };
   if (isUnsureValue(orderType)) return { ok: false, reason: 'order type unsure' };
 
+  // Defense-in-depth (2026-07-15): an explicit "Just exploring" TIMING is the
+  // same self-ID-not-ready signal as the budget one below, and it must hold
+  // even when `Qualified At` is present — /api/qualify's hold branch used to
+  // stamp Qualified At on explicitly-not-ready completers (234 legacy records
+  // carry the mis-stamp), and routing gates treat the stamp as ready.
+  const timingField = readField(buyer['Timing']);
+  if (isJustExploringValue(timingField)) {
+    return { ok: false, reason: 'timing just exploring — buyer self-identified as not ready' };
+  }
+
   // ── THE QUIZ IS THE QUALIFIER ───────────────────────────────────────────
   // A passed quiz (Qualified At + score >= 75) with a chosen tier qualifies for
   // routing — full stop. This runs BEFORE the budget gate on purpose: the

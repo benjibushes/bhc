@@ -68,7 +68,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const url = `${BASE_URL}/half-a-cow/${slug}`;
   const title = `Buy Half a Cow in ${name} — What It Costs & How It Works`;
   const description =
-    `Half a cow in ${name}: typical half-beef shares run ${fmtRange(r.half)} all-in (~$6–9/lb hanging weight vs $13–17/lb boxed delivery). ` +
+    `Half a cow in ${name}: typical half-beef shares run ${fmtRange(r.half)} all-in (~$8–11/lb hanging weight vs $13–17/lb boxed delivery). ` +
     `90-second quiz, a verified local ranch, ${r.depositPercent}% refundable deposit.`;
 
   return {
@@ -186,7 +186,7 @@ export default async function HalfACowStatePage({ params }: Props) {
     { k: 'whole beef, all-in (animal + processing)', v: fmtRange(r.whole) },
     { k: 'half beef (~55% of a whole)', v: fmtRange(r.half) },
     { k: 'quarter beef (~28% of a whole)', v: fmtRange(r.quarter) },
-    { k: 'your price per pound, hanging weight', v: '~$6–9/lb' },
+    { k: 'your price per pound, hanging weight', v: '~$8–11/lb' },
     { k: 'boxed-delivery services, comparable cuts', v: '$13–17/lb' },
     { k: 'deposit to reserve', v: `${r.depositPercent}%, refundable` },
   ];

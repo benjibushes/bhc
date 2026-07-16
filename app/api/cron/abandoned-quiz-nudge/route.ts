@@ -113,6 +113,9 @@ async function realHandler(_request: Request): Promise<CronResult> {
   const today = new Date().toISOString().slice(0, 10);
   // Window: signed up between MAX_NUDGE_DAYS ago and 1h ago (give the signup
   // welcome a head start). Excludes already-matched/closed buyers.
+  // {Funnel Completed At}="" (2026-07-15): held not-ready completers no longer
+  // carry Qualified At — without this clause they'd get "finish your quiz"
+  // nudges for a quiz they finished. Abandoned = NEITHER stamp present.
   const cutoffEarly = new Date(now - MAX_NUDGE_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const cutoffLate = new Date(now - 1 * 60 * 60 * 1000).toISOString();
 
@@ -121,6 +124,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
     `AND(
       {Status}="Approved",
       {Qualified At}="",
+      {Funnel Completed At}="",
       IS_AFTER(CREATED_TIME(), "${cutoffEarly}"),
       IS_BEFORE(CREATED_TIME(), "${cutoffLate}"),
       NOT({Email}=""),

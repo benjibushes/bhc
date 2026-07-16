@@ -157,7 +157,7 @@ export default function FullHomepage() {
               {[
                 { n: '1', t: 'Apply', d: '90-second quiz. We capture your state, household size, timing.' },
                 { n: '2', t: 'Get routed', d: 'We match you to the verified ranch nearest you — low food miles, real local beef.' },
-                { n: '3', t: 'Talk direct', d: 'Rancher emails you direct with pricing, cuts, processing date.' },
+                { n: '3', t: 'Talk direct', d: 'Your rancher calls or texts within 24–48 hours with pricing, cuts, processing date.' },
                 { n: '4', t: 'Beef in your freezer', d: '2–4 weeks. Deposit refundable until your rancher accepts. BHC Promise on every match.' },
               ].map((step) => (
                 <li
@@ -405,7 +405,7 @@ export default function FullHomepage() {
                 <div className="text-center space-y-3">
                   <div className="w-12 h-12 bg-charcoal text-bone rounded-full flex items-center justify-center font-serif text-xl mx-auto">3</div>
                   <p className="font-medium">Talk direct</p>
-                  <p className="text-sm text-saddle">Rancher emails you direct with pricing, cuts, processing date.</p>
+                  <p className="text-sm text-saddle">Your rancher calls or texts within 24–48 hours with pricing, cuts, processing date.</p>
                 </div>
                 <div className="text-center space-y-3">
                   <div className="w-12 h-12 bg-charcoal text-bone rounded-full flex items-center justify-center font-serif text-xl mx-auto">4</div>
