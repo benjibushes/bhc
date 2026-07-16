@@ -1803,7 +1803,11 @@ export async function sendBuyerIntroNotification(data: {
   // (the "will reach out" promise was previously gated behind readyToBuy) and
   // primes the buyer to expect + answer the rancher, naming the channel + that
   // the number is unfamiliar.
-  const rancherFirst = esc(String(data.rancherName || '').trim().split(/\s+/)[0] || data.rancherName || 'your rancher');
+  // Raw first name feeds the SMS body (URL-encoded by smsHref, never HTML);
+  // esc() is strictly for HTML interpolation. Passing the escaped form into
+  // buyerIntroSmsBody would prefill "hi D&#039;Arcy, …" for D'Arcy / J&L.
+  const rancherFirstRaw = String(data.rancherName || '').trim().split(/\s+/)[0] || 'your rancher';
+  const rancherFirst = esc(rancherFirstRaw);
   const fromNumber = data.rancherPhone
     ? ` — likely from <strong>${esc(data.rancherPhone)}</strong>, a number you won't recognize`
     : '';
@@ -1834,7 +1838,7 @@ export async function sendBuyerIntroNotification(data: {
   // ship; the plain pretty number covers desktop mail clients where sms:
   // goes nowhere. Body shared with the funnel reveal via buyerIntroSmsBody.
   const introSmsHref = !isOperatorTier
-    ? smsHref(String(data.rancherPhone || ''), buyerIntroSmsBody(rancherFirst, data.firstName))
+    ? smsHref(String(data.rancherPhone || ''), buyerIntroSmsBody(rancherFirstRaw, data.firstName))
     : null;
   const textNowBlock = introSmsHref
     ? `<div style="border:2px solid #0E0E0E;background:#FAF8F4;padding:14px 18px;margin:16px 0;">

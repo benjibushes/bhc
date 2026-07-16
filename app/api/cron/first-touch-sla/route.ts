@@ -11,6 +11,12 @@
 //     Rancher out of the SMS window or without a textable phone falls back
 //     to the existing rancher email-nudge pattern (nudgerancher's copy) —
 //     the stamp still guarantees exactly one nudge per referral either way.
+//     CROSS-THROTTLED against referral-chasup L2a (which emails this same
+//     Intro Sent ≥2d population at 17:05 UTC on a 4d 'Rancher Reminded At'
+//     window): the selector holds the nudge while chasup's stamp is <48h
+//     fresh, and the nudge stamps 'Rancher Reminded At' alongside its own
+//     field so chasup skips for 4d after — one automated ping per referral
+//     per window, never two crons an hour apart, on either channel.
 //
 //   96h still untouched (nudged or not) → one Telegram card to Ben per
 //     referral, throttled on 'Stalled Alert Sent At' — the SAME field +
@@ -41,6 +47,7 @@ import {
   selectFirstTouchNudges,
   selectFirstTouchEscalations,
   privacyName,
+  buyerFirstLabel,
   type FirstTouchRef,
 } from '@/lib/firstTouchSla';
 import { fireRancherSMSEvent } from '@/lib/smsEvents';
@@ -85,7 +92,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
     {
       fields: [
         'Status', 'Intro Sent At', 'Last Rancher Activity At',
-        'First Touch Nudged At', 'Stalled Alert Sent At',
+        'First Touch Nudged At', 'Stalled Alert Sent At', 'Rancher Reminded At',
         'Buyer Name', 'Buyer State', 'Buyer Phone', 'Order Type',
         'Rancher', 'Suggested Rancher', 'Suggested Rancher Name',
       ],
@@ -99,6 +106,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
     lastRancherActivityAt: r['Last Rancher Activity At'] || undefined,
     firstTouchNudgedAt: r['First Touch Nudged At'] || undefined,
     stalledAlertSentAt: r['Stalled Alert Sent At'] || undefined,
+    rancherRemindedAt: r['Rancher Reminded At'] || undefined,
     raw: r,
   }));
 
@@ -115,10 +123,17 @@ async function realHandler(_request: Request): Promise<CronResult> {
   const skip = (reason: string) => { skips[reason] = (skips[reason] || 0) + 1; };
 
   // ── 48h: one nudge per referral, SMS first, email fallback ────────────────
+  // The cap counts ACTUAL nudge attempts, not selector rows: exclusions below
+  // (no rancher / inactive / operator / no channel) never stamp, so they
+  // re-qualify daily — if they consumed cap slots, 25 stale rows on
+  // deactivated ranchers would sit oldest-first at the head of the queue and
+  // starve every real nudge until stale-hold expiry flips them Dormant.
   let smsSent = 0;
   let emailSent = 0;
   let sendFailed = 0;
-  for (const ref of selectFirstTouchNudges(refs, now, MAX_NUDGES_PER_RUN)) {
+  let attempted = 0;
+  for (const ref of selectFirstTouchNudges(refs, now, Number.MAX_SAFE_INTEGER)) {
+    if (attempted >= MAX_NUDGES_PER_RUN) break;
     try {
       const rancher = rancherFor(ref.raw);
       if (!rancher) { skip('no-rancher-linked'); continue; }
@@ -127,7 +142,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
 
       const rancherPhone = str(rancher['Phone']).trim();
       const rancherEmail = str(rancher['Email']).trim();
-      const buyerFirst = privacyName(ref.raw['Buyer Name']).split(' ')[0] || 'A buyer';
+      const buyerFirst = buyerFirstLabel(ref.raw['Buyer Name']);
       const buyerState = str(ref.raw['Buyer State']);
       const cut = str(ref.raw['Order Type']);
       const buyerPhoneE164 = normalizePhoneE164(ref.raw['Buyer Phone']);
@@ -136,11 +151,20 @@ async function realHandler(_request: Request): Promise<CronResult> {
         smsEnabled() && !!normalizePhoneE164(rancherPhone) && isSmsWindow(rancher['State'], now);
       if (!canSms && !rancherEmail) { skip('no-reachable-channel'); continue; }
 
+      // From here on this row consumes a cap slot (it costs Airtable writes +
+      // a send), whether or not the send ultimately succeeds.
+      attempted++;
+
       // Stamp BEFORE sending (close-detector pattern): if the stamp fails we
-      // abort — a repeat-nudge loop is worse than one lost nudge.
+      // abort — a repeat-nudge loop is worse than one lost nudge. 'Rancher
+      // Reminded At' rides along so referral-chasup L2a's 4d throttle absorbs
+      // this nudge instead of emailing the same rancher an hour later (the
+      // selector holds our side when chasup stamped first — see
+      // CROSS_NUDGE_SUPPRESS_MS in lib/firstTouchSla).
       try {
         await updateRecord(TABLES.REFERRALS, ref.id, {
           'First Touch Nudged At': new Date().toISOString(),
+          'Rancher Reminded At': new Date().toISOString(),
         });
       } catch (stampErr: any) {
         skip('stamp-failed');

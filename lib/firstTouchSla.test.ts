@@ -6,9 +6,11 @@ import {
   selectFirstTouchNudges,
   selectFirstTouchEscalations,
   privacyName,
+  buyerFirstLabel,
   FIRST_TOUCH_NUDGE_AFTER_MS,
   FIRST_TOUCH_ESCALATE_AFTER_MS,
   ESCALATION_COOLDOWN_MS,
+  CROSS_NUDGE_SUPPRESS_MS,
   type FirstTouchRef,
 } from './firstTouchSla';
 
@@ -70,6 +72,27 @@ test('same-UTC-day activity stamp is the scanner artifact — still nudges', () 
 test('missing/garbage intro date → no nudge', () => {
   assert.equal(needsFirstTouchNudge(base({ introSentAt: undefined }), NOW), false);
   assert.equal(needsFirstTouchNudge(base({ introSentAt: 'garbage' }), NOW), false);
+});
+
+test('fresh chasup reminder (<48h) holds the nudge — no double-ping day', () => {
+  // referral-chasup L2a stamped 'Rancher Reminded At' an hour ago (its 17:05
+  // email) → the SLA nudge must NOT fire on top of it.
+  assert.equal(
+    needsFirstTouchNudge(base({ rancherRemindedAt: iso(1 * H) }), NOW),
+    false,
+  );
+  assert.equal(
+    needsFirstTouchNudge(base({ rancherRemindedAt: iso(47 * H) }), NOW),
+    false,
+  );
+});
+
+test('chasup reminder older than 48h → nudge fires (held, not lost)', () => {
+  assert.equal(
+    needsFirstTouchNudge(base({ introSentAt: iso(120 * H), rancherRemindedAt: iso(49 * H) }), NOW),
+    true,
+  );
+  assert.equal(CROSS_NUDGE_SUPPRESS_MS, 48 * H);
 });
 
 // ── needsFirstTouchEscalation ───────────────────────────────────────────────
@@ -147,4 +170,15 @@ test('privacyName renders first name + last initial only', () => {
   assert.equal(privacyName('Cher'), 'Cher');
   assert.equal(privacyName(''), 'a buyer');
   assert.equal(privacyName(undefined), 'a buyer');
+});
+
+// ── buyerFirstLabel ─────────────────────────────────────────────────────────
+test('buyerFirstLabel gives the first name, never the literal word "a"', () => {
+  assert.equal(buyerFirstLabel('Amie Gunderson'), 'Amie');
+  assert.equal(buyerFirstLabel('Cher'), 'Cher');
+  // Nameless record: privacyName('') is 'a buyer' → naive .split(' ')[0]
+  // yields the truthy 'a' and copy reads "a is waiting on your first call".
+  assert.equal(buyerFirstLabel(''), 'A buyer');
+  assert.equal(buyerFirstLabel('   '), 'A buyer');
+  assert.equal(buyerFirstLabel(undefined), 'A buyer');
 });

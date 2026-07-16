@@ -25,11 +25,22 @@ export const FIRST_TOUCH_NUDGE_AFTER_MS = 48 * 60 * 60 * 1000;
 export const FIRST_TOUCH_ESCALATE_AFTER_MS = 96 * 60 * 60 * 1000;
 // Mirrors referral-chasup's 3-day re-alert throttle on the same field.
 export const ESCALATION_COOLDOWN_MS = 3 * 24 * 60 * 60 * 1000;
+// Cross-cron throttle: referral-chasup L2a emails ranchers on this SAME
+// population (Intro Sent ≥2d, 17:05 UTC, stamped 'Rancher Reminded At', 4d
+// window). Without a cross-check, the day a referral crosses 48h the rancher
+// gets chasup's email AND this cron's nudge an hour apart. If chasup pinged
+// within the last 48h, hold the SLA nudge — it isn't lost, only delayed:
+// chasup re-fires every 4d, so the stamp always ages past 48h before the
+// next chasup send and the nudge fires in that window. The reverse direction
+// is covered by the cron stamping 'Rancher Reminded At' alongside 'First
+// Touch Nudged At', which chasup's own 4d throttle then respects.
+export const CROSS_NUDGE_SUPPRESS_MS = 48 * 60 * 60 * 1000;
 
 export interface FirstTouchRef extends IntroTouchFields {
   id: string;
   firstTouchNudgedAt?: string; // ISO — 'First Touch Nudged At'
   stalledAlertSentAt?: string; // ISO — 'Stalled Alert Sent At' (shared w/ chasup)
+  rancherRemindedAt?: string; // ISO — 'Rancher Reminded At' (chasup L2a's 4d throttle)
 }
 
 const ageMs = (iso: string | undefined, nowMs: number): number | null => {
@@ -45,6 +56,11 @@ export function needsFirstTouchNudge(ref: FirstTouchRef, nowMs: number): boolean
   if (ref.firstTouchNudgedAt) return false; // one nudge, ever
   const age = ageMs(ref.introSentAt, nowMs);
   if (age === null || age < FIRST_TOUCH_NUDGE_AFTER_MS) return false;
+  // chasup L2a pinged this rancher about this referral <48h ago → hold (see
+  // CROSS_NUDGE_SUPPRESS_MS). One automated ping per referral per window,
+  // never two crons an hour apart.
+  const sinceReminder = ageMs(ref.rancherRemindedAt, nowMs);
+  if (sinceReminder !== null && sinceReminder < CROSS_NUDGE_SUPPRESS_MS) return false;
   return needsFirstCall(ref);
 }
 
@@ -101,4 +117,16 @@ export function privacyName(fullName: unknown): string {
   if (parts.length === 1) return parts[0];
   const last = parts[parts.length - 1];
   return `${parts[0]} ${last[0].toUpperCase()}.`;
+}
+
+/**
+ * First-name label for nudge copy ("Amie is waiting on your first call").
+ * NOT privacyName(...).split(' ')[0] — that turns a nameless record's
+ * 'a buyer' fallback into the literal word "a" (truthy, so a `|| 'A buyer'`
+ * guard downstream never fires). Fall back on the RAW name's emptiness.
+ */
+export function buyerFirstLabel(fullName: unknown): string {
+  const raw = String(fullName || '').trim();
+  if (!raw) return 'A buyer';
+  return privacyName(raw).split(' ')[0] || 'A buyer';
 }

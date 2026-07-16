@@ -95,6 +95,21 @@ test('intro sms body degrades gracefully without cut or names', () => {
   );
 });
 
+test("intro sms body contract: callers pass RAW names, never HTML-escaped", () => {
+  // The email surface builds its HTML with esc(); the SMS body must receive
+  // the unescaped name or D'Arcy prefills as "hi D&#039;Arcy". smsHref is
+  // the only encoder (percent-encoding), applied once, at link time.
+  const body = buyerIntroSmsBody("D'Arcy", 'J&L Cattle Co');
+  assert.equal(
+    body,
+    "hi D'Arcy, just matched with you on buyhalfcow — i'm looking for a beef share. — J&L Cattle Co",
+  );
+  assert.ok(!body.includes('&#039;'));
+  const href = smsHref('7204917819', body);
+  assert.ok(href!.includes(encodeURIComponent("D'Arcy")));
+  assert.ok(!href!.includes('&#039;'));
+});
+
 // ── areaCodeState / phoneLooksOutOfState ────────────────────────────────────
 test('area code maps to state for known codes', () => {
   assert.equal(areaCodeState('7204917819'), 'CO');
