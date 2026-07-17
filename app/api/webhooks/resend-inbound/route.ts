@@ -360,10 +360,42 @@ export async function POST(request: Request) {
       (classification.senderType === 'buyer' ||
         (classification.senderType === 'unknown' && !!links.referralId && matchedByFromEmail));
 
-    if (isBuyer && classification.sentiment !== 'blocking' && !saysStop) {
+    // IDEMPOTENCY (audit 2026-07-17): Resend Inbound delivers at-least-once, so
+    // the same reply can arrive twice. The thread-mirror block already dedups
+    // on Message-Id; the buyer-arm sends (escalation email + one machine
+    // objection reply + Telegram card) did NOT — a retry double-emailed the
+    // BUYER and double-carded Ben. Claim the Message-Id once (Redis SET NX EX,
+    // fails OPEN if Redis is down — a rare double is better than never sending)
+    // before any buyer-arm side effect. Empty Message-Id (rare) skips the claim
+    // and behaves as before.
+    let buyerArmClaimed = true;
+    {
+      const midForClaim = String(
+        (headers as any)?.['message-id'] ||
+          (headers as any)?.['Message-Id'] ||
+          (headers as any)?.['Message-ID'] ||
+          '',
+      ).trim();
+      if (isBuyer && classification.sentiment !== 'blocking' && !saysStop && midForClaim) {
+        try {
+          const { claimOnce } = await import('@/lib/rancherCapacity');
+          buyerArmClaimed = await claimOnce(`buyer-arm:${midForClaim}`, 3 * 24 * 60 * 60);
+        } catch {
+          buyerArmClaimed = true; // fail open
+        }
+      }
+    }
+
+    if (isBuyer && classification.sentiment !== 'blocking' && !saysStop && buyerArmClaimed) {
       // Resolve buyer context (best-effort — every field degrades gracefully).
       const ctx: import('@/lib/buyerReplyTemplates').BuyerReplyContext = {};
       const signals: import('@/lib/buyerEscalation').IntentSignals = {};
+      // A transient Airtable failure reading the referral must NOT be
+      // mistaken for "no deposit paid" — that would mis-tier a PAID customer
+      // to 'warm' and email them a "let's lock it in" pitch (audit 2026-07-17).
+      // Track whether we actually READ the deal record; the escalation send is
+      // suppressed when we couldn't.
+      let referralReadOk = !links.referralId; // no referral → nothing to read
       try {
         const { getRecordById, TABLES } = await import('@/lib/airtable');
         if (links.consumerId) {
@@ -386,6 +418,7 @@ export async function POST(request: Request) {
         if (links.referralId) {
           const ref: any = await getRecordById(TABLES.REFERRALS, links.referralId).catch(() => null);
           if (ref) {
+            referralReadOk = true;
             // Deposit stamps live on the REFERRAL (the deal record).
             signals.referralStatus = String(ref['Status'] || ref['Referral Status'] || '');
             signals.depositLinkOpenedAt = String(ref['Deposit Link Opened At'] || '');
@@ -396,13 +429,25 @@ export async function POST(request: Request) {
             // magic link so the buyer lands authed on the deposit page. Only
             // for a deposit-capable, not-yet-paid referral.
             const buyerEmailForLink = String(ref['Buyer Email'] || '').toLowerCase().trim();
-            const cut = String(ref['Order Type'] || ref['Cut'] || '').trim();
-            if (links.consumerId && buyerEmailForLink && !signals.depositPaidAt && cut) {
+            // Order Type is stored as a LABEL ('Half Cow' / 'Quarter Cow');
+            // the deposit page matches the lowercase SLUG ('quarter'|'half'|
+            // 'whole'). Extract the slug or the deep-link silently defaults to
+            // 'half' and a quarter/whole buyer lands on the wrong cut (audit
+            // 2026-07-17).
+            const cutLabel = String(ref['Order Type'] || ref['Cut'] || '').toLowerCase();
+            const cutSlug = cutLabel.includes('quarter')
+              ? 'quarter'
+              : cutLabel.includes('whole')
+                ? 'whole'
+                : cutLabel.includes('half')
+                  ? 'half'
+                  : '';
+            if (links.consumerId && buyerEmailForLink && !signals.depositPaidAt && cutSlug) {
               try {
                 const { generateMemberLoginToken } = await import('@/lib/secrets');
                 const { depositPathFor } = await import('@/lib/reserveDeposit');
                 const token = generateMemberLoginToken(links.consumerId, buyerEmailForLink);
-                const next = depositPathFor(links.referralId, cut as any);
+                const next = depositPathFor(links.referralId, cutSlug as any);
                 const site = process.env.SITE_URL || process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
                 ctx.depositUrl = `${site}/api/auth/member/verify?token=${token}&next=${encodeURIComponent(next)}`;
               } catch (e: any) {
@@ -433,8 +478,11 @@ export async function POST(request: Request) {
         // Respect the same dial: when BUYER_AUTORESPOND=off nothing auto-sends,
         // Ben just gets the hot card and reaches out himself. assisted/auto
         // both send the fast path (a ready buyer should never wait).
+        // referralReadOk gate: if we have a referral but couldn't READ it, the
+        // tier may be wrong (a paid customer could read as warm) — do NOT
+        // auto-send the wrong pitch; Ben still gets the card (audit 2026-07-17).
         let sent = false;
-        if (autoRespondMode() !== 'off') {
+        if (autoRespondMode() !== 'off' && referralReadOk) {
           try {
             const { sendEmail } = await import('@/lib/email');
             await sendEmail({
