@@ -366,6 +366,68 @@ export async function POST(request: Request) {
       String(bodyForClassify || ''),
     );
 
+    // ── PROSPECT REPLY STAMP (the booking-brain bridge) ───────────────────
+    // Stamp the raw reply onto the Rancher Prospects row so the outreach
+    // dashboard's booking brain (classify → availability → cal.com slot
+    // proposals → cockpit one-tap Book) picks it up on its next pass.
+    // Airtable is the bus between the two apps — no cross-app secrets.
+    // Stamping Outreach Status='Replied' ALSO instantly halts T2/T3
+    // follow-ups (pickFollowUps only touches status='Sent' rows), so a
+    // rancher who replied can never get a canned follow-up afterward.
+    // 'Reply Class' is deliberately NOT set — blank Reply Class + Replied
+    // status is the brain's "unprocessed" marker.
+    if (isProspect && context) {
+      const PROSPECTS_TABLE = 'tbljw0vdfMpyQ6Nk5'; // Rancher Prospects (dashboard app's table, same base)
+      try {
+        const { getRecordById, updateRecord } = await import('@/lib/airtable');
+        const prow: any = await getRecordById(PROSPECTS_TABLE, context.recordId).catch(() => null);
+        if (!prow) {
+          console.warn('[resend-inbound] prp stamp: prospect row not found', context.recordId);
+        } else if (String(prow['Outreach Status'] || '') === 'Suppressed') {
+          // A stopped prospect writing again must not resurrect — Telegram only.
+          await sendTelegramMessage(
+            TELEGRAM_ADMIN_CHAT_ID,
+            `📨 <b>Suppressed prospect wrote again</b>\n${String(prow['Ranch Name'] || from).replace(/[<>&]/g, '')}\nReview by hand if worth reopening.`,
+          ).catch(() => {});
+        } else {
+          const now = new Date().toISOString();
+          const fromAddr = bareEmail(from);
+          const rowEmail = String(prow['Email'] || '').toLowerCase().trim();
+          const authResults = String(
+            (headers as any)?.['authentication-results'] || (headers as any)?.['Authentication-Results'] || '',
+          ).toLowerCase();
+          const dkimSpfPass = /dkim=pass|spf=pass/.test(authResults);
+          const fromMatches = !!rowEmail && fromAddr.includes(rowEmail);
+          const replyAuth = !fromMatches
+            ? `from-mismatch:${fromAddr.slice(0, 80)}`
+            : dkimSpfPass
+            ? 'pass'
+            : 'unverified';
+          const mid = String(
+            (headers as any)?.['message-id'] || (headers as any)?.['Message-Id'] || (headers as any)?.['Message-ID'] || '',
+          ).trim();
+          const logDate = now.slice(0, 10);
+          const priorLog = String(prow['Setter Log'] || '').replace(/\s+$/, '');
+          const logLine = saysStop ? 'auto: stop (webhook)' : 'auto: reply received (webhook)';
+          await updateRecord(PROSPECTS_TABLE, context.recordId, {
+            'Outreach Status': saysStop ? 'Suppressed' : 'Replied',
+            'Reply Body': bodyForClassify.slice(0, 4000),
+            'Reply Snippet': bodyForClassify.slice(0, 200),
+            'Reply Message Id': mid,
+            'Reply Auth': replyAuth,
+            'Last Reply At': now,
+            'Last Touch At': now,
+            'Last Touch Note': logLine,
+            'Setter Log': `${priorLog ? priorLog + '\n' : ''}${logDate} · ${logLine}`,
+          });
+        }
+      } catch (e: any) {
+        // Stamp failure must never drop the reply — the Telegram mirror below
+        // still fires, and Ben sees it. Log for forensics.
+        console.warn('[resend-inbound] prp stamp failed:', e?.message || e);
+      }
+    }
+
     const isBuyer =
       !isProspect &&
       !fromMatchesRancher &&
