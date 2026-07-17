@@ -95,6 +95,17 @@ export async function POST(request: Request) {
         State: state,
         Segment: 'Beef Buyer',
         'Lead Source': 'halfcow-guide',
+        // ADOPT INTO THE LIVE DRIP (2026-07-17, revenue-path audit): without
+        // these two stamps a guide lead was a terminal orphan — 'Lead Source'
+        // is written here and read by NOTHING, and a row with no Status and no
+        // Buyer Stage is invisible to every cron (abandoned-quiz-nudge needs
+        // Status='Approved'; waiting-activation reads Buyer Stage). The lead
+        // got exactly one email in their lifetime and then went dark forever.
+        // Status+Stage make the already-built, already-live, already-whitelisted
+        // 4-touch abandoned-quiz drip pick them up with zero new code — which
+        // is what this route's own header always claimed it did.
+        Status: 'Approved',
+        'Buyer Stage': 'NEW',
         ...(wantsSms ? { 'SMS Opt-In': true, 'SMS Opt-In At': new Date().toISOString() } : {}),
       });
       consumerId = created?.id || '';

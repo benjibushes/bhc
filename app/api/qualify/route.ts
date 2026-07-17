@@ -469,9 +469,17 @@ export async function POST(request: Request) {
     // Non-tier_v2 (legacy / Operator-without-Connect) ranchers genuinely can't
     // take a self-serve deposit, so they keep the call-only invite.
     //
-    // Score guard unchanged: low scorers (<60) stay routed but get no email —
-    // Ben follows up manually via /admin/today v2.
-    if (score >= 60 && consumer['Email']) {
+    // SCORE-FLOOR GATE REMOVED (2026-07-17, revenue-path audit): this used to
+    // be `score >= 60 && consumer['Email']`, so a buyer who COMPLETED the
+    // funnel but scored under 60 was routed to a rancher and then emailed
+    // NOTHING — handed off in silence, dependent entirely on Ben working
+    // /admin/today by hand. That guard was the same scarce-leads relic #359
+    // already deleted from the ROUTING gate (isQualifiedForRouting now routes
+    // on Qualified At alone, no score floor). Routing and emailing must agree:
+    // if a buyer is good enough to hand to a rancher, they are good enough to
+    // receive the deposit link. Live count at audit time: real funnel
+    // completers (e.g. Char/TX scored 55 on timing) were going dark here.
+    if (consumer['Email']) {
       const buyerEmail = String(consumer['Email']);
       const buyerFirstName = String(consumer['Full Name'] || 'there').split(' ')[0];
       const depositCapable = isDepositCapableMatch(pricingModel, referralId, connectStatus);

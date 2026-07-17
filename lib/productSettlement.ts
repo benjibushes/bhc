@@ -217,6 +217,16 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
   // Deposit-style receipt matches the storefront promise exactly: deposit
   // counts toward the total, rancher reaches out BEFORE anything ships.
   const buyerFirst = escapeHtml(buyerName ? buyerName.split(/\s+/)[0] : 'there');
+  // SHOP → SHARE CROSS-SELL (2026-07-17, revenue-path audit): the product rail
+  // carried ZERO /access links anywhere, so a buyer who just paid a ranch for
+  // a box was never once asked about the ~$2k share — the highest-margin
+  // product, offered to the single most qualified audience there is (someone
+  // who already bought beef from a BHC ranch). One P.S., no new infrastructure.
+  const SITE = process.env.SITE_URL || process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
+  const shareLadderPs =
+    `<p style="font-size:13px;color:#5A5752;border-top:1px solid #A7A29A;padding-top:14px;margin-top:22px">` +
+    `p.s. if it's good and you'd rather stop buying beef by the box, a quarter or half from a ranch like this one runs about $5.50 to $9.50 a pound and fills a freezer for the year. ` +
+    `<a href="${SITE}/access?utm_source=email&utm_medium=product_receipt&utm_campaign=shop_to_share" style="color:#0E0E0E">see what's available near you</a>.</p>`;
   if (buyerEmail) {
     await sendEmail({
       to: buyerEmail,
@@ -230,6 +240,7 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
         <p>hey ${buyerFirst},</p>
         <p>your deposit's in — <strong>${escapeHtml(rancherName)}</strong> has your <strong>${escapeHtml(productName)}</strong> reservation and will reach out to confirm the size you want + the balance <em>before anything ships</em>.</p>
         <p style="font-size:14px;color:#5A5752">deposit paid: $${dollars(displayCents)} — it counts toward your total. nothing ships until you've confirmed the details together.</p>
+        ${shareLadderPs}
         <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow</p>
       </div>`
         : `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
@@ -237,6 +248,7 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
         <p>you're all set — <strong>${escapeHtml(rancherName)}</strong> got your order for <strong>${quantity > 1 ? `${quantity}× ` : 'a '}${escapeHtml(productName)}</strong>${isPickup ? ' and will reach out to set up your pickup at the ranch.' : ' and will ship it direct to you.'}</p>
         <p style="font-size:14px;color:#5A5752">paid: $${dollars(paidCents)}${quantity > 1 || shippingCents > 0 ? ` (${quantity > 1 ? `${quantity} × $${dollars(displayCents)}` : `$${dollars(displayCents)}`}${shippingCents > 0 ? ` + $${dollars(shippingCents)} shipping` : ''})` : ''}. ${isPickup ? 'local pickup — no shipping charged; the ranch will confirm the time and place with you.' : "you'll get tracking as soon as it's on the way."}</p>
         ${shipTo ? `<p style="font-size:13px;color:#5A5752">shipping to:<br>${escapeHtml(shipTo).replace(/\n/g, '<br>')}<br><span style="color:#A7A29A">typo in the address? just reply to this email and we'll fix it before it ships.</span></p>` : ''}
+        ${shareLadderPs}
         <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow</p>
       </div>`,
       templateName: 'product_receipt',
