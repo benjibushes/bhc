@@ -323,20 +323,104 @@ export async function POST(request: Request) {
       context,
     });
 
-    let autoRespondResult: { sent: boolean; reason?: string } | null = null;
-    if (
-      classification.actionNeeded === 'auto-respond' &&
-      classification.senderType === 'buyer' &&
-      classification.sentiment !== 'blocking' &&
-      ['ghost', 'scheduling'].includes(classification.objectionCategory)
-    ) {
-      const { maybeAutoRespond } = await import('@/lib/autoRespond');
-      autoRespondResult = await maybeAutoRespond({
-        to: from,
-        subject,
-        bodyContext: bodyForClassify,
-        category: classification.objectionCategory,
-      });
+    // ── BUYER SALES ARM ───────────────────────────────────────────────────
+    // For buyer replies that aren't blocking, either escalate (ready-to-buy →
+    // call) or let the machine answer common objections in Ben's voice from
+    // the template bank. Build the buyer context once, from the linked
+    // referral/consumer/rancher, and load the purchase-readiness signals.
+    let autoRespondResult: import('@/lib/autoRespond').AutoRespondResult | null = null;
+    let escalation: { tier: string; sent: boolean } | null = null;
+    let stagedReplyDraft = '';
+
+    const isBuyer =
+      classification.senderType === 'buyer' ||
+      (classification.senderType === 'unknown' && !!links.referralId && matchedByFromEmail);
+
+    if (isBuyer && classification.sentiment !== 'blocking') {
+      // Resolve buyer context (best-effort — every field degrades gracefully).
+      const ctx: import('@/lib/buyerReplyTemplates').BuyerReplyContext = {};
+      const signals: import('@/lib/buyerEscalation').IntentSignals = {};
+      try {
+        const { getRecordById, TABLES } = await import('@/lib/airtable');
+        if (links.consumerId) {
+          const c: any = await getRecordById(TABLES.CONSUMERS, links.consumerId).catch(() => null);
+          if (c) {
+            ctx.firstName = String(c['Name'] || c['First Name'] || '').trim();
+            ctx.state = String(c['State'] || '').trim();
+          }
+        }
+        if (links.rancherId) {
+          const r: any = await getRecordById(TABLES.RANCHERS, links.rancherId).catch(() => null);
+          if (r) ctx.rancherName = String(r['Ranch Name'] || r['Name'] || '').trim();
+        }
+        if (links.referralId) {
+          const ref: any = await getRecordById(TABLES.REFERRALS, links.referralId).catch(() => null);
+          if (ref) {
+            signals.qualifiedAt = String(ref['Qualified At'] || '');
+            signals.responseAckAt = String(ref['Response Ack At'] || '');
+            signals.referralStatus = String(ref['Status'] || ref['Referral Status'] || '');
+            signals.depositLinkOpenedAt = String(ref['Deposit Link Opened At'] || '');
+            signals.depositPaidAt = String(ref['Deposit Paid At'] || '');
+          }
+        }
+      } catch (e: any) {
+        console.warn('[buyer-arm] context resolve failed:', e?.message);
+      }
+      try {
+        const { getOperatorBookingUrl } = await import('@/lib/calBooking');
+        ctx.calLink = (await getOperatorBookingUrl('sales').catch(() => '')) || '';
+      } catch {}
+
+      const emailMessageId = String(
+        (headers as any)?.['message-id'] || (headers as any)?.['Message-Id'] || (headers as any)?.['Message-ID'] || '',
+      );
+
+      if (classification.objectionCategory === 'ready-to-buy') {
+        // ESCALATE: the machine never talks a ready buyer out of buying. Send
+        // the fastest path to purchase and hand Ben a tiered hot-lead card.
+        const { readinessTier, tierEmoji, readyToBuyEmail } = await import('@/lib/buyerEscalation');
+        const tier = readinessTier(signals);
+        const mail = readyToBuyEmail(ctx);
+        let sent = false;
+        try {
+          const { sendEmail } = await import('@/lib/email');
+          await sendEmail({
+            to: from,
+            subject: mail.subject,
+            html: `<p>${mail.text.replace(/\n/g, '<br>')}</p>`,
+            ...(emailMessageId ? { headers: { 'In-Reply-To': emailMessageId, References: emailMessageId } } : {}),
+          } as any);
+          sent = true;
+        } catch (e: any) {
+          console.warn('[buyer-arm] ready-to-buy send failed:', e?.message);
+        }
+        escalation = { tier, sent };
+        try {
+          const { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } = await import('@/lib/telegram');
+          await sendTelegramMessage(
+            TELEGRAM_ADMIN_CHAT_ID,
+            `${tierEmoji(tier)} <b>READY TO BUY — ${tier.toUpperCase()}</b>\n\n` +
+              `<b>From:</b> ${String(from).slice(0, 100)}\n` +
+              (ctx.rancherName ? `<b>Rancher:</b> ${ctx.rancherName}\n` : '') +
+              (links.referralId ? `<b>Referral:</b> <code>${links.referralId}</code>\n` : '') +
+              `<i>${classification.summary}</i>\n\n` +
+              (sent ? 'sent them the fastest path to purchase. call them now.' : '⚠️ path-to-purchase email failed — reach out by hand.'),
+          );
+        } catch {}
+      } else {
+        // ANSWER: template reply for a handled objection (assisted or auto).
+        const { maybeAutoRespond } = await import('@/lib/autoRespond');
+        autoRespondResult = await maybeAutoRespond({
+          to: from,
+          subject,
+          category: classification.objectionCategory,
+          ctx,
+          inReplyTo: emailMessageId || undefined,
+        });
+        if (autoRespondResult?.staged && autoRespondResult.draft) {
+          stagedReplyDraft = autoRespondResult.draft;
+        }
+      }
     }
 
     // Build the Conversations row. Fields that are linked records use arrays.
@@ -355,6 +439,18 @@ export async function POST(request: Request) {
       'AI Summary': classification.summary,
       'Raw Headers': JSON.stringify(headers || {}),
     };
+    // Buyer-arm staging: an assisted-mode template answer is stored on the row
+    // so Ben (or a console one-tap) can send it. Fields are optional — if the
+    // Conversations table doesn't have them yet, Airtable ignores unknown keys
+    // only when typecast is off; createRecord here tolerates their absence.
+    if (stagedReplyDraft) {
+      row['Staged Reply'] = stagedReplyDraft;
+      row['Reply Status'] = autoRespondResult?.sent ? 'sent' : 'staged';
+    } else if (autoRespondResult?.sent) {
+      row['Reply Status'] = 'auto-sent';
+    } else if (escalation) {
+      row['Reply Status'] = escalation.sent ? 'escalated (path sent)' : 'escalated';
+    }
     if (links.referralId) row['Linked Referral'] = [links.referralId];
     if (links.consumerId) row['Linked Consumer'] = [links.consumerId];
     if (links.rancherId) row['Linked Rancher'] = [links.rancherId];
@@ -364,9 +460,21 @@ export async function POST(request: Request) {
       const created = await createRecord(CONVERSATIONS_TABLE, row);
       conversationId = (created as any)?.id || null;
     } catch (e: any) {
-      // Graceful: table doesn't exist yet. Log to console + Telegram so Ben
-      // sees the reply even if the table isn't ready.
-      console.warn(`[resend-inbound] ${CONVERSATIONS_TABLE} unavailable:`, e?.message || e);
+      // The Staged Reply / Reply Status fields may not exist on the table yet
+      // (buyer-arm additions). Rather than lose the whole conversation log to
+      // a 422 on unknown fields, retry once without them.
+      if (/unknown field|Staged Reply|Reply Status|422/i.test(String(e?.message || ''))) {
+        const { ['Staged Reply']: _sr, ['Reply Status']: _rs, ...safe } = row as any;
+        try {
+          const created = await createRecord(CONVERSATIONS_TABLE, safe);
+          conversationId = (created as any)?.id || null;
+        } catch (e2: any) {
+          console.warn(`[resend-inbound] ${CONVERSATIONS_TABLE} unavailable:`, e2?.message || e2);
+        }
+      } else {
+        // Graceful: table doesn't exist yet. Telegram still fires below.
+        console.warn(`[resend-inbound] ${CONVERSATIONS_TABLE} unavailable:`, e?.message || e);
+      }
     }
 
     // ── ACTIVITY STAMPING on the Referral ─────────────────────────────────
@@ -569,10 +677,19 @@ export async function POST(request: Request) {
         ? '\n👀 Ben to review.'
         : '';
 
-      const autoReplyLine = autoRespondResult?.sent
-        ? '\n🤖 Auto-replied to buyer.'
-        : autoRespondResult
-        ? `\n⚠️ Auto-reply attempt failed: ${autoRespondResult.reason}`
+      // Buyer-arm status line. A ready-to-buy escalation already fired its own
+      // hot card above, so keep this one quiet for that case.
+      const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const autoReplyLine = escalation
+        ? '' // escalation card already sent
+        : autoRespondResult?.staged && autoRespondResult.draft
+        ? `\n\n✏️ <b>Machine drafted a reply (staged):</b>\n<i>${esc(autoRespondResult.draft).slice(0, 500)}</i>\n(one-tap Send in the console, or send it yourself)`
+        : autoRespondResult?.sent
+        ? '\n🤖 Machine auto-answered the buyer.'
+        : autoRespondResult && autoRespondResult.handled === false
+        ? '' // nothing the machine handles — normal ben-eyes flow
+        : autoRespondResult?.reason
+        ? `\n⚠️ Auto-answer skipped: ${autoRespondResult.reason}`
         : '';
 
       const msg =
