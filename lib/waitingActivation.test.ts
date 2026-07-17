@@ -7,6 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  isBuyerInSupply,
   isWaitingNudgeEligible,
   selectWaitingBuyersForNudge,
   WAITING_NUDGE_LIFETIME_CAP,
@@ -194,4 +195,63 @@ test('dry-run formatter: carries the load-bearing numbers + go-live instruction'
   assert.match(text, /WAITING_ACTIVATION_ENABLED=true/);
   assert.match(text, /Kasey/);
   assert.doesNotMatch(text, /undefined/);
+});
+
+// ── SUPPLY GATE (founder rule 2026-07-16) ────────────────────────────────────
+
+test('supply gate: buyer in a served state selects; unserved state drops', () => {
+  const supply = new Set(['MT', 'TX']);
+  const mt = buyer({ id: 'recMT', State: 'MT' });
+  const fl = buyer({ id: 'recFL', State: 'FL' });
+  const picked = selectWaitingBuyersForNudge([mt, fl], { ...OPTS, supplyStates: supply });
+  assert.deepEqual(picked.map((c) => c.id), ['recMT']);
+});
+
+test('supply gate: full state names normalize ("Montana" → MT)', () => {
+  const supply = new Set(['MT']);
+  const c = buyer({ State: 'Montana' });
+  assert.equal(isBuyerInSupply(c, supply), true);
+  assert.equal(selectWaitingBuyersForNudge([c], { ...OPTS, supplyStates: supply }).length, 1);
+});
+
+test('supply gate: blank or garbage State drops when gate is live', () => {
+  const supply = new Set(['MT']);
+  assert.equal(isBuyerInSupply(buyer({ State: '' }), supply), false);
+  assert.equal(isBuyerInSupply(buyer({ State: 'Narnia' }), supply), false);
+  assert.equal(isBuyerInSupply(buyer({}), supply), false);
+});
+
+test('supply gate: null/undefined set = gate off, everything passes', () => {
+  assert.equal(isBuyerInSupply(buyer({ State: 'FL' }), null), true);
+  assert.equal(isBuyerInSupply(buyer({ State: '' }), undefined), true);
+  assert.equal(selectWaitingBuyersForNudge([buyer({ State: 'FL' })], OPTS).length, 1);
+});
+
+test('dry-run report: counts eligible buyers held back by the supply gate only', () => {
+  const supply = new Set(['MT']);
+  const candidates = [
+    buyer({ id: 'recMT', State: 'MT' }),                        // selects
+    buyer({ id: 'recFL', State: 'FL' }),                        // held: supply only
+    buyer({ id: 'recAZ', State: 'AZ', Unsubscribed: true }),    // ineligible anyway — NOT counted
+  ];
+  const selected = selectWaitingBuyersForNudge(candidates, { ...OPTS, supplyStates: supply });
+  const report = buildWaitingDryRunReport(candidates, selected, {
+    nowISO: NOW_ISO,
+    cooldownDays: OPTS.cooldownDays,
+    supplyStates: supply,
+  });
+  assert.equal(report.selectedCount, 1);
+  assert.equal(report.droppedNoSupply, 1);
+  assert.deepEqual(report.supplyStates, ['MT']);
+  const text = formatWaitingDryRunReport(report, { cooldownDays: 14, batchCap: 50 });
+  assert.match(text, /Supply gate: MT/);
+  assert.match(text, /held back 1/);
+});
+
+test('dry-run report: gate off → supplyStates null, droppedNoSupply 0', () => {
+  const report = buildWaitingDryRunReport([buyer({ State: 'FL' })], [], { nowISO: NOW_ISO });
+  assert.equal(report.supplyStates, null);
+  assert.equal(report.droppedNoSupply, 0);
+  const text = formatWaitingDryRunReport(report, { cooldownDays: 14, batchCap: 50 });
+  assert.match(text, /Supply gate: OFF/);
 });
