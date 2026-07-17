@@ -23,6 +23,31 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   'sendMonthlyCommissionInvoice',
   'sendRancherApproval',
   'sendBuyerIntroNotification',
+  // ── CAP-EATEN MONEY EMAILS (2026-07-17, revenue-path audit) ──────────────
+  // Live Email Sends data: 99 of the last 100 suppressions were 'cap-exceeded'
+  // — NOT unsubscribes. The 3/week cap was silently eating the emails the
+  // business runs on. Every entry below carries its OWN throttle, so
+  // whitelisting cannot create volume (the same argument that justified the
+  // intro whitelist in the 2026-06-02 hotfix above).
+  //
+  // deposit_request_nudge_1/2: the buyer's rancher SENT them a deposit request
+  // and they're expected to pay — this is the money ask. 5 were cap-suppressed,
+  // which partly explains the 16-requested → 6-opened → 1-paid funnel. Own
+  // throttle: DEPOSIT_NUDGE_LIFETIME_CAP=2 + 48h cooldown (lib/
+  // depositRequestNudge.ts) — capped at 2 per referral FOREVER.
+  'deposit_request_nudge_1',
+  'deposit_request_nudge_2',
+  // still_looking_reconfirm: the one-click freshness gate. A buyer who never
+  // gets it can never re-confirm, so they never route — permanently stranded
+  // by a cap. 31 were suppressed. Own throttle: 14-day resend via 'Reconfirm
+  // Sent At' (app/api/matching/suggest/route.ts:214).
+  'still_looking_reconfirm',
+  // sendRancherLeadReminder: tells a rancher they have a LEAD waiting — the
+  // rancher's entire reason to be on the platform, and the supply side of
+  // every deal. 33 were suppressed (the single most-eaten template). Own
+  // throttle: 4-day window via 'Rancher Reminded At' (app/api/cron/
+  // referral-chasup/route.ts:274).
+  'sendRancherLeadReminder',
   // P0 hotfix (2026-06-02): rancher intro email from /api/matching/suggest
   // was hitting the 3/week cap silently — 60%+ of intros suppressed during
   // volume spikes. Whitelisted because this is revenue-critical (without it
