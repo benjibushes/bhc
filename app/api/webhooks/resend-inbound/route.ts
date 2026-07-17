@@ -323,6 +323,17 @@ export async function POST(request: Request) {
       context,
     });
 
+    // ── COLD RANCHER PROSPECT guard ───────────────────────────────────────
+    // A reply tagged prp-<id>@replies (set by the outreach dashboard on cold
+    // rancher outreach) is rancher-side BY DEFINITION — the recipient address
+    // itself encodes who it is. Override any AI mislabel so a prospect saying
+    // "yeah, I'm interested" can NEVER be treated as a buyer: no ready-to-buy
+    // escalation, no buyer objection copy, no buyer-facing "you pay the rancher
+    // direct" reply. It just surfaces to Ben's Telegram as a rancher reply to
+    // close by hand. (isBuyer below also excludes it, belt-and-suspenders.)
+    const isProspect = context?.type === 'prp';
+    if (isProspect) classification.senderType = 'rancher';
+
     // ── BUYER SALES ARM ───────────────────────────────────────────────────
     // For buyer replies that aren't blocking, either escalate (ready-to-buy →
     // call) or let the machine answer common objections in Ben's voice from
@@ -356,6 +367,7 @@ export async function POST(request: Request) {
     );
 
     const isBuyer =
+      !isProspect &&
       !fromMatchesRancher &&
       (classification.senderType === 'buyer' ||
         (classification.senderType === 'unknown' && !!links.referralId && matchedByFromEmail));
