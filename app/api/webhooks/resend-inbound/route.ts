@@ -347,6 +347,12 @@ export async function POST(request: Request) {
           if (c) {
             ctx.firstName = String(c['Name'] || c['First Name'] || '').trim();
             ctx.state = String(c['State'] || '').trim();
+            // Qualified At + Response Ack At live on the CONSUMER, not the
+            // Referral (verified: app/api/qualify writes them to consumer;
+            // Response Ack At field is Consumers fldFjOCvy8v0ZVQNh). Reading
+            // them off the referral would always see blank → warm tier.
+            signals.qualifiedAt = String(c['Qualified At'] || '');
+            signals.responseAckAt = String(c['Response Ack At'] || '');
           }
         }
         if (links.rancherId) {
@@ -356,8 +362,7 @@ export async function POST(request: Request) {
         if (links.referralId) {
           const ref: any = await getRecordById(TABLES.REFERRALS, links.referralId).catch(() => null);
           if (ref) {
-            signals.qualifiedAt = String(ref['Qualified At'] || '');
-            signals.responseAckAt = String(ref['Response Ack At'] || '');
+            // Deposit stamps live on the REFERRAL (the deal record).
             signals.referralStatus = String(ref['Status'] || ref['Referral Status'] || '');
             signals.depositLinkOpenedAt = String(ref['Deposit Link Opened At'] || '');
             signals.depositPaidAt = String(ref['Deposit Paid At'] || '');
@@ -379,20 +384,26 @@ export async function POST(request: Request) {
         // ESCALATE: the machine never talks a ready buyer out of buying. Send
         // the fastest path to purchase and hand Ben a tiered hot-lead card.
         const { readinessTier, tierEmoji, readyToBuyEmail } = await import('@/lib/buyerEscalation');
+        const { autoRespondMode } = await import('@/lib/autoRespond');
         const tier = readinessTier(signals);
         const mail = readyToBuyEmail(ctx);
+        // Respect the same dial: when BUYER_AUTORESPOND=off nothing auto-sends,
+        // Ben just gets the hot card and reaches out himself. assisted/auto
+        // both send the fast path (a ready buyer should never wait).
         let sent = false;
-        try {
-          const { sendEmail } = await import('@/lib/email');
-          await sendEmail({
-            to: from,
-            subject: mail.subject,
-            html: `<p>${mail.text.replace(/\n/g, '<br>')}</p>`,
-            ...(emailMessageId ? { headers: { 'In-Reply-To': emailMessageId, References: emailMessageId } } : {}),
-          } as any);
-          sent = true;
-        } catch (e: any) {
-          console.warn('[buyer-arm] ready-to-buy send failed:', e?.message);
+        if (autoRespondMode() !== 'off') {
+          try {
+            const { sendEmail } = await import('@/lib/email');
+            await sendEmail({
+              to: from,
+              subject: mail.subject,
+              html: `<p>${mail.text.replace(/\n/g, '<br>')}</p>`,
+              ...(emailMessageId ? { headers: { 'In-Reply-To': emailMessageId, References: emailMessageId } } : {}),
+            } as any);
+            sent = true;
+          } catch (e: any) {
+            console.warn('[buyer-arm] ready-to-buy send failed:', e?.message);
+          }
         }
         escalation = { tier, sent };
         try {
@@ -702,17 +713,25 @@ export async function POST(request: Request) {
         actionLine +
         autoReplyLine;
 
-      // Inline buttons only when there's actionable signal
-      const inlineKeyboard = classification.actionNeeded === 'propose-close-won' && links.referralId
-        ? {
-            inline_keyboard: [
-              [
-                { text: '✅ Mark Closed Won', callback_data: `clcheck_won_${links.referralId}` },
-                { text: '❌ Not closed', callback_data: `clcheck_working_${links.referralId}` },
+      // Inline buttons. A staged buyer reply gets a one-tap Send (buyer sales
+      // arm). Otherwise a propose-close-won gets the close buttons.
+      const inlineKeyboard =
+        stagedReplyDraft && conversationId
+          ? {
+              inline_keyboard: [
+                [{ text: '📧 Send this reply', callback_data: `bsend_${conversationId}` }],
               ],
-            ],
-          }
-        : undefined;
+            }
+          : classification.actionNeeded === 'propose-close-won' && links.referralId
+          ? {
+              inline_keyboard: [
+                [
+                  { text: '✅ Mark Closed Won', callback_data: `clcheck_won_${links.referralId}` },
+                  { text: '❌ Not closed', callback_data: `clcheck_working_${links.referralId}` },
+                ],
+              ],
+            }
+          : undefined;
 
       await sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, msg, inlineKeyboard);
     } catch (e: any) {

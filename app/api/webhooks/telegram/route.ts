@@ -733,6 +733,7 @@ async function processUpdate(update: any) {
         'selfblock_',
         'firstweek_',
         'bcsend_',
+        'bsend_', // buyer sales arm: one-tap send of a staged buyer reply
       ];
       const isHighRiskCallback =
         HIGH_RISK_ACTIONS.has(action) ||
@@ -1953,6 +1954,66 @@ Output ONLY the email body. First line should be the subject line prefixed with 
         await answerCallbackQuery(queryId, 'Skipped');
         if (chatId && messageId) {
           await editTelegramMessage(chatId, messageId, `⏭️ <b>SKIPPED</b> — won't reappear for 5 days`);
+        }
+      }
+
+      // ─── Buyer sales arm: one-tap send of a STAGED buyer reply ───────────
+      // The resend-inbound webhook stages a Ben-voice template answer on the
+      // Conversations row (Staged Reply) in assisted mode and cards it here
+      // with a "Send this" button. fullReferralId is the Conversations record
+      // id. Sending threads the reply back to the buyer and stamps sent.
+      else if (action === 'bsend') {
+        await answerCallbackQuery(queryId, 'Sending reply…');
+        try {
+          const conv: any = await getRecordById('Conversations', fullReferralId);
+          if (!conv) {
+            await answerCallbackQuery(queryId, 'Conversation not found.');
+            return NextResponse.json({ ok: true });
+          }
+          if (String(conv['Reply Status'] || '') === 'sent') {
+            await answerCallbackQuery(queryId, 'Already sent.');
+            return NextResponse.json({ ok: true });
+          }
+          const draft = String(conv['Staged Reply'] || '').trim();
+          const fromRaw = String(conv['From'] || '');
+          const addrMatch = fromRaw.match(/<([^>]+)>/);
+          const buyerEmail = (addrMatch ? addrMatch[1] : fromRaw).toLowerCase().trim();
+          const subject = String(conv['Subject'] || '').trim();
+          if (!draft || !buyerEmail.includes('@')) {
+            await answerCallbackQuery(queryId, 'No draft / buyer email on record.');
+            return NextResponse.json({ ok: true });
+          }
+          // Sanitize outbound links defensively (draft is template-derived,
+          // but the buyer's own inbound text could have influenced context).
+          const safe = draft.replace(/https?:\/\/[^\s<>"')]+/gi, (u: string) => {
+            try {
+              const h = new URL(u).hostname;
+              return /(^|\.)(cal\.com|buyhalfcow\.com)$/i.test(h) ? u : '[link removed]';
+            } catch {
+              return '[link removed]';
+            }
+          });
+          // Thread back onto the buyer's message if we captured its id.
+          let inReplyTo = '';
+          try {
+            const hdrs = JSON.parse(String(conv['Raw Headers'] || '{}'));
+            inReplyTo = String(hdrs['message-id'] || hdrs['Message-Id'] || hdrs['Message-ID'] || '');
+          } catch {}
+          await sendEmail({
+            to: buyerEmail,
+            subject: subject ? `Re: ${subject}`.slice(0, 200) : 'Re: your beef question',
+            html: `<p>${safe.replace(/\n/g, '<br>')}</p>`,
+            ...(inReplyTo ? { headers: { 'In-Reply-To': inReplyTo, References: inReplyTo } } : {}),
+          } as any);
+          try {
+            await updateRecord('Conversations', fullReferralId, { 'Reply Status': 'sent' });
+          } catch { /* field may not exist; send already happened */ }
+          await answerCallbackQuery(queryId, '📧 Sent!');
+          if (chatId && messageId) {
+            await editTelegramMessage(chatId, messageId, `✅ <b>REPLY SENT</b> to ${buyerEmail}`);
+          }
+        } catch (e: any) {
+          await answerCallbackQuery(queryId, `Error: ${e.message}`);
         }
       }
 
