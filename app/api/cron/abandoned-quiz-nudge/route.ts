@@ -119,12 +119,19 @@ async function realHandler(_request: Request): Promise<CronResult> {
   const cutoffEarly = new Date(now - MAX_NUDGE_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const cutoffLate = new Date(now - 1 * 60 * 60 * 1000).toISOString();
 
+  // Lead Source exclusion (2026-07-17, pressure audit): guide-only downloaders
+  // now enter the pipeline as Status='Approved' + Buyer Stage='NEW' so they
+  // aren't orphaned — but they NEVER started the quiz, so this drip's copy
+  // ("you started signing up but haven't finished the 60-second quiz") is
+  // FALSE for them and reads as a spammy wrong-cohort nag. Exclude them here;
+  // they're still reachable by waiting-activation and the buyer sequences.
   const candidates = await getAllRecords(
     TABLES.CONSUMERS,
     `AND(
       {Status}="Approved",
       {Qualified At}="",
       {Funnel Completed At}="",
+      {Lead Source}!="halfcow-guide",
       IS_AFTER(CREATED_TIME(), "${cutoffEarly}"),
       IS_BEFORE(CREATED_TIME(), "${cutoffLate}"),
       NOT({Email}=""),
