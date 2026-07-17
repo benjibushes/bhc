@@ -43,10 +43,23 @@ export function tierEmoji(tier: ReadinessTier): string {
  * "I'm ready" reply always gets an immediate, on-brand next step even before
  * Ben picks up the phone.
  */
-export function readyToBuyEmail(ctx: BuyerReplyContext): { subject: string; text: string } {
+export function readyToBuyEmail(ctx: BuyerReplyContext, tier: ReadinessTier = 'warm'): { subject: string; text: string } {
   const first = String(ctx.firstName || '').trim().split(/\s+/)[0];
   const hi = first ? `${first},` : 'hey,';
   const rancher = String(ctx.rancherName || '').trim() || 'your rancher';
+
+  // A 'closing' buyer has ALREADY paid their deposit — do NOT tell them to
+  // reserve/pay again (audit 2026-07-16). They're past the deposit; this is
+  // about pickup and next steps.
+  if (tier === 'closing') {
+    return {
+      subject: `you're all set with ${rancher}`,
+      text:
+        `${hi} you're already locked in with ${rancher}, so you're all set on the deposit. ` +
+        `they'll coordinate your pickup and the cut details from here. if anything's unclear or you want me on a quick call, just reply.\n\n— Ben`,
+    };
+  }
+
   if (ctx.depositUrl) {
     return {
       subject: `you're ready — here's your spot with ${rancher}`,

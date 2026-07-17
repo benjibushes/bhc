@@ -1964,6 +1964,19 @@ Output ONLY the email body. First line should be the subject line prefixed with 
       // id. Sending threads the reply back to the buyer and stamps sent.
       else if (action === 'bsend') {
         await answerCallbackQuery(queryId, 'Sending reply…');
+        // Claim the CONVERSATION, not the queryId — two genuine taps have
+        // different queryIds and both clear the per-press dedup, so only a
+        // per-conversation claim stops a double-send (audit 2026-07-16). Fail
+        // closed on Redis degrade: better to refuse than double-email a buyer.
+        const bsendClaimed = await claimCallback(
+          `bsend:${fullReferralId}`,
+          MUTATION_CALLBACK_TTL_SECONDS,
+          /* failClosedOnDegraded */ true,
+        );
+        if (!bsendClaimed) {
+          await answerCallbackQuery(queryId, isRedisDegraded() ? '⚠️ retry in a moment' : 'Already sending/sent');
+          return NextResponse.json({ ok: true, deduped: true });
+        }
         try {
           const conv: any = await getRecordById('Conversations', fullReferralId);
           if (!conv) {

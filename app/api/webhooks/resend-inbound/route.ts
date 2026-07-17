@@ -332,11 +332,35 @@ export async function POST(request: Request) {
     let escalation: { tier: string; sent: boolean } | null = null;
     let stagedReplyDraft = '';
 
-    const isBuyer =
-      classification.senderType === 'buyer' ||
-      (classification.senderType === 'unknown' && !!links.referralId && matchedByFromEmail);
+    // Deterministic sender guard: never treat a message as a BUYER if the
+    // From matches the linked RANCHER's email. Haiku can mislabel a short
+    // rancher reply as senderType='buyer', which would send buyer-facing
+    // objection copy ("you pay <rancher> direct...") to the rancher (audit
+    // 2026-07-16). Resolve the rancher email up front and exclude it.
+    let fromMatchesRancher = false;
+    const fromAddrForGate = bareEmail(from);
+    if (links.rancherId && fromAddrForGate) {
+      try {
+        const { getRecordById, TABLES } = await import('@/lib/airtable');
+        const rr: any = await getRecordById(TABLES.RANCHERS, links.rancherId).catch(() => null);
+        const remail = String(rr?.['Email'] || '').toLowerCase().trim();
+        if (remail && fromAddrForGate.includes(remail)) fromMatchesRancher = true;
+      } catch {}
+    }
 
-    if (isBuyer && classification.sentiment !== 'blocking') {
+    // Deterministic STOP guard: a family who wants out must never get a
+    // machine answer, regardless of what the classifier read (audit). Checks
+    // the raw body for explicit opt-out language.
+    const saysStop = /\b(unsubscribe|stop emailing|take me off|remove me|opt.?out|do not (contact|email)|leave me alone)\b/i.test(
+      String(bodyForClassify || ''),
+    );
+
+    const isBuyer =
+      !fromMatchesRancher &&
+      (classification.senderType === 'buyer' ||
+        (classification.senderType === 'unknown' && !!links.referralId && matchedByFromEmail));
+
+    if (isBuyer && classification.sentiment !== 'blocking' && !saysStop) {
       // Resolve buyer context (best-effort — every field degrades gracefully).
       const ctx: import('@/lib/buyerReplyTemplates').BuyerReplyContext = {};
       const signals: import('@/lib/buyerEscalation').IntentSignals = {};
@@ -366,6 +390,25 @@ export async function POST(request: Request) {
             signals.referralStatus = String(ref['Status'] || ref['Referral Status'] || '');
             signals.depositLinkOpenedAt = String(ref['Deposit Link Opened At'] || '');
             signals.depositPaidAt = String(ref['Deposit Paid At'] || '');
+            // Populate the buyer's REAL deposit link (the "fastest path to
+            // purchase" the arm is designed around — was never set, so every
+            // CTA fell back to the cal link; audit 2026-07-16). Needs a member
+            // magic link so the buyer lands authed on the deposit page. Only
+            // for a deposit-capable, not-yet-paid referral.
+            const buyerEmailForLink = String(ref['Buyer Email'] || '').toLowerCase().trim();
+            const cut = String(ref['Order Type'] || ref['Cut'] || '').trim();
+            if (links.consumerId && buyerEmailForLink && !signals.depositPaidAt && cut) {
+              try {
+                const { generateMemberLoginToken } = await import('@/lib/secrets');
+                const { depositPathFor } = await import('@/lib/reserveDeposit');
+                const token = generateMemberLoginToken(links.consumerId, buyerEmailForLink);
+                const next = depositPathFor(links.referralId, cut as any);
+                const site = process.env.SITE_URL || process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
+                ctx.depositUrl = `${site}/api/auth/member/verify?token=${token}&next=${encodeURIComponent(next)}`;
+              } catch (e: any) {
+                console.warn('[buyer-arm] deposit link mint failed:', e?.message);
+              }
+            }
           }
         }
       } catch (e: any) {
@@ -386,7 +429,7 @@ export async function POST(request: Request) {
         const { readinessTier, tierEmoji, readyToBuyEmail } = await import('@/lib/buyerEscalation');
         const { autoRespondMode } = await import('@/lib/autoRespond');
         const tier = readinessTier(signals);
-        const mail = readyToBuyEmail(ctx);
+        const mail = readyToBuyEmail(ctx, tier);
         // Respect the same dial: when BUYER_AUTORESPOND=off nothing auto-sends,
         // Ben just gets the hot card and reaches out himself. assisted/auto
         // both send the fast path (a ready buyer should never wait).
@@ -408,13 +451,17 @@ export async function POST(request: Request) {
         escalation = { tier, sent };
         try {
           const { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } = await import('@/lib/telegram');
+          // Escape all interpolated values — `from` (buyer-controlled display
+          // name), rancherName, and the Haiku summary could otherwise inject
+          // live HTML/links into Ben's operator card (parse_mode=HTML). Audit.
+          const h = (s: string) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
           await sendTelegramMessage(
             TELEGRAM_ADMIN_CHAT_ID,
             `${tierEmoji(tier)} <b>READY TO BUY — ${tier.toUpperCase()}</b>\n\n` +
-              `<b>From:</b> ${String(from).slice(0, 100)}\n` +
-              (ctx.rancherName ? `<b>Rancher:</b> ${ctx.rancherName}\n` : '') +
-              (links.referralId ? `<b>Referral:</b> <code>${links.referralId}</code>\n` : '') +
-              `<i>${classification.summary}</i>\n\n` +
+              `<b>From:</b> ${h(String(from).slice(0, 100))}\n` +
+              (ctx.rancherName ? `<b>Rancher:</b> ${h(ctx.rancherName)}\n` : '') +
+              (links.referralId ? `<b>Referral:</b> <code>${h(links.referralId)}</code>\n` : '') +
+              `<i>${h(classification.summary)}</i>\n\n` +
               (sent ? 'sent them the fastest path to purchase. call them now.' : '⚠️ path-to-purchase email failed — reach out by hand.'),
           );
         } catch {}
@@ -703,13 +750,15 @@ export async function POST(request: Request) {
         ? `\n⚠️ Auto-answer skipped: ${autoRespondResult.reason}`
         : '';
 
+      // Escape all interpolated values (from/subject/summary are attacker- or
+      // AI-influenced) — same HTML-injection class as the escalation card. Audit.
       const msg =
         `${senderEmoji} <b>Inbound reply</b> ${sentimentEmoji}\n\n` +
-        `<b>From:</b> ${from}\n` +
-        `<b>Subject:</b> ${subject}\n` +
-        (context ? `<b>Threaded to:</b> ${context.type}=${context.recordId}\n` : `<b>No thread:</b> reply hit catch-all\n`) +
-        `<b>Category:</b> ${classification.objectionCategory}\n\n` +
-        `<i>${classification.summary}</i>` +
+        `<b>From:</b> ${esc(from)}\n` +
+        `<b>Subject:</b> ${esc(subject)}\n` +
+        (context ? `<b>Threaded to:</b> ${esc(context.type)}=${esc(context.recordId)}\n` : `<b>No thread:</b> reply hit catch-all\n`) +
+        `<b>Category:</b> ${esc(classification.objectionCategory)}\n\n` +
+        `<i>${esc(classification.summary)}</i>` +
         actionLine +
         autoReplyLine;
 
