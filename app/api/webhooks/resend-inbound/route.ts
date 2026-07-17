@@ -361,9 +361,20 @@ export async function POST(request: Request) {
 
     // Deterministic STOP guard: a family who wants out must never get a
     // machine answer, regardless of what the classifier read (audit). Checks
-    // the raw body for explicit opt-out language.
+    // opt-out language in the sender's OWN words only — quoted history is
+    // stripped first, because our outbound emails legitimately contain
+    // "unsubscribe"/opt-out lines: an interested reply quoting the original
+    // ("...yes let's talk! > if you'd rather I stop emailing, just say so")
+    // must never be read as a stop (pressure test 2026-07-17 C6 — it was
+    // auto-Suppressing interested ranchers replying to the T3 breakup).
+    const unquotedBody = String(bodyForClassify || '')
+      .split(/\n\s*(?:>|On .{5,80} wrote:)/)[0]
+      // html-derived bodies have collapsed newlines — catch the flat form too
+      .split(/On .{5,80} wrote:/)[0]
+      .replace(/^\s*>.*$/gm, '')
+      .trim();
     const saysStop = /\b(unsubscribe|stop emailing|take me off|remove me|opt.?out|do not (contact|email)|leave me alone)\b/i.test(
-      String(bodyForClassify || ''),
+      unquotedBody,
     );
 
     // ── PROSPECT REPLY STAMP (the booking-brain bridge) ───────────────────
@@ -376,13 +387,27 @@ export async function POST(request: Request) {
     // rancher who replied can never get a canned follow-up afterward.
     // 'Reply Class' is deliberately NOT set — blank Reply Class + Replied
     // status is the brain's "unprocessed" marker.
+    let prospectStampFailed = false;
+    let prospectDuplicate = false;
+    let prospectFromMismatch = false;
     if (isProspect && context) {
       const PROSPECTS_TABLE = 'tbljw0vdfMpyQ6Nk5'; // Rancher Prospects (dashboard app's table, same base)
       try {
         const { getRecordById, updateRecord } = await import('@/lib/airtable');
         const prow: any = await getRecordById(PROSPECTS_TABLE, context.recordId).catch(() => null);
+        const mid = String(
+          (headers as any)?.['message-id'] || (headers as any)?.['Message-Id'] || (headers as any)?.['Message-ID'] || '',
+        ).trim();
         if (!prow) {
+          // The exact silent failure the flag exists for (pressure test C7):
+          // a bad/deleted record id means no halt + no brain — warn loudly.
+          prospectStampFailed = true;
           console.warn('[resend-inbound] prp stamp: prospect row not found', context.recordId);
+        } else if (mid && String(prow['Reply Message Id'] || '').trim() === mid) {
+          // Resend redelivery of the SAME email (at-least-once) — already
+          // stamped. Skip the re-stamp, duplicate Setter Log line, duplicate
+          // Conversations row, and duplicate Telegram card (pressure test C3).
+          prospectDuplicate = true;
         } else if (String(prow['Outreach Status'] || '') === 'Suppressed') {
           // A stopped prospect writing again must not resurrect — Telegram only.
           await sendTelegramMessage(
@@ -398,23 +423,46 @@ export async function POST(request: Request) {
           ).toLowerCase();
           const dkimSpfPass = /dkim=pass|spf=pass/.test(authResults);
           const fromMatches = !!rowEmail && fromAddr.includes(rowEmail);
+          prospectFromMismatch = !fromMatches;
           const replyAuth = !fromMatches
             ? `from-mismatch:${fromAddr.slice(0, 80)}`
             : dkimSpfPass
             ? 'pass'
             : 'unverified';
-          const mid = String(
-            (headers as any)?.['message-id'] || (headers as any)?.['Message-Id'] || (headers as any)?.['Message-ID'] || '',
-          ).trim();
+          // A second reply arriving before the brain processed the first must
+          // not erase it — APPEND so the brain classifies the full exchange
+          // (pressure test C13). Cleared 'Reply Class'/'Reply Draft'/'Proposed
+          // Slots' re-open the row so a reply AFTER processing gets triaged
+          // fresh instead of staying invisible forever (C4/C8/C10/C16).
+          const priorBody = String(prow['Reply Body'] || '').trim();
+          const priorCls = String(prow['Reply Class'] || '').trim();
+          // blank = brain hasn't run; 'triaging:' = brain is mid-pass right
+          // now (our Reply Class clear below aborts its claim, so IT will not
+          // finish — keep both bodies for the retriage).
+          const priorUnprocessed = !!priorBody && (priorCls === '' || priorCls.startsWith('triaging:'));
+          const newBody = bodyForClassify.slice(0, 4000);
+          const mergedBody = priorUnprocessed
+            ? `${priorBody}\n\n--- next reply ---\n\n${newBody}`.slice(0, 8000)
+            : newBody;
+          // Anti-forgery (pressure test C9): record ids are guessable enough
+          // that a From-mismatched email must never be able to SUPPRESS a
+          // prospect (that would mute legit outreach to a victim ranch). A
+          // mismatched reply still stamps Replied — ranchers really do reply
+          // from a different address than the one on file — but only an
+          // address-matched sender can trigger the stop path.
+          const effectiveStop = saysStop && fromMatches;
           const logDate = now.slice(0, 10);
           const priorLog = String(prow['Setter Log'] || '').replace(/\s+$/, '');
-          const logLine = saysStop ? 'auto: stop (webhook)' : 'auto: reply received (webhook)';
+          const logLine = effectiveStop ? 'auto: stop (webhook)' : 'auto: reply received (webhook)';
           await updateRecord(PROSPECTS_TABLE, context.recordId, {
-            'Outreach Status': saysStop ? 'Suppressed' : 'Replied',
-            'Reply Body': bodyForClassify.slice(0, 4000),
+            'Outreach Status': effectiveStop ? 'Suppressed' : 'Replied',
+            'Reply Body': mergedBody,
             'Reply Snippet': bodyForClassify.slice(0, 200),
             'Reply Message Id': mid,
             'Reply Auth': replyAuth,
+            'Reply Class': '',
+            'Reply Draft': '',
+            'Proposed Slots': '',
             'Last Reply At': now,
             'Last Touch At': now,
             'Last Touch Note': logLine,
@@ -423,9 +471,20 @@ export async function POST(request: Request) {
         }
       } catch (e: any) {
         // Stamp failure must never drop the reply — the Telegram mirror below
-        // still fires, and Ben sees it. Log for forensics.
+        // still fires, and Ben sees it. But a silent stamp failure is the
+        // worst partial failure: Ben sees the reply and assumes the machine
+        // handled it, while follow-ups DIDN'T halt and the booking brain will
+        // never pick it up. Flag it so the card below warns him explicitly.
+        prospectStampFailed = true;
         console.warn('[resend-inbound] prp stamp failed:', e?.message || e);
       }
+    }
+
+    // Redelivered prospect email (same Message-Id already on the row): fully
+    // handled the first time — skip the duplicate Conversations row, audit
+    // entry, and Telegram card. Fast 200 so Resend stops retrying.
+    if (prospectDuplicate) {
+      return NextResponse.json({ ok: true, duplicate: true });
     }
 
     const isBuyer =
@@ -882,7 +941,15 @@ export async function POST(request: Request) {
         `<b>Category:</b> ${esc(classification.objectionCategory)}\n\n` +
         `<i>${esc(classification.summary)}</i>` +
         actionLine +
-        autoReplyLine;
+        autoReplyLine +
+        // Silent stamp failure is the one partial-failure Ben could mistake
+        // for "handled" — say it out loud so he can halt follow-ups by hand.
+        (prospectStampFailed
+          ? '\n\n🚨 <b>PROSPECT STAMP FAILED</b> — reply seen but NOT recorded on the prospect row: follow-ups did not halt and the booking brain will not pick this up. Open the cockpit and mark this prospect Replied by hand.'
+          : '') +
+        (prospectFromMismatch
+          ? '\n\n⚠️ Sender address differs from the prospect email on file — could be their other inbox, could be a forgery. Confirm identity before booking; autobook is blocked for this reply.'
+          : '');
 
       // Inline buttons. A staged buyer reply gets a one-tap Send (buyer sales
       // arm). Otherwise a propose-close-won gets the close buttons.
