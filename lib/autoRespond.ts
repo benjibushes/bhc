@@ -21,8 +21,13 @@ import { draftBuyerReply, MACHINE_HANDLED, type BuyerObjection, type BuyerReplyC
 export type AutoRespondMode = 'off' | 'assisted' | 'auto';
 
 export function autoRespondMode(): AutoRespondMode {
-  const m = String(process.env.BUYER_AUTORESPOND || 'assisted').toLowerCase();
-  return m === 'off' || m === 'auto' ? m : 'assisted';
+  // Default AUTO (Ben, 2026-07-17: "flip everything, make it live") — the
+  // machine sends template objection answers to buyers itself instead of
+  // staging them. Templates only, voice-guarded, STOP-guarded, Message-Id
+  // claimed; anything off-template still escalates to Ben. Set
+  // BUYER_AUTORESPOND=assisted (stage + one-tap) or off to dial back.
+  const m = String(process.env.BUYER_AUTORESPOND || 'auto').toLowerCase();
+  return m === 'off' || m === 'assisted' ? (m as AutoRespondMode) : 'auto';
 }
 
 export interface AutoRespondResult {
