@@ -23,6 +23,32 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   'sendMonthlyCommissionInvoice',
   'sendRancherApproval',
   'sendBuyerIntroNotification',
+  // ── CAP-EATEN MONEY EMAILS (2026-07-17, revenue-path audit) ──────────────
+  // Live Email Sends data: 99 of the last 100 suppressions were 'cap-exceeded'
+  // — NOT unsubscribes. The 3/week cap was silently eating the deposit ASK.
+  //
+  // deposit_request_nudge_1/2: the buyer's rancher SENT them a deposit request
+  // and they're expected to pay — this is the money ask. 5 were cap-suppressed,
+  // which partly explains the 16-requested → 6-opened → 1-paid funnel. SAFE to
+  // whitelist because the throttle is DB-STATE, not a best-effort stamp:
+  // DEPOSIT_NUDGE_LIFETIME_CAP=2 read from 'Deposit Nudge Count' + 48h cooldown
+  // (lib/depositRequestNudge.ts) — capped at 2 per referral FOREVER, so
+  // whitelisting cannot create volume even if a stamp write fails.
+  'deposit_request_nudge_1',
+  'deposit_request_nudge_2',
+  // NOT whitelisted (pressure audit 2026-07-17): still_looking_reconfirm and
+  // sendRancherLeadReminder were ALSO cap-eaten (31 + 33 suppressed), but their
+  // throttles are too weak to safely uncap:
+  //   - still_looking_reconfirm: the 14-day 'Reconfirm Sent At' stamp is
+  //     best-effort — its own code comment says a failed write "degrades to the
+  //     old always-send." batch-approve re-pulls the same stale buyers DAILY,
+  //     so whitelisting turns a stamp-write failure into an unbounded daily
+  //     storm to the exact cohort whose email promises "no more nags."
+  //   - sendRancherLeadReminder: the 4-day throttle is per-REFERRAL, not
+  //     per-recipient — a rancher with N open leads can get N reminders per
+  //     window; the 3/week cap was the only per-recipient ceiling.
+  // These stay capped. The eaten-email leak for them needs a robust throttle
+  // fix, not a blanket cap exemption (tracked in memory).
   // P0 hotfix (2026-06-02): rancher intro email from /api/matching/suggest
   // was hitting the 3/week cap silently — 60%+ of intros suppressed during
   // volume spikes. Whitelisted because this is revenue-critical (without it

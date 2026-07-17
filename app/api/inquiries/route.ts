@@ -1,7 +1,17 @@
 import { NextResponse } from 'next/server';
 import { createRecord, getAllRecords, getRecordById, updateRecord, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
-import { sendInquiryToRancher, sendInquiryAlertToAdmin } from '@/lib/email';
+import { sendInquiryToRancher, sendInquiryAlertToAdmin, sendEmail } from '@/lib/email';
+
+// Local HTML escape (lib/email.ts keeps its `esc` private; productSettlement
+// declares its own the same way — matching the existing pattern).
+function escapeHtml(s: string): string {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 
 export const maxDuration = 60;
@@ -145,6 +155,32 @@ export async function POST(request: Request) {
       message,
       inquiryId: record.id,
     });
+
+    // INSTANT BUYER ACK (2026-07-17, revenue-path audit): until now this route
+    // emailed ONLY the admin — a family asking a pre-purchase question about a
+    // ~$2k share got total silence while the inquiry sat at Status='Pending'
+    // waiting on a manual approve (no cron reads the Inquiries table at all).
+    // Silence on a high-intent question is the cheapest possible way to lose a
+    // buyer. The reply-to threads into resend-inbound, so if they answer, the
+    // buyer arm classifies it and stages a response like any other reply.
+    if (consumerEmail) {
+      const first = String(consumerName || '').trim().split(/\s+/)[0] || 'there';
+      await sendEmail({
+        to: consumerEmail,
+        subject: `got your question for ${ranchName}`,
+        html:
+          `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">` +
+          `<p>hey ${escapeHtml(first)},</p>` +
+          `<p>got your question for <strong>${escapeHtml(ranchName)}</strong> — I'm passing it to them now and you should hear back shortly.</p>` +
+          `<p style="font-size:14px;color:#5A5752">if you don't, just reply to this email and I'll chase it down myself.</p>` +
+          `<p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow</p></div>`,
+        templateName: 'inquiry_buyer_ack',
+      }).catch((e: any) => {
+        // Never fail the inquiry on an ack failure — the record + admin alert
+        // are what matter; the buyer ack is additive.
+        console.error('[inquiries] buyer ack failed (non-fatal):', e?.message);
+      });
+    }
 
     return NextResponse.json({ success: true, inquiry: record }, { status: 201 });
   } catch (error: any) {
