@@ -23,6 +23,17 @@
 // Ordering: oldest signup first (Airtable record `_createdTime`, exposed by
 // lib/airtable getAllRecords) — the stale backlog is the point of this cron.
 // Output is capped at batchCap per run to pace sends.
+//
+// SUPPLY GATE (founder rule 2026-07-16): only nudge buyers in states an
+// operational rancher actually serves. Warming a buyer to finish /qualify
+// and then telling them "no rancher in your state" burns trust and invites
+// spam reports — ~480 of the WAITING pool sat in unserved states (FL/AZ/IL/
+// GA/OH/MI/PA) when this shipped. The cron computes the served-state set from
+// live rancher data (isRancherOperationalForBuyers + getOperationalServedStates)
+// every run, so the gate widens automatically the moment a new rancher goes
+// live. Buyers outside supply stay in the nurture-drip lane instead.
+
+import { normalizeState } from './states';
 
 export const WAITING_NUDGE_LIFETIME_CAP = 3;
 
@@ -47,6 +58,13 @@ export interface WaitingNudgeOptions {
   cooldownDays: number;
   /** Max buyers returned per run (selector output cap). */
   batchCap: number;
+  /**
+   * SUPPLY GATE: normalized 2-letter codes of states an operational rancher
+   * serves. When provided, only buyers in these states select — a buyer with
+   * a blank or unrecognizable State is dropped too (can't prove supply).
+   * null/undefined = gate off (legacy behavior, used only by old tests).
+   */
+  supplyStates?: ReadonlySet<string> | null;
 }
 
 const DAY_MS = 86_400_000;
@@ -95,8 +113,23 @@ export function isWaitingNudgeEligible(
 }
 
 /**
+ * SUPPLY GATE predicate: true when the gate is off (no set given) or the
+ * buyer's normalized state is one an operational rancher serves. A blank or
+ * unrecognizable State fails a live gate — supply can't be proven, and the
+ * nudge would walk them into a "no rancher near you" wall.
+ */
+export function isBuyerInSupply(
+  c: WaitingConsumerLike,
+  supplyStates?: ReadonlySet<string> | null,
+): boolean {
+  if (supplyStates == null) return true;
+  const state = normalizeState(c['State']);
+  return !!state && supplyStates.has(state);
+}
+
+/**
  * Pick the buyers to nudge this run: eligible per isWaitingNudgeEligible,
- * oldest signup first, at most batchCap.
+ * inside the supply gate, oldest signup first, at most batchCap.
  */
 export function selectWaitingBuyersForNudge<T extends WaitingConsumerLike>(
   consumers: T[],
@@ -106,6 +139,7 @@ export function selectWaitingBuyersForNudge<T extends WaitingConsumerLike>(
   if (!Array.isArray(consumers) || consumers.length === 0 || cap <= 0) return [];
   return consumers
     .filter((c) => isWaitingNudgeEligible(c, opts))
+    .filter((c) => isBuyerInSupply(c, opts.supplyStates))
     .sort((a, b) => createdTimeMs(a) - createdTimeMs(b))
     .slice(0, cap);
 }
@@ -128,6 +162,13 @@ export interface WaitingDryRunReport {
   smsEligibleCount: number;
   /** Age in whole days of the oldest selected signup, or null when empty. */
   oldestSignupDays: number | null;
+  /** Sorted supply-gate states, or null when the gate was off. */
+  supplyStates: string[] | null;
+  /**
+   * Otherwise-eligible buyers dropped ONLY by the supply gate (no-silent-caps:
+   * the report must say who the gate held back). 0 when the gate is off.
+   */
+  droppedNoSupply: number;
   sample: Array<{
     id: string;
     firstName: string;
@@ -146,10 +187,29 @@ function signupAgeDays(c: WaitingConsumerLike, nowMs: number): number | null {
 export function buildWaitingDryRunReport(
   candidates: WaitingConsumerLike[],
   selected: WaitingConsumerLike[],
-  opts: { nowISO: string; sampleSize?: number },
+  opts: {
+    nowISO: string;
+    sampleSize?: number;
+    /** Pass BOTH to surface how many eligible buyers the supply gate held back. */
+    cooldownDays?: number;
+    supplyStates?: ReadonlySet<string> | null;
+  },
 ): WaitingDryRunReport {
   const nowMs = Date.parse(opts.nowISO);
   const sampleSize = opts.sampleSize ?? 10;
+
+  // Supply-gate visibility: count buyers who pass every OTHER filter but sit
+  // in a state without an operational rancher. Needs cooldownDays to re-run
+  // the base eligibility; without it (legacy callers) the count stays 0.
+  let droppedNoSupply = 0;
+  if (opts.supplyStates != null && opts.cooldownDays !== undefined) {
+    const baseOpts = { nowISO: opts.nowISO, cooldownDays: opts.cooldownDays };
+    for (const c of candidates) {
+      if (isWaitingNudgeEligible(c, baseOpts) && !isBuyerInSupply(c, opts.supplyStates)) {
+        droppedNoSupply++;
+      }
+    }
+  }
 
   const byState: Record<string, number> = {};
   const byPriorNudges: Record<string, number> = {};
@@ -176,6 +236,8 @@ export function buildWaitingDryRunReport(
     byPriorNudges,
     smsEligibleCount,
     oldestSignupDays: oldest,
+    supplyStates: opts.supplyStates == null ? null : Array.from(opts.supplyStates).sort(),
+    droppedNoSupply,
     sample: selected.slice(0, sampleSize).map((c) => ({
       id: String(c.id || ''),
       firstName: String(c['Full Name'] || '').split(' ')[0] || 'there',
@@ -204,10 +266,15 @@ export function formatWaitingDryRunReport(
     .map((s) => `${s.firstName} (${s.state || '?'}, ${s.signedUpDaysAgo ?? '?'}d, ${s.priorNudges} prior)`)
     .join(' · ') || '—';
 
+  const supplyLine = report.supplyStates === null
+    ? 'Supply gate: OFF (all states)'
+    : `Supply gate: ${report.supplyStates.join(', ') || 'NO SERVED STATES — nothing can select'} · held back ${report.droppedNoSupply} eligible buyers in unserved states`;
+
   return [
     'WAITING ACTIVATION — DRY RUN (no sends, no stamps)',
     `Pool: ${report.poolSize} WAITING buyers (suppressed already excluded)`,
     `Would nudge this run: ${report.selectedCount} (cap ${opts.batchCap}, cooldown ${opts.cooldownDays}d)`,
+    supplyLine,
     `SMS-eligible among them: ${report.smsEligibleCount} (TCPA opt-in + phone; live sends also respect ENABLE_SMS + quiet hours)`,
     `Prior nudges: ${priorLine}`,
     `Top states: ${topStates}`,

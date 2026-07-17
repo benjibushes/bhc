@@ -52,6 +52,7 @@ import { isSmsWindow } from '@/lib/sendWindow';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
+import { isRancherOperationalForBuyers, getOperationalServedStates } from '@/lib/rancherEligibility';
 import {
   buildWaitingDryRunReport,
   formatWaitingDryRunReport,
@@ -106,10 +107,39 @@ async function realHandler(_request: Request): Promise<CronResult> {
     };
   }
 
-  const selected = selectWaitingBuyersForNudge(candidates, { nowISO, cooldownDays, batchCap });
+  // SUPPLY GATE (founder rule 2026-07-16): compute the served-state set from
+  // live rancher data every run — never a hardcoded list, so the gate widens
+  // by itself the moment a new rancher goes operational. Only buyers in these
+  // states get the "finish /qualify" nudge; the rest stay in nurture-drip.
+  // A ranchers-read failure FAILS CLOSED (no sends) — a transient Airtable
+  // blip must never turn the gate off and blast the unserved-state backlog.
+  let supplyStates: Set<string>;
+  try {
+    const ranchers = (await getAllRecords(TABLES.RANCHERS)) as any[];
+    supplyStates = new Set<string>();
+    for (const r of ranchers) {
+      if (!isRancherOperationalForBuyers(r)) continue;
+      for (const s of getOperationalServedStates(r)) supplyStates.add(s);
+    }
+  } catch (e: any) {
+    return {
+      status: 'error',
+      recordsTouched: 0,
+      notes: `ranchers query failed (supply gate fails closed, no sends): ${e?.message?.slice(0, 200) || 'unknown'}`,
+    };
+  }
+  if (supplyStates.size === 0) {
+    return {
+      status: 'error',
+      recordsTouched: 0,
+      notes: 'supply gate: ZERO operational served states — refusing to select (data problem, not a valid empty market)',
+    };
+  }
+
+  const selected = selectWaitingBuyersForNudge(candidates, { nowISO, cooldownDays, batchCap, supplyStates });
 
   if (dryRun) {
-    const report = buildWaitingDryRunReport(candidates, selected, { nowISO });
+    const report = buildWaitingDryRunReport(candidates, selected, { nowISO, cooldownDays, supplyStates });
     const text = formatWaitingDryRunReport(report, { cooldownDays, batchCap });
     await sendOperatorSignal({
       urgency: 'normal',
@@ -126,6 +156,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
       recordsTouched: 0,
       notes:
         `DRY RUN pool=${report.poolSize} wouldNudge=${report.selectedCount} ` +
+        `supplyStates=${supplyStates.size} heldNoSupply=${report.droppedNoSupply} ` +
         `smsEligible=${report.smsEligibleCount} cooldownDays=${cooldownDays} cap=${batchCap} ` +
         `oldest=${report.oldestSignupDays ?? '—'}d — no sends, no stamps`,
     };
@@ -222,8 +253,8 @@ async function realHandler(_request: Request): Promise<CronResult> {
     status: errors.length ? 'partial' : 'success',
     recordsTouched: emailsSent,
     notes:
-      `pool=${candidates.length} selected=${selected.length} emailSent=${emailsSent} ` +
-      `emailSuppressed=${emailSuppressed} sms=${smsSent} smsHeld=${smsDeferredWindow} ` +
+      `pool=${candidates.length} selected=${selected.length} supplyStates=${supplyStates.size} ` +
+      `emailSent=${emailsSent} emailSuppressed=${emailSuppressed} sms=${smsSent} smsHeld=${smsDeferredWindow} ` +
       `cooldownDays=${cooldownDays} cap=${batchCap} errs=${errors.length}` +
       (errors.length ? ` err1=${errors[0].slice(0, 80)}` : ''),
     skipReasonBreakdown: {

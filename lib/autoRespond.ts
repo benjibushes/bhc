@@ -1,45 +1,79 @@
-// AI-drafted auto-reply for inbound buyer emails classified ghost or
-// scheduling. Sends back to the original sender so the buyer doesn't
-// sit waiting. Conservative trigger.
+// Buyer sales arm — the machine's reply to an inbound buyer email.
+//
+// REWRITTEN 2026-07-16 (Ben's "next hire"): the old version freestyled a
+// Haiku paragraph and sent it immediately with no voice guard and no human
+// gate — the exact "doesn't feel human" failure the rancher outreach machine
+// was rebuilt to kill. This version answers from the Ben-voice template bank
+// (lib/buyerReplyTemplates), voice-guards every send, and runs on a dial:
+//
+//   BUYER_AUTORESPOND = off       → machine never answers (Ben handles all)
+//                     | assisted  → machine STAGES a draft (default); Ben
+//                                   one-taps Send from Telegram / the console
+//                     | auto      → machine sends the answer itself
+//
+// Only machine-handleable objection categories are answered (price, distance,
+// timing, cut, quality, capacity, scheduling, ghost). ready-to-buy and
+// close-won never come here — they escalate.
 
 import { sendEmail } from './email';
-import { callClaude } from './ai';
+import { draftBuyerReply, MACHINE_HANDLED, type BuyerObjection, type BuyerReplyContext } from './buyerReplyTemplates';
 
-const SYSTEM = `You are an AI assistant drafting a SHORT reply on behalf
-of Ben (the BuyHalfCow operator) to a buyer who emailed back. Tone:
-warm, concise, no marketing speak. Sign off "— Ben". One paragraph.
-No bullet lists. No "circle back". Acknowledge their message specifically.
-If they asked about scheduling: tell them the rancher will reach out
-within 48 hours. If they said they never heard from the rancher: apologize
-and say we are routing them to a backup rancher.`;
+export type AutoRespondMode = 'off' | 'assisted' | 'auto';
+
+export function autoRespondMode(): AutoRespondMode {
+  const m = String(process.env.BUYER_AUTORESPOND || 'assisted').toLowerCase();
+  return m === 'off' || m === 'auto' ? m : 'assisted';
+}
+
+export interface AutoRespondResult {
+  mode: AutoRespondMode;
+  handled: boolean; // did the machine produce an answer for this category
+  sent: boolean; // did we actually email it (auto mode only)
+  staged: boolean; // is there a draft for Ben to one-tap (assisted mode)
+  draft?: string; // the Ben-voice answer text
+  reason?: string;
+}
 
 export async function maybeAutoRespond(opts: {
   to: string;
   subject: string;
-  bodyContext: string;
   category: string;
-}): Promise<{ sent: boolean; reason?: string }> {
-  const body = opts.bodyContext.slice(0, 2000);
-  let draft = '';
-  try {
-    draft = await callClaude({
-      model: 'claude-haiku-4-5-20251001',
-      system: SYSTEM,
-      user: `Category: ${opts.category}\nBuyer email:\n${body}`,
-      maxTokens: 300,
-    });
-  } catch {
-    return { sent: false, reason: 'classify-failed' };
+  ctx: BuyerReplyContext;
+  inReplyTo?: string;
+}): Promise<AutoRespondResult> {
+  const mode = autoRespondMode();
+  const category = opts.category as BuyerObjection;
+
+  if (!MACHINE_HANDLED.includes(category)) {
+    return { mode, handled: false, sent: false, staged: false, reason: 'not machine-handled' };
   }
-  if (!draft || draft.length < 20) return { sent: false, reason: 'empty-draft' };
+
+  const drafted = draftBuyerReply(category, opts.ctx);
+  if (!drafted) {
+    return { mode, handled: false, sent: false, staged: false, reason: 'template/voice-guard rejected' };
+  }
+  const draft = drafted.text;
+
+  if (mode === 'off') {
+    return { mode, handled: true, sent: false, staged: false, draft, reason: 'autorespond off' };
+  }
+
+  if (mode === 'assisted') {
+    // Stage only — the webhook persists the draft to the Conversations row
+    // and cards it to Telegram for a one-tap Send. No email leaves here.
+    return { mode, handled: true, sent: false, staged: true, draft };
+  }
+
+  // auto: send it ourselves, threaded into the buyer's conversation.
   try {
     await sendEmail({
       to: opts.to,
       subject: `Re: ${opts.subject}`.slice(0, 200),
       html: `<p>${draft.replace(/\n/g, '<br>')}</p>`,
+      ...(opts.inReplyTo ? { headers: { 'In-Reply-To': opts.inReplyTo, References: opts.inReplyTo } } : {}),
     } as any);
-    return { sent: true };
+    return { mode, handled: true, sent: true, staged: false, draft };
   } catch (e: any) {
-    return { sent: false, reason: e?.message || 'send-failed' };
+    return { mode, handled: true, sent: false, staged: false, draft, reason: e?.message || 'send-failed' };
   }
 }

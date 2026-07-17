@@ -544,7 +544,7 @@ export async function sendConsumerConfirmation(data: {
   email: string;
   state: string;
 }) {
-  const subject = 'Application Received — BuyHalfCow';
+  const subject = 'got your info — here\'s what happens next';
   return guardedSend({
     templateName: 'sendConsumerConfirmation',
     recipientEmail: data.email,
@@ -638,8 +638,8 @@ export async function sendConsumerApproval(data: {
   `;
 
   const subject = isBeef
-    ? "You're Approved — Let's Find Your Rancher"
-    : 'Welcome to BuyHalfCow';
+    ? "you're in — let's find your rancher"
+    : "you're in — welcome to buyhalfcow";
   return guardedSend({
     templateName: 'sendConsumerApproval',
     recipientEmail: data.email,
@@ -3390,7 +3390,7 @@ export async function sendWaitlistEmail(data: {
   state: string;
   loginUrl?: string;
 }) {
-  const subject = "You're Approved — We're Expanding to Your Area";
+  const subject = "you're in — working on a rancher near you";
   return guardedSend({
     templateName: 'sendWaitlistEmail',
     recipientEmail: data.email,
@@ -3418,9 +3418,9 @@ p { color: #6B4F3F; margin: 12px 0; }
 <div class="container">
   <h1>You're Approved</h1>
   <p>Hi ${esc(data.firstName)},</p>
-  <p>Your application has been approved — you're in the network. We're actively expanding our rancher partnerships in <strong>${esc(data.state)}</strong> and you're at the front of the line.</p>
+  <p>You're in. I'm working on lining up a ranch near you in <strong>${esc(data.state)}</strong> right now. Some states move fast, some take a little longer depending on which ranchers have room, and I'll be straight with you either way.</p>
   <div class="highlight">
-    <strong>You're first in line.</strong> The moment a rancher is ready in your state, we'll email you and make a personal introduction within 24 hours. No action needed on your end.
+    The moment a ranch is ready in your state, I'll email you and make the introduction myself, usually within a day. Nothing you need to do right now.
   </div>
   <p><strong>While you wait, here's what you can do:</strong></p>
   <ul style="color: #6B4F3F; line-height: 2;">

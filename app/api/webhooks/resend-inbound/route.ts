@@ -323,20 +323,210 @@ export async function POST(request: Request) {
       context,
     });
 
-    let autoRespondResult: { sent: boolean; reason?: string } | null = null;
-    if (
-      classification.actionNeeded === 'auto-respond' &&
-      classification.senderType === 'buyer' &&
-      classification.sentiment !== 'blocking' &&
-      ['ghost', 'scheduling'].includes(classification.objectionCategory)
-    ) {
-      const { maybeAutoRespond } = await import('@/lib/autoRespond');
-      autoRespondResult = await maybeAutoRespond({
-        to: from,
-        subject,
-        bodyContext: bodyForClassify,
-        category: classification.objectionCategory,
-      });
+    // ── BUYER SALES ARM ───────────────────────────────────────────────────
+    // For buyer replies that aren't blocking, either escalate (ready-to-buy →
+    // call) or let the machine answer common objections in Ben's voice from
+    // the template bank. Build the buyer context once, from the linked
+    // referral/consumer/rancher, and load the purchase-readiness signals.
+    let autoRespondResult: import('@/lib/autoRespond').AutoRespondResult | null = null;
+    let escalation: { tier: string; sent: boolean } | null = null;
+    let stagedReplyDraft = '';
+
+    // Deterministic sender guard: never treat a message as a BUYER if the
+    // From matches the linked RANCHER's email. Haiku can mislabel a short
+    // rancher reply as senderType='buyer', which would send buyer-facing
+    // objection copy ("you pay <rancher> direct...") to the rancher (audit
+    // 2026-07-16). Resolve the rancher email up front and exclude it.
+    let fromMatchesRancher = false;
+    const fromAddrForGate = bareEmail(from);
+    if (links.rancherId && fromAddrForGate) {
+      try {
+        const { getRecordById, TABLES } = await import('@/lib/airtable');
+        const rr: any = await getRecordById(TABLES.RANCHERS, links.rancherId).catch(() => null);
+        const remail = String(rr?.['Email'] || '').toLowerCase().trim();
+        if (remail && fromAddrForGate.includes(remail)) fromMatchesRancher = true;
+      } catch {}
+    }
+
+    // Deterministic STOP guard: a family who wants out must never get a
+    // machine answer, regardless of what the classifier read (audit). Checks
+    // the raw body for explicit opt-out language.
+    const saysStop = /\b(unsubscribe|stop emailing|take me off|remove me|opt.?out|do not (contact|email)|leave me alone)\b/i.test(
+      String(bodyForClassify || ''),
+    );
+
+    const isBuyer =
+      !fromMatchesRancher &&
+      (classification.senderType === 'buyer' ||
+        (classification.senderType === 'unknown' && !!links.referralId && matchedByFromEmail));
+
+    // IDEMPOTENCY (audit 2026-07-17): Resend Inbound delivers at-least-once, so
+    // the same reply can arrive twice. The thread-mirror block already dedups
+    // on Message-Id; the buyer-arm sends (escalation email + one machine
+    // objection reply + Telegram card) did NOT — a retry double-emailed the
+    // BUYER and double-carded Ben. Claim the Message-Id once (Redis SET NX EX,
+    // fails OPEN if Redis is down — a rare double is better than never sending)
+    // before any buyer-arm side effect. Empty Message-Id (rare) skips the claim
+    // and behaves as before.
+    let buyerArmClaimed = true;
+    {
+      const midForClaim = String(
+        (headers as any)?.['message-id'] ||
+          (headers as any)?.['Message-Id'] ||
+          (headers as any)?.['Message-ID'] ||
+          '',
+      ).trim();
+      if (isBuyer && classification.sentiment !== 'blocking' && !saysStop && midForClaim) {
+        try {
+          const { claimOnce } = await import('@/lib/rancherCapacity');
+          buyerArmClaimed = await claimOnce(`buyer-arm:${midForClaim}`, 3 * 24 * 60 * 60);
+        } catch {
+          buyerArmClaimed = true; // fail open
+        }
+      }
+    }
+
+    if (isBuyer && classification.sentiment !== 'blocking' && !saysStop && buyerArmClaimed) {
+      // Resolve buyer context (best-effort — every field degrades gracefully).
+      const ctx: import('@/lib/buyerReplyTemplates').BuyerReplyContext = {};
+      const signals: import('@/lib/buyerEscalation').IntentSignals = {};
+      // A transient Airtable failure reading the referral must NOT be
+      // mistaken for "no deposit paid" — that would mis-tier a PAID customer
+      // to 'warm' and email them a "let's lock it in" pitch (audit 2026-07-17).
+      // Track whether we actually READ the deal record; the escalation send is
+      // suppressed when we couldn't.
+      let referralReadOk = !links.referralId; // no referral → nothing to read
+      try {
+        const { getRecordById, TABLES } = await import('@/lib/airtable');
+        if (links.consumerId) {
+          const c: any = await getRecordById(TABLES.CONSUMERS, links.consumerId).catch(() => null);
+          if (c) {
+            ctx.firstName = String(c['Name'] || c['First Name'] || '').trim();
+            ctx.state = String(c['State'] || '').trim();
+            // Qualified At + Response Ack At live on the CONSUMER, not the
+            // Referral (verified: app/api/qualify writes them to consumer;
+            // Response Ack At field is Consumers fldFjOCvy8v0ZVQNh). Reading
+            // them off the referral would always see blank → warm tier.
+            signals.qualifiedAt = String(c['Qualified At'] || '');
+            signals.responseAckAt = String(c['Response Ack At'] || '');
+          }
+        }
+        if (links.rancherId) {
+          const r: any = await getRecordById(TABLES.RANCHERS, links.rancherId).catch(() => null);
+          if (r) ctx.rancherName = String(r['Ranch Name'] || r['Name'] || '').trim();
+        }
+        if (links.referralId) {
+          const ref: any = await getRecordById(TABLES.REFERRALS, links.referralId).catch(() => null);
+          if (ref) {
+            referralReadOk = true;
+            // Deposit stamps live on the REFERRAL (the deal record).
+            signals.referralStatus = String(ref['Status'] || ref['Referral Status'] || '');
+            signals.depositLinkOpenedAt = String(ref['Deposit Link Opened At'] || '');
+            signals.depositPaidAt = String(ref['Deposit Paid At'] || '');
+            // Populate the buyer's REAL deposit link (the "fastest path to
+            // purchase" the arm is designed around — was never set, so every
+            // CTA fell back to the cal link; audit 2026-07-16). Needs a member
+            // magic link so the buyer lands authed on the deposit page. Only
+            // for a deposit-capable, not-yet-paid referral.
+            const buyerEmailForLink = String(ref['Buyer Email'] || '').toLowerCase().trim();
+            // Order Type is stored as a LABEL ('Half Cow' / 'Quarter Cow');
+            // the deposit page matches the lowercase SLUG ('quarter'|'half'|
+            // 'whole'). Extract the slug or the deep-link silently defaults to
+            // 'half' and a quarter/whole buyer lands on the wrong cut (audit
+            // 2026-07-17).
+            const cutLabel = String(ref['Order Type'] || ref['Cut'] || '').toLowerCase();
+            const cutSlug = cutLabel.includes('quarter')
+              ? 'quarter'
+              : cutLabel.includes('whole')
+                ? 'whole'
+                : cutLabel.includes('half')
+                  ? 'half'
+                  : '';
+            if (links.consumerId && buyerEmailForLink && !signals.depositPaidAt && cutSlug) {
+              try {
+                const { generateMemberLoginToken } = await import('@/lib/secrets');
+                const { depositPathFor } = await import('@/lib/reserveDeposit');
+                const token = generateMemberLoginToken(links.consumerId, buyerEmailForLink);
+                const next = depositPathFor(links.referralId, cutSlug as any);
+                const site = process.env.SITE_URL || process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
+                ctx.depositUrl = `${site}/api/auth/member/verify?token=${token}&next=${encodeURIComponent(next)}`;
+              } catch (e: any) {
+                console.warn('[buyer-arm] deposit link mint failed:', e?.message);
+              }
+            }
+          }
+        }
+      } catch (e: any) {
+        console.warn('[buyer-arm] context resolve failed:', e?.message);
+      }
+      try {
+        const { getOperatorBookingUrl } = await import('@/lib/calBooking');
+        ctx.calLink = (await getOperatorBookingUrl('sales').catch(() => '')) || '';
+      } catch {}
+
+      const emailMessageId = String(
+        (headers as any)?.['message-id'] || (headers as any)?.['Message-Id'] || (headers as any)?.['Message-ID'] || '',
+      );
+
+      if (classification.objectionCategory === 'ready-to-buy') {
+        // ESCALATE: the machine never talks a ready buyer out of buying. Send
+        // the fastest path to purchase and hand Ben a tiered hot-lead card.
+        const { readinessTier, tierEmoji, readyToBuyEmail } = await import('@/lib/buyerEscalation');
+        const { autoRespondMode } = await import('@/lib/autoRespond');
+        const tier = readinessTier(signals);
+        const mail = readyToBuyEmail(ctx, tier);
+        // Respect the same dial: when BUYER_AUTORESPOND=off nothing auto-sends,
+        // Ben just gets the hot card and reaches out himself. assisted/auto
+        // both send the fast path (a ready buyer should never wait).
+        // referralReadOk gate: if we have a referral but couldn't READ it, the
+        // tier may be wrong (a paid customer could read as warm) — do NOT
+        // auto-send the wrong pitch; Ben still gets the card (audit 2026-07-17).
+        let sent = false;
+        if (autoRespondMode() !== 'off' && referralReadOk) {
+          try {
+            const { sendEmail } = await import('@/lib/email');
+            await sendEmail({
+              to: from,
+              subject: mail.subject,
+              html: `<p>${mail.text.replace(/\n/g, '<br>')}</p>`,
+              ...(emailMessageId ? { headers: { 'In-Reply-To': emailMessageId, References: emailMessageId } } : {}),
+            } as any);
+            sent = true;
+          } catch (e: any) {
+            console.warn('[buyer-arm] ready-to-buy send failed:', e?.message);
+          }
+        }
+        escalation = { tier, sent };
+        try {
+          const { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } = await import('@/lib/telegram');
+          // Escape all interpolated values — `from` (buyer-controlled display
+          // name), rancherName, and the Haiku summary could otherwise inject
+          // live HTML/links into Ben's operator card (parse_mode=HTML). Audit.
+          const h = (s: string) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          await sendTelegramMessage(
+            TELEGRAM_ADMIN_CHAT_ID,
+            `${tierEmoji(tier)} <b>READY TO BUY — ${tier.toUpperCase()}</b>\n\n` +
+              `<b>From:</b> ${h(String(from).slice(0, 100))}\n` +
+              (ctx.rancherName ? `<b>Rancher:</b> ${h(ctx.rancherName)}\n` : '') +
+              (links.referralId ? `<b>Referral:</b> <code>${h(links.referralId)}</code>\n` : '') +
+              `<i>${h(classification.summary)}</i>\n\n` +
+              (sent ? 'sent them the fastest path to purchase. call them now.' : '⚠️ path-to-purchase email failed — reach out by hand.'),
+          );
+        } catch {}
+      } else {
+        // ANSWER: template reply for a handled objection (assisted or auto).
+        const { maybeAutoRespond } = await import('@/lib/autoRespond');
+        autoRespondResult = await maybeAutoRespond({
+          to: from,
+          subject,
+          category: classification.objectionCategory,
+          ctx,
+          inReplyTo: emailMessageId || undefined,
+        });
+        if (autoRespondResult?.staged && autoRespondResult.draft) {
+          stagedReplyDraft = autoRespondResult.draft;
+        }
+      }
     }
 
     // Build the Conversations row. Fields that are linked records use arrays.
@@ -355,6 +545,18 @@ export async function POST(request: Request) {
       'AI Summary': classification.summary,
       'Raw Headers': JSON.stringify(headers || {}),
     };
+    // Buyer-arm staging: an assisted-mode template answer is stored on the row
+    // so Ben (or a console one-tap) can send it. Fields are optional — if the
+    // Conversations table doesn't have them yet, Airtable ignores unknown keys
+    // only when typecast is off; createRecord here tolerates their absence.
+    if (stagedReplyDraft) {
+      row['Staged Reply'] = stagedReplyDraft;
+      row['Reply Status'] = autoRespondResult?.sent ? 'sent' : 'staged';
+    } else if (autoRespondResult?.sent) {
+      row['Reply Status'] = 'auto-sent';
+    } else if (escalation) {
+      row['Reply Status'] = escalation.sent ? 'escalated (path sent)' : 'escalated';
+    }
     if (links.referralId) row['Linked Referral'] = [links.referralId];
     if (links.consumerId) row['Linked Consumer'] = [links.consumerId];
     if (links.rancherId) row['Linked Rancher'] = [links.rancherId];
@@ -364,9 +566,21 @@ export async function POST(request: Request) {
       const created = await createRecord(CONVERSATIONS_TABLE, row);
       conversationId = (created as any)?.id || null;
     } catch (e: any) {
-      // Graceful: table doesn't exist yet. Log to console + Telegram so Ben
-      // sees the reply even if the table isn't ready.
-      console.warn(`[resend-inbound] ${CONVERSATIONS_TABLE} unavailable:`, e?.message || e);
+      // The Staged Reply / Reply Status fields may not exist on the table yet
+      // (buyer-arm additions). Rather than lose the whole conversation log to
+      // a 422 on unknown fields, retry once without them.
+      if (/unknown field|Staged Reply|Reply Status|422/i.test(String(e?.message || ''))) {
+        const { ['Staged Reply']: _sr, ['Reply Status']: _rs, ...safe } = row as any;
+        try {
+          const created = await createRecord(CONVERSATIONS_TABLE, safe);
+          conversationId = (created as any)?.id || null;
+        } catch (e2: any) {
+          console.warn(`[resend-inbound] ${CONVERSATIONS_TABLE} unavailable:`, e2?.message || e2);
+        }
+      } else {
+        // Graceful: table doesn't exist yet. Telegram still fires below.
+        console.warn(`[resend-inbound] ${CONVERSATIONS_TABLE} unavailable:`, e?.message || e);
+      }
     }
 
     // ── ACTIVITY STAMPING on the Referral ─────────────────────────────────
@@ -569,33 +783,52 @@ export async function POST(request: Request) {
         ? '\n👀 Ben to review.'
         : '';
 
-      const autoReplyLine = autoRespondResult?.sent
-        ? '\n🤖 Auto-replied to buyer.'
-        : autoRespondResult
-        ? `\n⚠️ Auto-reply attempt failed: ${autoRespondResult.reason}`
+      // Buyer-arm status line. A ready-to-buy escalation already fired its own
+      // hot card above, so keep this one quiet for that case.
+      const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const autoReplyLine = escalation
+        ? '' // escalation card already sent
+        : autoRespondResult?.staged && autoRespondResult.draft
+        ? `\n\n✏️ <b>Machine drafted a reply (staged):</b>\n<i>${esc(autoRespondResult.draft).slice(0, 500)}</i>\n(one-tap Send in the console, or send it yourself)`
+        : autoRespondResult?.sent
+        ? '\n🤖 Machine auto-answered the buyer.'
+        : autoRespondResult && autoRespondResult.handled === false
+        ? '' // nothing the machine handles — normal ben-eyes flow
+        : autoRespondResult?.reason
+        ? `\n⚠️ Auto-answer skipped: ${autoRespondResult.reason}`
         : '';
 
+      // Escape all interpolated values (from/subject/summary are attacker- or
+      // AI-influenced) — same HTML-injection class as the escalation card. Audit.
       const msg =
         `${senderEmoji} <b>Inbound reply</b> ${sentimentEmoji}\n\n` +
-        `<b>From:</b> ${from}\n` +
-        `<b>Subject:</b> ${subject}\n` +
-        (context ? `<b>Threaded to:</b> ${context.type}=${context.recordId}\n` : `<b>No thread:</b> reply hit catch-all\n`) +
-        `<b>Category:</b> ${classification.objectionCategory}\n\n` +
-        `<i>${classification.summary}</i>` +
+        `<b>From:</b> ${esc(from)}\n` +
+        `<b>Subject:</b> ${esc(subject)}\n` +
+        (context ? `<b>Threaded to:</b> ${esc(context.type)}=${esc(context.recordId)}\n` : `<b>No thread:</b> reply hit catch-all\n`) +
+        `<b>Category:</b> ${esc(classification.objectionCategory)}\n\n` +
+        `<i>${esc(classification.summary)}</i>` +
         actionLine +
         autoReplyLine;
 
-      // Inline buttons only when there's actionable signal
-      const inlineKeyboard = classification.actionNeeded === 'propose-close-won' && links.referralId
-        ? {
-            inline_keyboard: [
-              [
-                { text: '✅ Mark Closed Won', callback_data: `clcheck_won_${links.referralId}` },
-                { text: '❌ Not closed', callback_data: `clcheck_working_${links.referralId}` },
+      // Inline buttons. A staged buyer reply gets a one-tap Send (buyer sales
+      // arm). Otherwise a propose-close-won gets the close buttons.
+      const inlineKeyboard =
+        stagedReplyDraft && conversationId
+          ? {
+              inline_keyboard: [
+                [{ text: '📧 Send this reply', callback_data: `bsend_${conversationId}` }],
               ],
-            ],
-          }
-        : undefined;
+            }
+          : classification.actionNeeded === 'propose-close-won' && links.referralId
+          ? {
+              inline_keyboard: [
+                [
+                  { text: '✅ Mark Closed Won', callback_data: `clcheck_won_${links.referralId}` },
+                  { text: '❌ Not closed', callback_data: `clcheck_working_${links.referralId}` },
+                ],
+              ],
+            }
+          : undefined;
 
       await sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, msg, inlineKeyboard);
     } catch (e: any) {
