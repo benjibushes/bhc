@@ -3776,6 +3776,7 @@ I'm your operations assistant — I run the daily ops so you can focus on closin
 /today — Daily brief (numbers + AI priorities)
 /leads — Pending consumers awaiting review
 /ranchers — Rancher onboarding pipeline
+/onboard — Stuck ranchers as tap-to-Go-Live cards (shows what each needs)
 /money — Revenue + commission summary
 /find [name or phone] — Search consumers, tap 💬 SMS · 📱 Call · 📧 Email
 
@@ -3818,6 +3819,66 @@ You can also just ask me anything in plain English — I'll figure it out.`;
           if (count > 10) msg += `\n...and ${count - 10} more`;
           msg += '\n\nView all at: ' + SITE_URL + '/admin/referrals';
           await sendTelegramMessage(chatId, msg);
+        }
+      }
+
+      else if (text === '/onboard') {
+        // THE onboarding queue: every rancher who's been worked (onboarding
+        // touched) but can't take a buyer yet, each as a tap-to-go-live card
+        // that shows exactly what's missing. Turns "why isn't this rancher
+        // live" into a one-glance checklist + one tap. Go Live fires the same
+        // gated goLiveRancher rail (rgolive_ handler) — Ben's finger per card.
+        const DEMAND = new Set(['TX','CA','FL','AZ','GA','TN','OH','IL','CO','MO','NE','NC','WA','OR','PA','MI']);
+        const READY_ONB = new Set(['Live','Call Complete','Docs Sent','Verification Complete']);
+        const all = await getAllRecords(TABLES.RANCHERS) as any[];
+        const s = (r: any, k: string) => { const v = r[k]; return v == null ? '' : (typeof v === 'object' && 'name' in v ? String(v.name) : String(v)).trim(); };
+        const stuck = all.filter((r) =>
+          s(r, 'Active Status') !== 'Active' &&                       // not routable yet
+          s(r, 'Verification Status') !== 'Removed' &&                // not a closed account
+          (READY_ONB.has(s(r, 'Onboarding Status')) || s(r, 'Active Status') === 'Paused') &&
+          String(r['Email'] || '').includes('@'),
+        );
+        // Demand states first, then by name.
+        stuck.sort((a, b) => (DEMAND.has(s(b, 'State')) ? 1 : 0) - (DEMAND.has(s(a, 'State')) ? 1 : 0) || s(a, 'Ranch Name').localeCompare(s(b, 'Ranch Name')));
+
+        if (stuck.length === 0) {
+          await sendTelegramMessage(chatId, '✅ No stuck ranchers — everyone onboarded is live (or closed).');
+        } else {
+          const shown = stuck.slice(0, 15);
+          await sendTelegramMessage(
+            chatId,
+            `🚜 <b>Onboarding queue — ${stuck.length} rancher${stuck.length === 1 ? '' : 's'} worked but not live</b>\n` +
+              `Each card shows what's missing. Tap <b>Go Live</b> when they're ready (your call — it fires the waitlist + a go-live email).` +
+              (stuck.length > 15 ? `\nShowing first 15.` : ''),
+          );
+          for (const r of shown) {
+            const name = s(r, 'Ranch Name') || s(r, 'Operator Name') || 'Rancher';
+            const state = s(r, 'State') || '?';
+            const ck = {
+              slug: !!s(r, 'Slug'),
+              about: !!s(r, 'About Text'),
+              price: !!(r['Quarter Price'] || r['Half Price'] || r['Whole Price']),
+              pay: !!(r['Quarter Payment Link'] || r['Half Payment Link'] || r['Whole Payment Link']),
+              agreement: !!r['Agreement Signed'],
+            };
+            const missing = [
+              !ck.slug && 'URL slug',
+              !ck.about && 'About text',
+              !ck.price && 'a price',
+              !ck.pay && 'a payment link',
+              !ck.agreement && 'signed agreement',
+            ].filter(Boolean);
+            const ready = missing.length === 0;
+            const line =
+              `${DEMAND.has(state) ? '🔥' : '  '} <b>${escHtml(name)}</b> · ${escHtml(state)}` +
+              `  <i>(onb: ${escHtml(s(r, 'Onboarding Status') || 'blank')}${s(r, 'Active Status') === 'Paused' ? ', paused' : ''})</i>\n` +
+              (ready
+                ? `✅ <b>READY</b> — tap Go Live`
+                : `⛔ needs: ${missing.map((m) => escHtml(String(m))).join(', ')}`);
+            await sendTelegramMessage(chatId, line, {
+              inline_keyboard: [[{ text: ready ? '🚀 Go Live' : '🚀 Go Live (checks first)', callback_data: `rgolive_${r.id}` }]],
+            });
+          }
         }
       }
 
