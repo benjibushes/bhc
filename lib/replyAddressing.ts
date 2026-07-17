@@ -10,6 +10,12 @@
 //   ref     → Referral (highest-context: buyer + rancher already paired)
 //   usr     → Consumer (buyer-side, no active referral yet)
 //   rnc     → Rancher (rancher-side, e.g. onboarding/launch warmup replies)
+//   prp     → Rancher Prospect (COLD outreach target in the prospecting app's
+//             Rancher Prospects table — a lead, not yet an onboarded Rancher).
+//             Set by the outreach dashboard so a cold rancher's reply routes
+//             through this same inbound rail and is marked rancher-side (never
+//             mistaken for a buyer). The record lives in a different Airtable
+//             table than 'rnc', which is why it has its own prefix.
 //   inq     → Inquiry (rancher-page contact form replies)
 //   thread  → Thread (buyer↔rancher message thread; inbound replies post into the thread)
 //
@@ -23,7 +29,7 @@
 
 export const REPLIES_DOMAIN = process.env.REPLIES_DOMAIN || 'replies.buyhalfcow.com';
 
-export type ReplyContextType = 'ref' | 'usr' | 'rnc' | 'inq' | 'thread';
+export type ReplyContextType = 'ref' | 'usr' | 'rnc' | 'prp' | 'inq' | 'thread';
 
 export interface ReplyContext {
   type: ReplyContextType;
@@ -74,7 +80,7 @@ export function parseReplyAddress(rawAddress: string): ReplyContext | null {
 
   // Prefix-record format. Prefix is case-insensitive; the record ID keeps its
   // original case ([a-zA-Z0-9], not [a-z0-9]) so it matches the real Airtable id.
-  const prefixMatch = localPart.match(/^(ref|usr|rnc|inq|thread)-(rec[a-zA-Z0-9]+)$/i);
+  const prefixMatch = localPart.match(/^(ref|usr|rnc|prp|inq|thread)-(rec[a-zA-Z0-9]+)$/i);
   if (!prefixMatch) return null;
 
   const type = prefixMatch[1].toLowerCase() as ReplyContextType;
