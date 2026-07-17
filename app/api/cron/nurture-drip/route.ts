@@ -138,8 +138,13 @@ async function realHandler(_request: Request): Promise<DripResult> {
         'Nurture Touch': touch,
         'Nurture Touched At': new Date().toISOString(),
       });
-      const sentId = String((result as any)?.data?.id || '');
-      if (sentId && !sentId.startsWith('skipped')) sent++;
+      // guardedSend returns { success, suppressed?, reason? } — NOT the raw
+      // Resend { data: { id } } shape this originally read. First live run
+      // (2026-07-17, 60 processed) proved it: Email Log showed 57 real sends
+      // + 3 suppressed while this counted sent=0, so the "🌱 nurture sent N"
+      // Telegram never fired and the Cron Runs note read like a dead run.
+      const r: any = result;
+      if (r?.success && !r?.suppressed) sent++;
     } catch {
       failed++;
     }
