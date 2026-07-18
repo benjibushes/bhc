@@ -1,101 +1,160 @@
-# ManyChat Automations — the complete flow pack
+# ManyChat — the HERD flow (research-backed rebuild)
 
-*2026-07-08. Every automation, trigger, message, and link — copy-paste ready.
-All links verified live tonight. Voice: lowercase, direct, — ben. One link
-per message (IG deliverability). UTM every link so lead-source scoring
-(#263) can grade IG leads.*
+*2026-07-17. ONE CTA on every reel: **comment HERD**. Replaces the 5-keyword
+sprawl + the 8-turn open-AI closer that leaked. Design is button-first: the
+DM's only job is the right link, fast — qualification lives on the landing
+page, not in the DMs.*
 
-**Canonical links (use EXACTLY these):**
-- shop → `https://www.buyhalfcow.com/shop?utm_source=ig&utm_medium=manychat`
-- share quiz → `https://www.buyhalfcow.com/access?utm_source=ig&utm_medium=manychat`
-- ranchers → `https://www.buyhalfcow.com/sell?utm_source=ig&utm_medium=manychat`
-- guide → `https://www.buyhalfcow.com/guide?utm_source=ig&utm_medium=manychat`
-- gear → `https://www.buyhalfcow.com/gear?utm_source=ig&utm_medium=manychat`
-- everything → `https://www.buyhalfcow.com/links`
+**The one rule that fixes everything:** the link lands on **message 2, behind
+a button tap** — never in the first DM. The tap is the opt-in that moves the
+thread out of Instagram's Message Requests folder, refreshes the 24-hour
+window, and earns the link. First DM = the fork, nothing else. Never more than
+2 messages before the link. Never a question the person has to answer before
+they get it. (Sources: ManyChat IG DM guide; creatorflow DM-funnel teardown —
+"link past message 3 = most people drop off"; button flows complete ~72% vs
+~33% for open text.)
+
+**Canonical links — use EXACTLY these (UTM tags the IG lead scorer #263):**
+- buyer quiz → `https://www.buyhalfcow.com/access?utm_source=ig&utm_medium=manychat&utm_campaign=herd`
+- rancher apply → `https://www.buyhalfcow.com/sell?utm_source=ig&utm_medium=manychat&utm_campaign=herd`
+- free guide → `https://www.buyhalfcow.com/guide?utm_source=ig&utm_medium=manychat&utm_campaign=herd`
 
 ---
 
-## 1. Keyword: BEEF (the workhorse — every product reel says "comment BEEF")
+## The flow — keyword `HERD`
 
-**Trigger:** DM or comment contains "beef" (also add: "jerky", "box").
-**Comment trigger:** reply to their comment publicly with a short randomized
-line ("sent you a dm 🤝" / "check your dms") + send DM:
+**Trigger:** comment or DM contains `herd` (case-insensitive, loose/contains).
+Keep `beef` / `share` / `cow` / `sell` / `price` as **silent fuzzy synonyms
+that dump into this same flow** — NOT as their own advertised CTAs. One CTA per
+reel: *"comment HERD."*
 
-> hey — here's the shop. real beef from verified family ranches, shipped
-> to your door, starting at $13. shipping's included or shown up front.
-> [shop link]
+### Step 1 — public comment reply (rotate 5, so it doesn't read as botted)
+
+1. `sent it to your dms 🤝`
+2. `just dm'd you`
+3. `check your dms — it's there`
+4. `in your dms now 🤝`
+5. `dm'd you, go look`
+
+### Step 2 — first DM = the fork (NO link, 3 SOLID buttons)
+
+> hey — ben here 🤠 you commented HERD — which one's you?
+
+**Buttons (SOLID buttons, not quick-replies — verbatim labels):**
+- `i want a freezer of beef`
+- `i raise cattle + want buyers`
+- `just looking around`
+
+### Step 3 — message 2, per button (one link each, delivered on the tap)
+
+**→ `i want a freezer of beef`**
+> perfect. the quiz matches you to a verified ranch in your state — budget,
+> freezer size, timing, all in about 90 seconds. that's where it happens 👉
+> https://www.buyhalfcow.com/access?utm_source=ig&utm_medium=manychat&utm_campaign=herd
 >
-> anything you're hunting for specifically? just reply — it's really me.
+> reply STOP anytime to opt out.
 
-**Follow-up (condition: sent, link not clicked, +20h):**
-> still there? the jerky's the usual gateway — $13, shelf-stable, from the
-> same ranches that sell whole shares. [shop link]
+*(tag `beef-buyer` + `ig-herd`)*
 
-## 2. Keyword: SHARE (also: "cow", "half", "quarter", "freezer")
-
-> the share list works like this: 90-second quiz (budget, freezer,
-> timing) → we match you to a verified ranch near you → deposit's fully
-> refundable until your rancher accepts. no spam, no calls you didn't ask
-> for. [quiz link]
+**→ `i raise cattle + want buyers`**
+> you're who i built this for. we route qualified, deposit-down buyers in your
+> state straight to your ranch — your stripe, your customers. free to start,
+> apply's 90 seconds 👉
+> https://www.buyhalfcow.com/sell?utm_source=ig&utm_medium=manychat&utm_campaign=herd
 >
-> takes less time than reading this message tbh.
+> what state are you ranching in? drop it here and i'll flag your area. — ben
 
-**Follow-up (+20h, not clicked):**
-> no rush — but the quiz is how you get in line, and lines move by state.
-> [quiz link]
+*(tag `rancher-lead` + `ig-herd`. The link is NOT gated behind the state
+answer — it's already sent above. The state question just warms the handoff.
+Check `rancher-lead` weekly, hand warm ones to the call list.)*
 
-## 3. Keyword: RANCH (also: "rancher", "sell", "partner")
-
-> you raise beef? then you're the person i built this for. we route
-> qualified buyers — deposit already down — straight to your ranch, into
-> your own stripe account. free to start. apply takes 90 seconds:
-> [sell link]
+**→ `just looking around`**
+> no pressure. here's the free guide — what a share actually costs per pound,
+> how much freezer you need, how the deposit works 👉
+> https://www.buyhalfcow.com/guide?utm_source=ig&utm_medium=manychat&utm_campaign=herd
 >
-> or if you'd rather talk first, that page has my calendar. — ben
+> whenever you're ready, comment HERD on any reel and i'll get you sorted.
+> reply STOP to opt out.
 
-*(ALSO: tag subscriber "rancher-lead" so these DMs are findable; check
-this tag weekly and hand warm ones to the call list.)*
+*(tag `curious` + `ig-herd`)*
 
-## 4. Keyword: GUIDE (also: "price", "cost", "how much")
+---
 
-> fair question — beef math is the whole game. the free guide breaks down
-> what a share actually costs per pound, how much freezer you need, and
-> how the deposit works: [guide link]
+## Where qualification goes
 
-## 5. Keyword: HAT (also: "gear", "merch", "knife")
+**In-DM: only the fork tap.** That single tap segments the audience AND is the
+opt-in micro-commitment. Ask nothing else before the link.
 
-> gear page — the hats plus the stuff i actually use to store, cut, and
-> cook it: [gear link]
+- **Buyers** → 100% of qualification (state, email, budget, freezer, timing) is
+  on the `/access` quiz. Ask NONE of it in the DM — every field moved off the
+  page costs ~5–10% completion.
+- **Ranchers** → link first (above), then exactly ONE ungated question: state.
+  `/sell` does the real qualification (herd size, tier, Stripe Connect, sign).
+  Do not turn this branch back into an in-DM form.
+- **Curious** → no qualification. Deliver the guide, leave the door open.
 
-## 6. Default reply (DM with no keyword match)
+---
 
-> hey, ben here (or my robot doing a good impression). quick menu:
-> • BEEF — shop, shipped nationwide from real ranches
-> • SHARE — get matched to a ranch near you for a freezer full
-> • RANCH — you raise beef and want buyers
-> or just talk to me like a person — i read these.
+## The AI catch-all (tiny, caged — only for free-typers)
 
-## 7. Story mention / reply
+Only fires when someone free-types with **no button tap and no keyword**.
+Everyone else never touches it. This replaces the deleted 8-turn closer.
 
-> appreciate you 🤝 if you're beef-curious: buyhalfcow.com/links has
-> everything — the shop ships this week.
+**Hard limits (enforce in the system prompt — see `MANYCHAT_AI_CLOSER.md`):**
+- **Max 2 turns, then it MUST show the 3 fork buttons or hand to a human.** No
+  exceptions. This one rule kills the old 8-turn leak.
+- **1–2 short sentences per reply. One question per turn, max.** No walls of
+  text. Never volunteer pricing, availability, deposit mechanics, or policy
+  unless asked — answer only what was asked, then route.
+- **Scope = route + light FAQ only** ("do you ship to my state?", "what's the
+  difference between a share and the shop?"), answered in Ben's voice, always
+  ending by presenting the 3 buttons.
+- **NEVER captures email / phone / address in the DM.** That lives on the page.
+- **Support keywords** (`refund`, `wrong`, `problem`, `melted`, `charged`) →
+  assign to human + tag `support`. No bot answer.
 
-## 8. Housekeeping settings
+---
 
-- **Welcome message (new follower DM eligible):** use the Default reply
-  copy (§6).
-- **Turn OFF** any old flows pointing at retired links (old quiz URLs,
-  linktree, anything not on the canonical list above).
-- **Live-chat handoff:** any message containing "refund", "wrong",
-  "problem", "melted", "charged" → assign to human + tag "support" (these
-  go to the inbox/Ben, never a bot answer).
-- Keywords match loosely (contains, case-insensitive); one automation per
-  keyword group, not per synonym.
-- Every flow: ONE link per message. IG throttles multi-link DMs.
+## What was DELETED (and why)
 
-## 9. The content loop this powers
+- ❌ **The open-ended AI closer that free-chats up to 8 turns** capturing
+  state+email+timing before giving a link — the entire reported problem.
+- ❌ **In-DM email capture** — moved to `/access`.
+- ❌ **The BEEF DM's "anything you're hunting for? just reply — it's really
+  me"** open-chat invite — that line was the mouth of the 8-turn hole.
+- ❌ **Multi-keyword sprawl** (BEEF/SHARE/RANCH/GUIDE/HAT/price/cost as separate
+  advertised triggers) — collapsed to one `HERD` + the fork.
+- ❌ **The "type BEEF / SHARE / RANCH" default menu** — tapping beats typing.
+- ❌ **Any DM that opens with a raw link to a cold recipient** — links now live
+  on message 2 behind the tap, or they rot in Requests + trip Meta's spam
+  classifier.
+- ❌ **The HAT/gear front-door CTA** — folded into `/links`; not one of the 3
+  audiences worth a fork slot.
 
-Every reel caption ends: "comment BEEF and i'll send it to you" (products)
-or "comment SHARE for the quiz" (shares). Comments explode reach → the
-auto-DM converts it → utm-tagged links let the lead scorer grade IG
-sources. This is the free version of ads until Meta flips on.
+**KEPT:** rotate-5 public replies · one link per message · UTM on every link ·
+support-keyword human handoff · loose/case-insensitive matching.
+
+---
+
+## Build it in ManyChat (no-code, ~15 min)
+
+1. Open the IG Herd Funnel automation. **Delete** the old keyword triggers +
+   the AI-Step qualifier + the default keyword menu (see DELETED list).
+2. New trigger: **Instagram → Comment/DM contains `herd`** (+ silent synonyms).
+3. Public reply: enable comment auto-reply, paste the 5 rotate lines.
+4. First DM = the fork text + **3 Buttons** (Button type, NOT Quick Reply) with
+   the 3 verbatim labels.
+5. Each button → a **Send Message** with that branch's message 2 + link + tag.
+6. Rancher branch: after the message, a **User Input (text) → save to `State`**.
+7. Fallback (no keyword / free text) → the **AI Step** using the caged prompt
+   in `MANYCHAT_AI_CLOSER.md`; set **Max turns = 2**; on completion → show the
+   3 fork buttons.
+8. Support-keyword rule: message contains refund/wrong/problem/melted/charged →
+   assign to human + tag `support`.
+9. Turn OFF every old flow pointing at retired links or the 5 old keywords.
+
+## The content loop this powers
+
+Every reel caption ends **"comment HERD 👇"**. Comments spike reach → the
+public reply feeds the algorithm → the button fork routes in 2 taps → UTM'd
+links let the lead scorer grade IG sources. Free ads until Meta flips on.
