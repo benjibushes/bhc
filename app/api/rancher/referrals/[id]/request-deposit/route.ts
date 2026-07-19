@@ -290,6 +290,28 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
   }
 
+  // PERSIST THE INVITE OUTCOME (2026-07-19, Champion Valley/Dave incident).
+  // Before this, the send result lived ONLY in the HTTP response + a transient
+  // operator signal — nothing was written to the referral. So
+  // `Deposit Invite Sent At` stayed blank forever and no one could later answer
+  // the only question that matters when a deposit stalls: "was this buyer ever
+  // actually told?" Seven stalled deposits were indistinguishable from seven
+  // never-emailed ones, which cost hours of misdiagnosis. The invite outcome is
+  // money-path truth — it gets persisted, not just logged.
+  //
+  // Success-only write: 'Deposit Invite Sent At' is the field that exists.
+  // Failures already fire the deduped operator signal above (and leaving the
+  // stamp blank on failure is itself the signal: link exists, buyer not told).
+  if (emailOutcome.emailSent) {
+    try {
+      await updateRecord(TABLES.REFERRALS, referralId, {
+        'Deposit Invite Sent At': nowISO,
+      });
+    } catch (e: any) {
+      console.warn('[request-deposit] invite-sent stamp failed:', e?.message);
+    }
+  }
+
   // Telegram operator ping.
   try {
     if (TELEGRAM_ADMIN_CHAT_ID) {
