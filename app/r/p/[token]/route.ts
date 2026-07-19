@@ -21,7 +21,7 @@
 import { NextResponse } from 'next/server';
 import { verifyDepositGrantToken, mintDepositGrantToken } from '@/lib/campaignReserve';
 import { setDepositGrantCookie } from '@/lib/buyerAuth';
-import { getRecordById, TABLES } from '@/lib/airtable';
+import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 
 export const dynamic = 'force-dynamic';
@@ -72,6 +72,27 @@ export async function GET(req: Request, { params }: { params: Promise<{ token: s
     }
   } catch {
     /* page handles cut selection */
+  }
+
+  // STAMP THE OPEN (2026-07-19). This route is the ONLY place a buyer can click
+  // through a pay link, and it was never recording that they did — so
+  // 'Deposit Link Opened At' read NEVER on every referral, forever. That dead
+  // gauge made a healthy funnel look broken: 7 stalled deposits were
+  // indistinguishable from 7 buyers who never saw the email, and diagnosing a
+  // live incident took a full night instead of five minutes.
+  //
+  // Fire-and-forget: a stamp failure must NEVER block a buyer reaching checkout.
+  // Idempotent by intent — we record FIRST open only, so the field answers
+  // "did this buyer ever engage?" without later clicks overwriting the signal.
+  try {
+    const existing = await getRecordById(TABLES.REFERRALS, referralId).catch(() => null);
+    if (existing && !String(existing['Deposit Link Opened At'] || '').trim()) {
+      await updateRecord(TABLES.REFERRALS, referralId, {
+        'Deposit Link Opened At': new Date().toISOString(),
+      }).catch(() => {});
+    }
+  } catch {
+    /* never block the buyer */
   }
 
   const res = NextResponse.redirect(`${base}/checkout/${referralId}/deposit${cutParam}`, 302);
