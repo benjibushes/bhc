@@ -174,6 +174,17 @@ export async function POST(req: Request) {
   if (!isValidEmail(body.email.trim())) {
     return NextResponse.json({ error: 'Please enter a valid email.' }, { status: 400 });
   }
+  // PHONE REQUIRED (2026-07-20) — server-side, so it holds regardless of client.
+  // Vale Creek Ranch signed up with a typo'd email (hard bounce, "mailbox not
+  // found") and no phone: approved, sent a setup link that could never arrive,
+  // permanently unreachable, nobody alerted. Email as the ONLY channel means one
+  // typo silently loses a rancher. A second channel is non-negotiable.
+  if (String(body.phone || '').replace(/\D/g, '').length < 10) {
+    return NextResponse.json(
+      { error: 'A phone number is required — it is how we reach you if email fails.' },
+      { status: 400 },
+    );
+  }
 
   const email = body.email.trim().toLowerCase();
 
