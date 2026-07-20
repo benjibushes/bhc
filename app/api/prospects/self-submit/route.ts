@@ -123,6 +123,17 @@ export async function POST(req: Request) {
     if (!isValidEmail(rancherEmail)) {
       return NextResponse.json({ error: 'Valid email is required' }, { status: 400 });
     }
+    // PHONE REQUIRED (2026-07-20) — a rancher signing themselves up must leave a
+    // second channel. Vale Creek Ranch gave a typo'd email (hard bounce) and no
+    // phone: approved, setup link undeliverable, permanently unreachable, no
+    // alert. Only enforced for 'self' — a fan flagging a ranch they admire
+    // legitimately may not have the rancher's number.
+    if (rancherPhone.replace(/\D/g, '').length < 10) {
+      return NextResponse.json(
+        { error: 'A phone number is required — it is how we reach you if email fails.' },
+        { status: 400 },
+      );
+    }
   } else {
     if (!submitterName) {
       return NextResponse.json({ error: 'Your name is required' }, { status: 400 });

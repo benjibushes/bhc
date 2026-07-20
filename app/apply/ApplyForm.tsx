@@ -96,6 +96,16 @@ export default function ApplyForm() {
       setError('Please enter a valid email.');
       return;
     }
+    // PHONE REQUIRED (2026-07-20). Vale Creek Ranch signed up with a typo'd
+    // email (nikki_subley@yahoo.com — hard bounce, "mailbox not found") and no
+    // phone. She was approved, sent a setup link that could never arrive, and
+    // became permanently unreachable with nobody alerted. Email as the ONLY
+    // channel means one typo = a silently lost rancher. Require a second way in.
+    // 10 digits = US number after formatPhone() strips punctuation.
+    if (form.phone.replace(/\D/g, '').length < 10) {
+      setError('A phone number is required — it is how we reach you if email fails.');
+      return;
+    }
     // headPerYear + constraint are genuinely OPTIONAL (2026-07-08) — they live
     // inside the collapsed "optional: 30 more seconds" accordion and the server
     // only requires name/ranch/email/state. Requiring them here made Submit
@@ -288,6 +298,7 @@ export default function ApplyForm() {
             </label>
             <input
               type="tel"
+              required
               value={form.phone}
               onChange={(e) => setField('phone', formatPhone(e.target.value))}
               placeholder="(555) 555-5555"
