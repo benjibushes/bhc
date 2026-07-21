@@ -4784,6 +4784,87 @@ Confirm send?`;
 
       // ─── /setuppage — Rancher Landing Page Wizard ─────────────────────────
 
+      else if (text.startsWith('/connectstore')) {
+        // Fulfillment connector onboarding (2026-07-21, PR-D):
+        //   /connectstore <ranch|email> | <shop.myshopify.com> | <shpat_token> | <api secret> | <sync|manual> [| markup%]
+        // Pipe-separated because ranch names contain spaces. Validates the
+        // store live, registers webhooks, encrypts + saves credentials.
+        const parts = text.replace('/connectstore', '').split('|').map((p: string) => p.trim());
+        if (parts.length < 5 || !parts[0]) {
+          await sendTelegramMessage(
+            chatId,
+            `Usage:\n<code>/connectstore ranch or email | shop.myshopify.com | shpat_... | api secret | sync or manual | markup% (optional)</code>\n\n` +
+              `Get the token: their Shopify admin → Settings → Apps → Develop apps → create app with write_orders, read_orders, read_products → install → Admin API token + API secret key.`,
+          );
+          return NextResponse.json({ ok: true });
+        }
+        const [query, shop, token, apiSecret, modeRaw, markupRaw] = parts;
+        const mode = modeRaw?.toLowerCase() === 'sync' ? 'sync' : modeRaw?.toLowerCase() === 'manual' ? 'manual' : null;
+        if (!mode) {
+          await sendTelegramMessage(chatId, `Mode must be <code>sync</code> or <code>manual</code> (got "${modeRaw || ''}").`);
+          return NextResponse.json({ ok: true });
+        }
+        const markupPercent = markupRaw !== undefined && markupRaw !== '' && Number.isFinite(Number(markupRaw?.replace('%', '')))
+          ? Number(markupRaw.replace('%', ''))
+          : null;
+        try {
+          const ranchers = await getAllRecords(TABLES.RANCHERS);
+          const q = query.toLowerCase();
+          const match = (ranchers as any[]).find((r) =>
+            (r['Ranch Name'] || '').toLowerCase().includes(q) ||
+            (r['Operator Name'] || '').toLowerCase().includes(q) ||
+            (r['Email'] || '').toLowerCase().includes(q),
+          );
+          if (!match) {
+            await sendTelegramMessage(chatId, `❌ No rancher found for "<b>${query}</b>".`);
+            return NextResponse.json({ ok: true });
+          }
+          const { connectShopifyStore } = await import('@/lib/shopifyConnectFlow');
+          const result = await connectShopifyStore({
+            rancherId: String(match.id), shop, token, apiSecret, mode, markupPercent,
+          });
+          const name = match['Ranch Name'] || match['Operator Name'] || 'rancher';
+          await sendTelegramMessage(
+            chatId,
+            `${result.ok ? '🔌 <b>Store connected</b>' : '❌ <b>Connect failed</b>'} — ${name}\n\n` +
+              result.report.map((l) => `• ${l}`).join('\n') +
+              (result.ok ? `\n\n⚠️ The token was pasted in this chat — delete your message above.` : ''),
+          );
+        } catch (e: any) {
+          await sendTelegramMessage(chatId, `❌ connectstore error: ${String(e?.message || 'unknown').slice(0, 200)}`);
+        }
+      }
+
+      else if (text.startsWith('/syncstore')) {
+        // Manual catalog import for a sync-mode connected rancher.
+        const query = text.replace('/syncstore', '').trim();
+        if (!query) {
+          await sendTelegramMessage(chatId, `Usage: <code>/syncstore [ranch name or email]</code>`);
+          return NextResponse.json({ ok: true });
+        }
+        try {
+          const ranchers = await getAllRecords(TABLES.RANCHERS);
+          const q = query.toLowerCase();
+          const match = (ranchers as any[]).find((r) =>
+            (r['Ranch Name'] || '').toLowerCase().includes(q) ||
+            (r['Operator Name'] || '').toLowerCase().includes(q) ||
+            (r['Email'] || '').toLowerCase().includes(q),
+          );
+          if (!match) {
+            await sendTelegramMessage(chatId, `❌ No rancher found for "<b>${query}</b>".`);
+            return NextResponse.json({ ok: true });
+          }
+          const { syncShopifyCatalog } = await import('@/lib/shopifyCatalogSync');
+          const res = await syncShopifyCatalog(String(match.id));
+          await sendTelegramMessage(
+            chatId,
+            `📦 <b>Catalog sync</b> — ${match['Ranch Name'] || match['Operator Name'] || 'rancher'}\n${res.report.join('\n')}`,
+          );
+        } catch (e: any) {
+          await sendTelegramMessage(chatId, `❌ syncstore error: ${String(e?.message || 'unknown').slice(0, 200)}`);
+        }
+      }
+
       else if (text.startsWith('/setuppage')) {
         const query = text.replace('/setuppage', '').trim();
         if (!query) {

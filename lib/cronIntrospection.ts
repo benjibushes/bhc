@@ -67,6 +67,7 @@ export const EXPECTED_CRONS_24H = [
   'deposit-request-nudge',
   'deposit-watchdog',
   'fulfillment-push-net',
+  'shopify-catalog-sync',
   'orphan-checkout-reaper',
   'qualified-no-action',
   'referral-record-id-backfill',

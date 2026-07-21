@@ -139,5 +139,19 @@ export async function runPaymentPathSmoke(
     }
   }
 
+  // Fulfillment connector (2026-07-21, PR-D): a rancher with a connected
+  // store must have a WORKING connection at go-live — a dead token means
+  // paid orders silently stop reaching their fulfillment stack.
+  try {
+    const { parseIntegration, getConnector } = await import('@/lib/fulfillmentConnector');
+    const integration = parseIntegration(rancher?.['Fulfillment Integration']);
+    if (integration) {
+      const valid = await getConnector(integration.provider).validateConfig(integration);
+      if (!valid.ok) failures.push(`shopify-auth: ${valid.detail}`);
+    }
+  } catch (e: any) {
+    failures.push(`shopify-auth-probe-failed (transient?): ${String(e?.message || e).slice(0, 120)}`);
+  }
+
   return { ok: failures.length === 0, failures };
 }

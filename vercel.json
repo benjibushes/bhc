@@ -198,6 +198,10 @@
       "schedule": "35 */2 * * *"
     },
     {
+      "path": "/api/cron/shopify-catalog-sync",
+      "schedule": "55 */6 * * *"
+    },
+    {
       "path": "/api/cron/product-recovery",
       "schedule": "35 18 * * *"
     },
