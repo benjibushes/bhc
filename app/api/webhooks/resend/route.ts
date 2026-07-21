@@ -100,16 +100,24 @@ export async function POST(request: Request) {
         console.error('Resend webhook — consumer update error:', e.message);
       }
 
-      // Mark rancher as well (in case it's a rancher email)
+      // Mark rancher as well (in case it's a rancher email). 2026-07-21: also
+      // stamp the Bounced/Complained checkboxes — they exist on Ranchers but
+      // only the Notes line was ever written, so the rancher-side suppression
+      // reads gated on a field nothing wrote (the Vale Creek phantom: her
+      // 07-20 bounce DID process, but only into Notes, and the blank checkbox
+      // was mis-read as "webhook not firing").
       try {
         const ranchers = await getAllRecords(
           TABLES.RANCHERS,
           `LOWER({Email}) = "${recipientEmail}"`
         ) as any[];
         for (const r of ranchers) {
-          await updateRecord(TABLES.RANCHERS, r.id, {
+          const rancherUpdates: Record<string, any> = {
             'Notes': `${r['Notes'] || ''}\n[Auto-flag ${new Date().toISOString().slice(0, 10)}] Email ${reason}`.trim(),
-          });
+          };
+          if (eventType === 'email.bounced') rancherUpdates['Bounced'] = true;
+          if (eventType === 'email.complained') rancherUpdates['Complained'] = true;
+          await updateRecord(TABLES.RANCHERS, r.id, rancherUpdates);
         }
       } catch (e: any) {
         console.error('Resend webhook — rancher update error:', e.message);
