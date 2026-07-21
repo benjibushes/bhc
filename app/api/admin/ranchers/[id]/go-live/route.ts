@@ -2,6 +2,8 @@ import { NextResponse, NextRequest } from 'next/server';
 import { goLiveRancher } from '@/lib/goLiveRancher';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { requireAdmin } from '@/lib/adminAuth';
+import { getRecordById, TABLES } from '@/lib/airtable';
+import { runPaymentPathSmoke } from '@/lib/paymentPathSmoke';
 
 export const maxDuration = 60;
 
@@ -46,6 +48,30 @@ export async function POST(
       } catch { /* no/!json body — fine */ }
     }
 
+    // ── Payment-path smoke test (money-truth 1c, 2026-07-21) ───────────────
+    // Beyond goLiveRancher's field gates, LIVE-probe the payment path
+    // (tier_v2: Stripe Connect actually active + card-payments capable;
+    // legacy: slug/price/payment-link statics). ?force=true is the admin
+    // escape hatch — it skips the smoke, and the response says so.
+    if (!force) {
+      const rancher: any = await getRecordById(TABLES.RANCHERS, id).catch(() => null);
+      if (rancher) {
+        const smoke = await runPaymentPathSmoke(rancher);
+        if (!smoke.ok) {
+          return NextResponse.json(
+            {
+              error: `Payment-path smoke test failed — rancher cannot take money: ${smoke.failures.join(' · ')}`,
+              code: 'payment_path_smoke_failed',
+              failures: smoke.failures,
+              hint: 'Fix the gates above, or re-run with ?force=true to override (logged).',
+            },
+            { status: 409 },
+          );
+        }
+      }
+      // rancher===null falls through: goLiveRancher owns the 404 contract.
+    }
+
     const result = await goLiveRancher(id, { force, actor: 'admin-go-live' });
 
     if (!result.ok) {
@@ -60,6 +86,8 @@ export async function POST(
       success: true,
       matched: result.matched,
       alreadyLive: result.alreadyLive,
+      // Audit trail in the response: a forced go-live skipped the smoke test.
+      ...(force ? { forced: true, paymentPathSmoke: 'skipped (force=true)' } : {}),
     });
   } catch (error: any) {
     console.error('Error setting rancher page live:', error);

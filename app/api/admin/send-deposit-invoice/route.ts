@@ -180,6 +180,7 @@ export async function POST(req: Request) {
 
   // Fire deposit-invoice email to the buyer w/ the checkout URL.
   const buyerName = String(buyer['Full Name'] || buyerEmail.split('@')[0]).trim();
+  let inviteEmailSent = false;
   try {
     // chargedCents mirrors createDepositCheckout's totalChargedCents exactly
     // (deposit + round(fullSale × tier rate)) so the quoted "Today" figure is
@@ -194,8 +195,26 @@ export async function POST(req: Request) {
       chargedCents: depositCents + Math.round(fullSaleCents * feeRate),
       checkoutUrl,
     });
+    inviteEmailSent = true;
   } catch (e: any) {
     console.error('[send-deposit-invoice] email send failed:', e?.message);
+  }
+
+  // PERSIST THE INVITE OUTCOME (money-truth 1b, 2026-07-21). This rail flips
+  // Status → Awaiting Payment (both the update and create paths above) but
+  // never stamped 'Deposit Invite Sent At' — so every admin-invoiced deal
+  // looked to the deposit watchdog like a buyer who was never told, and the
+  // watchdog would cry wolf forever. Success-only, mirroring the
+  // request-deposit rail (PR #410): a failed send leaves the stamp blank,
+  // which is exactly the half-state the watchdog exists to catch.
+  if (inviteEmailSent) {
+    try {
+      await updateRecord(TABLES.REFERRALS, referralId, {
+        'Deposit Invite Sent At': new Date().toISOString(),
+      });
+    } catch (e: any) {
+      console.warn('[send-deposit-invoice] invite-sent stamp failed:', e?.message);
+    }
   }
 
   try {

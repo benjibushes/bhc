@@ -2525,6 +2525,21 @@ Output ONLY the email body. First line should be the subject line prefixed with 
             return NextResponse.json({ ok: true });
           }
 
+          // Payment-path smoke test (money-truth 1c, 2026-07-21): beyond the
+          // static content checks above, LIVE-probe the payment path (tier_v2:
+          // Stripe Connect actually active; legacy: slug/price/link statics).
+          // A page that goes live but can't take money loses the sale silently.
+          const { runPaymentPathSmoke } = await import('@/lib/paymentPathSmoke');
+          const smoke = await runPaymentPathSmoke(rancher);
+          if (!smoke.ok) {
+            await answerCallbackQuery(queryId, 'Payment-path check failed');
+            if (chatId) {
+              await sendTelegramMessage(chatId,
+                `🔒 <b>Can't go live — payment path failed the smoke test:</b>\n${smoke.failures.map(f => `• ${escHtml(f)}`).join('\n')}\n\nFix these, then tap GO LIVE again.`);
+            }
+            return NextResponse.json({ ok: true });
+          }
+
           const { logAuditEntry: logSpGolive, buildAirtableUpdateReverse: buildSpGoliveReverse } = await import('@/lib/auditLog');
           const previousPageLive = rancher['Page Live'] ?? null;
           const previousOnboardingStatus = rancher['Onboarding Status'] ?? null;
