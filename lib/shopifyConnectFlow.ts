@@ -83,7 +83,9 @@ export async function connectShopifyStore(input: ConnectStoreInput): Promise<{ o
       const { syncShopifyCatalog } = await import('./shopifyCatalogSync');
       const dry = await syncShopifyCatalog(input.rancherId, { dryRun: true });
       report.push(`Catalog dry-run: ${dry.report.join('; ')}`);
-      report.push('Run /syncstore <rancher> to import for real.');
+      report.push(
+        'Imported products start OFF the marketplace — BHC reviews and approves each one before it displays (curation gate).',
+      );
     } catch {
       report.push('Catalog dry-run unavailable (sync engine ships in PR-E) — connection itself is saved.');
     }
