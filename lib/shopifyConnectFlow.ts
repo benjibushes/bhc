@@ -30,6 +30,19 @@ export interface ConnectStoreInput {
 }
 
 export async function connectShopifyStore(input: ConnectStoreInput): Promise<{ ok: boolean; report: string[] }> {
+  // Markup preservation (audit open-item close, 2026-07-21): a re-connect
+  // that omits markup must NOT silently wipe a stored markup — sync would
+  // quietly stop repricing. Inherit the existing value; an explicit number
+  // always wins.
+  let markupPercent = input.markupPercent;
+  if (markupPercent == null) {
+    try {
+      const { getRecordById, TABLES: T } = await import('./airtable');
+      const existingRow: any = await getRecordById(T.RANCHERS, input.rancherId).catch(() => null);
+      const existing = parseIntegration(existingRow?.['Fulfillment Integration']);
+      if (existing && typeof existing.markupPercent === 'number') markupPercent = existing.markupPercent;
+    } catch { /* inherit is best-effort */ }
+  }
   const cfg: IntegrationConfig = {
     v: 1,
     provider: 'shopify',
@@ -37,7 +50,7 @@ export async function connectShopifyStore(input: ConnectStoreInput): Promise<{ o
     encToken: encryptSecret(input.token.trim()),
     encApiSecret: encryptSecret(input.apiSecret.trim()),
     mode: input.mode,
-    markupPercent: input.markupPercent,
+    markupPercent,
     locationId: null,
   };
   if (!parseIntegration(JSON.stringify(cfg))) {
@@ -109,7 +122,7 @@ export async function connectShopifyStore(input: ConnectStoreInput): Promise<{ o
   await updateRecord(TABLES.RANCHERS, input.rancherId, {
     'Fulfillment Integration': JSON.stringify(cfg),
   });
-  report.push(`Saved — ${input.mode} mode${input.markupPercent != null ? `, ${input.markupPercent}% markup` : ''}.`);
+  report.push(`Saved — ${input.mode} mode${markupPercent != null ? `, ${markupPercent}% markup${input.markupPercent == null ? ' (kept from previous connection)' : ''}` : ''}.`);
 
   if (input.mode === 'sync') {
     try {
