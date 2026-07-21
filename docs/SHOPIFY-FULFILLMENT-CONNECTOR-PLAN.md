@@ -1,7 +1,12 @@
 # Shopify Fulfillment Connector — build plan (2026-07-21)
 
-Status: PLANNED — researched + repo-mapped, not built. Ben decisions pending
-(see §7). Execute as 4 BUILD-lane sessions, one PR each.
+Status: APPROVED by Ben 2026-07-21 (all §7 recommendations accepted; business
+model locked: BHC brings customers + charges margin upfront on the existing
+direct-charge rail; distributor fulfills; per-operation choice of full store
+sync OR manual SKU entry). **Execution-grade task-level plan with complete
+code lives at `docs/plans/2026-07-21-shopify-fulfillment-connector.md` —
+build from THAT document.** This file remains the concept/architecture
+overview.
 
 ## 1. Concept
 
