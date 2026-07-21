@@ -15,6 +15,7 @@ import { NextResponse } from 'next/server';
 import { requireRancher } from '@/lib/rancherAuth';
 import { getRecordById, TABLES } from '@/lib/airtable';
 import { parseIntegration } from '@/lib/fulfillmentConnector';
+import { publicAppCreds } from '@/lib/shopifyOauth';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 
 export const dynamic = 'force-dynamic';
@@ -27,9 +28,11 @@ export async function GET(request: Request) {
 
   const rancher: any = await getRecordById(TABLES.RANCHERS, session.rancherId).catch(() => null);
   const cfg = parseIntegration(rancher?.['Fulfillment Integration']);
-  if (!cfg) return NextResponse.json({ connected: false });
+  const publicApp = publicAppCreds() !== null;
+  if (!cfg) return NextResponse.json({ connected: false, publicApp });
   return NextResponse.json({
     connected: true,
+    publicApp,
     shop: cfg.shop,
     mode: cfg.mode,
     markupPercent: cfg.markupPercent ?? null,

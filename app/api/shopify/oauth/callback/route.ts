@@ -21,6 +21,7 @@ import {
   verifyOauthCallbackHmac,
   parsePendingIntegration,
   isValidShopDomain,
+  publicAppCreds,
   OAUTH_NONCE_COOKIE,
 } from '@/lib/shopifyOauth';
 import { parseIntegration } from '@/lib/fulfillmentConnector';
@@ -116,6 +117,59 @@ export async function GET(req: Request) {
   const rancher: any = await getRecordById(TABLES.RANCHERS, state.payload.rancherId).catch(() => null);
   if (!rancher) return fail('unknown-rancher');
   const raw = rancher['Fulfillment Integration'];
+
+  // PUBLIC-APP install (Phase 2): one app, env credentials, no staged pending
+  // config — the state JWT carries the card's choices and pins the shop.
+  if (state.payload.pub) {
+    const creds = publicAppCreds();
+    if (!creds) return fail('secret-unavailable');
+    if (state.payload.shop !== shop) return fail('shop-mismatch');
+    if (!verifyOauthCallbackHmac(query, creds.clientSecret)) return fail('bad-hmac');
+    const pubCode = String(query.code || '').trim();
+    if (!pubCode) return fail('missing-code');
+    let pubToken = '';
+    try {
+      const tokenRes = await fetch(`https://${shop}/admin/oauth/access_token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ client_id: creds.clientId, client_secret: creds.clientSecret, code: pubCode }),
+      });
+      const tokenBody: any = await tokenRes.json().catch(() => null);
+      pubToken = String(tokenBody?.access_token || '');
+      if (!tokenRes.ok || !pubToken) return fail('token-exchange', `Shop: ${shop} (http ${tokenRes.status})`);
+    } catch (e: any) {
+      console.error('[shopify-oauth] public token exchange error:', e?.message);
+      return fail('token-exchange');
+    }
+    try {
+      const { connectShopifyStore } = await import('@/lib/shopifyConnectFlow');
+      const result = await connectShopifyStore({
+        rancherId: state.payload.rancherId,
+        shop,
+        token: pubToken,
+        apiSecret: creds.clientSecret, // public-app webhooks are signed with the app secret
+        mode: state.payload.mode || 'sync',
+        markupPercent: state.payload.markupPercent ?? null,
+      });
+      if (!result.ok) return fail('store-validation', `Shop: ${shop} — ${result.report.join('; ').slice(0, 300)}`);
+      try {
+        const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+        await sendOperatorSignal({
+          urgency: 'normal',
+          kind: 'system-error',
+          summary: `🔌 Store INSTALLED (public app) — ${String(rancher['Ranch Name'] || rancher['Operator Name'] || shop)}`,
+          detail: `${shop} connected one-click (${state.payload.mode || 'sync'} mode).\n${result.report.join('\n')}`,
+          dedupeKey: `shopify-oauth-installed-${state.payload.rancherId}`,
+          dedupeWindowMs: 5 * 60 * 1000,
+        });
+      } catch { /* best-effort */ }
+    } catch (e: any) {
+      console.error('[shopify-oauth] public connect flow error:', e?.message);
+      return fail('store-validation');
+    }
+    return clearNonce(NextResponse.redirect(`${SITE_URL}/store-connected?ok=1`, 302));
+  }
+
   const pending = parsePendingIntegration(raw);
   if (!pending) {
     if (parseIntegration(raw)) {

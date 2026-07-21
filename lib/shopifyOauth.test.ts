@@ -174,3 +174,20 @@ test('pending config never satisfies the ACTIVE connector parser', () => {
   const { parseIntegration } = require('./fulfillmentConnector');
   assert.equal(parseIntegration(pendingGood), null);
 });
+
+test('public-app state carries pub/mode/markup/shop and roundtrips', () => {
+  const t = mintOauthState({ rancherId: 'recA', nonce: 'n1', pub: true, mode: 'sync', markupPercent: 25, shop: 'x.myshopify.com' });
+  const v = verifyOauthState(t);
+  assert.equal(v.ok, true);
+  if (v.ok) {
+    assert.equal(v.payload.pub, true);
+    assert.equal(v.payload.mode, 'sync');
+    assert.equal(v.payload.markupPercent, 25);
+    assert.equal(v.payload.shop, 'x.myshopify.com');
+  }
+  const plain = verifyOauthState(mintOauthState({ rancherId: 'recA', nonce: 'n1' }));
+  if (plain.ok) {
+    assert.equal(plain.payload.pub, false);
+    assert.equal(plain.payload.mode, undefined);
+  }
+});
