@@ -176,6 +176,15 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
             text: `${name} payment-path smoke FAILED: ${smoke.failures.join(' · ')}`,
           });
         }
+        // Store-connector warnings (dead Shopify token, transient probe) are
+        // WARN — a store problem never reads as a broken beef payment path.
+        if (smoke.warnings?.length) {
+          issues.push({
+            severity: 'warn',
+            rancher: name,
+            text: `${name} store connector: ${smoke.warnings.join(' · ')}`,
+          });
+        }
       } catch (e: any) {
         // runPaymentPathSmoke never throws by contract — belt and braces.
         issues.push({ severity: 'warn', rancher: name, text: `${name} payment-path smoke errored: ${e?.message || 'unknown'}` });

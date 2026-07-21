@@ -36,12 +36,18 @@ export async function connectShopifyStore(input: ConnectStoreInput): Promise<{ o
   // quietly stop repricing. Inherit the existing value; an explicit number
   // always wins.
   let markupPercent = input.markupPercent;
-  if (markupPercent == null) {
+  let category = input.category || null;
+  if (markupPercent == null || !category) {
     try {
       const { getRecordById, TABLES: T } = await import('./airtable');
       const existingRow: any = await getRecordById(T.RANCHERS, input.rancherId).catch(() => null);
       const existing = parseIntegration(existingRow?.['Fulfillment Integration']);
-      if (existing && typeof existing.markupPercent === 'number') markupPercent = existing.markupPercent;
+      if (existing) {
+        if (markupPercent == null && typeof existing.markupPercent === 'number') markupPercent = existing.markupPercent;
+        // Category preservation (GTM audit): a re-connect without the
+        // category token must not dump merch back into the beef sections.
+        if (!category && existing.category) category = existing.category;
+      }
     } catch { /* inherit is best-effort */ }
   }
   const cfg: IntegrationConfig = {
@@ -53,7 +59,7 @@ export async function connectShopifyStore(input: ConnectStoreInput): Promise<{ o
     mode: input.mode,
     markupPercent,
     locationId: null,
-    category: input.category || null,
+    category,
   };
   if (!parseIntegration(JSON.stringify(cfg))) {
     return { ok: false, report: ['Invalid shop domain — need something like ranch-name.myshopify.com'] };

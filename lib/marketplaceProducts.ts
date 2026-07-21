@@ -419,7 +419,13 @@ export function groupKeyForCategory(category: string): string {
  * buyer who balked at bulk. Pure so it's unit-testable.
  */
 export function pickFunnelProducts(products: MarketplaceProduct[]): MarketplaceProduct[] {
-  const nonShare = products.filter((p) => !(MARKETPLACE_GROUPS.find((g) => g.key === 'shares')?.categories || []).includes(p.category));
+  // Shares AND merch are excluded — a hat must never appear in the beef
+  // funnel rail on /access (GTM audit 2026-07-21).
+  const excluded = new Set([
+    ...(MARKETPLACE_GROUPS.find((g) => g.key === 'shares')?.categories || []),
+    ...(MARKETPLACE_GROUPS.find((g) => g.key === 'merch')?.categories || []),
+  ]);
+  const nonShare = products.filter((p) => !excluded.has(p.category));
   const picks: MarketplaceProduct[] = [];
   for (const g of MARKETPLACE_GROUPS) {
     if (g.key === 'shares') continue;

@@ -10,6 +10,13 @@
 
 **Authored against:** main `d168df8` (2026-07-21). Re-verify file:line anchors before editing — main moves.
 
+> **HISTORICAL NOTE (2026-07-21 PM):** all tasks SHIPPED (#424-#429, #432,
+> #434, #436+). Later decisions supersede parts of this doc: the pilot row is
+> the PERMANENT 'BuyHalfCow Merch' rancher, /storelink grew `category:` +
+> `force` tokens, config schema gained `category`, and the public-app OAuth
+> rail (plan §8 phase 2) shipped same-day. For current truth read
+> docs/HANDOFF-2026-07-19.md — use this doc for design rationale only.
+
 **Business model (locked by Ben 2026-07-21):** BHC brings the customer and charges the buyer; margin is taken upfront via the existing Stripe Connect direct charge (`application_fee_amount` = BHC margin, `lib/productCheckout.ts:58` money math unchanged). The distributor gets paid instantly and fulfills through whatever connector they choose. Per-operation choice: sync their store OR manually enter SKUs. Approved decisions: Shopify sends the shipment email (`sendFulfillmentReceipt: true`, BHC suppresses `product_shipped` for connected orders); v1 auth = per-store custom-app token; pilot = merch.buyhalfcow.com before any rancher store.
 
 ---

@@ -19,7 +19,7 @@ interface ConnectionStatus {
   markupPercent?: number | null;
 }
 
-export default function ShopifyConnectCard() {
+export default function ShopifyConnectCard({ payoutsReady = true }: { payoutsReady?: boolean }) {
   const [status, setStatus] = useState<ConnectionStatus | null>(null);
   const [open, setOpen] = useState(false);
   const [shop, setShop] = useState('');
@@ -102,6 +102,12 @@ export default function ShopifyConnectCard() {
             {report.map((l, i) => (<li key={i}>{l}</li>))}
           </ul>
         )}
+        {!payoutsReady && (
+          <p className="mt-2 text-xs text-weathered">
+            One more thing before products can sell: finish your payout setup (Stripe) in the Money
+            tab — that&rsquo;s the account your sales land in.
+          </p>
+        )}
       </div>
     );
   }
@@ -114,6 +120,11 @@ export default function ShopifyConnectCard() {
           <p className="text-xs text-saddle mt-0.5 max-w-lg">
             Connect your store — we bring the buyer and take payment, the paid order appears in
             your Shopify like any other, and you fulfill exactly how you already do.
+            {!payoutsReady && (
+              <span className="block mt-1 text-charcoal/60">
+                (You&rsquo;ll also finish payout setup in the Money tab before sales go live.)
+              </span>
+            )}
           </p>
         </div>
         {!open && (

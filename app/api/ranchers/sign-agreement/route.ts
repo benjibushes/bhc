@@ -225,8 +225,52 @@ export async function POST(request: Request) {
     );
     const dashboardLink = `${SITE_URL}/rancher/verify?token=${loginToken}`;
 
-    // Send "you're signed — now set up your page" email
-    if (rancherEmail) {
+    // Send the post-sign email — BRANCHED on the live outcome (GTM audit
+    // 2026-07-21): the same request that puts a rancher fully live used to
+    // send "You're Almost Live" with instructions to redo the wizard's work
+    // plus a verification step that doesn't gate go-live anymore.
+    if (rancherEmail && readyToGoLive) {
+      try {
+        const esc = (s: string) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        await sendEmail({
+          to: rancherEmail,
+          subject: `You're LIVE — ${esc(ranchName)} is on BuyHalfCow`,
+          html: `
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #0E0E0E; background: #F4F1EC; margin: 0; padding: 20px; }
+    .container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border: 1px solid #A7A29A; }
+    h1 { font-family: Georgia, serif; font-size: 26px; margin: 0 0 20px 0; }
+    p { margin: 14px 0; color: #6B4F3F; }
+    .btn { display: inline-block; padding: 16px 40px; background: #0E0E0E; color: #F4F1EC; text-decoration: none; font-weight: bold; font-size: 14px; letter-spacing: 1px; text-transform: uppercase; }
+    .footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #A7A29A; font-size: 12px; color: #A7A29A; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>You're live.</h1>
+    <p>Hi ${esc(rancherName.split(' ')[0])},</p>
+    <p><strong>${esc(ranchName)}</strong> is signed, published, and live on BuyHalfCow — buyers in your area can route to you starting now.</p>
+    <p>Nothing else is required. When a buyer comes in, you'll get an email and a text with everything you need.</p>
+    <div style="text-align: center; margin: 32px 0;">
+      <a href="${dashboardLink}" class="btn">OPEN MY DASHBOARD</a>
+    </div>
+    <p style="font-size: 12px; color: #A7A29A; text-align: center;">This link logs you in automatically. Valid for 14 days.</p>
+    <p>Want to sharpen your page (photos, story, pricing)? All editable from the dashboard, any time.</p>
+    <div class="footer">
+      <p>— Benjamin, Founder<br>BuyHalfCow<br>Questions? Email ${ADMIN_EMAIL}</p>
+    </div>
+  </div>
+</body>
+</html>
+          `,
+        });
+      } catch (emailErr) {
+        console.error('Post-signing live email error:', emailErr);
+      }
+    } else if (rancherEmail) {
       try {
         const esc = (s: string) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         await sendEmail({

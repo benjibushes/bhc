@@ -4993,10 +4993,14 @@ Confirm send?`;
             const { revalidatePath } = await import('next/cache');
             revalidatePath('/shop');
           } catch { /* ISR backstop */ }
+          const connectWarn = String(match['Stripe Connect Status'] || '').toLowerCase() !== 'active'
+            ? `\n\n⚠️ This rancher has NO active Stripe Connect — products will display but CHECKOUT WILL FAIL until payout setup is finished.`
+            : '';
           await sendTelegramMessage(
             chatId,
             `✅ <b>Approved ${targets.length}</b> synced product${targets.length === 1 ? '' : 's'} for ${match['Ranch Name'] || match['Operator Name']}` +
-              ` — ${live} now LIVE on /shop${targets.length - live > 0 ? ` (${targets.length - live} approved but out of stock)` : ''}.`,
+              ` — ${live} now LIVE on /shop${targets.length - live > 0 ? ` (${targets.length - live} approved but out of stock)` : ''}.` +
+              connectWarn,
           );
         } catch (e: any) {
           await sendTelegramMessage(chatId, `❌ approvestore error: ${String(e?.message || 'unknown').slice(0, 200)}`);
