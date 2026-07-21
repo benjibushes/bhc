@@ -66,6 +66,7 @@ export const EXPECTED_CRONS_24H = [
   'onboarding-stuck',
   'deposit-request-nudge',
   'deposit-watchdog',
+  'fulfillment-push-net',
   'orphan-checkout-reaper',
   'qualified-no-action',
   'referral-record-id-backfill',
