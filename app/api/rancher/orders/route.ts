@@ -150,7 +150,11 @@ export async function POST(request: Request) {
   // The buyer email the receipt promised — tracking for shipped orders, a
   // picked-up note for pickups. Transactional (both templateNames whitelisted
   // in emailFrequencyGuard) — best-effort, never blocks the status update.
-  const buyerEmail = String(order['Buyer Email'] || '').trim();
+  // Connector-pushed orders (2026-07-21): Shopify owns the buyer's shipping
+  // email (sendFulfillmentReceipt on the pushed order) — sending BHC's
+  // product_shipped too would double-email the buyer.
+  const externallyFulfilled = String(order['External Push Status'] || '') === 'pushed';
+  const buyerEmail = externallyFulfilled ? '' : String(order['Buyer Email'] || '').trim();
   const buyerFirst = escapeHtml(String(order['Buyer Name'] || '').trim().split(/\s+/)[0] || 'there');
   const productName = escapeHtml(String(order['Product Name'] || 'your order'));
   const ranchName = escapeHtml(String(order['Rancher Name'] || session.ranchName || 'the ranch'));
