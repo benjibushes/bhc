@@ -480,8 +480,6 @@ export default function ProductsTab({
         )}
       </div>
 
-      <ShopifyConnectCard />
-
       {savedNote && (
         <p className="text-sm text-sage border border-sage/40 bg-bone-warm px-4 py-3">{savedNote}</p>
       )}
@@ -955,6 +953,8 @@ export default function ProductsTab({
           </Link>
         </div>
       )}
+
+      <ShopifyConnectCard payoutsReady={connectActive} />
 
       {/* ── My products ── */}
       {connectActive && loading && <p className="text-saddle text-sm">loading your products…</p>}

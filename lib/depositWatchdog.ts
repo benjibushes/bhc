@@ -17,9 +17,14 @@
 // so without this clause the watchdog would scream about money already
 // collected.
 //
-// Age anchor: 'Deposit Requested At' when set (the moment the ask happened),
-// else Airtable's record createdTime (exposed by getAllRecords as
-// `_createdTime`). If NEITHER parses, the record is NOT eligible — never
+// SCOPE (GTM audit 2026-07-21): the watchdog targets the DEPOSIT RAIL only —
+// a referral is eligible ONLY when 'Deposit Requested At' is stamped (the
+// rail's entry stamp). Legacy deals and desk stage-advances also sit in
+// Status='Awaiting Payment' with no invite stamp — by design, they have no
+// deposit flow at all — and anchoring on createdTime made the watchdog cry
+// wolf on every one of them (6 false alarms on the first prod run).
+//
+// Age anchor: 'Deposit Requested At'. Unparseable ⇒ NOT eligible — never
 // alert on unknown age.
 //
 // Same discipline as lib/depositRequestNudge.ts / lib/finalInvoiceDunning.ts:
@@ -57,10 +62,10 @@ function parseMs(raw: unknown): number | null {
 
 /**
  * The age anchor for a referral: 'Deposit Requested At' if parseable, else
- * the Airtable record createdTime (`_createdTime`). null = unknown age.
+ * null = unknown age / not on the deposit rail (no 'Deposit Requested At').
  */
 export function watchdogAnchorMs(r: WatchdogReferralLike): number | null {
-  return parseMs(r['Deposit Requested At']) ?? parseMs(r._createdTime);
+  return parseMs(r['Deposit Requested At']);
 }
 
 /**

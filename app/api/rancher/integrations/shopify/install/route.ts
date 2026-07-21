@@ -49,6 +49,7 @@ export async function POST(request: Request) {
   }
   const shop = String(body?.shop || '').toLowerCase().trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
   const mode = body?.mode === 'manual' ? 'manual' : 'sync';
+  const category = body?.category ? String(body.category).slice(0, 40) : null;
   const markupPercent =
     body?.markupPercent !== undefined && body?.markupPercent !== null && body?.markupPercent !== ''
       && Number.isFinite(Number(body.markupPercent))
@@ -62,7 +63,7 @@ export async function POST(request: Request) {
   }
 
   const nonce = randomBytes(16).toString('hex');
-  const state = mintOauthState({ rancherId: session.rancherId, nonce, pub: true, mode, markupPercent, shop });
+  const state = mintOauthState({ rancherId: session.rancherId, nonce, pub: true, mode, markupPercent, shop, category });
   const authorizeUrl = buildAuthorizeUrl({
     shop,
     clientId: creds.clientId,

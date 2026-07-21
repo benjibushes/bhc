@@ -1838,6 +1838,15 @@ export default function RancherDashboardPage() {
     String(rancherInfo?.pricingModel || '').toLowerCase() === 'tier_v2' &&
     String(rancherInfo?.connectStatus || '').toLowerCase() === 'active';
 
+  // GTM audit fix (2026-07-21): the PRODUCTS marketplace runs on direct
+  // charges to a Connect account — it never reads the pricing model. Gating
+  // it on tier_v2 made the tab a CLOSED LOOP for the (now-default) legacy
+  // rancher: the tab's nudge sent them to Stripe, and completing Stripe
+  // still didn't unlock it. Connect-active alone unlocks products; the
+  // referral-deposit affordances keep the stricter depositEligible gate.
+  const productsEligible =
+    String(rancherInfo?.connectStatus || '').toLowerCase() === 'active';
+
   // ── Cockpit nav spine (Wave A) ─────────────────────────────────────────
   // 5 persistent items. Home / Deals / My Page are in-page tabs; Messages and
   // Money are nav links that route to the (previously orphaned) inbox + billing
@@ -2760,7 +2769,7 @@ export default function RancherDashboardPage() {
               product checkout enforces server-side. */}
           {activeTab === 'products' && (
             <ProductsTab
-              connectActive={depositEligible}
+              connectActive={productsEligible}
               onGoToMyPage={() => setActiveTab('my_page')}
               onOrdersChanged={(orders) => setProductOrders(orders)}
             />

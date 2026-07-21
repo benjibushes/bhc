@@ -5320,15 +5320,14 @@ export async function sendRancherApplyAutoApproved(data: {
   </p>
   <p style="font-size:13px;color:#6B4F3F;text-align:center;">Bookmark this email &mdash; the link is good for 60 days.</p>
   <div class="box">
-    <p style="margin:0 0 6px;font-weight:700;font-family:Georgia,serif;font-size:15px;">5 minutes to live. Here&rsquo;s what&rsquo;s ahead:</p>
+    <p style="margin:0 0 6px;font-weight:700;font-family:Georgia,serif;font-size:15px;">About 10 minutes to live. Here&rsquo;s what&rsquo;s ahead:</p>
     <ul>
-      <li><strong>Pick a tier</strong> &mdash; Pasture ($150/mo + 7%), Ranch ($350/mo + 3%), Operator ($500/mo + 0%). Operator is recommended if you want me running every sales call for you.</li>
-      <li><strong>Stripe Connect</strong> &mdash; 5-min KYC + bank connect. Buyers pay through the platform, money lands directly in your bank next day.</li>
       <li><strong>Set your numbers</strong> &mdash; Quarter / Half / Whole prices + deposits + processing fees. You own these. Edit anytime.</li>
-      <li><strong>Page goes live</strong> &mdash; Your /ranchers/[your-name] page publishes the moment you sign. Buyers in your state start routing your way.</li>
+      <li><strong>Paste your payment link</strong> &mdash; the Venmo/Stripe/Square link you already use. Buyers pay you the way you already get paid. No new accounts, no SSN, no bank forms.</li>
+      <li><strong>Sign &amp; go live</strong> &mdash; one e-signature and your /ranchers page publishes. Buyers in your state start routing your way immediately.</li>
     </ul>
   </div>
-  <p><strong>What to have ready before you start the wizard:</strong> bank routing number, EIN (or SSN for sole prop), and your phone in case Stripe asks for a driver license photo. Most ranchers finish in 12-15 minutes.</p>
+  <p><strong>What to have ready:</strong> your prices and the payment link you already use. That&rsquo;s it. Prefer to talk it through first? There&rsquo;s a book-a-call option right inside the wizard.</p>
   <p>Got questions? Reply directly &mdash; this email lands in my inbox. I read every one.</p>
   <p style="margin-top:32px;">&mdash; Ben</p>
 </div></body></html>`,

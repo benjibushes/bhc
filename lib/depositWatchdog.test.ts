@@ -89,22 +89,8 @@ test('exactly at the 2h boundary → still too-young (strict >2h)', () => {
 
 // ── anchor fallback ─────────────────────────────────────────────────────────
 
-test('no Deposit Requested At → falls back to _createdTime', () => {
-  const r = baseTarget({ 'Deposit Requested At': '' });
-  assert.equal(watchdogAnchorMs(r), Date.parse(hoursAgo(48)));
-  assert.equal(isWatchdogTarget(r, NOW_MS), true);
-});
 
-test('young _createdTime fallback → too-young', () => {
-  const r = baseTarget({ 'Deposit Requested At': '', _createdTime: hoursAgo(1) });
-  assert.equal(watchdogSkipReason(r, NOW_MS), 'too-young');
-});
 
-test('unparseable Deposit Requested At falls through to _createdTime', () => {
-  const r = baseTarget({ 'Deposit Requested At': 'not-a-date' });
-  assert.equal(watchdogAnchorMs(r), Date.parse(hoursAgo(48)));
-  assert.equal(isWatchdogTarget(r, NOW_MS), true);
-});
 
 test('neither anchor parseable → excluded (never alert on unknown age)', () => {
   const r = baseTarget({ 'Deposit Requested At': 'garbage', _createdTime: '' });
@@ -149,4 +135,16 @@ test('targets sorted oldest anchor first', () => {
 test('empty / non-array input → []', () => {
   assert.deepEqual(selectWatchdogTargets([], { now: NOW }), []);
   assert.deepEqual(selectWatchdogTargets(undefined as any, { now: NOW }), []);
+});
+
+test('NOT on the deposit rail (no Deposit Requested At) → never a target', () => {
+  // Legacy deals + desk stage-advances sit in Awaiting Payment with no
+  // deposit flow — the 6 first-run false alarms (GTM audit 2026-07-21).
+  const r = { Status: 'Awaiting Payment', _createdTime: new Date(NOW_MS - 10 * 60 * 60 * 1000).toISOString() };
+  assert.equal(watchdogSkipReason(r as any, NOW_MS), 'no-parseable-anchor');
+});
+
+test('unparseable Deposit Requested At → not eligible (no createdTime fallback)', () => {
+  const r = { Status: 'Awaiting Payment', 'Deposit Requested At': 'not-a-date', _createdTime: new Date(NOW_MS - 10 * 60 * 60 * 1000).toISOString() };
+  assert.equal(watchdogSkipReason(r as any, NOW_MS), 'no-parseable-anchor');
 });

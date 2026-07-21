@@ -112,7 +112,7 @@ export function evaluateStaticGates(rancher: any): SmokeGateResult[] {
  */
 export async function runPaymentPathSmoke(
   rancher: any,
-): Promise<{ ok: boolean; failures: string[] }> {
+): Promise<{ ok: boolean; failures: string[]; warnings: string[] }> {
   const failures = evaluateStaticGates(rancher)
     .filter((g) => !g.ok)
     .map((g) => `${g.gate}: ${g.detail}`);
@@ -139,19 +139,22 @@ export async function runPaymentPathSmoke(
     }
   }
 
-  // Fulfillment connector (2026-07-21, PR-D): a rancher with a connected
-  // store must have a WORKING connection at go-live — a dead token means
-  // paid orders silently stop reaching their fulfillment stack.
+  // Fulfillment connector (2026-07-21, PR-D; downgraded to WARNING by the
+  // GTM audit): a dead store token matters — but STORE health must never
+  // block BEEF go-live, and a transient Shopify 429 must never strand a
+  // rancher. Store problems surface as warnings (operator ping + canary
+  // warn), not go-live failures.
+  const warnings: string[] = [];
   try {
     const { parseIntegration, getConnector } = await import('@/lib/fulfillmentConnector');
     const integration = parseIntegration(rancher?.['Fulfillment Integration']);
     if (integration) {
       const valid = await getConnector(integration.provider).validateConfig(integration);
-      if (!valid.ok) failures.push(`shopify-auth: ${valid.detail}`);
+      if (!valid.ok) warnings.push(`shopify-auth: ${valid.detail}`);
     }
   } catch (e: any) {
-    failures.push(`shopify-auth-probe-failed (transient?): ${String(e?.message || e).slice(0, 120)}`);
+    warnings.push(`shopify-auth-probe-failed (transient?): ${String(e?.message || e).slice(0, 120)}`);
   }
 
-  return { ok: failures.length === 0, failures };
+  return { ok: failures.length === 0, failures, warnings };
 }

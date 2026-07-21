@@ -83,6 +83,7 @@ export interface OauthStateClaims {
   mode?: 'sync' | 'manual';
   markupPercent?: number | null;
   shop?: string;
+  category?: string | null;
 }
 export interface OauthStatePayload extends OauthStateClaims {
   purpose: typeof OAUTH_STATE_PURPOSE;
@@ -102,6 +103,7 @@ export function mintOauthState(claims: OauthStateClaims): string {
       ...(claims.mode ? { mode: claims.mode } : {}),
       ...(claims.markupPercent != null ? { markupPercent: claims.markupPercent } : {}),
       ...(claims.shop ? { shop: claims.shop } : {}),
+      ...(claims.category ? { category: claims.category } : {}),
     },
     { expiresIn: '1h' },
   );
@@ -128,6 +130,7 @@ export function verifyOauthState(token: string | null | undefined): VerifyResult
       mode: decoded.mode === 'sync' || decoded.mode === 'manual' ? decoded.mode : undefined,
       markupPercent: typeof decoded.markupPercent === 'number' ? decoded.markupPercent : null,
       shop: decoded.shop ? String(decoded.shop) : undefined,
+      category: decoded.category ? String(decoded.category).slice(0, 40) : null,
     },
   };
 }

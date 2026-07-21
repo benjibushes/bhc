@@ -150,6 +150,7 @@ export async function GET(req: Request) {
         apiSecret: creds.clientSecret, // public-app webhooks are signed with the app secret
         mode: state.payload.mode || 'sync',
         markupPercent: state.payload.markupPercent ?? null,
+        category: state.payload.category ?? null,
       });
       if (!result.ok) return fail('store-validation', `Shop: ${shop} — ${result.report.join('; ').slice(0, 300)}`);
       try {
@@ -241,7 +242,7 @@ export async function GET(req: Request) {
       const { sendOperatorSignal } = await import('@/lib/operatorSignal');
       await sendOperatorSignal({
         urgency: 'normal',
-        kind: 'system-error',
+        kind: 'audit',
         summary: `🔌 Store INSTALLED — ${String(rancher['Ranch Name'] || rancher['Operator Name'] || shop)}`,
         detail: `${shop} connected via one-click install (${pending.mode} mode).\n${result.report.join('\n')}`,
         dedupeKey: `shopify-oauth-installed-${state.payload.rancherId}`,

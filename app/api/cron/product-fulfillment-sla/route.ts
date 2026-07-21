@@ -26,8 +26,15 @@ interface SlaResult {
 
 async function realHandler(_request: Request): Promise<SlaResult> {
   const newOrders = await getAllRecords(TABLES.RANCHER_ORDERS, `{Status} = 'New'`);
+  // Connector-pushed orders are Shopify's to fulfill (GTM audit 2026-07-21):
+  // the store fulfills on its own SLA and the reverse webhook stamps Shipped
+  // — nudging the rancher to "ship" an order Printify is already printing is
+  // pure noise, and the day-6 escalation reads like an accusation.
+  const unpushed = (newOrders as any[]).filter(
+    (o) => String(o['External Push Status'] || '') !== 'pushed',
+  );
   const decisions = slaDecisions(
-    (newOrders as any[]).map((o) => ({
+    unpushed.map((o) => ({
       id: o.id,
       status: String(o['Status'] || ''),
       orderedAt: String(o['Ordered At'] || ''),

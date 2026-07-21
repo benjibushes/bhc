@@ -1159,24 +1159,13 @@ export default function RancherSetupWizard() {
     const connectAccountId = String((rancher as any)['Stripe Connect Account Id'] || '').trim();
     const connectFullyActive = connectStatus === 'active';
     const stillNeedsConnect = pm === 'tier_v2' && (!connectAccountId || !connectFullyActive);
-    if (isLegacy || stillNeedsConnect) {
-      // 2026-06-09 fix: previously `if (step === 0) setTimeout(setStep(7))`
-      // — which had two races:
-      //   1. P1-2 localStorage step-restore (line 305-323) could fire
-      //      AFTER this setTimeout and overwrite our jump back to a saved
-      //      step (e.g. 3, the original new-rancher path).
-      //   2. If wizard mounted with step != 0 (e.g. Step 9 connect resume),
-      //      this branch never fired — silently dropping into the wrong
-      //      flow for ranchers who'd been previously partway through.
-      // Now jumps to Step 7 unconditionally on first detection of the
-      // legacy-needs-upgrade signal, regardless of current step. Once
-      // restoring guard fires, we're already on Step 7 so localStorage
-      // restore correctly no-ops.
-      if (isLegacy && typeof window !== 'undefined' && !didRestoreStep.current) {
-        // Mark restore-done so the localStorage effect doesn't fight us.
-        didRestoreStep.current = true;
-        setTimeout(() => setStep(7 as any), 0);
-      }
+    // GTM audit fix (2026-07-21): legacy is now the DEFAULT TERMINAL state,
+    // not a to-be-migrated one — a signed legacy rancher reopening their
+    // setup link previously got force-jumped into the Step-7 tier/Stripe
+    // upgrade flow (a dead end with no tier picked). They belong on the
+    // "you're all set" landing below. Connect upgrades live in the
+    // dashboard, never as an ambush on a stale setup link.
+    if (stillNeedsConnect) {
       // 2026-06-19 fix: COLD-revisit for a tier_v2 rancher who SKIPPED Stripe
       // Connect. On a fresh open (setup?token=…, no ?tierComplete=1) nothing
       // calls setStep(9) — the tierComplete effect (line 314) is gated on the
@@ -1261,7 +1250,7 @@ export default function RancherSetupWizard() {
             {rancher.ranchName} · onboarding
           </p>
           <h1 className="font-serif text-3xl md:text-5xl text-charcoal leading-tight">
-            Set up your page in 5 minutes
+            Set up your page in about 10 minutes
           </h1>
           <p className="text-saddle leading-relaxed">
             Fill in what you&rsquo;ve got — skip the rest, you can come back any
@@ -1640,7 +1629,7 @@ export default function RancherSetupWizard() {
                   placeholder="yourname or yourname/buyhalfcow-intro"
                 />
                 <div className="bg-bone border border-dust p-4 mt-3 text-sm leading-relaxed text-charcoal">
-                  <p className="font-medium mb-2">3-step setup (5 minutes total):</p>
+                  <p className="font-medium mb-2">3-step setup (about 10 minutes total):</p>
                   <ol className="list-decimal pl-5 space-y-1.5 text-saddle">
                     <li>
                       <a
@@ -2231,7 +2220,7 @@ export default function RancherSetupWizard() {
                         <p>
                           Buyer pays a <strong>${dep > 0 ? dep.toLocaleString() : '—'}</strong> deposit now to
                           reserve — that covers your <strong>${fee.toLocaleString()}</strong> processing recoup
-                          plus BHC&rsquo;s commission per the plan you select at the end.
+                          plus BHC&rsquo;s commission per your agreement.
                         </p>
                         <p>
                           Final invoice (rancher net):{' '}
@@ -2647,10 +2636,9 @@ export default function RancherSetupWizard() {
                   Welcome to the network.
                 </h2>
                 <p className="text-charcoal/85 max-w-md mx-auto leading-relaxed">
-                  <strong>{rancher.ranchName}</strong> is signed and locked in.
-                  <strong> One last step:</strong> hit &ldquo;Start Verification&rdquo;
-                  on your dashboard. Most ranchers complete it in 2 minutes.
-                  Once verified, your page goes live and buyers route to you within 2 hours.
+                  <strong>{rancher.ranchName}</strong> is signed and <strong>live</strong>.
+                  Your page is up and buyers can route to you starting now — no
+                  verification step, no waiting. Edit anything from your dashboard.
                 </p>
                 {dashboardCtas}
               </section>
@@ -3097,9 +3085,8 @@ function SignStep({
           Lock it in &mdash; sign the partner agreement
         </h2>
         <p className="text-sm text-saddle mt-1">
-          One signature. No PDF, no notary, no email round-trip. Signing locks
-          you in &mdash; next step is verification (instant tap if your profile
-          is filled out, 24-48h otherwise).
+          One signature. No PDF, no notary, no email round-trip. Sign and your
+          page goes live &mdash; buyers can route to you right away.
         </p>
       </header>
 
