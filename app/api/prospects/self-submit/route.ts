@@ -259,11 +259,13 @@ export async function POST(req: Request) {
     'Self-Submit Drip Stage': 'welcome-sent',
     'Notes': composedNotes,
     'Public Map Hidden': false,
-    // 2026-06-09 fix: was empty, causing wizard to misroute self-submitted
-    // ranchers into the legacy upgrade flow. /api/apply + /api/partners
-    // both default to tier_v2 now — keep self-submit consistent so every
-    // new rancher signup path defaults to the new payout model.
-    'Pricing Model': 'tier_v2',
+    // 2026-06-09: must never be empty (a blank value misrouted the wizard).
+    // 2026-07-21: default flipped tier_v2 → legacy — the Stripe-Connect SSN
+    // wall killed 73% of cold signups; legacy goes live on e-sign + slug +
+    // price + own payment link. /api/apply + /api/partners default to legacy
+    // too — keep self-submit consistent so every new rancher signup path
+    // defaults to the same model.
+    'Pricing Model': 'legacy',
   };
   if (coords) {
     fields['Latitude'] = coords.lat;

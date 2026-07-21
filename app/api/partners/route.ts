@@ -137,11 +137,13 @@ export async function POST(request: Request) {
         'Operation Details': operationDetails || '',
         'Acreage': parseInt(acreage) || 0,
         'Status': 'Pending',
-        // 2026-06-09 fix: was empty, causing wizard to misroute new ranchers
-        // into the legacy upgrade flow instead of the standard new-rancher
-        // path. /api/apply already sets this; /api/partners must match so
-        // every new rancher signup path defaults to the new payout model.
-        'Pricing Model': 'tier_v2',
+        // 2026-06-09: must never be empty (a blank value misrouted the wizard).
+        // 2026-07-21: default flipped tier_v2 → legacy — the Stripe-Connect
+        // SSN wall killed 73% of cold signups; legacy goes live on e-sign +
+        // slug + price + own payment link. /api/apply + self-submit default
+        // to legacy too; /api/partners must match so every new rancher
+        // signup path defaults to the same model.
+        'Pricing Model': 'legacy',
       };
       if (referredBy) rancherFields['Referred By'] = referredBy;
 

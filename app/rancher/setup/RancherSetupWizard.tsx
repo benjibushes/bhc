@@ -506,28 +506,15 @@ export default function RancherSetupWizard() {
           localStorage.removeItem(legacyStepStorageKey);
         }
       }
-      // Self-serve flag read synchronously from storage — the selfServeChosen
-      // STATE is set by a later effect in this same commit, so canSkipBooking()
-      // alone would see a stale `false` here and wrongly clamp a self-serve
-      // rancher's restored step back to the call gate.
-      let selfServeStored = false;
-      try {
-        selfServeStored =
-          localStorage.getItem(`bhc-selfserve-${rancher.id}`) === '1' ||
-          (!!token && localStorage.getItem(`bhc-selfserve-${token.slice(0, 32)}`) === '1');
-      } catch {
-        /* ignore */
-      }
-      const gateOpen = canSkipBooking() || selfServeStored;
       if (!saved) {
         // Server-informed start: a mid-flow rancher opening a FRESH token on a
         // new browser/device has no localStorage at all — don't re-show the
-        // intro. Onboarding Status Call Complete / Docs Sent means the intro +
-        // call gate are behind them; with contact fields already on file, land
-        // them at Step 1 (Contact, pre-filled) instead of Step 0.
+        // intro. Onboarding Status Call Complete / Docs Sent means the intro
+        // is behind them; with contact fields already on file, land them at
+        // Step 1 (Contact, pre-filled) instead of Step 0.
         const status = String(rancher.onboardingStatus || '');
         const hasContact = !!(String(rancher.Email || '').trim() && String(rancher.Phone || '').trim());
-        if ((status === 'Call Complete' || status === 'Docs Sent') && hasContact && gateOpen) {
+        if ((status === 'Call Complete' || status === 'Docs Sent') && hasContact) {
           setStep(1);
         }
         return;
@@ -535,20 +522,13 @@ export default function RancherSetupWizard() {
       const n = parseInt(saved, 10);
       // Only restore valid in-range steps; 0 means "start at intro" so we
       // skip — no point setting the same state we already have.
+      //
+      // SELF-SERVE-FIRST (2026-07-21): the old CLOSE-FIRST clamp forced any
+      // un-called rancher's restore back to the call gate (step 4). Self-serve
+      // is now the default path — the call is optional — so we restore the
+      // rancher to exactly the step they left off on, no clamping.
       if (n > 0 && n <= 9) {
-        // CLOSE-FIRST gate enforcement: a rancher who has NOT done the call
-        // (gate closed) must never be restored PAST the required call into a
-        // setup step. Clamp any forward-restore to the call gate (step 4).
-        // Steps 5/6 (sign/done) imply the agreement is already in motion, so
-        // leave those alone. A rancher whose gate is open (call done or
-        // self-serve chosen) is restored exactly where they left off — this
-        // preserves mid-onboarding ranchers (Renick/Anna) so they're not
-        // stranded or re-gated.
-        const restoreTarget =
-          !gateOpen && (n === 1 || n === 2 || n === 3 || n === 7 || n === 8 || n === 9)
-            ? 4
-            : n;
-        setStep(restoreTarget as 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9);
+        setStep(n as 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9);
       }
     } catch {
       /* localStorage disabled — non-fatal, fall back to Step 0. */
@@ -955,12 +935,12 @@ export default function RancherSetupWizard() {
   // bumped to "Docs Sent" instead of "Call Complete" was being asked to
   // book a SECOND call when they revisited the wizard. Real bug — Anna
   // Gajewski (Renick Valley) hit it on 2026-05-13.
-  // HYBRID call-gate (Ben, 2026-06-24): the onboarding call stays the DEFAULT +
-  // recommended path — most new ranchers sign up confused and need the
-  // conversation. But a pre-sold rancher who knows the ropes can choose "set up
-  // myself" to bypass the booking gate. Persisted to localStorage (keyed on
-  // the rancher record id) so a refresh doesn't re-clamp them back to the
-  // call step.
+  // SELF-SERVE-FIRST (2026-07-21, was HYBRID 2026-06-24): self-serve setup is
+  // now the DEFAULT path — the wizard no longer clamps un-called ranchers to
+  // the call gate, so this flag no longer gates anything. It's kept because
+  // (a) CallStep still uses it (via canSkipBooking) to show the "call done /
+  // set up my page" state, and (b) existing ranchers have it persisted in
+  // localStorage — harmless redundancy beats a migration.
   const [selfServeChosen, setSelfServeChosen] = useState(false);
   // Keyed on the stable rancher record id (same reasoning as stepStorageKey):
   // the old key hashed token.slice(0, 32) — the CONSTANT JWT header prefix —
@@ -1553,20 +1533,31 @@ export default function RancherSetupWizard() {
               </p>
             </div>
 
+            {/* SELF-SERVE-FIRST (2026-07-21 inversion): setup is the primary
+                path — a rancher goes live on e-sign + slug + price + their own
+                payment link, no call required. Booking a call stays available
+                as the secondary, optional path (step 4). */}
             <div className="border-t border-dust pt-5 space-y-3">
               <p className="text-sm text-charcoal/85 leading-relaxed">
-                <strong>First, let&rsquo;s hop on a quick call to get you set
-                up.</strong> We&rsquo;ll walk through your dashboard, pricing, and
-                anything you want to ask &mdash; then build your page together.
-                It&rsquo;s the fastest way to go live.
+                <strong>Set up your page in about 10 minutes.</strong> Confirm
+                your contact, add your story and prices, sign, and you&rsquo;re
+                live. Prefer to walk through it together? You can book a call
+                instead.
               </p>
               <div className="flex flex-col sm:flex-row sm:items-center gap-3">
                 <button
                   type="button"
-                  onClick={() => setStep(4)}
+                  onClick={() => setStep(1)}
                   className="inline-flex items-center gap-2 justify-center px-7 py-3.5 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-divider"
                 >
-                  Book your onboarding call &rarr;
+                  Start setup &rarr;
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStep(4)}
+                  className="text-sm text-saddle hover:text-charcoal underline underline-offset-4"
+                >
+                  Prefer a guided call? Book onboarding call &rarr;
                 </button>
               </div>
             </div>
@@ -1973,9 +1964,9 @@ export default function RancherSetupWizard() {
               <p className="text-xs uppercase tracking-widest text-saddle mb-2">Pricing</p>
               <h2 className="font-serif text-2xl text-charcoal">Set your share prices</h2>
               <p className="text-sm text-saddle mt-1">
-                Optional — but pages with prices convert ~3× better. Fill in
-                only the shares you sell. Buyers see "Contact for pricing" if
-                you skip.
+                {String((rancher as any)['Pricing Model'] || 'legacy') === 'legacy'
+                  ? 'Fill in the shares you sell. Buyers pay you directly through your own payment link, so at least one share needs a payment link before your page can go live.'
+                  : 'Optional — but pages with prices convert ~3× better. Fill in only the shares you sell. Buyers see "Contact for pricing" if you skip.'}
               </p>
             </header>
 
@@ -2206,12 +2197,26 @@ export default function RancherSetupWizard() {
                         onChange={(v) => setField(`${tier} lbs`, v)}
                         placeholder="~150 lbs"
                       />
+                      {/* COMPANION GUARD (2026-07-21 legacy-default flip): a
+                          legacy rancher has no Stripe Connect step — their own
+                          payment link IS the money path, so it's labeled
+                          required and Continue blocks below when every sold
+                          share's link is empty. tier_v2 keeps it optional. */}
                       <Field
-                        label="Stripe / payment link (optional)"
+                        label={
+                          String((rancher as any)['Pricing Model'] || 'legacy') === 'legacy'
+                            ? 'Payment link — required to go live'
+                            : 'Stripe / payment link (optional)'
+                        }
                         value={form[`${tier} Payment Link`]}
                         onChange={(v) => setField(`${tier} Payment Link`, v)}
                         type="url"
                         placeholder="https://buy.stripe.com/..."
+                        helper={
+                          String((rancher as any)['Pricing Model'] || 'legacy') === 'legacy'
+                            ? 'Buyers pay you directly through this link. At least one share you sell needs one.'
+                            : undefined
+                        }
                       />
                     </div>
                     {price > 0 && Number.isFinite(fee) && fee >= 0 && (
@@ -2351,6 +2356,29 @@ export default function RancherSetupWizard() {
                     return;
                   }
                 }
+                // COMPANION GUARD (2026-07-21, legacy-default flip): a legacy
+                // rancher goes live on e-sign + slug + price + their OWN
+                // payment link — there's no Stripe Connect step collecting
+                // money for them. Without at least one link, flipping the
+                // signup default to legacy would just swap the SSN wall for an
+                // invisible "page can never take money" wall. Block Continue
+                // until at least one sold share has a payment link. tier_v2
+                // keeps links optional (Connect handles payment).
+                const isLegacy =
+                  String((rancher as any)['Pricing Model'] || 'legacy') === 'legacy';
+                if (isLegacy) {
+                  const hasAnyLink = sells.some(
+                    (tier) => String(form[`${tier} Payment Link`] || '').trim().length > 0
+                  );
+                  if (!hasAnyLink) {
+                    setError(
+                      sells.length === 0
+                        ? 'Pick at least one share you sell above and add its payment link — buyers pay you directly through it, and your page can’t go live without one.'
+                        : 'Add a payment link (Stripe, Square, etc.) to at least one share you sell — buyers pay you directly through it, and your page can’t go live without one.'
+                    );
+                    return;
+                  }
+                }
                 // Filter out empty testimonials before saving (rancher may add
                 // then leave blank).
                 const validTestimonials = testimonials.filter(
@@ -2389,9 +2417,8 @@ export default function RancherSetupWizard() {
                   // Legacy ranchers pay BHC monthly commission on closed deals
                   // (no tier subscription), so forcing them through Pick Plan
                   // (step 7) or Stripe Connect (step 9) is wrong and blocks
-                  // onboarding. (P2-B fix.)
-                  const isLegacy =
-                    String((rancher as any)['Pricing Model'] || 'legacy') === 'legacy';
+                  // onboarding. (P2-B fix.) `isLegacy` computed above for the
+                  // payment-link guard.
                   const nextAfterPricing = isLegacy ? 8 : 7;
                   setStep(nextAfterPricing);
                 }
@@ -2400,13 +2427,14 @@ export default function RancherSetupWizard() {
           </section>
         )}
 
-        {/* STEP 4 — Book onboarding call. CLOSE-FIRST: this is now the REQUIRED
-            gate at the FRONT of the funnel (intro → CALL → setup). A rancher who
-            has NOT done the call must book and cannot skip into setup. A rancher
-            who HAS done the call (canSkipBooking — returning rancher OR an
-            operator-backfilled record) advances straight into setup at Contact.
-            This preserves the real past-bug fix (Renick/Anna Gajewski must not
-            be asked to re-book). */}
+        {/* STEP 4 — Book onboarding call. SELF-SERVE-FIRST (2026-07-21): the
+            call is OPTIONAL — a rancher only lands here by choosing "book a
+            call" from the intro (or a saved step). Self-serve setup is the
+            primary path and is never locked behind booking. A rancher who HAS
+            done the call (canSkipBooking — returning rancher OR an
+            operator-backfilled record) sees the call-done state and continues
+            into setup at Contact — preserving the real past-bug fix
+            (Renick/Anna Gajewski must not be asked to re-book). */}
         {step === 4 && (
           <CallStep
             rancher={rancher}
@@ -3230,13 +3258,13 @@ function SignStep({
   );
 }
 
-// ── Step 4 — Onboarding call (CLOSE-FIRST required gate) ───────────────────
-// This is the FRONT of the funnel: intro → CALL → setup. The onboarding call
-// is REQUIRED and setup stays locked behind it. A rancher who has NOT done the
-// call must book (Cal.com embed) and CANNOT skip into setup; once they book,
-// Cal.com fires BOOKING_CREATED → /api/webhooks/cal flips Onboarding Status to
-// "Call Scheduled" and we show the "you're booked, come back after" state with
-// no forward button.
+// ── Step 4 — Onboarding call (OPTIONAL — self-serve-first, 2026-07-21) ─────
+// Self-serve setup is the primary path; this step is the OPTIONAL guided
+// alternative a rancher opts into from the intro. Booking works the same as
+// before: Cal.com fires BOOKING_CREATED → /api/webhooks/cal flips Onboarding
+// Status to "Call Scheduled" and we show the "you're booked, come back after"
+// state — but setup is never locked behind it ("Set up myself" is always
+// available and is the primary action).
 //
 // `callDone` is the parent's authoritative canSkipBooking() result. When true
 // (a returning rancher who already did the call, OR an operator-backfilled
@@ -3362,7 +3390,7 @@ function CallStep({
         <p className="text-sm text-saddle mt-1">
           {alreadyBooked
             ? `We'll get your page set up together on the call — pricing, dashboard, and any questions. Come back here after to finish your setup.`
-            : `First, let's hop on a quick 30-min call. We'll walk through your dashboard, pricing, and questions, then build your page together. Pick a slot below — your setup unlocks once we've talked.`}
+            : `Want to walk through it together? On a quick 30-min call we'll cover your dashboard, pricing, and questions, then build your page together. Pick a slot below — or set up your page yourself right now, no call needed.`}
         </p>
       </header>
 
@@ -3406,8 +3434,9 @@ function CallStep({
           </div>
 
           <p className="text-xs text-dust leading-relaxed text-center">
-            Once you book, we&rsquo;ll auto-stamp this step and unlock your setup.
-            Come back here right after your call to finish.
+            Once you book, we&rsquo;ll auto-stamp this step. You can keep setting
+            up your page in the meantime &mdash; or come back right after your
+            call to finish together.
             <br />
             Just booked? This page updates automatically within a few seconds
             &mdash; no refresh needed.
@@ -3435,10 +3464,11 @@ function CallStep({
         </div>
       )}
 
-      {/* HYBRID gate: the call is the DEFAULT (above). But a pre-sold rancher
-          who knows the ropes can self-serve via onSelfServe — the parent persists
-          that choice so a refresh doesn't re-clamp them here. Kept visually
-          secondary so the call stays the recommended path. */}
+      {/* SELF-SERVE-FIRST (2026-07-21 inversion of the old HYBRID gate): the
+          call above is the optional, alternative path — self-serve setup is
+          the default, so "Set up myself" is the PRIMARY action here. The
+          parent persists the choice via onSelfServe so a refresh keeps the
+          gate open for this rancher. */}
       <div className="flex flex-col sm:flex-row gap-3 sm:items-center pt-2 border-t border-dust">
         <button
           type="button"
@@ -3451,9 +3481,9 @@ function CallStep({
           <button
             type="button"
             onClick={onSelfServe}
-            className="text-sm text-saddle hover:text-charcoal underline underline-offset-4 sm:ml-auto"
+            className="inline-flex items-center gap-2 justify-center px-7 py-3.5 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-divider sm:ml-auto"
           >
-            Already know the ropes? Set up myself →
+            Set up myself &rarr;
           </button>
         )}
       </div>
