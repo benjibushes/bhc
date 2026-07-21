@@ -19,8 +19,20 @@ export function computeDisplayPrice(base: number, markupPercent: number | null):
   return Math.ceil(base * (1 + markupPercent / 100)) - 0.01;
 }
 
-export function mapVariantToProductFields(input: { product: any; variant: any; markupPercent: number | null }): Record<string, any> {
-  const { product, variant, markupPercent } = input;
+export function mapVariantToProductFields(input: {
+  product: any;
+  variant: any;
+  markupPercent: number | null;
+  /**
+   * CURATION GATE (2026-07-21, Ben decision): a synced product only displays
+   * on /shop once Ben checks 'Marketplace Approved' on its row. Active is
+   * COMPUTED — approved AND in-stock AND store-ACTIVE — so approval is a
+   * one-time human call while stock/status flaps stay automatic. New rows
+   * import unapproved (Active false, never on the marketplace unseen).
+   */
+  approved: boolean;
+}): Record<string, any> {
+  const { product, variant, markupPercent, approved } = input;
   const base = Number(variant.price || 0);
   const name = variant.title && variant.title !== 'Default Title'
     ? `${product.title} — ${variant.title}`
@@ -34,7 +46,7 @@ export function mapVariantToProductFields(input: { product: any; variant: any; m
     'Rancher Base': base,
     ...(display != null ? { 'Display Price': display } : {}),
     'Orders Left': Math.max(0, qty),
-    'Active': product.status === 'ACTIVE' && qty > 0,
+    'Active': approved && product.status === 'ACTIVE' && qty > 0,
     'Sync Managed': true,
     'Last Synced At': new Date().toISOString(),
     ...(product?.featuredMedia?.preview?.image?.url ? { 'Image URL': String(product.featuredMedia.preview.image.url) } : {}),
@@ -102,8 +114,14 @@ export async function syncShopifyCatalog(rancherId: string, opts?: { dryRun?: bo
           skippedNoSku++;
           continue;
         }
-        const fields = mapVariantToProductFields({ product, variant, markupPercent: cfg.markupPercent ?? null });
-        const row = bySku.get(fields['External SKU']);
+        const skuKey = String(variant.sku || '').trim();
+        const row = bySku.get(skuKey);
+        const fields = mapVariantToProductFields({
+          product,
+          variant,
+          markupPercent: cfg.markupPercent ?? null,
+          approved: row?.['Marketplace Approved'] === true,
+        });
         if (opts?.dryRun) {
           if (row) updated++;
           else imported++;

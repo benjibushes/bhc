@@ -24,6 +24,7 @@ test('variant maps to Rancher Products fields', () => {
     },
     variant: { id: 'gid://shopify/ProductVariant/2', title: '10 lb', sku: 'BOX-10', price: '95.00', inventoryQuantity: 12 },
     markupPercent: 30,
+    approved: true,
   });
   assert.equal(f['Product Name'], 'Beef Box — 10 lb');
   assert.equal(f['External SKU'], 'BOX-10');
@@ -41,6 +42,7 @@ test('single-variant products drop the "Default Title" suffix', () => {
     product: { id: 'p', title: 'Jerky', status: 'ACTIVE' },
     variant: { id: 'v', title: 'Default Title', sku: 'JERKY-1', price: '12', inventoryQuantity: 5 },
     markupPercent: null,
+    approved: true,
   });
   assert.equal(f['Product Name'], 'Jerky');
   assert.equal('Display Price' in f, false);
@@ -51,12 +53,24 @@ test('zero inventory or non-ACTIVE product maps Active:false', () => {
     product: { id: 'p', title: 'X', status: 'ACTIVE' },
     variant: { id: 'v', title: 'Default Title', sku: 'S', price: '10', inventoryQuantity: 0 },
     markupPercent: null,
+    approved: true,
   });
   assert.equal(oos['Active'], false);
   const draft = mapVariantToProductFields({
     product: { id: 'p', title: 'X', status: 'DRAFT' },
     variant: { id: 'v', title: 'Default Title', sku: 'S', price: '10', inventoryQuantity: 9 },
     markupPercent: null,
+    approved: true,
   });
   assert.equal(draft['Active'], false);
+});
+
+test('curation gate: unapproved products are never Active, even in stock', () => {
+  const f = mapVariantToProductFields({
+    product: { id: 'p', title: 'X', status: 'ACTIVE' },
+    variant: { id: 'v', title: 'Default Title', sku: 'S', price: '10', inventoryQuantity: 9 },
+    markupPercent: 30,
+    approved: false,
+  });
+  assert.equal(f['Active'], false);
 });

@@ -16,6 +16,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import ShopifyConnectCard from './ShopifyConnectCard';
 import {
   PRODUCT_CATEGORIES,
   deriveProductPricing,
@@ -478,6 +479,8 @@ export default function ProductsTab({
           </button>
         )}
       </div>
+
+      <ShopifyConnectCard />
 
       {savedNote && (
         <p className="text-sm text-sage border border-sage/40 bg-bone-warm px-4 py-3">{savedNote}</p>
