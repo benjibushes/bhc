@@ -164,6 +164,7 @@ export interface PendingIntegration {
   encClientSecret: string;
   mode: 'sync' | 'manual';
   markupPercent: number | null;
+  category: string | null;
 }
 
 export function parsePendingIntegration(raw: unknown): PendingIntegration | null {
@@ -189,5 +190,6 @@ export function parsePendingIntegration(raw: unknown): PendingIntegration | null
     encClientSecret: String(obj.encClientSecret),
     mode: obj.mode,
     markupPercent: typeof obj.markupPercent === 'number' ? obj.markupPercent : null,
+    category: obj.category ? String(obj.category).slice(0, 40) : null,
   };
 }

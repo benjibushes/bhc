@@ -18,6 +18,12 @@ export interface IntegrationConfig {
   mode: 'sync' | 'manual';
   markupPercent?: number | null;
   locationId?: string | null;
+  /**
+   * Optional Rancher Products Category stamped on every synced row (e.g.
+   * 'Merch' keeps the BHC merch line in its own /shop section, never mixed
+   * into the beef groups). Unset → rows land in the 'more' group.
+   */
+  category?: string | null;
 }
 
 export interface PushLineItem { sku: string; quantity: number; title: string }
@@ -56,6 +62,7 @@ export function parseIntegration(raw: unknown): IntegrationConfig | null {
     mode: obj.mode,
     markupPercent: typeof obj.markupPercent === 'number' ? obj.markupPercent : null,
     locationId: obj.locationId ? String(obj.locationId) : null,
+    category: obj.category ? String(obj.category).slice(0, 40) : null,
   };
 }
 

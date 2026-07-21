@@ -176,6 +176,7 @@ export async function GET(req: Request) {
       apiSecret: clientSecret,
       mode: pending.mode,
       markupPercent: pending.markupPercent,
+      category: pending.category,
     });
     if (!result.ok) {
       console.error('[shopify-oauth] connect flow failed:', result.report.join('; '));

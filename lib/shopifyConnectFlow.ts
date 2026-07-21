@@ -27,6 +27,7 @@ export interface ConnectStoreInput {
   apiSecret: string;
   mode: 'sync' | 'manual';
   markupPercent: number | null;
+  category?: string | null;
 }
 
 export async function connectShopifyStore(input: ConnectStoreInput): Promise<{ ok: boolean; report: string[] }> {
@@ -52,6 +53,7 @@ export async function connectShopifyStore(input: ConnectStoreInput): Promise<{ o
     mode: input.mode,
     markupPercent,
     locationId: null,
+    category: input.category || null,
   };
   if (!parseIntegration(JSON.stringify(cfg))) {
     return { ok: false, report: ['Invalid shop domain — need something like ranch-name.myshopify.com'] };

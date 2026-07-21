@@ -389,13 +389,15 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
               <div className={`text-[13px] ${p.localOnly ? 'text-saddle font-medium' : 'text-sage'}`}>
                 {p.localOnly
                   ? `local pickup only — at the ranch${p.rancherState ? ` in ${p.rancherState}` : ''} · no shipping`
-                  : p.depositStyle
-                    ? 'deposit today · rancher confirms size + balance · ships frozen, nationwide'
-                    : p.shippingCost > 0
-                      ? `${p.shelfStable ? 'shelf-stable' : 'ships frozen, direct from the ranch'} · + $${p.shippingCost.toFixed(2)} shipping, nationwide`
-                      : p.shelfStable
-                        ? 'shelf-stable · ships free, no freezer needed'
-                        : 'ships frozen, direct from the ranch · shipping included, nationwide'}
+                  : p.category === 'Merch'
+                    ? `printed to order · ships to your door${p.shippingCost > 0 ? ` · + $${p.shippingCost.toFixed(2)} shipping` : ' · shipping included'}, nationwide`
+                    : p.depositStyle
+                      ? 'deposit today · rancher confirms size + balance · ships frozen, nationwide'
+                      : p.shippingCost > 0
+                        ? `${p.shelfStable ? 'shelf-stable' : 'ships frozen, direct from the ranch'} · + $${p.shippingCost.toFixed(2)} shipping, nationwide`
+                        : p.shelfStable
+                          ? 'shelf-stable · ships free, no freezer needed'
+                          : 'ships frozen, direct from the ranch · shipping included, nationwide'}
               </div>
 
               {/* Real scarcity only — shown because it's literally true. */}
@@ -443,7 +445,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
                     : p.shippingCost > 0
                       ? `$${p.price.toFixed(2)} + $${p.shippingCost.toFixed(2)} shipping — that's the whole total, no surprises at checkout. `
                       : 'the price you see is the price you pay — shipping included. '}
-                if a cut ever shows up wrong or freezer-burned, we make it right — no forms, no
+                if {p.category === 'Merch' ? 'anything shows up wrong or damaged' : 'a cut ever shows up wrong or freezer-burned'}, we make it right — no forms, no
                 runaround. checkout secured by Stripe. questions? reply to your receipt — a real
                 person answers. &mdash; Ben
               </p>

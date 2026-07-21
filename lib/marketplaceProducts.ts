@@ -386,6 +386,15 @@ export const MARKETPLACE_GROUPS: {
     sub: 'a real cut of a whole animal — the best price per pound',
     categories: ['Eighth Share'],
   },
+  // Merch (2026-07-21): the BHC merch line (and any connected store selling
+  // non-food goods) gets its OWN section — never mixed into the beef groups.
+  // Ordered last so food always leads the market.
+  {
+    key: 'merch',
+    title: 'herd merch',
+    sub: 'hats & tees — rep the movement · printed to order, shipped to your door',
+    categories: ['Merch'],
+  },
 ];
 
 /**

@@ -4854,7 +4854,12 @@ Confirm send?`;
           );
           return NextResponse.json({ ok: true });
         }
-        const [query, shopRaw, clientId, clientSecret, modeRaw, markupRaw, forceRaw] = parts;
+        // Optional trailing tokens (any order after mode): markup%, 'force',
+        // 'category:Merch'. Scan rather than fix positions.
+        const catToken = parts.find((t: string) => /^category:/i.test(t));
+        const category = catToken ? catToken.slice(catToken.indexOf(':') + 1).trim() : null;
+        const cleanParts = parts.filter((t: string) => !/^category:/i.test(t));
+        const [query, shopRaw, clientId, clientSecret, modeRaw, markupRaw, forceRaw] = cleanParts;
         const force = String(forceRaw || '').toLowerCase() === 'force' || String(markupRaw || '').toLowerCase() === 'force';
         const mode = modeRaw?.toLowerCase() === 'sync' ? 'sync' : modeRaw?.toLowerCase() === 'manual' ? 'manual' : null;
         if (!mode) {
@@ -4919,7 +4924,7 @@ Confirm send?`;
             'Fulfillment Integration': JSON.stringify({
               v: 1, provider: 'shopify', pending: true, shop,
               clientId: clientId, encClientSecret: encryptSecret(clientSecret),
-              mode, markupPercent,
+              mode, markupPercent, ...(category ? { category } : {}),
             }),
           });
           const link = `${SITE_URL}/api/shopify/oauth/install?l=${mintInstallLinkToken({ rancherId: String(match.id) })}`;

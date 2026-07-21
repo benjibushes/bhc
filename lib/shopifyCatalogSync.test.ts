@@ -84,3 +84,10 @@ test('share-fence + $5 floor regexes: fence blocks share names, floor logic valu
   assert.equal(fence.test('half-pound jerky'), false);
   assert.equal(fence.test('Beef Box'), false);
 });
+
+test('Merch category routes to its own /shop group, beef groups untouched', () => {
+  const { groupKeyForCategory } = require('./marketplaceProducts');
+  assert.equal(groupKeyForCategory('Merch'), 'merch');
+  assert.equal(groupKeyForCategory('Jerky'), 'jerky');
+  assert.equal(groupKeyForCategory(''), 'more');
+});
