@@ -305,6 +305,35 @@ export async function POST(request: Request) {
       );
     }
 
+    // ── Payment-path smoke test (money-truth 1c, 2026-07-21) ───────────────
+    // The field gates above verify what Airtable BELIEVES; the smoke test
+    // additionally LIVE-probes Stripe for tier_v2 (Connect account actually
+    // active + card-payments capable — the cached 'Stripe Connect Status'
+    // field can drift from reality). Static-gate failures can't normally
+    // reach here (the checks above mirror them), so what this catches is the
+    // cached-active/actually-restricted rancher. Slug failures are ignored:
+    // this route auto-mints a Slug during the flip below.
+    {
+      const { runPaymentPathSmoke } = await import('@/lib/paymentPathSmoke');
+      const smoke = await runPaymentPathSmoke(rancher);
+      const smokeFailures = smoke.failures.filter((f) => !f.startsWith('slug:'));
+      if (smokeFailures.length > 0) {
+        return new NextResponse(
+          htmlPage({
+            title: 'Payment path not ready',
+            heading: '🔒',
+            body:
+              `<h1>One more step, ${operatorFirst}</h1>` +
+              `<p>Your agreement is in, but ${ranchName} can't go live yet — our payment-path check found:</p>` +
+              `<div class="box">${smokeFailures.map((f) => `<p style="margin:4px 0;">• ${f}</p>`).join('')}</div>` +
+              `<p>Going live now would send you buyers who literally cannot pay you. Fix the above (usually: finish or re-open Stripe onboarding from your rancher dashboard), then click this link again.</p>` +
+              `<p>Reply to my email if you're stuck and I'll jump on a call to finish it with you.</p>`,
+          }),
+          { status: 409, headers: { 'Content-Type': 'text/html' } }
+        );
+      }
+    }
+
     // Compute fields to set, preserving existing values where present
     const fields: Record<string, any> = {
       'Agreement Signed': true,

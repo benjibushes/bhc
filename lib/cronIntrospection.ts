@@ -65,6 +65,7 @@ export const EXPECTED_CRONS_24H = [
   'nightly-rancher-audit',
   'onboarding-stuck',
   'deposit-request-nudge',
+  'deposit-watchdog',
   'orphan-checkout-reaper',
   'qualified-no-action',
   'referral-record-id-backfill',

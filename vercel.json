@@ -190,6 +190,10 @@
       "schedule": "45 * * * *"
     },
     {
+      "path": "/api/cron/deposit-watchdog",
+      "schedule": "25 * * * *"
+    },
+    {
       "path": "/api/cron/product-recovery",
       "schedule": "35 18 * * *"
     },

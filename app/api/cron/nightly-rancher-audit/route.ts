@@ -4,6 +4,7 @@ import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
+import { runPaymentPathSmoke } from '@/lib/paymentPathSmoke';
 
 export const maxDuration = 180;
 
@@ -156,6 +157,28 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
       // 2. Agreement Signed=false
       if (!r['Agreement Signed']) {
         issues.push({ severity: 'critical', rancher: name, text: `${name} is Active but Agreement Signed=false — won't appear in matching.` });
+      }
+
+      // 15. PAYMENT-PATH CANARY (money-truth 1d, 2026-07-21): re-run the
+      //     go-live payment-path smoke on every Active rancher nightly.
+      //     tier_v2 gets a LIVE Stripe Connect probe (a live rancher whose
+      //     bank/Connect silently broke would otherwise lose the next sale
+      //     with zero signal); legacy gets the slug/price/payment-link
+      //     statics. A transient probe error is warn (retry tomorrow); a
+      //     definitive failure is critical.
+      try {
+        const smoke = await runPaymentPathSmoke(r);
+        if (!smoke.ok) {
+          const allTransient = smoke.failures.every((f) => f.startsWith('connect-probe-failed'));
+          issues.push({
+            severity: allTransient ? 'warn' : 'critical',
+            rancher: name,
+            text: `${name} payment-path smoke FAILED: ${smoke.failures.join(' · ')}`,
+          });
+        }
+      } catch (e: any) {
+        // runPaymentPathSmoke never throws by contract — belt and braces.
+        issues.push({ severity: 'warn', rancher: name, text: `${name} payment-path smoke errored: ${e?.message || 'unknown'}` });
       }
 
       // 3. Capacity drift
