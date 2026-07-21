@@ -74,7 +74,16 @@ export function verifyInstallLinkToken(token: string | null | undefined): Verify
 // ALSO come back via the httpOnly cookie.
 // ---------------------------------------------------------------------------
 
-export interface OauthStateClaims { rancherId: string; nonce: string }
+export interface OauthStateClaims {
+  rancherId: string;
+  nonce: string;
+  /** Public-app install (env creds, shop from callback) vs staged custom app. */
+  pub?: boolean;
+  /** Public installs carry the card's choices — no pending config exists. */
+  mode?: 'sync' | 'manual';
+  markupPercent?: number | null;
+  shop?: string;
+}
 export interface OauthStatePayload extends OauthStateClaims {
   purpose: typeof OAUTH_STATE_PURPOSE;
   iat?: number;
@@ -86,7 +95,16 @@ export function mintOauthState(claims: OauthStateClaims): string {
   const nonce = String(claims.nonce || '').trim();
   if (!rancherId) throw new Error('mintOauthState: rancherId required');
   if (!nonce) throw new Error('mintOauthState: nonce required');
-  return signJwt({ purpose: OAUTH_STATE_PURPOSE, rancherId, nonce }, { expiresIn: '1h' });
+  return signJwt(
+    {
+      purpose: OAUTH_STATE_PURPOSE, rancherId, nonce,
+      ...(claims.pub ? { pub: true } : {}),
+      ...(claims.mode ? { mode: claims.mode } : {}),
+      ...(claims.markupPercent != null ? { markupPercent: claims.markupPercent } : {}),
+      ...(claims.shop ? { shop: claims.shop } : {}),
+    },
+    { expiresIn: '1h' },
+  );
 }
 
 export function verifyOauthState(token: string | null | undefined): VerifyResult<OauthStatePayload> {
@@ -102,7 +120,16 @@ export function verifyOauthState(token: string | null | undefined): VerifyResult
   const rancherId = String(decoded.rancherId || '').trim();
   const nonce = String(decoded.nonce || '').trim();
   if (!rancherId || !nonce) return { ok: false, reason: 'invalid' };
-  return { ok: true, payload: { purpose: OAUTH_STATE_PURPOSE, rancherId, nonce } };
+  return {
+    ok: true,
+    payload: {
+      purpose: OAUTH_STATE_PURPOSE, rancherId, nonce,
+      pub: decoded.pub === true,
+      mode: decoded.mode === 'sync' || decoded.mode === 'manual' ? decoded.mode : undefined,
+      markupPercent: typeof decoded.markupPercent === 'number' ? decoded.markupPercent : null,
+      shop: decoded.shop ? String(decoded.shop) : undefined,
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -192,4 +219,11 @@ export function parsePendingIntegration(raw: unknown): PendingIntegration | null
     markupPercent: typeof obj.markupPercent === 'number' ? obj.markupPercent : null,
     category: obj.category ? String(obj.category).slice(0, 40) : null,
   };
+}
+
+/** Public-app credentials (ONE app for every rancher) — set once in Vercel. */
+export function publicAppCreds(): { clientId: string; clientSecret: string } | null {
+  const clientId = String(process.env.SHOPIFY_APP_CLIENT_ID || '').trim();
+  const clientSecret = String(process.env.SHOPIFY_APP_CLIENT_SECRET || '').trim();
+  return clientId && clientSecret ? { clientId, clientSecret } : null;
 }

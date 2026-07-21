@@ -16,6 +16,7 @@ import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord, TABLES, escapeAirtableValue } from '@/lib/airtable';
 import { parseIntegration } from '@/lib/fulfillmentConnector';
 import { verifyShopifyHmac } from '@/lib/shopifyWebhookVerify';
+import { publicAppCreds } from '@/lib/shopifyOauth';
 import { decryptSecret } from '@/lib/integrationCrypto';
 
 export const dynamic = 'force-dynamic';
@@ -27,6 +28,39 @@ export async function POST(request: Request) {
     const shop = String(request.headers.get('x-shopify-shop-domain') || '').toLowerCase().trim();
     const topic = String(request.headers.get('x-shopify-topic') || '');
     if (!shop) return NextResponse.json({ ok: true, skipped: 'no shop header' });
+
+    // MANDATORY COMPLIANCE TOPICS (public app, Phase 2): customers/data_request,
+    // customers/redact, shop/redact. Shopify's review sends these with the
+    // PUBLIC app's secret and requires: valid HMAC → 200, invalid → 401 —
+    // regardless of whether we know the shop. We hold no store-customer PII
+    // (buyers are BHC's, not theirs), so data_request/redact are acknowledge-
+    // only; shop/redact clears the shop's integration config (app uninstalled
+    // + store data purge requested).
+    const COMPLIANCE_TOPICS = new Set(['customers/data_request', 'customers/redact', 'shop/redact']);
+    if (COMPLIANCE_TOPICS.has(topic)) {
+      const creds = publicAppCreds();
+      const sig = request.headers.get('x-shopify-hmac-sha256');
+      const okSig = creds ? verifyShopifyHmac(raw, sig, creds.clientSecret) : false;
+      if (!okSig) return NextResponse.json({ ok: false, error: 'invalid signature' }, { status: 401 });
+      if (topic === 'shop/redact') {
+        try {
+          const rs = (await getAllRecords(
+            TABLES.RANCHERS,
+            `FIND("${escapeAirtableValue(shop)}", {Fulfillment Integration})`,
+          ).catch(() => [])) as any[];
+          const { parseIntegration: pi2 } = await import('@/lib/fulfillmentConnector');
+          for (const rr of rs) {
+            if (pi2(rr['Fulfillment Integration'])?.shop === shop) {
+              await updateRecord(TABLES.RANCHERS, rr.id, { 'Fulfillment Integration': '' }).catch(() => {});
+            }
+          }
+        } catch (e: any) {
+          console.error('[shopify-webhook] shop/redact cleanup error:', e?.message);
+        }
+      }
+      console.log(`[shopify-webhook] compliance ${topic} acknowledged for ${shop}`);
+      return NextResponse.json({ ok: true, processed: topic });
+    }
 
     const ranchers = (await getAllRecords(
       TABLES.RANCHERS,

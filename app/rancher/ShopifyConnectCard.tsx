@@ -13,6 +13,7 @@ import { useEffect, useState } from 'react';
 
 interface ConnectionStatus {
   connected: boolean;
+  publicApp?: boolean;
   shop?: string;
   mode?: 'sync' | 'manual';
   markupPercent?: number | null;
@@ -35,6 +36,30 @@ export default function ShopifyConnectCard() {
       .then((d) => setStatus(d && typeof d.connected === 'boolean' ? d : { connected: false }))
       .catch(() => setStatus({ connected: false }));
   }, []);
+
+  // ONE-CLICK path (public app live): shop + mode only — we redirect straight
+  // to Shopify's consent screen. No tokens ever touch the rancher.
+  async function submitOneClick() {
+    setSubmitting(true);
+    setError('');
+    try {
+      const res = await fetch('/api/rancher/integrations/shopify/install', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shop, mode }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data?.authorizeUrl) {
+        window.location.href = data.authorizeUrl;
+        return;
+      }
+      setError(String(data?.error || 'Could not start the connection — try again.'));
+    } catch {
+      setError('Network error — try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   async function submit() {
     setSubmitting(true);
@@ -101,7 +126,55 @@ export default function ShopifyConnectCard() {
         )}
       </div>
 
-      {open && (
+      {open && status.publicApp && (
+        <div className="mt-4 space-y-3 max-w-xl">
+          <div>
+            <span className="block text-xs uppercase tracking-wider text-saddle mb-1.5">Store address</span>
+            <input
+              value={shop}
+              onChange={(e) => setShop(e.target.value)}
+              placeholder="your-store.myshopify.com"
+              className="w-full border border-dust bg-bone px-3 py-2 text-sm"
+            />
+          </div>
+          <div className="space-y-2 text-sm pt-1">
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input type="radio" className="mt-1" checked={mode === 'sync'} onChange={() => setMode('sync')} />
+              <span>
+                Sync my catalog
+                <span className="block text-xs text-saddle">
+                  we import your products automatically; BuyHalfCow approves each one before it displays
+                </span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input type="radio" className="mt-1" checked={mode === 'manual'} onChange={() => setMode('manual')} />
+              <span>
+                Manual SKUs
+                <span className="block text-xs text-saddle">you list products by hand and we match them by SKU</span>
+              </span>
+            </label>
+          </div>
+          {error && <p className="text-sm text-weathered border border-weathered/40 px-3 py-2">{error}</p>}
+          <div className="flex gap-3 items-center">
+            <button
+              onClick={submitOneClick}
+              disabled={submitting || !shop}
+              className="px-5 py-2 bg-charcoal text-bone text-sm uppercase tracking-wider hover:bg-saddle transition-colors disabled:opacity-40"
+            >
+              {submitting ? 'Starting…' : 'Connect store'}
+            </button>
+            <button onClick={() => { setOpen(false); setError(''); }} className="text-sm text-saddle underline underline-offset-4">
+              cancel
+            </button>
+          </div>
+          <p className="text-xs text-dust">
+            You’ll approve the connection on Shopify’s screen — takes about 20 seconds. No passwords, no tokens.
+          </p>
+        </div>
+      )}
+
+      {open && !status.publicApp && (
         <div className="mt-4 space-y-3 max-w-xl">
           <ol className="text-xs text-saddle list-decimal pl-5 space-y-1">
             <li>In your Shopify admin: <strong>Settings → Apps and sales channels → Develop apps → Create an app</strong> (name it “BuyHalfCow”).</li>
