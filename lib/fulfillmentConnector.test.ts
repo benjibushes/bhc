@@ -29,3 +29,10 @@ test('null on blank / malformed / wrong version / unknown provider / bad shop / 
   assert.equal(parseIntegration(JSON.stringify({ v: 1, provider: 'shopify', shop: 'x.myshopify.com', encToken: 'x', encApiSecret: 'x', mode: 'auto' })), null);
   assert.equal(parseIntegration(JSON.stringify({ v: 1, provider: 'shopify', shop: 'x.myshopify.com', mode: 'manual' })), null);
 });
+
+test('config category parses and caps length; absent → null', () => {
+  const base = { v: 1, provider: 'shopify', shop: 'x.myshopify.com', encToken: 'e', encApiSecret: 'e', mode: 'sync' };
+  assert.equal(parseIntegration(JSON.stringify({ ...base, category: 'Merch' }))?.category, 'Merch');
+  assert.equal(parseIntegration(JSON.stringify(base))?.category, null);
+  assert.equal(parseIntegration(JSON.stringify({ ...base, category: 'x'.repeat(100) }))?.category?.length, 40);
+});

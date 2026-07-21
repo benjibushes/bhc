@@ -147,6 +147,9 @@ export async function syncShopifyCatalog(rancherId: string, opts?: { dryRun?: bo
         if (!('Display Price' in fields) && !row) {
           (fields as any)['Display Price'] = fields['Rancher Base'];
         }
+        // Section routing: a config-level Category (e.g. 'Merch') keeps this
+        // store's products in their own /shop section.
+        if (cfg.category) (fields as any)['Category'] = cfg.category;
         if (opts?.dryRun) {
           if (row) updated++;
           else imported++;
