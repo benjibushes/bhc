@@ -369,6 +369,18 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
     console.warn('[productSettlement] inventory decrement skipped (non-fatal):', e?.message);
   }
 
+  // ── FULFILLMENT CONNECTOR PUSH (2026-07-21, Shopify v1) ───────────────────
+  // If the rancher has a connected store, inject this paid order into it so
+  // their own logistics stack fulfills (docs/plans/2026-07-21-shopify-
+  // fulfillment-connector.md). Best-effort, never blocks settlement; gates +
+  // outcome stamps live in the runner; misses swept by fulfillment-push-net.
+  try {
+    const { runFulfillmentPush } = await import('./fulfillmentPushRunner');
+    await runFulfillmentPush(String(created?.id || ''));
+  } catch (e: any) {
+    console.warn('[productSettlement] fulfillment push skipped (non-fatal):', e?.message);
+  }
+
   // ── Meta Conversions API: server-side Purchase (the ROAS conversion) ──────
   // Gated on productPurchaseEnabled() (privacy dry-run first). No fbp/fbc at
   // webhook time → action_source='system_generated' + email match (same posture
@@ -518,6 +530,41 @@ export async function reconcileProductOrderRefund(
     }
   } catch (e: any) {
     console.warn('[productSettlement] refund stock restore skipped (non-fatal):', e?.message);
+  }
+
+  // FULFILLMENT CONNECTOR CANCEL (2026-07-21): if this order was pushed into
+  // the rancher's own store, cancel it there too (restock:true) — otherwise
+  // their Shopify keeps fulfilling a refunded deal. FULL refunds/disputes
+  // only: the partial-refund branch above returned early and the external
+  // order must stay live (buyer still gets their box).
+  const externalOrderId = String(order['External Order Id'] || '').trim();
+  if (externalOrderId && String(order['External Push Status'] || '') !== 'cancelled') {
+    try {
+      const { parseIntegration, getConnector } = await import('./fulfillmentConnector');
+      const rancherRow = await getRecordById(TABLES.RANCHERS, String(order['Rancher Record ID'] || '')).catch(() => null);
+      const integration = parseIntegration(rancherRow?.['Fulfillment Integration']);
+      if (integration) {
+        const res = await getConnector(integration.provider).cancelOrder(
+          integration, externalOrderId, `BHC ${opts.kind} — ${String(order['Order Ref'] || '')}`.slice(0, 255));
+        await updateRecord(TABLES.RANCHER_ORDERS, order.id, {
+          'External Push Status': res.ok ? 'cancelled' : `cancel-failed:${res.error || 'unknown'}`.slice(0, 250),
+        }).catch(() => {});
+        if (!res.ok) {
+          await sendOperatorSignal({
+            urgency: 'loud',
+            kind: 'sale',
+            summary: `EXTERNAL ORDER CANCEL FAILED — ${String(order['Product Name'] || 'product')}`,
+            detail:
+              `Shopify order ${externalOrderId} could not be cancelled after the ${opts.kind} ` +
+              `and may still ship. Cancel it manually in the rancher's store. ${res.error || ''}`,
+            dedupeKey: `shopify-cancel-fail-${order.id}`,
+            dedupeWindowMs: 24 * 60 * 60 * 1000,
+          }).catch(() => {});
+        }
+      }
+    } catch (e: any) {
+      console.warn('[productSettlement] external cancel skipped (non-fatal):', e?.message);
+    }
   }
 
   const product = String(order['Product Name'] || 'a product');

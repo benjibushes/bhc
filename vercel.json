@@ -194,6 +194,10 @@
       "schedule": "25 * * * *"
     },
     {
+      "path": "/api/cron/fulfillment-push-net",
+      "schedule": "35 */2 * * *"
+    },
+    {
       "path": "/api/cron/product-recovery",
       "schedule": "35 18 * * *"
     },
