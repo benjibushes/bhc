@@ -104,7 +104,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
     let bucketLabel = '';
     const missing: string[] = [];
 
-    const connectAcct = !!(r['Stripe Connect Account Id'] || r['Stripe Account Id']);
+    const connectAcct = !!r['Stripe Connect Account Id'];
     const connectActive = String(r['Stripe Connect Status'] || '').toLowerCase() === 'active';
     const isTierV2 = String(r['Pricing Model'] || '').toLowerCase() === 'tier_v2';
 

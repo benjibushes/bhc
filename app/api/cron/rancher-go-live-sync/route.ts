@@ -67,7 +67,7 @@ async function realHandler(
     const { getConnectAccountStatus } = await import('@/lib/stripeConnect');
     for (const r of ranchers) {
       if (String(r['Pricing Model'] || 'legacy').toLowerCase() !== 'tier_v2') continue;
-      const acct = String(r['Stripe Connect Account Id'] || r['Stripe Account Id'] || '').trim();
+      const acct = String(r['Stripe Connect Account Id'] || '').trim();
       if (!acct) continue;
       const cached = String(r['Stripe Connect Status'] || '').toLowerCase();
       if (cached === 'active' || cached === 'detached') continue;
@@ -139,7 +139,7 @@ async function realHandler(
         rancher['Half Price'] ||
         rancher['Whole Price']
       );
-      const connectAcctId = rancher['Stripe Connect Account Id'] || rancher['Stripe Account Id'] || '';
+      const connectAcctId = rancher['Stripe Connect Account Id'] || '';
 
       // LIVE-READ RECONCILE: the Connect webhook is the only writer of Status
       // 'active', and it returns 400 when CONNECT_WEBHOOK_SECRET is unset (the
