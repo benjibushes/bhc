@@ -48,6 +48,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, error: 'invalid signature' }, { status: 401 });
     }
 
+    // Catalog freshness (sync mode): a product edit in their store re-syncs
+    // that rancher's catalog. Full-catalog resync is cheap at these sizes and
+    // avoids per-product partial-update bugs.
+    if (topic === 'products/update' || topic === 'products/delete') {
+      try {
+        const { syncShopifyCatalog } = await import('@/lib/shopifyCatalogSync');
+        const res = await syncShopifyCatalog(String(rancher.id));
+        return NextResponse.json({ ok: true, processed: topic, sync: res.report.join('; ') });
+      } catch (e: any) {
+        return NextResponse.json({ ok: true, processed: topic, sync: `failed: ${String(e?.message || '').slice(0, 100)}` });
+      }
+    }
+
     if (topic !== 'fulfillments/create' && topic !== 'fulfillments/update') {
       return NextResponse.json({ ok: true, skipped: topic || 'no topic' });
     }
