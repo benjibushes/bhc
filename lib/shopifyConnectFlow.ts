@@ -53,6 +53,7 @@ export async function connectShopifyStore(input: ConnectStoreInput): Promise<{ o
   // Duplicate-address userErrors (re-running /connectstore) are reported,
   // not fatal — the subscription already exists.
   const topics = ['FULFILLMENTS_CREATE', 'FULFILLMENTS_UPDATE', ...(input.mode === 'sync' ? ['PRODUCTS_UPDATE'] : [])];
+  const webhookFailures: string[] = [];
   for (const topic of topics) {
     try {
       const res: any = await fetch(`https://${cfg.shop}/admin/api/2026-01/graphql.json`, {
@@ -67,9 +68,36 @@ export async function connectShopifyStore(input: ConnectStoreInput): Promise<{ o
         }),
       }).then((r) => r.json());
       const errs = res?.data?.webhookSubscriptionCreate?.userErrors;
-      report.push(`webhook ${topic}: ${errs?.length ? errs[0].message : 'registered'}`);
+      const msg = errs?.length ? String(errs[0].message) : 'registered';
+      report.push(`webhook ${topic}: ${msg}`);
+      // "address ... already exists" = re-connect, fine. Anything else is a
+      // real failure of that leg.
+      if (msg !== 'registered' && !/taken|already/i.test(msg)) webhookFailures.push(`${topic}: ${msg}`);
     } catch (e: any) {
-      report.push(`webhook ${topic}: FAILED (${String(e?.message || 'network').slice(0, 80)})`);
+      const msg = String(e?.message || 'network').slice(0, 80);
+      report.push(`webhook ${topic}: FAILED (${msg})`);
+      webhookFailures.push(`${topic}: ${msg}`);
+    }
+  }
+  // Review 2026-07-21: a saved config with DEAD fulfillment webhooks means
+  // orders push fine but tracking never flows back and the SLA cron nags a
+  // rancher whose store already shipped. Save anyway (token is good, push
+  // works) but ring Ben — re-running /connectstore or /storelink re-registers.
+  if (webhookFailures.some((f) => f.startsWith('FULFILLMENTS'))) {
+    try {
+      const { sendOperatorSignal } = await import('./operatorSignal');
+      await sendOperatorSignal({
+        urgency: 'loud',
+        kind: 'system-error',
+        summary: `Store connected but fulfillment webhooks FAILED — ${cfg.shop}`,
+        detail:
+          `${webhookFailures.join('\n')}\n` +
+          `Order push works; tracking will NOT flow back until webhooks register. Re-run the connect for this rancher.`,
+        dedupeKey: `shopify-webhook-reg-fail-${cfg.shop}`,
+        dedupeWindowMs: 60 * 60 * 1000,
+      });
+    } catch {
+      /* best-effort */
     }
   }
 

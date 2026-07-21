@@ -4835,6 +4835,106 @@ Confirm send?`;
         }
       }
 
+      else if (text.startsWith('/storelink')) {
+        // ONE-CLICK install link (connector §8 Phase 1):
+        //   /storelink <ranch|email> | <shop.myshopify.com> | <client_id> | <client_secret> | <sync|manual> [| markup%]
+        // Ben creates a custom-distribution app in the Partner Dashboard
+        // (~3 min), pastes its client creds here, and gets back the link the
+        // DISTRIBUTOR clicks — they approve on Shopify's consent screen and
+        // the OAuth callback auto-configures everything. Zero merchant API
+        // steps (vs /connectstore where the merchant makes the token).
+        const parts = text.replace('/storelink', '').split('|').map((p: string) => p.trim());
+        if (parts.length < 5 || !parts[0]) {
+          await sendTelegramMessage(
+            chatId,
+            `Usage:\n<code>/storelink ranch or email | shop.myshopify.com | client id | client secret | sync or manual | markup% (optional) | force (optional)</code>\n\n` +
+              `Get client id + secret: Partner Dashboard → Apps → your custom-distribution app for their store → Client credentials.\n` +
+              `In that app's config: <b>App URL</b> = <code>${SITE_URL}</code> · <b>Allowed redirection URL</b> = <code>${SITE_URL}/api/shopify/oauth/callback</code>. ` +
+              `(App URL must NOT be the callback — Shopify opens it after install without OAuth params.)`,
+          );
+          return NextResponse.json({ ok: true });
+        }
+        const [query, shopRaw, clientId, clientSecret, modeRaw, markupRaw, forceRaw] = parts;
+        const force = String(forceRaw || '').toLowerCase() === 'force' || String(markupRaw || '').toLowerCase() === 'force';
+        const mode = modeRaw?.toLowerCase() === 'sync' ? 'sync' : modeRaw?.toLowerCase() === 'manual' ? 'manual' : null;
+        if (!mode) {
+          await sendTelegramMessage(chatId, `Mode must be <code>sync</code> or <code>manual</code> (got "${modeRaw || ''}").`);
+          return NextResponse.json({ ok: true });
+        }
+        const shop = String(shopRaw || '').toLowerCase().trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+        const markupPercent = markupRaw !== undefined && markupRaw !== '' && Number.isFinite(Number(markupRaw?.replace('%', '')))
+          ? Math.min(300, Math.max(0, Number(markupRaw.replace('%', ''))))
+          : null;
+        try {
+          const { isValidShopDomain, mintInstallLinkToken } = await import('@/lib/shopifyOauth');
+          if (!isValidShopDomain(shop)) {
+            await sendTelegramMessage(chatId, `❌ Shop must be their *.myshopify.com domain (got "${shopRaw}").`);
+            return NextResponse.json({ ok: true });
+          }
+          if (!clientId || !clientSecret) {
+            await sendTelegramMessage(chatId, `❌ Need both client id and client secret from the Partner Dashboard app.`);
+            return NextResponse.json({ ok: true });
+          }
+          const ranchers = await getAllRecords(TABLES.RANCHERS);
+          const q = query.toLowerCase();
+          // UNIQUE match required (review 2026-07-21): this command overwrites a
+          // money-path config — a fuzzy first-hit must never pick the wrong
+          // rancher. Ambiguity = refuse + list.
+          const matches = (ranchers as any[]).filter((r) =>
+            (r['Ranch Name'] || '').toLowerCase().includes(q) ||
+            (r['Operator Name'] || '').toLowerCase().includes(q) ||
+            (r['Email'] || '').toLowerCase().includes(q),
+          );
+          if (matches.length === 0) {
+            await sendTelegramMessage(chatId, `❌ No rancher found for "<b>${query}</b>".`);
+            return NextResponse.json({ ok: true });
+          }
+          if (matches.length > 1) {
+            await sendTelegramMessage(
+              chatId,
+              `❌ "<b>${query}</b>" matches ${matches.length} ranchers — be more specific (use their email):\n` +
+                matches.slice(0, 6).map((m: any) => `• ${m['Ranch Name'] || m['Operator Name'] || '?'} (${m['Email'] || 'no email'})`).join('\n'),
+            );
+            return NextResponse.json({ ok: true });
+          }
+          const match = matches[0];
+          // LIVE-CONFIG GUARD (review 2026-07-21): staging a pending config
+          // OVERWRITES this field — on a connected rancher that destroys the
+          // working token and the connector goes inert BEFORE anyone clicks.
+          // Require an explicit trailing "force".
+          const { parseIntegration: parseActive } = await import('@/lib/fulfillmentConnector');
+          const existingActive = parseActive(match['Fulfillment Integration']);
+          if (existingActive && !force) {
+            await sendTelegramMessage(
+              chatId,
+              `⚠️ <b>${match['Ranch Name'] || match['Operator Name']}</b> already has a LIVE store connection ` +
+                `(${existingActive.shop}, ${existingActive.mode}). Staging a new install link would DISCONNECT it ` +
+                `immediately — orders would stop pushing until they complete the new install.\n\n` +
+                `If that's really what you want, re-run the command with <code>| force</code> at the end.`,
+            );
+            return NextResponse.json({ ok: true });
+          }
+          const { encryptSecret } = await import('@/lib/integrationCrypto');
+          await updateRecord(TABLES.RANCHERS, match.id, {
+            'Fulfillment Integration': JSON.stringify({
+              v: 1, provider: 'shopify', pending: true, shop,
+              clientId: clientId, encClientSecret: encryptSecret(clientSecret),
+              mode, markupPercent,
+            }),
+          });
+          const link = `${SITE_URL}/api/shopify/oauth/install?l=${mintInstallLinkToken({ rancherId: String(match.id) })}`;
+          const name = match['Ranch Name'] || match['Operator Name'] || 'rancher';
+          await sendTelegramMessage(
+            chatId,
+            `🔗 <b>Install link staged</b> — ${name} (${mode}${markupPercent != null ? `, ${markupPercent}%` : ''})\n\n` +
+              `Send them this link — they click, approve, done:\n${link}\n\n` +
+              `Good for 30 days. ⚠️ Delete your message above (it has the app secret).`,
+          );
+        } catch (e: any) {
+          await sendTelegramMessage(chatId, `❌ storelink error: ${String(e?.message || 'unknown').slice(0, 200)}`);
+        }
+      }
+
       else if (text.startsWith('/syncstore')) {
         // Manual catalog import for a sync-mode connected rancher.
         const query = text.replace('/syncstore', '').trim();
