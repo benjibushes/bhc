@@ -65,10 +65,19 @@ const PRODUCTS_PAGE = `query($cursor: String) {
   }
 }`;
 
+// Mirror of the rancher self-serve SHARE FENCE (lib/rancherProductInput.ts):
+// whole/half/quarter shares sell through the qualified deposit rail, never as
+// one-click /shop products — a synced Shopify product named "Half Beef Share"
+// must not bypass the gate the hand-entry path enforces. (Audit 2026-07-21:
+// sync wrote fields directly and skipped every input guard.)
+const SHARE_FENCE_RE = /\b(whole|half|quarter)\s*[- ]?\s*(beef|cow|share|steer|animal)s?\b/i;
+const MIN_SYNC_PRICE = 5; // dollars — mirrors MIN_PRODUCT_PRICE_CENTS
+
 export interface CatalogSyncResult {
   imported: number;
   updated: number;
   skippedNoSku: number;
+  skippedGuard: number;
   report: string[];
 }
 
@@ -76,7 +85,7 @@ export async function syncShopifyCatalog(rancherId: string, opts?: { dryRun?: bo
   const rancher = await getRecordById(TABLES.RANCHERS, rancherId);
   const cfg = parseIntegration(rancher?.['Fulfillment Integration']);
   if (!cfg || cfg.mode !== 'sync') {
-    return { imported: 0, updated: 0, skippedNoSku: 0, report: ['not in sync mode'] };
+    return { imported: 0, updated: 0, skippedNoSku: 0, skippedGuard: 0, report: ['not in sync mode'] };
   }
   const rancherName = String(rancher['Ranch Name'] || rancher['Operator Name'] || '');
 
@@ -93,6 +102,7 @@ export async function syncShopifyCatalog(rancherId: string, opts?: { dryRun?: bo
   let imported = 0;
   let updated = 0;
   let skippedNoSku = 0;
+  let skippedGuard = 0;
   let cursor: string | null = null;
   let pages = 0;
   do {
@@ -106,12 +116,19 @@ export async function syncShopifyCatalog(rancherId: string, opts?: { dryRun?: bo
     }).then((r) => r.json()).catch(() => null);
     const page = res?.data?.products;
     if (!page) {
-      return { imported, updated, skippedNoSku, report: [`catalog fetch failed on page ${pages + 1} — partial: imported ${imported}, updated ${updated}`] };
+      return { imported, updated, skippedNoSku, skippedGuard, report: [`catalog fetch failed on page ${pages + 1} — partial: imported ${imported}, updated ${updated}`] };
     }
     for (const product of page.nodes || []) {
       for (const variant of product.variants?.nodes || []) {
         if (!String(variant.sku || '').trim()) {
           skippedNoSku++;
+          continue;
+        }
+        // Guardrails the hand-entry path enforces (share fence + $5 floor) —
+        // synced rows must not bypass them.
+        const candidateName = `${product.title || ''} ${variant.title || ''}`;
+        if (SHARE_FENCE_RE.test(candidateName) || Number(variant.price || 0) < MIN_SYNC_PRICE) {
+          skippedGuard++;
           continue;
         }
         const skuKey = String(variant.sku || '').trim();
@@ -122,6 +139,14 @@ export async function syncShopifyCatalog(rancherId: string, opts?: { dryRun?: bo
           markupPercent: cfg.markupPercent ?? null,
           approved: row?.['Marketplace Approved'] === true,
         });
+        // First-create price safety (audit 2026-07-21): a null markup left
+        // 'Display Price' unwritten FOREVER — an approved row was then
+        // invisible on /shop and 409'd at buy. On create, default the resale
+        // price to the store price (zero-margin listing Ben can re-price);
+        // updates still leave a hand-set price alone.
+        if (!('Display Price' in fields) && !row) {
+          (fields as any)['Display Price'] = fields['Rancher Base'];
+        }
         if (opts?.dryRun) {
           if (row) updated++;
           else imported++;
@@ -152,6 +177,10 @@ export async function syncShopifyCatalog(rancherId: string, opts?: { dryRun?: bo
     imported,
     updated,
     skippedNoSku,
-    report: [`${opts?.dryRun ? '[dry-run] ' : ''}imported ${imported}, updated ${updated}, no-SKU skipped ${skippedNoSku}`],
+    skippedGuard,
+    report: [
+      `${opts?.dryRun ? '[dry-run] ' : ''}imported ${imported}, updated ${updated}, no-SKU skipped ${skippedNoSku}` +
+        (skippedGuard ? `, guard-blocked ${skippedGuard} (share-fence/$5 floor)` : ''),
+    ],
   };
 }

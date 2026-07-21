@@ -67,8 +67,13 @@ export async function connectShopifyStore(input: ConnectStoreInput): Promise<{ o
           variables: { topic, sub: { callbackUrl: `${SITE_URL}/api/webhooks/shopify`, format: 'JSON' } },
         }),
       }).then((r) => r.json());
+      // Top-level GraphQL errors (throttle, scope, coercion) come back HTTP
+      // 200 with data:null — they are failures too (audit 2026-07-21).
+      const topErrs = res?.errors;
       const errs = res?.data?.webhookSubscriptionCreate?.userErrors;
-      const msg = errs?.length ? String(errs[0].message) : 'registered';
+      const msg = topErrs?.length
+        ? String(topErrs[0]?.message || 'graphql error')
+        : errs?.length ? String(errs[0].message) : 'registered';
       report.push(`webhook ${topic}: ${msg}`);
       // "address ... already exists" = re-connect, fine. Anything else is a
       // real failure of that leg.

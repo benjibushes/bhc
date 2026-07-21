@@ -4935,6 +4935,69 @@ Confirm send?`;
         }
       }
 
+      else if (text.startsWith('/approvestore')) {
+        // CURATION GATE approval (audit 2026-07-21: checking the Airtable box
+        // alone did NOTHING until the next 6-hour sync recomputed Active —
+        // the demo step silently no-op'd). This command approves synced rows
+        // AND flips Active for in-stock ones AND revalidates /shop, so the
+        // product is live seconds after Ben's decision. The cron remains the
+        // convergence net for box-checked-by-hand rows.
+        //   /approvestore <ranch|email>            → approve ALL unapproved synced rows
+        //   /approvestore <ranch|email> | SKU,SKU  → approve specific SKUs
+        const aparts = text.replace('/approvestore', '').split('|').map((p: string) => p.trim());
+        const aquery = aparts[0];
+        const skuList = (aparts[1] || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+        if (!aquery) {
+          await sendTelegramMessage(chatId, `Usage: <code>/approvestore ranch or email</code> (all synced products) or <code>/approvestore ranch | SKU1,SKU2</code>`);
+          return NextResponse.json({ ok: true });
+        }
+        try {
+          const ranchers = await getAllRecords(TABLES.RANCHERS);
+          const q = aquery.toLowerCase();
+          const match = (ranchers as any[]).find((r) =>
+            (r['Ranch Name'] || '').toLowerCase().includes(q) ||
+            (r['Operator Name'] || '').toLowerCase().includes(q) ||
+            (r['Email'] || '').toLowerCase().includes(q),
+          );
+          if (!match) {
+            await sendTelegramMessage(chatId, `❌ No rancher found for "<b>${aquery}</b>".`);
+            return NextResponse.json({ ok: true });
+          }
+          const rows = (await getAllRecords(
+            TABLES.RANCHER_PRODUCTS,
+            `AND({Rancher Record ID} = "${escapeAirtableValue(String(match.id))}", {Sync Managed} = TRUE())`,
+          )) as any[];
+          const targets = rows.filter((r) =>
+            (skuList.length === 0 || skuList.includes(String(r['External SKU'] || '').trim())) &&
+            r['Marketplace Approved'] !== true,
+          );
+          if (targets.length === 0) {
+            await sendTelegramMessage(chatId, `Nothing to approve — ${rows.length} synced product${rows.length === 1 ? '' : 's'}, all already approved (or no SKU match).`);
+            return NextResponse.json({ ok: true });
+          }
+          let live = 0;
+          for (const r of targets) {
+            const inStock = Number(r['Orders Left'] ?? 0) > 0;
+            await updateRecord(TABLES.RANCHER_PRODUCTS, r.id, {
+              'Marketplace Approved': true,
+              ...(inStock ? { 'Active': true } : {}),
+            });
+            if (inStock) live++;
+          }
+          try {
+            const { revalidatePath } = await import('next/cache');
+            revalidatePath('/shop');
+          } catch { /* ISR backstop */ }
+          await sendTelegramMessage(
+            chatId,
+            `✅ <b>Approved ${targets.length}</b> synced product${targets.length === 1 ? '' : 's'} for ${match['Ranch Name'] || match['Operator Name']}` +
+              ` — ${live} now LIVE on /shop${targets.length - live > 0 ? ` (${targets.length - live} approved but out of stock)` : ''}.`,
+          );
+        } catch (e: any) {
+          await sendTelegramMessage(chatId, `❌ approvestore error: ${String(e?.message || 'unknown').slice(0, 200)}`);
+        }
+      }
+
       else if (text.startsWith('/syncstore')) {
         // Manual catalog import for a sync-mode connected rancher.
         const query = text.replace('/syncstore', '').trim();
