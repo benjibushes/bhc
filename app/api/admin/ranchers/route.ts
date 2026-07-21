@@ -14,7 +14,7 @@ function toRancherView(record: any) {
       // vs blocked (legacy = off-platform; Connect not active; price typo; paused).
       const _pricingModel = String(record['Pricing Model'] || 'legacy').toLowerCase();
       const _connectStatus = String(record['Stripe Connect Status'] || '').toLowerCase();
-      const _connectAcct = record['Stripe Account Id'] || record['Stripe Connect Account Id'] || '';
+      const _connectAcct = record['Stripe Connect Account Id'] || '';
       const _activeStatus = String(record['Active Status'] || '');
       const _maxPrice = Math.max(
         0,
@@ -134,7 +134,7 @@ function toRancherView(record: any) {
         return String(t);
       })(),
       subscription_status: record['Subscription Status'] || '',
-      stripe_connect_account_id: record['Stripe Account Id'] || record['Stripe Connect Account Id'] || '',
+      stripe_connect_account_id: record['Stripe Connect Account Id'] || '',
       v2_upgrade_invite_sent_at: record['V2 Upgrade Invite Sent At'] || '',
       quarter_deposit: record['Quarter Deposit'] || null,
       half_deposit: record['Half Deposit'] || null,
