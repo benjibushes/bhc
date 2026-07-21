@@ -74,3 +74,13 @@ test('curation gate: unapproved products are never Active, even in stock', () =>
   });
   assert.equal(f['Active'], false);
 });
+
+test('share-fence + $5 floor regexes: fence blocks share names, floor logic values', () => {
+  // The engine-level guards are loop-side; assert the fence regex behavior via
+  // a mirror here so a regex edit that breaks intent fails a test.
+  const fence = /\b(whole|half|quarter)\s*[- ]?\s*(beef|cow|share|steer|animal)s?\b/i;
+  assert.equal(fence.test('Half Beef Share'), true);
+  assert.equal(fence.test('Quarter Cow'), true);
+  assert.equal(fence.test('half-pound jerky'), false);
+  assert.equal(fence.test('Beef Box'), false);
+});

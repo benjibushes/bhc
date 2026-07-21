@@ -33,6 +33,12 @@ const PRE_INSTALL_REASONS = new Set([
   'shop-mismatch', 'bad-hmac', 'missing-code', 'secret-unavailable', 'bad-request',
 ]);
 
+const NEXT_STEPS: { title: string; body: string }[] = [
+  { title: 'Orders appear', body: 'Paid BuyHalfCow orders show up in your Shopify like any other order.' },
+  { title: 'You ship like normal', body: 'Same pick, pack, and label flow you already run. Nothing new to learn.' },
+  { title: 'Money lands itself', body: 'Your cut arrives in your account the moment a customer pays. No invoices.' },
+];
+
 export default async function StoreConnectedPage({
   searchParams,
 }: {
@@ -44,37 +50,64 @@ export default async function StoreConnectedPage({
   const already = params.already === '1';
 
   return (
-    <main className="min-h-[70vh] flex items-center justify-center px-6 py-16 bg-bone">
-      <div className="max-w-lg w-full border border-dust bg-bone-warm p-8 text-center space-y-4">
-        {ok ? (
-          <>
-            <p className="text-4xl">🤝</p>
-            <h1 className="font-serif text-2xl">
-              {already ? 'Your store is already connected' : 'Your store is connected'}
-            </h1>
-            <p className="text-sm text-saddle">
-              When a BuyHalfCow customer buys one of your products, the paid order shows up in
-              your Shopify like any other order — pack it and ship it exactly how you already do.
-              Your money lands automatically. Nothing else to set up.
-            </p>
-            <p className="text-xs text-charcoal/60">
-              You can close this page. Questions? Reply to any email from Ben, or text him.
-            </p>
-          </>
-        ) : (
-          <>
-            <p className="text-4xl">🪵</p>
-            <h1 className="font-serif text-2xl">That didn’t go through</h1>
-            <p className="text-sm text-saddle">
-              {FAIL_COPY[why] || 'Something unexpected happened. Text Ben — he can see exactly what.'}
-            </p>
-            {PRE_INSTALL_REASONS.has(why) && (
-              <p className="text-xs text-charcoal/60">Nothing was changed on your store.</p>
-            )}
-          </>
-        )}
-        <p className="pt-2">
-          <Link href="/" className="text-xs text-saddle underline underline-offset-4">
+    <main className="min-h-[70vh] flex items-center justify-center px-6 py-20 bg-bone">
+      <div className="max-w-2xl w-full">
+        <div className="border border-divider/20 bg-bone-warm px-8 py-12 sm:px-14 text-center">
+          <p className="text-[11px] uppercase tracking-[0.25em] text-dust mb-8">
+            BuyHalfCow · Store Connection
+          </p>
+
+          <span
+            aria-hidden
+            className={`inline-flex items-center justify-center w-14 h-14 rounded-full border text-2xl font-serif mb-6 ${
+              ok ? 'border-sage/50 text-sage' : 'border-weathered/50 text-weathered'
+            }`}
+          >
+            {ok ? '✓' : '✕'}
+          </span>
+
+          {ok ? (
+            <>
+              <h1 className="font-serif text-3xl sm:text-4xl text-charcoal">
+                {already ? 'Your store is already connected' : 'Your store is connected'}
+              </h1>
+              <p className="text-sm text-saddle mt-4 max-w-md mx-auto leading-relaxed">
+                That’s everything — there is nothing else to set up. You can close this page.
+              </p>
+
+              <div className="grid sm:grid-cols-3 gap-6 sm:gap-0 mt-10 sm:divide-x sm:divide-divider/15 text-left sm:text-center">
+                {NEXT_STEPS.map((s) => (
+                  <div key={s.title} className="sm:px-5">
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-charcoal font-medium">
+                      {s.title}
+                    </p>
+                    <p className="text-xs text-saddle mt-2 leading-relaxed">{s.body}</p>
+                  </div>
+                ))}
+              </div>
+
+              <p className="text-xs text-dust mt-10">
+                Questions? Reply to any email from Ben, or text him — a real person answers.
+              </p>
+            </>
+          ) : (
+            <>
+              <h1 className="font-serif text-3xl sm:text-4xl text-charcoal">That didn’t go through</h1>
+              <p className="text-sm text-saddle mt-4 max-w-md mx-auto leading-relaxed">
+                {FAIL_COPY[why] || 'Something unexpected happened. Text Ben — he can see exactly what.'}
+              </p>
+              {PRE_INSTALL_REASONS.has(why) && (
+                <p className="text-xs text-dust mt-6">Nothing was changed on your store.</p>
+              )}
+            </>
+          )}
+        </div>
+
+        <p className="text-center mt-6">
+          <Link
+            href="/"
+            className="text-[11px] uppercase tracking-[0.2em] text-saddle underline underline-offset-4 hover:text-charcoal transition-colors"
+          >
             buyhalfcow.com
           </Link>
         </p>

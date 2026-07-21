@@ -11,9 +11,13 @@ export function selectPushableOrder(input: {
 }): { ok: true } | { ok: false; reason: string } {
   const { order, product, integration } = input;
   if (!integration) return { ok: false, reason: 'no-integration' };
+  // Exact settlement markers ('DEPOSIT — ' / 'PICKUP — ', em-dash included —
+  // see productSettlement's Order Ref template). A bare prefix match would
+  // false-positive on a product legitimately NAMED "Deposit..." (audit
+  // 2026-07-21).
   const ref = String(order?.['Order Ref'] || '');
-  if (ref.startsWith('DEPOSIT')) return { ok: false, reason: 'deposit-style' };
-  if (ref.startsWith('PICKUP')) return { ok: false, reason: 'pickup' };
+  if (ref.startsWith('DEPOSIT — ')) return { ok: false, reason: 'deposit-style' };
+  if (ref.startsWith('PICKUP — ') || ref.startsWith('DEPOSIT — PICKUP — ')) return { ok: false, reason: 'pickup' };
   if (String(order?.Status || order?.['Status'] || '') !== 'New') return { ok: false, reason: `status-${order?.Status || order?.['Status'] || 'blank'}` };
   if (String(order?.['External Order Id'] || '').trim()) return { ok: false, reason: 'already-pushed' };
   if (String(order?.['External Push Status'] || '').trim() === 'pushed') return { ok: false, reason: 'already-pushed' };

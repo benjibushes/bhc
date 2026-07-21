@@ -51,3 +51,14 @@ test('buildPushInput defaults quantity 1 and trims SKU', () => {
   assert.equal(input.lineItems[0].quantity, 1);
   assert.equal(input.lineItems[0].sku, 'BEEF-BOX-10');
 });
+
+test('exact markers only: a product NAMED Deposit/Pickup is not blocked', () => {
+  const cfg2 = { v: 1, provider: 'shopify', shop: 'x.myshopify.com', encToken: 'e', encApiSecret: 'e', mode: 'manual', markupPercent: null, locationId: null } as any;
+  const order = {
+    id: 'recX', 'Order Ref': 'Deposit Jar Candle — Jane Doe', Status: 'New', Quantity: 1,
+    'Buyer Name': 'Jane', 'Buyer Email': 'j@x.com', 'Ship To Address': 'J\n1 St\nAustin, TX, 78701',
+    'External Push Status': '', 'External Order Id': '',
+  };
+  const product2 = { id: 'recP', 'External SKU': 'CANDLE-1', 'Product Name': 'Deposit Jar Candle' };
+  assert.deepEqual(selectPushableOrder({ order, product: product2, integration: cfg2 }), { ok: true });
+});

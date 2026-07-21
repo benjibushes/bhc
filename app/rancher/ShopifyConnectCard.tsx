@@ -108,36 +108,53 @@ export default function ShopifyConnectCard() {
             <li>Configure Admin API scopes: <code>write_orders</code>, <code>read_orders</code>, <code>read_products</code> — then <strong>Install app</strong>.</li>
             <li>Copy the <strong>Admin API access token</strong> (starts with shpat_) and the <strong>API secret key</strong> below. Takes about 5 minutes.</li>
           </ol>
-          <input
-            value={shop}
-            onChange={(e) => setShop(e.target.value)}
-            placeholder="your-store.myshopify.com"
-            className="w-full border border-dust bg-bone px-3 py-2 text-sm"
-          />
-          <input
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-            placeholder="Admin API access token (shpat_…)"
-            type="password"
-            autoComplete="off"
-            className="w-full border border-dust bg-bone px-3 py-2 text-sm"
-          />
-          <input
-            value={apiSecret}
-            onChange={(e) => setApiSecret(e.target.value)}
-            placeholder="API secret key"
-            type="password"
-            autoComplete="off"
-            className="w-full border border-dust bg-bone px-3 py-2 text-sm"
-          />
-          <div className="flex gap-4 text-sm">
-            <label className="flex items-center gap-2">
-              <input type="radio" checked={mode === 'sync'} onChange={() => setMode('sync')} />
-              <span>Sync my catalog <span className="text-xs text-saddle">(we import your products; BHC approves each before it displays)</span></span>
+          <div>
+            <span className="block text-xs uppercase tracking-wider text-saddle mb-1.5">Store address</span>
+            <input
+              value={shop}
+              onChange={(e) => setShop(e.target.value)}
+              placeholder="your-store.myshopify.com"
+              className="w-full border border-dust bg-bone px-3 py-2 text-sm"
+            />
+          </div>
+          <div>
+            <span className="block text-xs uppercase tracking-wider text-saddle mb-1.5">Admin API access token</span>
+            <input
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              placeholder="shpat_…"
+              type="password"
+              autoComplete="off"
+              className="w-full border border-dust bg-bone px-3 py-2 text-sm"
+            />
+          </div>
+          <div>
+            <span className="block text-xs uppercase tracking-wider text-saddle mb-1.5">API secret key</span>
+            <input
+              value={apiSecret}
+              onChange={(e) => setApiSecret(e.target.value)}
+              placeholder="shpss_… or hex string"
+              type="password"
+              autoComplete="off"
+              className="w-full border border-dust bg-bone px-3 py-2 text-sm"
+            />
+          </div>
+          <div className="space-y-2 text-sm pt-1">
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input type="radio" className="mt-1" checked={mode === 'sync'} onChange={() => setMode('sync')} />
+              <span>
+                Sync my catalog
+                <span className="block text-xs text-saddle">
+                  we import your products automatically; BuyHalfCow approves each one before it displays
+                </span>
+              </span>
             </label>
-            <label className="flex items-center gap-2">
-              <input type="radio" checked={mode === 'manual'} onChange={() => setMode('manual')} />
-              <span>Manual SKUs</span>
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input type="radio" className="mt-1" checked={mode === 'manual'} onChange={() => setMode('manual')} />
+              <span>
+                Manual SKUs
+                <span className="block text-xs text-saddle">you list products by hand and we match them by SKU</span>
+              </span>
             </label>
           </div>
           {error && <p className="text-sm text-weathered border border-weathered/40 px-3 py-2">{error}</p>}
