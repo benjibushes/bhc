@@ -129,3 +129,45 @@ incl. a real refund-cancel before any rancher store is touched.
 2. v1 auth = per-store custom-app token (RECOMMENDED, 5-min merchant setup) vs
    public OAuth app (only if dozens of stores; layerable later, no rework).
 3. Pilot rancher after merch-store proof.
+
+## 8. ONE-CLICK MILESTONE (researched + approved direction, 2026-07-21 PM)
+
+Ben requirement: connection must be click-button, no merchant API steps.
+Verified against current Shopify docs (docs/apps/launch/distribution):
+
+**Custom-distribution apps (Partner Dashboard) = click-button TODAY, no
+App Store review.** Ben generates an install link per distributor (app is
+single-store; multi-store only within one Plus org); merchant clicks →
+Shopify consent screen → installed. OAuth authorization-code grant (non-
+embedded) → BHC callback exchanges code for the OFFLINE token automatically.
+
+### Phase 1 (next build, ~1 PR): OAuth rail
+- `GET /api/shopify/oauth/install?d=<distributorAppId>` → 302 to
+  `https://{shop}/admin/oauth/authorize?client_id&scope=write_orders,read_orders,read_products&redirect_uri&state`
+  (state = signed JWT pinning distributorAppId + nonce).
+- `GET /api/shopify/oauth/callback` → verify HMAC + state → POST
+  `/admin/oauth/access_token` (client_id, client_secret, code) → encrypt
+  token → write Fulfillment Integration (webhook HMAC secret = the app's
+  client secret) → register webhooks → sync dry-run → success page.
+- Small admin surface: Ben pastes per-app client_id/client_secret + shop
+  domain (from Partner Dashboard, ~3 min/distributor) → BHC returns the
+  install link to send. Per-app creds stored encrypted (Admin Config or a
+  small table).
+- Token-paste card (PR-F) stays as fallback door.
+
+### Phase 2 (at 2-3 live distributors): public "BuyHalfCow" app
+Same routes, ONE client_id forever, universal install link, Ben per-
+distributor steps → zero. Adds: Shopify App Store review (~1-2 wks) + the 3
+mandatory compliance webhooks (customers/data_request, customers/redact,
+shop/redact — small build). "Must sync certain data with Shopify" per
+public-distribution requirements — review at build time.
+
+### Phase 3: packaging, not plumbing
+Money rail unchanged (Standard Connect + direct charges — proven live).
+One "Get connected" surface: [Connect your bank] (Stripe hosted onboarding
+link) + [Connect your store] (install link) with status checks. Distributor
+total: two clicks + Stripe's one bank form.
+
+Pilot note: run the merch-store pilot THROUGH Phase 1's flow as its first
+real install (pilot rancher rec4pnnjfp2nTaS1V, shop 3gapis-dx.myshopify.com).
+
