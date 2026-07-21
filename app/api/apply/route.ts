@@ -19,8 +19,9 @@ import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 // basic contact. On success:
 //
 //   • Creates Airtable Ranchers record w/ Status='Pending',
-//     Onboarding Status='Lead', Pricing Model defaults to 'tier_v2'
-//     (new ranchers get deposit-direct path; can be downgraded by Ben).
+//     Onboarding Status='Lead', Pricing Model defaults to 'legacy'
+//     (e-sign + own payment link go-live; the Stripe-Connect SSN wall
+//     killed 73% of cold signups — Connect/tier_v2 is a later upgrade).
 //   • Mints a collision-safe Slug from Ranch Name (2026-07-08) — without
 //     it an /apply rancher can never reach a live public page self-serve:
 //     sign-agreement auto-go-live requires a Slug, the wizard PATCH
@@ -216,8 +217,9 @@ export async function POST(req: Request) {
     .join('\n');
 
   // Find-or-create through the shared duplicate-rancher guard. Default
-  // Pricing Model to 'tier_v2' for new ranchers — gets them on the
-  // deposit-direct path. Ben can downgrade to legacy during review if needed.
+  // Pricing Model to 'legacy' for new ranchers — go-live on e-sign + slug +
+  // price + their own payment link, no Stripe Connect onboarding (the SSN
+  // wall killed 73% of cold signups). Ben can upgrade to tier_v2 later.
   //
   // Dedupe now goes beyond the old email-only check: the helper also matches
   // Team Emails, phone, and (Ranch Name + State) so a 2nd team member or a
@@ -242,7 +244,7 @@ export async function POST(req: Request) {
         City: body.city?.trim() || '',
         State: body.state,
         Status: 'Pending',
-        'Pricing Model': 'tier_v2',
+        'Pricing Model': 'legacy',
         'Operation Details': opDetails,
         Slug: slug,
       },
@@ -333,7 +335,7 @@ export async function POST(req: Request) {
         `Channels: ${channelsList}\n` +
         `Deposits online: ${body.acceptsDeposits || '?'}\n` +
         `Score: ${score}/9${body.website ? ` · ${body.website}` : ''}\n\n` +
-        `<i>Pricing Model defaulted to tier_v2. Wizard token minted — they'll be redirected.</i>\n\n` +
+        `<i>Pricing Model defaulted to legacy. Wizard token minted — they'll be redirected.</i>\n\n` +
         `Rancher ${rancherId}`
     );
   } catch (e: any) {
