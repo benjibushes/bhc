@@ -183,7 +183,9 @@ interface DunningResult {
  *      Stripe returned a PI at create time) → paymentIntents.retrieve.
  *   2. Clover async-PI fallback: that field is usually EMPTY (apiVersion
  *      '2026-02-25.clover' defers PI creation to pay-time), so recover the
- *      session id from `Final Invoice URL` and read session.payment_intent.
+ *      session id from `Final Invoice Checkout Session Id` (durable-link era)
+ *      or, for legacy rows, parsed out of a raw-Stripe `Final Invoice URL`,
+ *      and read session.payment_intent.
  *      A live session with payment_status 'unpaid' and no PI = the buyer never
  *      submitted payment → definitively dunnable (NO_PAYMENT_INTENT sentinel).
  *
@@ -212,7 +214,14 @@ async function resolveFinalInvoicePi(
     }
   }
 
-  const sessionId = parseCheckoutSessionIdFromUrl(ref['Final Invoice URL']);
+  // Durable-link era (2026-07-21): 'Final Invoice URL' now holds our own
+  // /r/f/<token> link, which carries no cs_ id — the session id is stamped in
+  // its own field at send time AND at every /r/f click-time re-mint. The URL
+  // parse stays as the fallback for legacy rows that still store a raw
+  // checkout.stripe.com URL.
+  const sessionId =
+    String(ref['Final Invoice Checkout Session Id'] || '').trim() ||
+    parseCheckoutSessionIdFromUrl(ref['Final Invoice URL']);
   if (!sessionId) return { pi: null, piStatus: null };
   try {
     const session: any = await stripe.checkout.sessions.retrieve(

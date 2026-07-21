@@ -31,6 +31,7 @@ import { NextResponse } from 'next/server';
 import { TABLES, getRecordById, updateRecord } from '@/lib/airtable';
 import { canSendFinalInvoice } from '@/lib/refundLifecycle';
 import { createFinalInvoiceCheckout } from '@/lib/stripeConnect';
+import { mintFinalInvoiceLinkToken } from '@/lib/finalInvoiceLink';
 import { requireRancher } from '@/lib/rancherAuth';
 import { sendBuyerFinalInvoice } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
@@ -258,6 +259,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // Create Stripe Connect Checkout Session (app_fee = 0)
   let checkoutUrl: string;
   let paymentIntentId: string;
+  let checkoutSessionId: string;
   try {
     const result = await createFinalInvoiceCheckout({
       rancherConnectAccountId: connectAccountId,
@@ -274,6 +276,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     });
     checkoutUrl = result.url;
     paymentIntentId = result.paymentIntentId;
+    checkoutSessionId = result.sessionId;
   } catch (e: any) {
     console.error('[final-invoice] Stripe checkout creation failed:', e?.message);
     return NextResponse.json(
@@ -286,13 +289,31 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // declaration of the full deal value — useful for downstream stats +
   // Closed Won transition when webhook fires. Processing Fee is stamped so
   // re-sends + audit replays can recompute balance without rancher re-input.
+  // Durable link (2026-07-21, Dana incident): the STORED + EMAILED URL is our
+  // own /r/f/<token>, never the raw Stripe URL — Stripe expires those in ~24h
+  // and the dunning cron re-sends whatever this field holds. /r/f reuses the
+  // session below while it's open, then re-mints fresh ones forever after.
+  let durableUrl: string;
+  try {
+    durableUrl = `${SITE_URL}/r/f/${mintFinalInvoiceLinkToken({ referralId })}`;
+  } catch (e: any) {
+    // JWT_SECRET missing is the only real failure — fall back to the raw
+    // Stripe URL rather than sending nothing (24h beats zero).
+    console.error('[final-invoice] durable link mint failed, falling back to raw URL:', e?.message);
+    durableUrl = checkoutUrl;
+  }
+
   const nowISO = new Date().toISOString();
   try {
     await updateRecord(TABLES.REFERRALS, referralId, {
-      'Final Invoice URL': checkoutUrl,
+      'Final Invoice URL': durableUrl,
       'Final Invoice Sent At': nowISO,
       'Final Invoice Amount': balanceDollars,
       'Final Invoice Payment Intent ID': paymentIntentId,
+      // The dunning heal-or-skip resolver needs a live pointer into Stripe.
+      // It used to parse cs_… out of Final Invoice URL; that field now holds
+      // the durable link, so the session id gets its own stamped field.
+      'Final Invoice Checkout Session Id': checkoutSessionId,
       'Total Sale Amount': totalSaleAmount,
       ...(processingFeeInput !== null ? { 'Processing Fee': processingFeeInput } : {}),
       ...(body.processingDate ? { 'Processing Date': body.processingDate } : {}),
@@ -316,7 +337,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       depositAmount,
       processingDate: body.processingDate,
       notes: body.notes,
-      checkoutUrl,
+      checkoutUrl: durableUrl,
     });
   } catch (e: any) {
     console.error('[final-invoice] buyer email failed:', e?.message);
@@ -344,7 +365,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   return NextResponse.json({
     ok: true,
-    url: checkoutUrl,
+    url: durableUrl,
     paymentIntentId,
     balanceAmount: balanceDollars,
     totalSaleAmount,

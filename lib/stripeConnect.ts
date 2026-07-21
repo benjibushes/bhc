@@ -576,11 +576,17 @@ export interface CreateFinalInvoiceCheckoutInput {
   notes?: string;             // optional rancher message to buyer
   successUrl: string;
   cancelUrl: string;
+  /**
+   * Override the fixed per-referral idempotency key. /r/f click-time re-mints
+   * pass a varying key so a fresh session is minted after the old one expired;
+   * send-final-invoice omits it (fixed key = double-submit protection).
+   */
+  idempotencyKey?: string;
 }
 
 export async function createFinalInvoiceCheckout(
   input: CreateFinalInvoiceCheckoutInput,
-): Promise<{ url: string; paymentIntentId: string }> {
+): Promise<{ url: string; paymentIntentId: string; sessionId: string }> {
   if (input.amountCents <= 0) {
     throw new Error('Final invoice amount must be greater than zero');
   }
@@ -634,8 +640,10 @@ export async function createFinalInvoiceCheckout(
     },
     {
       stripeAccount: input.rancherConnectAccountId,
-      // v2: same param-pinning rule as the deposit key above.
-      idempotencyKey: `final-invoice-${input.referralId}-v3`,
+      // v2: same param-pinning rule as the deposit key above. Click-time
+      // re-mints from /r/f pass their own varying key — the fixed key would
+      // hand back the same (possibly expired) session for 24h.
+      idempotencyKey: input.idempotencyKey || `final-invoice-${input.referralId}-v3`,
     },
   );
 
@@ -648,5 +656,5 @@ export async function createFinalInvoiceCheckout(
   if (!url) {
     throw new Error('Stripe Checkout (final invoice) returned no url');
   }
-  return { url, paymentIntentId };
+  return { url, paymentIntentId, sessionId: String(session.id || '') };
 }
