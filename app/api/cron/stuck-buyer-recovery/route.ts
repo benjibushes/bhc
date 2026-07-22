@@ -149,7 +149,16 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
         skipReasons['not-stuck-yet'] = (skipReasons['not-stuck-yet'] || 0) + 1;
         continue;
       }
-      if (segment !== 'Beef Buyer') continue;
+      // Segment gate (2026-07-22, reactivation audit): a BLANK Segment is
+      // ELIGIBLE — plenty of import/signup paths never stamp it, and Qualified
+      // At / Ready to Buy above already prove buyer intent (quiz-required
+      // rule). Only an explicit non-buyer segment excludes, and the skip is
+      // COUNTED so "stuck=0" can never hide real READY buyers behind an
+      // unlogged filter.
+      if (segment && segment !== 'Beef Buyer') {
+        skipReasons['wrong-segment'] = (skipReasons['wrong-segment'] || 0) + 1;
+        continue;
+      }
       if (status === 'Rejected') continue;
       if (buyersWithActiveRef.has(c.id)) {
         skipReasons['already-recovered'] = (skipReasons['already-recovered'] || 0) + 1;
@@ -291,10 +300,16 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
     }
 
     const matchedCount = retried.filter((r) => r.matched).length;
+    // Surface every skip reason (wrong-segment especially) so "stuck=0" is
+    // diagnosable from the Cron Runs note alone.
+    const skipNote = Object.keys(skipReasons).length
+      ? ` skips=${Object.entries(skipReasons).map(([k, v]) => `${k}:${v}`).join(',')}`
+      : '';
     return {
       status: 'success',
       recordsTouched: retried.length,
-      notes: `stuck=${stuck.length} retried=${retried.length} matched=${matchedCount}`,
+      notes: `stuck=${stuck.length} retried=${retried.length} matched=${matchedCount}${skipNote}`,
+      skipReasonBreakdown: skipReasons,
     };
   }
 }

@@ -5,9 +5,11 @@
 // buyers are never invited, and ~80% of the invited never click).
 //
 // Targets: Status=Approved, Qualified At empty, has Email, not suppressed,
-// not already Matched/Closed, signed up within QUIZ_NUDGE_MAX_DAYS (default
-// 21d — the forward-going window; widening to all-time = the parked dead-lead
-// re-qualify campaign, gated on rancher Connect migration). SERVED STATES ONLY
+// not already Matched/Closed, and RECENTLY ENGAGED: signed up within
+// QUIZ_NUDGE_MAX_DAYS (default 21d) OR waiting-activation-nudged within that
+// window (2026-07-22 — reactivated WAITING buyers were created long ago, so a
+// created-time-only window made their mid-funnel drop-offs invisible; all-time
+// widening stays parked). SERVED STATES ONLY
 // — only buyers whose state has an operational rancher (else they'd qualify
 // straight onto a waitlist with no rancher to route to).
 //
@@ -25,7 +27,7 @@
 
 import { NextResponse } from 'next/server';
 import jwt from 'jsonwebtoken';
-import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
+import { getAllRecords, updateRecord, TABLES, isInvalidFilterFormulaError } from '@/lib/airtable';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendEmail } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
@@ -125,14 +127,23 @@ async function realHandler(_request: Request): Promise<CronResult> {
   // ("you started signing up but haven't finished the 60-second quiz") is
   // FALSE for them and reads as a spammy wrong-cohort nag. Exclude them here;
   // they're still reachable by waiting-activation and the buyer sequences.
-  const candidates = await getAllRecords(
-    TABLES.CONSUMERS,
+  // ENGAGEMENT-RECENCY WINDOW (2026-07-22, reactivation audit): the 21-day
+  // window anchors on CREATED_TIME() *or* the waiting-activation nudge stamp.
+  // Reactivated WAITING buyers were created months-to-years ago — a buyer who
+  // clicks a waiting nudge, lands on /access, and stalls mid-funnel would
+  // otherwise be invisible to this drip (record age fails the window). The OR
+  // clause keeps the all-time dead-lead backlog excluded: only buyers we JUST
+  // re-touched (Waiting Nudge Last Sent At inside the window) join the organic
+  // signup cohort.
+  const candidateFormula = (withWaitingRecency: boolean) =>
     `AND(
       {Status}="Approved",
       {Qualified At}="",
       {Funnel Completed At}="",
       {Lead Source}!="halfcow-guide",
-      IS_AFTER(CREATED_TIME(), "${cutoffEarly}"),
+      ${withWaitingRecency
+        ? `OR(IS_AFTER(CREATED_TIME(), "${cutoffEarly}"), IS_AFTER({Waiting Nudge Last Sent At}, "${cutoffEarly}"))`
+        : `IS_AFTER(CREATED_TIME(), "${cutoffEarly}")`},
       IS_BEFORE(CREATED_TIME(), "${cutoffLate}"),
       NOT({Email}=""),
       {Unsubscribed}!=1,
@@ -140,8 +151,21 @@ async function realHandler(_request: Request): Promise<CronResult> {
       {Complained}!=1,
       {Buyer Stage}!="MATCHED",
       {Buyer Stage}!="CLOSED"
-    )`.replace(/\s+/g, ' ')
-  ).catch(() => []) as any[];
+    )`.replace(/\s+/g, ' ');
+
+  let candidates: any[] = [];
+  try {
+    candidates = (await getAllRecords(TABLES.CONSUMERS, candidateFormula(true))) as any[];
+  } catch (e: any) {
+    if (isInvalidFilterFormulaError(e)) {
+      // {Waiting Nudge Last Sent At} missing → degrade to the created-time-only
+      // window rather than silently killing the whole drip.
+      console.warn('[abandoned-quiz-nudge] waiting-recency clause rejected; falling back to created-time window');
+      candidates = (await getAllRecords(TABLES.CONSUMERS, candidateFormula(false)).catch(() => [])) as any[];
+    } else {
+      console.warn('[abandoned-quiz-nudge] candidate read failed:', e?.message);
+    }
+  }
 
   // Served-states scoping (Ben, 2026-06-18): only nudge buyers whose state has
   // an operational rancher. Qualifying buyers in unserved states would dead-end

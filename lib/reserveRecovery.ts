@@ -190,6 +190,51 @@ export function selectRecoverySms<T extends RecoveryReferralLike>(refs: T[], opt
   return (refs || []).filter((r) => isRecoverySmsEligible(r, opts));
 }
 
+// ── ALL-RANCHER ABANDON RAIL (2026-07-22, reactivation audit) ────────────────
+// The demand-router recovery above is deliberately campaign-scoped (A7 blast-
+// radius bound) — so a reserve abandoned at ANY other operational rancher got
+// zero follow-up forever. deposit-request-nudge rail C uses this selector to
+// chase the same cohort platform-wide: same pure eligibility, same stamps,
+// same 14d max-age cap (a first run must never blast the historical backlog),
+// plus a per-run batch cap.
+
+/** Max reserve age (days) the all-rancher rail will recover. */
+export const DEFAULT_RESERVE_RECOVERY_MAX_AGE_DAYS = 14;
+
+export interface ReserveAbandonSelectOptions extends RecoveryOptions {
+  /** Reserves older than this many days are never recovered. Default 14. */
+  maxAgeDays?: number;
+  /** Per-run cap per step (email / sms). Default 25. */
+  batchCap?: number;
+}
+
+/**
+ * Select this run's reserve-abandon recovery work (email step + SMS step).
+ * The email step is age-capped (created within maxAgeDays); the SMS step keys
+ * off the email stamp, which already passed the cap when it was written. The
+ * two lists are disjoint by construction (email requires the stamp EMPTY, SMS
+ * requires it SET). Oldest first, capped per step. Pure.
+ */
+export function selectReserveAbandonRecovery<T extends RecoveryReferralLike>(
+  refs: T[],
+  opts: ReserveAbandonSelectOptions = {},
+): { email: T[]; sms: T[] } {
+  const maxAgeDays = opts.maxAgeDays ?? DEFAULT_RESERVE_RECOVERY_MAX_AGE_DAYS;
+  const now = opts.now ?? Date.now();
+  const cap = Math.floor(opts.batchCap ?? 25);
+  if (!Array.isArray(refs) || refs.length === 0 || cap <= 0) return { email: [], sms: [] };
+  const minCreated = now - maxAgeDays * 24 * HOUR;
+  const email = refs
+    .filter((r) => reserveCreatedMs(r) >= minCreated && isRecoveryEmailEligible(r, opts))
+    .sort((a, b) => reserveCreatedMs(a) - reserveCreatedMs(b))
+    .slice(0, cap);
+  const sms = refs
+    .filter((r) => isRecoverySmsEligible(r, opts))
+    .sort((a, b) => toMs(a['Reserve Recovery Sent At']) - toMs(b['Reserve Recovery Sent At']))
+    .slice(0, cap);
+  return { email, sms };
+}
+
 /** Whole hours since the reserve was created (for alert/report copy). */
 export function hoursSinceReserve(ref: RecoveryReferralLike, now: number = Date.now()): number {
   const created = reserveCreatedMs(ref);
