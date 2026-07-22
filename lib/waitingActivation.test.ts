@@ -255,3 +255,23 @@ test('dry-run report: gate off → supplyStates null, droppedNoSupply 0', () => 
   const text = formatWaitingDryRunReport(report, { cooldownDays: 14, batchCap: 50 });
   assert.match(text, /Supply gate: OFF/);
 });
+
+// ── cross-rail cooldown (audit 2026-07-22) ───────────────────────────────────
+// The demand-router campaign stamps 'Campaign Last Sent At'; the waiting-
+// activation rail must treat that touch as recent contact so one buyer never
+// gets both streams (conflicting CTAs) in the same window.
+
+test('cross-rail: a recent Campaign Last Sent At blocks the waiting nudge', () => {
+  const b = buyer({ 'Campaign Last Sent At': daysAgo(2) });
+  assert.equal(isWaitingNudgeEligible(b, OPTS), false);
+});
+
+test('cross-rail: a campaign touch older than the cooldown does NOT block', () => {
+  const b = buyer({ 'Campaign Last Sent At': daysAgo(OPTS.cooldownDays + 1) });
+  assert.equal(isWaitingNudgeEligible(b, OPTS), true);
+});
+
+test('cross-rail: a corrupt Campaign Last Sent At skips (never storms)', () => {
+  const b = buyer({ 'Campaign Last Sent At': 'not-a-date' });
+  assert.equal(isWaitingNudgeEligible(b, OPTS), false);
+});

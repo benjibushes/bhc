@@ -109,6 +109,20 @@ export function isWaitingNudgeEligible(
     if (nowMs - lastMs < opts.cooldownDays * DAY_MS) return false;
   }
 
+  // CROSS-RAIL COOLDOWN (audit 2026-07-22): the demand-router campaign stamps
+  // 'Campaign Last Sent At' on every wave send. A buyer the campaign touched
+  // within cooldownDays must not ALSO get a "finish your qualification" nudge
+  // pointing at a conflicting CTA the same week — each rail treats the other's
+  // touch as recent contact (reads the existing stamp only; no new fields).
+  const campaignStamp = String(c['Campaign Last Sent At'] || '').trim();
+  if (campaignStamp) {
+    const lastMs = Date.parse(campaignStamp);
+    if (!Number.isFinite(lastMs)) return false; // corrupt stamp → skip, never storm
+    const nowMs = Date.parse(opts.nowISO);
+    if (!Number.isFinite(nowMs)) return false;
+    if (nowMs - lastMs < opts.cooldownDays * DAY_MS) return false;
+  }
+
   return true;
 }
 
