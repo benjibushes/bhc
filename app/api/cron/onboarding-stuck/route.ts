@@ -182,13 +182,22 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
 
     const days = daysSince(anchorISO || undefined);
     if (days === null || days < 3) continue;
-    const bucket = pickNudgeBucket(days);
+    let bucket = pickNudgeBucket(days);
     if (!bucket) continue;
 
     // Throttle: don't re-send same bucket within 4 days.
     const lastNudgeISO: string | undefined = r['Last Onboarding Nudge At'] || undefined;
     const sinceLast = daysSince(lastNudgeISO);
     if (sinceLast !== null && sinceLast < 4) continue;
+
+    // FIRST-DETECTION CLAMP (audit 2026-07-21): the anchor chain falls back to
+    // Agreement Signed At / Docs Sent At / _createdTime, so a rancher whose
+    // stuck condition is DETECTED >14d after that anchor (the entire existing
+    // stuck cohort) jumped straight to the one-shot terminal escalation with
+    // ZERO rancher-facing emails. If we've never nudged this rancher at all,
+    // start the chase at day3 regardless of raw anchor age — the escalation
+    // still fires on the next pass (≥4d later) if they stay stuck.
+    if (bucket === 'day14' && !lastNudgeISO) bucket = 'day3';
 
     const email = (r['Email'] || '').toString().trim();
     const name = (r['Operator Name'] || r['Ranch Name'] || 'Rancher').toString();
@@ -207,7 +216,18 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
       // the stamp, or bucket field missing in the base) is treated as
       // terminal — conservative: stopping the spam is the point.
       const escalatedBucket = String(r['Stuck Escalated Bucket'] || '');
-      if (r['Stuck Escalated At'] && (!escalatedBucket || escalatedBucket === bucketLabel)) {
+      // RE-ARM (audit 2026-07-21): a Connect downgrade AFTER the terminal
+      // escalation re-enters the live-no-deposits bucket, and the matching
+      // stamp swallowed it forever — the "day-N chase" the webhook comment
+      // references is this rail. When 'Connect Restricted At' (stamped by the
+      // stripe-connect webhook on the active→restricted edge, cleared on
+      // re-activation) is NEWER than the escalation stamp, this is a fresh
+      // incident — escalate once more.
+      const restrictedAtMs = new Date(String(r['Connect Restricted At'] || '')).getTime();
+      const escalatedAtMs = new Date(String(r['Stuck Escalated At'] || '')).getTime();
+      const rearmed =
+        isFinite(restrictedAtMs) && isFinite(escalatedAtMs) && restrictedAtMs > escalatedAtMs;
+      if (!rearmed && r['Stuck Escalated At'] && (!escalatedBucket || escalatedBucket === bucketLabel)) {
         continue; // already escalated for this bucket — terminal, no re-ping
       }
       try {

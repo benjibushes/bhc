@@ -330,6 +330,11 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
         // on it, so requiring it here silently stranded ranchers who finished
         // everything else but left About blank.
         if (!r['Slug']) return false;
+        // Price gate (audit 2026-07-21): mirror rancher-go-live-sync — a
+        // priceless rancher flipped Live routes buyers into a "no X price set"
+        // 409 at the deposit endpoint / an empty cuts list. Every share size
+        // unset ⇒ not ready, regardless of pricing model.
+        if (!(r['Quarter Price'] || r['Half Price'] || r['Whole Price'])) return false;
         // tier_v2 ranchers collect via Stripe Connect deposits, not a legacy
         // Payment Link — accept an active Connect account as equivalent, else
         // every tier_v2 rancher is permanently blocked from auto-go-live.

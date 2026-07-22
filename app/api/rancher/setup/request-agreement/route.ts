@@ -113,7 +113,7 @@ export async function POST(req: Request) {
   // on Onboarding Status. "Docs Sent" gets the "your agreement is ready,
   // sign here" framing with the signingLink CTA.
   try {
-    await sendPipelineUpdateEmail({
+    const emailRes: any = await sendPipelineUpdateEmail({
       operatorName,
       ranchName,
       email,
@@ -121,6 +121,14 @@ export async function POST(req: Request) {
       onboardingStatus: 'Docs Sent',
       signingLink,
     });
+    // guardedSend returns {success:false, suppressed:true} WITHOUT throwing
+    // on a cap/unsubscribe suppression (audit 2026-07-21) — the old code only
+    // caught throws, so the route replied "signing email sent" while the
+    // rancher waited on an email that never left. Surface the truth.
+    if (!emailRes?.success) {
+      console.error('[setup/request-agreement] email not delivered:', emailRes?.suppressed ? 'suppressed' : 'send failed');
+      return NextResponse.json({ error: 'Email send failed — try again' }, { status: 500 });
+    }
   } catch (e: any) {
     console.error('[setup/request-agreement] email failed:', e?.message);
     return NextResponse.json({ error: 'Email send failed — try again' }, { status: 500 });

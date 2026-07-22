@@ -7,6 +7,8 @@ import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 import { getOperatorBookingUrl } from '@/lib/calBooking';
+import jwt from 'jsonwebtoken';
+import { JWT_SECRET } from '@/lib/secrets';
 
 export const maxDuration = 60;
 
@@ -158,6 +160,41 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
         }
       }
 
+      // TERMINAL STATE (audit 2026-07-21): this nudge previously re-armed
+      // every ~2 days FOREVER — a permanently-stalled applicant got the same
+      // email until the 3/week cap started randomly eating them. Mirror
+      // onboarding-stuck's one-shot day-14 escalation: past 14 days, stop
+      // emailing, Telegram admin ONCE (Stuck Escalated At/Bucket terminal
+      // markers, possibly-missing-field pattern), then go quiet.
+      if (isNewApplicant && daysStuck >= 14) {
+        const escalatedBucket = String(rancher['Stuck Escalated Bucket'] || '');
+        if (rancher['Stuck Escalated At'] && (!escalatedBucket || escalatedBucket === 'new-applicant')) {
+          continue; // already escalated — terminal, no re-ping
+        }
+        try {
+          await sendTelegramMessage(
+            TELEGRAM_ADMIN_CHAT_ID,
+            `🚨 <b>STUCK NEW APPLICANT (14d)</b>\n\n${name} (${state})\n${email}\n\n<i>Nudged every 2 days with no wizard progress. Call them or close the loop manually. This is the ONE escalation for this rancher — no repeats.</i>`
+          );
+          processed++;
+          try {
+            await updateRecord(TABLES.RANCHERS, rancher.id, {
+              'Last Onboarding Nudge At': new Date().toISOString(),
+              'Stuck Escalated At': new Date().toISOString(),
+              'Stuck Escalated Bucket': 'new-applicant',
+            });
+          } catch (stampErr: any) {
+            console.warn('[rancher-followup] terminal-stamp failed (degrades to 2-day re-ping until Stuck Escalated fields exist):', stampErr?.message);
+            await updateRecord(TABLES.RANCHERS, rancher.id, {
+              'Last Onboarding Nudge At': new Date().toISOString(),
+            });
+          }
+        } catch (e: any) {
+          console.error('[rancher-followup] new-applicant escalation failed:', e?.message);
+        }
+        continue;
+      }
+
       const stageEmoji: Record<string, string> = {
         'New Applicant':       '📬',
         'Call Scheduled':      '📅',
@@ -223,18 +260,35 @@ ${stageEmoji[stage] || '⏳'} Stage: <b>${stage}</b>
           const first = (rancher['Operator Name'] || '').toString().split(' ')[0] || 'there';
           const ranchName = (rancher['Ranch Name'] || rancher['Operator Name'] || 'your ranch').toString();
           const calLink = await getOperatorBookingUrl('rancher');
+          // Wrong-rail fix (audit 2026-07-21): this branch catches every
+          // /apply + /partners auto-approved rancher who stalled mid-wizard,
+          // and the old email pitched "yellow pin, book a call" — map-prospect
+          // framing that contradicted the approval email's "10 minutes to
+          // live, no call needed" wizard promise, with no setup link at all.
+          // Mint a fresh setup token (60d, matches the approval email) and
+          // make Finish-setup the primary CTA; book-a-call is secondary.
+          // Yellow-pin copy only for actual map self-submits (Self-Submitted
+          // At is the canonical marker).
+          const setupToken = jwt.sign({ type: 'rancher-setup', rancherId: rancher.id }, JWT_SECRET, { expiresIn: '60d' });
+          const setupUrl = `${SITE_URL}/rancher/setup?token=${setupToken}`;
+          const isMapProspect = !!rancher['Self-Submitted At'];
+          const introHtml = isMapProspect
+            ? `<p>Just a quick check-in &mdash; <strong>${ranchName}</strong> has been on the BuyHalfCow map for a couple days now. Yellow pin, visible to buyers, but not yet routed customers.</p>
+  <p>The fastest way to flip from "visible" to "getting leads" is finishing your setup &mdash; prices, payment link, one e-signature. About 10 minutes.</p>`
+            : `<p>Just a quick check-in &mdash; <strong>${ranchName}</strong> is approved, but your setup isn't finished yet, so buyers can't route to you.</p>
+  <p>Picking up where you left off takes about 10 minutes &mdash; prices, payment link, one e-signature &mdash; and your page goes live the moment you're done.</p>`;
           try {
             await sendEmail({
               to: rancherEmail,
-              subject: `${first}, ${ranchName} is on the map — what's next?`,
+              subject: `${first}, ${ranchName} is almost live — finish your setup`,
               html: `<!DOCTYPE html><html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px;">
 <div style="max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A;">
   <h1 style="font-family:Georgia,serif;font-size:24px;margin:0 0 18px;">Hey ${first},</h1>
-  <p>Just a quick check-in &mdash; <strong>${ranchName}</strong> has been on the BuyHalfCow map for a couple days now. Yellow pin, visible to buyers, but not yet routed customers.</p>
-  <p>The fastest way to flip from "visible" to "getting leads" is a 15-minute call. I'll show you what we do, ask how you sell today, and we figure out together if it's a fit.</p>
+  ${introHtml}
   <div style="text-align:center;margin:30px 0;">
-    <a href="${calLink}" style="display:inline-block;padding:14px 30px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px;">Book the 15-min call</a>
+    <a href="${setupUrl}" style="display:inline-block;padding:14px 30px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px;">Finish your setup</a>
   </div>
+  <p style="font-size:13px;color:#6B4F3F;">Prefer to talk it through first? <a href="${calLink}" style="color:#0E0E0E;">Book a 15-minute call</a> and I'll walk you through it.</p>
   <p style="font-size:13px;color:#6B4F3F;">If now isn't the right time, just reply and let me know. No pressure.</p>
   <p style="font-size:12px;color:#A7A29A;margin-top:30px;">&mdash; Ben<br>Founder, BuyHalfCow</p>
 </div></body></html>`,
