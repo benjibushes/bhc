@@ -23,12 +23,17 @@
 // 'Deposit Watchdog Alerted At' exists (fldf6Xo5xl2ktaykM, created
 // 2026-07-21); the abort guard is the safety net if it ever vanishes.
 
-import { getAllRecords, getRecordById, updateRecord, TABLES } from '@/lib/airtable';
+import { getAllRecords, getRecordById, updateRecord, escapeAirtableValue, TABLES } from '@/lib/airtable';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
-import { selectWatchdogTargets, watchdogAnchorMs, watchdogSkipReason } from '@/lib/depositWatchdog';
+import {
+  selectWatchdogTargets,
+  watchdogAnchorMs,
+  watchdogSkipReason,
+  earliestSentDepositInvite,
+} from '@/lib/depositWatchdog';
 
 export const maxDuration = 120;
 
@@ -69,10 +74,47 @@ async function realHandler(_request: Request): Promise<CronResult> {
   const targets = selectWatchdogTargets(candidates, { now }).slice(0, BATCH_CAP);
 
   let alerted = 0;
+  let healed = 0;
   const errors: string[] = [];
 
   for (const r of targets) {
     try {
+      // ── SELF-HEAL BEFORE ALERT (2026-07-22 false-alarm incident) ────────
+      // A blank 'Deposit Invite Sent At' is NOT proof the invite never went
+      // out — it can be a pre-#410 send (field didn't exist yet) or a send
+      // path that forgot to stamp. Email Sends is the ground truth. If a real
+      // deposit invite was delivered to this buyer, backfill the stamp from
+      // that timestamp and DO NOT alarm — the instrument heals itself instead
+      // of crying wolf. Read failure falls through to the alarm (never
+      // suppress a genuine one on a transient Airtable error).
+      const buyerEmail = String(r['Buyer Email'] || '').trim();
+      if (buyerEmail) {
+        let sends: any[] = [];
+        try {
+          sends = (await getAllRecords(
+            TABLES.EMAIL_SENDS,
+            `AND(LOWER({Recipient Email})="${escapeAirtableValue(buyerEmail.toLowerCase())}", {Status}="sent")`,
+          )) as any[];
+        } catch {
+          /* read failed → fall through to alarm; a real stuck buyer must not be
+             silently suppressed by an Airtable hiccup */
+        }
+        const invitedAt = earliestSentDepositInvite(sends);
+        if (invitedAt) {
+          try {
+            await updateRecord(TABLES.REFERRALS, r.id, { 'Deposit Invite Sent At': invitedAt });
+            healed++;
+            skipReasonBreakdown['self-healed'] = (skipReasonBreakdown['self-healed'] || 0) + 1;
+          } catch (e: any) {
+            // Backfill write failed — do NOT alarm (the invite DID go out, so an
+            // alarm would be the false positive we're fixing). Next run retries
+            // the heal. Record as an error so the run reports 'partial'.
+            errors.push(`${r.id}: self-heal write (${e?.message?.slice(0, 60) || 'unknown'})`);
+          }
+          continue; // invited for real → never alarm
+        }
+      }
+
       // ── CLAIM BEFORE ALERT + verify-persist (fields-missing abort) ──────
       const updated: any = await updateRecord(TABLES.REFERRALS, r.id, {
         'Deposit Watchdog Alerted At': new Date().toISOString(),
@@ -89,7 +131,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
       }
 
       const buyerName = String(r['Buyer Name'] || '').trim() || 'buyer';
-      const buyerEmail = String(r['Buyer Email'] || '').trim() || '(no email on referral)';
+      const buyerEmailLabel = buyerEmail || '(no email on referral)';
 
       // Rancher context — best-effort, copy degrades gracefully.
       let rancherName = String(r['Suggested Rancher Name'] || '').trim();
@@ -109,7 +151,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
         kind: 'payout',
         summary: `Deposit invite NEVER SENT — ${buyerName} waiting ${ageHours}h`,
         detail:
-          `${buyerEmail} · rancher=${rancherName || '?'} · referral=${r.id} · age=${ageHours}h\n` +
+          `${buyerEmailLabel} · rancher=${rancherName || '?'} · referral=${r.id} · age=${ageHours}h\n` +
           `Awaiting Payment with no invite — send the deposit link`,
         refs: [
           { type: 'referral', id: String(r.id) },
@@ -128,9 +170,10 @@ async function realHandler(_request: Request): Promise<CronResult> {
 
   return {
     status: errors.length ? 'partial' : 'success',
-    recordsTouched: alerted,
+    recordsTouched: alerted + healed,
     notes:
-      `candidates=${candidates.length} targets=${targets.length} alerted=${alerted} errs=${errors.length}` +
+      `candidates=${candidates.length} targets=${targets.length} alerted=${alerted} ` +
+      `self-healed=${healed} errs=${errors.length}` +
       (errors.length ? ` err1=${errors[0].slice(0, 80)}` : ''),
     skipReasonBreakdown,
   };

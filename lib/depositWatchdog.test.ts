@@ -15,6 +15,7 @@ import {
   isWatchdogTarget,
   watchdogSkipReason,
   watchdogAnchorMs,
+  earliestSentDepositInvite,
   WATCHDOG_MIN_AGE_MS,
   WATCHDOG_COOLDOWN_MS,
 } from './depositWatchdog';
@@ -147,4 +148,42 @@ test('NOT on the deposit rail (no Deposit Requested At) → never a target', () 
 test('unparseable Deposit Requested At → not eligible (no createdTime fallback)', () => {
   const r = { Status: 'Awaiting Payment', 'Deposit Requested At': 'not-a-date', _createdTime: new Date(NOW_MS - 10 * 60 * 60 * 1000).toISOString() };
   assert.equal(watchdogSkipReason(r as any, NOW_MS), 'no-parseable-anchor');
+});
+
+// ── SELF-HEAL: earliestSentDepositInvite (2026-07-22 false-alarm incident) ───
+
+test('self-heal: picks the earliest SENT deposit-invite timestamp', () => {
+  const rows = [
+    { 'Template Name': 'buyer_deposit_invoice', Status: 'sent', 'Sent At': '2026-07-14T18:50:00.000Z' },
+    { 'Template Name': 'quiz_complete_deposit_invite', Status: 'sent', 'Sent At': '2026-07-02T13:38:39.000Z' },
+    { 'Template Name': 'buyer_deposit_invoice', Status: 'sent', 'Sent At': '2026-07-02T22:12:00.000Z' },
+  ];
+  assert.equal(earliestSentDepositInvite(rows), '2026-07-02T13:38:39.000Z');
+});
+
+test('self-heal: suppressed/failed invites do NOT count (buyer got no link)', () => {
+  const rows = [
+    { 'Template Name': 'buyer_deposit_invoice', Status: 'suppressed', 'Sent At': '2026-07-02T13:38:39.000Z' },
+    { 'Template Name': 'buyer_deposit_invoice', Status: 'failed', 'Sent At': '2026-07-03T00:00:00.000Z' },
+  ];
+  assert.equal(earliestSentDepositInvite(rows), null);
+});
+
+test('self-heal: nudges are NOT the invite — a nudge-only history stays a real alarm', () => {
+  const rows = [
+    { 'Template Name': 'deposit_request_nudge_1', Status: 'sent', 'Sent At': '2026-07-06T04:45:00.000Z' },
+    { 'Template Name': 'deposit_request_nudge_2', Status: 'sent', 'Sent At': '2026-07-08T04:45:00.000Z' },
+  ];
+  assert.equal(earliestSentDepositInvite(rows), null);
+});
+
+test('self-heal: no rows / no deposit invites → null (genuine never-sent)', () => {
+  assert.equal(earliestSentDepositInvite([]), null);
+  assert.equal(earliestSentDepositInvite(undefined as any), null);
+  assert.equal(earliestSentDepositInvite([{ 'Template Name': 'sendBuyerIntroNotification', Status: 'sent', 'Sent At': '2026-07-01T00:00:00.000Z' }]), null);
+});
+
+test('self-heal: unparseable Sent At on the only invite → null (never heal on garbage)', () => {
+  const rows = [{ 'Template Name': 'buyer_deposit_invoice', Status: 'sent', 'Sent At': 'not-a-date' }];
+  assert.equal(earliestSentDepositInvite(rows), null);
 });
