@@ -260,7 +260,9 @@ async function realHandler(_request: Request): Promise<CronResult> {
 async function authedHandler(request: Request): Promise<Response> {
   const denied = requireCron(request);
   if (denied) return denied;
-  return withCronRun('qualified-no-action', realHandler)(request);
+  // heartbeat: hourly campaign cron — see lib/cronRun.ts (maxDuration kill
+  // used to leave no Cron Runs row and no alarm).
+  return withCronRun('qualified-no-action', realHandler, { heartbeat: true })(request);
 }
 
 export const GET = authedHandler;

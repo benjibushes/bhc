@@ -344,6 +344,31 @@ export const TRANSACTIONAL_WHITELIST_PREFIXES: readonly string[] = [
 const _countCache: Map<string, { count: number; ts: number }> = new Map();
 const CACHE_TTL_MS = 60_000;
 
+// Per-process cache of the Cron Pauses read (60s TTL). Scale audit 2026-07-22:
+// this read used to run uncached on EVERY guardedSend — during a 400-recipient
+// broadcast tick that's 400 identical reads against the shared base's 5 req/s
+// ceiling. One read per template per minute per process is plenty for an
+// emergency stop.
+const _pauseCache: Map<string, { paused: boolean; ts: number }> = new Map();
+
+async function isTemplatePaused(templateName: string): Promise<boolean> {
+  const cached = _pauseCache.get(templateName);
+  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) return cached.paused;
+  try {
+    const pauses = await getAllRecords(
+      TABLES.CRON_PAUSES,
+      `AND({Name}="${escapeAirtableValue(templateName)}", {Paused}=TRUE())`,
+    ) as any[];
+    const paused = pauses.length > 0;
+    _pauseCache.set(templateName, { paused, ts: Date.now() });
+    return paused;
+  } catch (e: any) {
+    // Don't let pause-table read error block a send. Log + proceed.
+    console.warn(`[freqGuard] pause check failed for ${templateName}:`, e?.message);
+    return false;
+  }
+}
+
 export interface FrequencyGateResult {
   ok: boolean;
   reason?: 'cap-exceeded' | 'paused' | 'unsubscribed' | 'bounced' | 'complained';
@@ -372,29 +397,24 @@ export async function checkFrequencyCap(
 ): Promise<FrequencyGateResult> {
   const cap = DEFAULT_FREQUENCY_CAP;
 
-  // Pause check runs BEFORE the whitelist so an operator running
-  // `/pausemail <template>` can halt even a transactional template
-  // when it's misbehaving. Emergency stop must always win.
-  try {
-    const pauses = await getAllRecords(
-      TABLES.CRON_PAUSES,
-      `AND({Name}="${escapeAirtableValue(templateName)}", {Paused}=TRUE())`,
-    ) as any[];
-    if (pauses.length > 0) {
-      return { ok: false, reason: 'paused', weekCount: 0, cap };
-    }
-  } catch (e: any) {
-    // Don't let pause-table read error block a send. Log + proceed.
-    console.warn(`[freqGuard] pause check failed for ${templateName}:`, e?.message);
-  }
-
-  // Transactional whitelist — bypass the rolling 7-day cap.
+  // Transactional whitelist — bypass the rolling 7-day cap AND the pause
+  // read. Scale audit 2026-07-22: the pause read used to run BEFORE the
+  // whitelist so even money templates paid an uncached Airtable read per
+  // send — the #1 per-email Airtable cost at campaign scale. Emergency stop
+  // for a misbehaving whitelisted template now lives at the cron level
+  // (withCronRun's Cron Pauses gate on the CRON name still halts the whole
+  // sender).
   if (TRANSACTIONAL_WHITELIST.has(templateName)) {
     return { ok: true, weekCount: 0, cap };
   }
   // Prefix match (e.g. `rancher_docs_reminder_${stage}`).
   if (TRANSACTIONAL_WHITELIST_PREFIXES.some((p) => templateName.startsWith(p))) {
     return { ok: true, weekCount: 0, cap };
+  }
+
+  // Pause check (60s process cache) — `/pausemail <template>` emergency stop.
+  if (await isTemplatePaused(templateName)) {
+    return { ok: false, reason: 'paused', weekCount: 0, cap };
   }
 
   // Count rolling 7-day sends to this recipient.
@@ -425,6 +445,53 @@ export async function checkFrequencyCap(
     return { ok: false, reason: 'cap-exceeded', weekCount: count, cap };
   }
   return { ok: true, weekCount: count, cap };
+}
+
+/**
+ * Pure: count Email Sends rows per lowercased recipient email. Exported for
+ * unit tests; used by primeFrequencyCapCache.
+ */
+export function countSendsByEmail(
+  records: Array<Record<string, unknown>>,
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const r of records) {
+    const email = String(r['Recipient Email'] || '').trim().toLowerCase();
+    if (!email) continue;
+    counts.set(email, (counts.get(email) || 0) + 1);
+  }
+  return counts;
+}
+
+/**
+ * Batch-prime the frequency-cap cache for a whole recipient set with ONE
+ * Email Sends read. Scale audit 2026-07-22: a campaign of unique recipients
+ * never hits the per-recipient 60s cache, so each send paid its own Airtable
+ * count read (~1 req/email against the 5 req/s base cap). Call this once per
+ * cron run before the send loop; per-recipient checkFrequencyCap calls then
+ * hit the primed cache. Best-effort: on read failure the per-recipient path
+ * (with its own fail-open) still runs.
+ */
+export async function primeFrequencyCapCache(recipientEmails: string[]): Promise<boolean> {
+  if (recipientEmails.length === 0) return true;
+  try {
+    const sinceISO = new Date(Date.now() - SEVEN_DAYS_MS).toISOString();
+    const records = await getAllRecords(
+      TABLES.EMAIL_SENDS,
+      `AND({Sent At} > "${sinceISO}", {Status}="sent")`,
+    ) as any[];
+    const counts = countSendsByEmail(records);
+    const ts = Date.now();
+    for (const email of recipientEmails) {
+      const e = email.trim().toLowerCase();
+      if (!e) continue;
+      _countCache.set(e, { count: counts.get(e) || 0, ts });
+    }
+    return true;
+  } catch (e: any) {
+    console.warn(`[freqGuard] batch cap prime failed (falling back to per-recipient reads):`, e?.message);
+    return false;
+  }
 }
 
 /**
@@ -478,6 +545,24 @@ export async function logEmailSend(input: {
       'statusCode:', e?.statusCode,
       'FULL ERROR:', JSON.stringify(e?.errors || e?.error || e),
     );
+    // Scale audit 2026-07-22: during a 429 storm this write fails silently
+    // and every unlogged send undercounts the rolling 7-day cap denominator
+    // for a week. Deduped operator signal (same pattern as the unknown-field
+    // strip alert in lib/airtable.ts) so the operator SEES the truth log rot.
+    try {
+      const { sendOperatorSignal } = await import('./operatorSignal');
+      await sendOperatorSignal({
+        urgency: 'normal',
+        kind: 'system-error',
+        summary: 'Email Sends log write FAILED — send-truth log rotting',
+        detail:
+          `logEmailSend for ${input.templateName} → ${input.recipientEmail} failed: ` +
+          `${e?.message || e}. Sends are going out UNLOGGED — frequency-cap counts ` +
+          `and campaign dedupe undercount until this clears (likely Airtable 429 storm).`,
+        dedupeKey: 'email-sends-log-write-failure',
+        dedupeWindowMs: 30 * 60 * 1000,
+      });
+    } catch {}
   } finally {
     // Update cap cache for this recipient. CRITICAL: increment in-memory
     // BEFORE Airtable read-after-write becomes visible, so a cron tick

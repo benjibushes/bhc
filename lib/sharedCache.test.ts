@@ -142,3 +142,69 @@ test('cacheSet floors sub-second TTL to a >=1s EX (never EX 0)', async () => {
   await cacheSet('k', { a: 1 }, 10_000, spy); // 10s
   assert.deepEqual(seen, [1, 10]);
 });
+
+// ── cacheIncrWithTtl (shared Resend token bucket, scale audit 2026-07-22) ─
+
+import { cacheIncrWithTtl, type RedisCounterLike } from './sharedCache';
+
+function memoryCounterClient(): RedisCounterLike & {
+  counts: Map<string, number>;
+  expires: Array<{ key: string; seconds: number }>;
+} {
+  const counts = new Map<string, number>();
+  const expires: Array<{ key: string; seconds: number }> = [];
+  return {
+    counts,
+    expires,
+    incr: async (k) => {
+      const n = (counts.get(k) || 0) + 1;
+      counts.set(k, n);
+      return n;
+    },
+    expire: async (k, seconds) => {
+      expires.push({ key: k, seconds });
+      return 1;
+    },
+  };
+}
+
+test('cacheIncrWithTtl with no client and no env → undefined (per-process fallback)', async () => {
+  // The suite runs with NO Upstash env — email.ts falls back to the lowered
+  // per-process rate on undefined, so this contract is what keeps local/test
+  // behavior identical to pre-change.
+  const n = await cacheIncrWithTtl('resend-tps:123', 2);
+  assert.equal(n, undefined);
+});
+
+test('cacheIncrWithTtl increments and returns the running count', async () => {
+  const client = memoryCounterClient();
+  assert.equal(await cacheIncrWithTtl('resend-tps:1', 2, client), 1);
+  assert.equal(await cacheIncrWithTtl('resend-tps:1', 2, client), 2);
+  assert.equal(await cacheIncrWithTtl('resend-tps:1', 2, client), 3);
+});
+
+test('cacheIncrWithTtl sets the TTL exactly once (on the first increment)', async () => {
+  const client = memoryCounterClient();
+  await cacheIncrWithTtl('resend-tps:9', 2, client);
+  await cacheIncrWithTtl('resend-tps:9', 2, client);
+  assert.deepEqual(client.expires, [{ key: 'resend-tps:9', seconds: 2 }]);
+});
+
+test('cacheIncrWithTtl clamps a zero/negative TTL to >=1s (Upstash rejects EX 0)', async () => {
+  const client = memoryCounterClient();
+  await cacheIncrWithTtl('resend-tps:0', 0, client);
+  assert.deepEqual(client.expires, [{ key: 'resend-tps:0', seconds: 1 }]);
+});
+
+test('cacheIncrWithTtl FAILS OPEN: throwing client → undefined, no throw', async () => {
+  const bad: RedisCounterLike = {
+    incr: async () => {
+      throw new Error('ECONNREFUSED upstash');
+    },
+    expire: async () => {
+      throw new Error('ECONNREFUSED upstash');
+    },
+  };
+  const n = await cacheIncrWithTtl('resend-tps:2', 2, bad);
+  assert.equal(n, undefined);
+});

@@ -8,6 +8,7 @@ import {
   OPERATOR_BOOKING_FALLBACK_URL,
 } from './calBooking';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from './telegram';
+import { cacheIncrWithTtl } from './sharedCache';
 // DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
 // lib/demo/demoMode.ts. Pure import, no side effect when the flag is off.
 import { isDemoMode } from './demo/demoMode';
@@ -133,6 +134,16 @@ const _resend = new Resend(process.env.RESEND_API_KEY || 're_placeholder_for_bui
 const SUPPRESSION_TTL_MS = 5 * 60 * 1000;
 let suppressionCache: { emails: Set<string>; loadedAt: number } | null = null;
 
+// Scale audit 2026-07-22: bulk/campaign senders must FAIL CLOSED when the
+// suppression list can't be built — a broadcast against an empty set risks
+// CAN-SPAM sends to unsubscribed addresses during an Airtable outage.
+// Transactional sends keep the fail-open behavior (better to send than to
+// drop a money email). Callers check this flag after getSuppressionList().
+let _suppressionBuildFailed = false;
+export function didSuppressionListBuildFail(): boolean {
+  return _suppressionBuildFailed;
+}
+
 export async function getSuppressionList(): Promise<Set<string>> {
   const now = Date.now();
   if (suppressionCache && now - suppressionCache.loadedAt < SUPPRESSION_TTL_MS) {
@@ -164,9 +175,15 @@ export async function getSuppressionList(): Promise<Set<string>> {
     }
   } catch (e) {
     console.error('Suppression list build failed:', e);
-    // Fail-open: if we can't load the list, send anyway. Better to send than
-    // to silently block all email — but log loud so this gets fixed.
+    // Fail-open for TRANSACTIONAL sends: if we can't load the list, send
+    // anyway — better than silently blocking all email. But flag the failure
+    // (bulk senders fail closed on it) and DON'T cache the empty set — the
+    // old code cached it for 5 minutes, locking in a fail-open window with
+    // no retry. Next call re-attempts the build.
+    _suppressionBuildFailed = true;
+    return emails;
   }
+  _suppressionBuildFailed = false;
   suppressionCache = { emails, loadedAt: now };
   return emails;
 }
@@ -228,32 +245,55 @@ function extractDomain(from: string | undefined): string {
 // ── Resend rate-limit guard ─────────────────────────────────────────────
 // Default Resend tier is 10 req/sec. Burst signups + cron loops easily
 // exceed that, dropping transactional emails with 429s. Token bucket
-// limits us to 8/sec (leaves headroom for the rate counter to refresh)
-// and serializes via a single global chain. 429 from Resend triggers a
+// serializes via a single global chain. 429 from Resend triggers a
 // 1s backoff + one retry.
+//
+// Scale audit 2026-07-22: the bucket is module state — PER LAMBDA INSTANCE.
+// demand-router + send-scheduled + qualified-no-action running from separate
+// instances could aggregate to 24+/s against Resend's 10/s. The primary
+// bucket is now a SHARED Upstash INCR on a per-second key (global 8/s across
+// all instances); when Redis is absent/down we fall back to the in-process
+// window at a LOWERED rate so ~3 concurrent processes still stay under 10/s
+// aggregate.
 let _emailGate: Promise<unknown> = Promise.resolve();
 const _emailTimestamps: number[] = [];
-const EMAIL_MAX_PER_SEC = 8;
+const EMAIL_MAX_PER_SEC = 8; // global, enforced via shared Redis counter
+const EMAIL_MAX_PER_SEC_LOCAL = 3; // per-process fallback when Redis absent
 async function _gateEmail<T>(fn: () => Promise<T>): Promise<T> {
   const prev = _emailGate;
   let resolve!: () => void;
   _emailGate = new Promise<void>(r => { resolve = r; });
   try {
     await prev;
-    const now = Date.now();
-    while (_emailTimestamps.length && now - _emailTimestamps[0] > 1000) _emailTimestamps.shift();
-    if (_emailTimestamps.length >= EMAIL_MAX_PER_SEC) {
-      const waitMs = 1000 - (now - _emailTimestamps[0]) + 5;
-      await new Promise(r => setTimeout(r, Math.max(0, waitMs)));
+    // Shared cross-instance bucket: INCR a per-second key; over-limit waits
+    // for the next second's key. cacheIncrWithTtl fails open (undefined) when
+    // Upstash is unconfigured or down → local fallback below.
+    let usedShared = false;
+    for (;;) {
+      const nowSec = Math.floor(Date.now() / 1000);
+      const n = await cacheIncrWithTtl(`resend-tps:${nowSec}`, 2);
+      if (n === undefined) break; // Redis absent → per-process fallback
+      usedShared = true;
+      if (n <= EMAIL_MAX_PER_SEC) break;
+      await new Promise(r => setTimeout(r, 1000 - (Date.now() % 1000) + 5));
+    }
+    if (!usedShared) {
+      const now = Date.now();
+      while (_emailTimestamps.length && now - _emailTimestamps[0] > 1000) _emailTimestamps.shift();
+      if (_emailTimestamps.length >= EMAIL_MAX_PER_SEC_LOCAL) {
+        const waitMs = 1000 - (now - _emailTimestamps[0]) + 5;
+        await new Promise(r => setTimeout(r, Math.max(0, waitMs)));
+      }
     }
     // Stamp timestamp AFTER the send completes (not before). Stamping
     // before created a window where a slow send extended past 1s but the
     // timestamp aged out — the next queued call read an empty window and
     // skipped the wait, doubling actual send rate during latency spikes.
+    // (Shared-bucket path reserved its slot at INCR time — no stamp needed.)
     try {
       return await fn();
     } finally {
-      _emailTimestamps.push(Date.now());
+      if (!usedShared) _emailTimestamps.push(Date.now());
     }
   } finally {
     resolve();

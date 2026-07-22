@@ -147,11 +147,11 @@
     },
     {
       "path": "/api/cron/qualified-no-action",
-      "schedule": "0 * * * *"
+      "schedule": "35 * * * *"
     },
     {
       "path": "/api/cron/abandoned-quiz-nudge",
-      "schedule": "0 * * * *"
+      "schedule": "5 * * * *"
     },
     {
       "path": "/api/cron/cal-reminder-1h",
