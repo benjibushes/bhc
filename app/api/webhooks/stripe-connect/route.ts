@@ -642,10 +642,9 @@ async function syncRancherConnectStatus(accountId: string): Promise<void> {
     !shouldAutoFlip
   ) {
     const currentMigStatus = String(rancher['Migration Status'] || '').toLowerCase();
-    // 'paused_overdue' (audit 2026-07-21): migration-deadline auto-paused this
-    // rancher; Connect going active means they finished — advance the tracker
-    // (mirrors lib/connectResync INCOMPLETE_MIGRATION). Active Status is NOT
-    // touched here — the paused-rancher alert below tells ops to unpause.
+    // 'paused_overdue' included (2026-07-21): a deadline-paused rancher who
+    // then finishes Connect HAS completed the migration — leaving the tracker
+    // at paused_overdue misreports /admin/migration forever.
     const incompleteStatuses = new Set(['', 'not_invited', 'invited', 'call_scheduled', 'upgrading', 'paused_overdue']);
     if (incompleteStatuses.has(currentMigStatus)) {
       writeFields['Migration Status'] = 'completed';
@@ -653,6 +652,36 @@ async function syncRancherConnectStatus(accountId: string): Promise<void> {
   }
 
   await updateRecord(TABLES.RANCHERS, rancher.id, writeFields);
+
+  // ── paused_overdue DEAD-END (audit 2026-07-21) ──────────────────────────
+  // migration-deadline auto-pauses overdue legacy ranchers (Active
+  // Status='Paused', Migration Status='paused_overdue'). When that rancher
+  // later finishes the upgrade, NOTHING unpauses them: the auto-go-live rail
+  // below requires a PRE-live Onboarding Status (a previously-live rancher
+  // carries 'Live'), and go-live-sync excludes Paused. Auto-unpausing here
+  // would violate the no-batch-flip rule (Active Status flips are Ben's
+  // per-rancher call — a Paused row can also be a deliberate manual pause),
+  // so fire a LOUD ops signal at the completion moment instead of letting the
+  // rancher silently receive zero buyers forever. sendOperatorSignal never
+  // throws; 24h dedupe absorbs webhook retries.
+  const wasPausedOverdueMig =
+    String(rancher['Migration Status'] || '').toLowerCase() === 'paused_overdue';
+  if (isNowActive && wasPausedOverdueMig && String(rancher['Active Status'] || '') === 'Paused') {
+    const pausedLabel = String(
+      rancher['Ranch Name'] || rancher['Operator Name'] || rancher['Email'] || accountId,
+    );
+    await sendOperatorSignal({
+      urgency: 'loud',
+      kind: 'stuck-rancher',
+      summary: `UPGRADE COMPLETE — UNPAUSE ${pausedLabel}`,
+      detail:
+        `Rancher was auto-paused by the migration deadline (paused_overdue) and just finished Stripe Connect (active).\n` +
+        `Active Status is still 'Paused' — flip it to 'Active' from /admin/ranchers/${rancher.id} so buyers route again.`,
+      refs: [{ type: 'rancher', id: rancher.id, label: pausedLabel }],
+      dedupeKey: `paused-overdue-upgrade:${rancher.id}`,
+      dedupeWindowMs: 24 * 3600 * 1000,
+    });
+  }
 
   // ── CONNECT DOWNGRADE — tell the rancher + name it for ops ──────────────
   // (Wave A 2026-07-14 — wasActive was computed above but previously dead.)
@@ -748,29 +777,42 @@ async function syncRancherConnectStatus(accountId: string): Promise<void> {
   //   2. Agreement Signed is truthy (legal gate satisfied)
   //   3. Active Status is NOT already 'Active' (idempotency)
   //   4. Onboarding Status is one of the pre-live states
-  //      ('', 'Agreement Signed', 'Verification Complete',
-  //       'Verification Pending', 'Docs Sent')
+  //      ('', 'Agreement Signed', 'Verification Complete', 'Docs Sent')
+  //   5. Slug + at least one price set (content gate, audit 2026-07-21) —
+  //      without it this door flipped a blank/priceless page Live and buyers
+  //      hit "rancher hasn't set a price yet" 409s at deposit time. Mirrors
+  //      rancher-go-live-sync's tier_v2 gate; a rancher who adds the price
+  //      later is flipped by that daily sync, so nothing is stranded.
   //
   // We read the ORIGINAL `rancher` fields (not `writeFields`) to check
   // current state before our write — this is safe because `writeFields`
   // only ever sets Connect-related + Pricing/Migration fields, never
   // Active Status or Onboarding Status. Defensive Airtable: never throw
   // on missing field; all guards below handle undefined gracefully.
+  //
+  // 'Verification Pending' REMOVED (audit 2026-07-21): goLiveGates blocks the
+  // admin door while a verification review is in flight — this automated door
+  // must not bypass the review the human door refuses to. auto-verify-stale
+  // clears the status within 24h, after which this rail (or go-live-sync)
+  // flips them.
   const PRE_LIVE_ONBOARDING_STATUSES = new Set([
     '',
     'Agreement Signed',
     'Verification Complete',
-    'Verification Pending',
     'Docs Sent',
   ]);
   const currentActiveStatus = String(rancher['Active Status'] || '');
   const agreementSigned = !!rancher['Agreement Signed'];
   const currentOnboardingStatus = String(rancher['Onboarding Status'] || '');
+  const hasGoLiveContent =
+    !!rancher['Slug'] &&
+    !!(rancher['Quarter Price'] || rancher['Half Price'] || rancher['Whole Price']);
   const shouldAutoGoLive =
     isNowActive &&
     agreementSigned &&
     currentActiveStatus !== 'Active' &&
-    PRE_LIVE_ONBOARDING_STATUSES.has(currentOnboardingStatus);
+    PRE_LIVE_ONBOARDING_STATUSES.has(currentOnboardingStatus) &&
+    hasGoLiveContent;
 
   if (shouldAutoGoLive) {
     try {
@@ -825,35 +867,6 @@ async function syncRancherConnectStatus(accountId: string): Promise<void> {
       // active but not yet Live" state which ops can manually resolve.
       console.error('[stripe-connect webhook] auto-go-live failed:', e?.message);
     }
-  }
-
-  // ── PAUSED RANCHER FINISHED PAYMENT SETUP (audit 2026-07-21) ──────────────
-  // migration-deadline auto-pauses overdue ranchers (Active Status='Paused',
-  // Migration Status='paused_overdue'). When they later finish the upgrade,
-  // NOTHING unpauses them: the auto-go-live gate above requires a pre-live
-  // Onboarding Status (a previously-live rancher carries 'Live' → never
-  // fires), rancher-go-live-sync excludes Paused rows, and admin resume is
-  // manual — so the rancher completes everything and silently receives zero
-  // buyers. Loud ops signal at the completion moment; never auto-flip Active
-  // Status (rule 5: no status flips without Ben's per-rancher OK).
-  // sendOperatorSignal never throws (catches internally) and dedupes.
-  if (isNowActive && !shouldAutoGoLive && currentActiveStatus === 'Paused') {
-    const pausedLabel = String(
-      rancher['Ranch Name'] || rancher['Operator Name'] || rancher['Email'] || accountId,
-    );
-    await sendOperatorSignal({
-      urgency: 'loud',
-      kind: 'connect',
-      summary: `UPGRADE COMPLETE — UNPAUSE ${pausedLabel}`,
-      detail:
-        `Connect just went active but Active Status is still 'Paused' ` +
-        `(Migration Status was '${String(rancher['Migration Status'] || '(blank)')}').\n` +
-        `Nothing auto-unpauses a previously-live rancher — flip Active Status to 'Active' ` +
-        `from /admin/ranchers/${rancher.id} or they silently receive zero buyers.`,
-      refs: [{ type: 'rancher', id: rancher.id, label: pausedLabel }],
-      dedupeKey: `paused-connect-active:${rancher.id}`,
-      dedupeWindowMs: 24 * 3600 * 1000,
-    });
   }
 
   // Telegram celebration when Connect goes active for the first time

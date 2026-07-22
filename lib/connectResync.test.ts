@@ -89,3 +89,35 @@ test('not_connected → onboarding is a plain status change', () => {
   assert.equal(d.changed, true);
   assert.deepEqual(d.writeFields, { 'Stripe Connect Status': 'onboarding' });
 });
+
+// ── paused_overdue dead-end (audit 2026-07-21) ─────────────────────────────
+
+test('active flip on paused_overdue completes migration + flags wasPausedOverdue', () => {
+  const d = computeConnectResync({ ...base, liveStatus: 'active', migrationStatus: 'paused_overdue' });
+  assert.equal(d.changed, true);
+  assert.equal(d.writeFields['Migration Status'], 'completed');
+  assert.equal(d.migrationCompleted, true);
+  assert.equal(d.wasPausedOverdue, true);
+});
+
+test('wasPausedOverdue fires even on the no-op branch (already-synced active cache)', () => {
+  const d = computeConnectResync({
+    ...base,
+    liveStatus: 'active',
+    previousStatus: 'active',
+    migrationStatus: 'paused_overdue',
+  });
+  assert.equal(d.changed, false);
+  assert.equal(d.wasPausedOverdue, true);
+});
+
+test('wasPausedOverdue is false when Connect is not active', () => {
+  const d = computeConnectResync({ ...base, liveStatus: 'restricted', migrationStatus: 'paused_overdue' });
+  assert.equal(d.wasPausedOverdue, false);
+  assert.equal(d.writeFields['Migration Status'], undefined);
+});
+
+test('normal upgrading flip has wasPausedOverdue false', () => {
+  const d = computeConnectResync({ ...base, liveStatus: 'active' });
+  assert.equal(d.wasPausedOverdue, false);
+});

@@ -5,9 +5,13 @@ import { sendRancherApproval } from '@/lib/email';
 import { requireAdmin } from '@/lib/adminAuth';
 import { getMaxActiveReferrals, MAX_ACTIVE_REFERRALS_FIELD } from '@/lib/rancherCapacity';
 import { goLiveRancher } from '@/lib/goLiveRancher';
+import { runPaymentPathSmoke } from '@/lib/paymentPathSmoke';
 import { logAuditEntry, buildAirtableUpdateReverse } from '@/lib/auditLog';
 import { geocodeRancher } from '@/lib/geocode';
-import { runPaymentPathSmoke } from '@/lib/paymentPathSmoke';
+import jwt from 'jsonwebtoken';
+import { JWT_SECRET } from '@/lib/secrets';
+
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 export async function PATCH(
   request: NextRequest,
@@ -105,12 +109,14 @@ export async function PATCH(
       delete fields['Onboarding Status'];
       delete fields['Active Status'];
       delete fields['Page Live'];
-      // ── Payment-path smoke test (audit 2026-07-21) ────────────────────
-      // Mirrors POST /go-live: goLiveGates has NO slug/price gate and NO
-      // payment-link gate for legacy, so this PATCH door could mint a Live
-      // legacy rancher with nothing to buy (the '49 onboarded-but-no-rail'
-      // pattern) that only the nightly canary caught ~24h later. LIVE-probe
-      // the payment path before flipping; body.force is the escape hatch.
+
+      // ── Payment-path smoke test (audit 2026-07-21) ──────────────────────
+      // This "Mark Live"/handleRelease door used to skip the smoke the
+      // sibling POST /go-live runs — goLiveGates has no slug/price gate and
+      // no payment-link gate for legacy, so one click could mint a
+      // routable-but-unpayable rancher (the '49 onboarded-but-no-rail'
+      // pattern). Mirror POST /go-live: LIVE-probe the payment path first;
+      // body.force is the admin escape hatch.
       if (body.force !== true) {
         const smokeRancher: any = await getRecordById(TABLES.RANCHERS, id).catch(() => null);
         if (smokeRancher) {
@@ -121,7 +127,7 @@ export async function PATCH(
                 error: `Payment-path smoke test failed — rancher cannot take money: ${smoke.failures.join(' · ')}`,
                 code: 'payment_path_smoke_failed',
                 failures: smoke.failures,
-                hint: 'Fix the gates above, or re-send with force:true to override (logged).',
+                hint: 'Fix the gates above, or re-run with force=true to override (logged).',
               },
               { status: 409 },
             );
@@ -129,6 +135,7 @@ export async function PATCH(
         }
         // smokeRancher===null falls through: goLiveRancher owns the 404 contract.
       }
+
       goLiveResult = await goLiveRancher(id, {
         force: body.force === true,
         actor: 'admin-rancher-patch',
@@ -227,7 +234,17 @@ export async function PATCH(
         const ranchName = rancher['Ranch Name'] || '';
 
         if (email) {
-          await sendRancherApproval({ operatorName, ranchName, email });
+          // Mint a 60d setup-wizard link (audit 2026-07-21): no automatic flow
+          // sends the "onboarding packet" the old approval copy promised —
+          // the approval email now carries the wizard link itself, matching
+          // sendRancherApplyAutoApproved's rail.
+          const wizardToken = jwt.sign(
+            { type: 'rancher-setup', rancherId: id },
+            JWT_SECRET,
+            { expiresIn: '60d' }
+          );
+          const wizardUrl = `${SITE_URL}/rancher/setup?token=${wizardToken}`;
+          await sendRancherApproval({ operatorName, ranchName, email, wizardUrl });
         }
       } catch (emailErr) {
         console.error('Failed to send rancher approval email (non-fatal):', emailErr);

@@ -43,15 +43,22 @@ export interface ConnectResyncDecision {
   writeFields: Record<string, any>;
   /** True when this resync advances the tier_v2 migration tracker to completed. */
   migrationCompleted: boolean;
+  /**
+   * True when Connect flipped active on a rancher the migration-deadline cron
+   * auto-paused (Migration Status='paused_overdue'). NOTHING auto-unpauses
+   * Active Status='Paused' (webhook auto-go-live excludes Onboarding
+   * Status='Live'; go-live-sync excludes Paused), so callers MUST fire a loud
+   * operator signal — otherwise the rancher finishes the upgrade and silently
+   * receives zero buyers forever.
+   */
+  wasPausedOverdue: boolean;
 }
 
 // Migration states that are not yet "done" — an active Connect flip advances
 // these to 'completed'. Mirrors app/api/admin/ranchers/[id]/resync-connect.
-// 'paused_overdue' (audit 2026-07-21): migration-deadline auto-paused this
-// rancher; when Connect later flips active they HAVE finished the upgrade, so
-// the tracker must advance — leaving it 'paused_overdue' made the completion
-// invisible forever. NOTE: nothing here touches Active Status — the caller
-// must alert ops to unpause (rule 5: no status flips without Ben's OK).
+// 'paused_overdue' included (2026-07-21): a deadline-paused rancher who then
+// finishes Connect HAS completed the migration — leaving the tracker at
+// paused_overdue misreports /admin/migration and hides the unpause need.
 const INCOMPLETE_MIGRATION = new Set([
   '',
   'not_invited',
@@ -70,9 +77,11 @@ const INCOMPLETE_MIGRATION = new Set([
  */
 export function computeConnectResync(input: ConnectResyncInput): ConnectResyncDecision {
   const isNowActive = input.liveStatus === 'active';
+  const migStatus = String(input.migrationStatus || '').toLowerCase();
+  const wasPausedOverdue = isNowActive && migStatus === 'paused_overdue';
 
   if (input.previousStatus === input.liveStatus) {
-    return { changed: false, isNowActive, writeFields: {}, migrationCompleted: false };
+    return { changed: false, isNowActive, writeFields: {}, migrationCompleted: false, wasPausedOverdue };
   }
 
   const writeFields: Record<string, any> = { 'Stripe Connect Status': input.liveStatus };
@@ -81,12 +90,11 @@ export function computeConnectResync(input: ConnectResyncInput): ConnectResyncDe
   }
 
   const pricingModel = String(input.pricingModel || '').toLowerCase();
-  const migStatus = String(input.migrationStatus || '').toLowerCase();
   const migrationCompleted =
     isNowActive && pricingModel === 'tier_v2' && INCOMPLETE_MIGRATION.has(migStatus);
   if (migrationCompleted) {
     writeFields['Migration Status'] = 'completed';
   }
 
-  return { changed: true, isNowActive, writeFields, migrationCompleted };
+  return { changed: true, isNowActive, writeFields, migrationCompleted, wasPausedOverdue };
 }

@@ -317,6 +317,15 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   // Pickup-order completion note to the buyer (sibling of the whitelisted
   // product_shipped) — 1:1, customer-expected, fires once per order.
   'product_picked_up',
+  // Post-signature confirmations from /api/ranchers/sign-agreement (audit
+  // 2026-07-21): the "You're LIVE" / "Agreement Signed — You're Almost Live"
+  // emails previously rode the generic capped 'sendEmail' template — a
+  // self-submit rancher signing after welcome + Day-2 + Day-5 drips had the
+  // confirmation (and its 14-day dashboard login link) silently eaten at the
+  // finish line. One-shot per signing event — the route 400s a second sign
+  // (Agreement Signed already true) — so whitelisting cannot create volume.
+  'sendRancherSignedLive',
+  'sendRancherSignedAlmostLive',
 ]);
 
 // T1 (2026-06-10): dynamic-name templates whose names contain a stage

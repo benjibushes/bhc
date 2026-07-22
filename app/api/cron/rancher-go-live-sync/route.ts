@@ -97,8 +97,18 @@ async function realHandler(
   // guard EXCLUDES them — without it the cron would re-activate paused or
   // at-capacity ranchers (vacation/sick states + the capacity-liberator system).
   // Mirrors the Connect-webhook go-live gate.
+  //
+  // Audit 2026-07-21:
+  //   - 'Call Scheduled' / 'Call Complete' ADDED — both are routinely hand-set
+  //     in Airtable (and settable via admin PATCH) and are pre-live states for
+  //     a signed rancher. Excluding them deadlocked with onboarding-stuck's
+  //     go-live-ready skip guard ("go-live-sync will flip") — a signed+ready
+  //     rancher carrying either status got zero nudges AND zero auto-flips.
+  //   - 'Verification Pending' REMOVED — goLiveGates blocks the admin door
+  //     while a review is in flight; this automated door must not bypass it.
+  //     auto-verify-stale clears the status within 24h, then this cron flips.
   const PRE_LIVE_ONBOARDING = new Set([
-    '', 'Agreement Signed', 'Verification Complete', 'Verification Pending', 'Docs Sent',
+    '', 'Agreement Signed', 'Verification Complete', 'Docs Sent', 'Call Scheduled', 'Call Complete',
   ]);
 
   // Filter: signed, not yet Active, never went live before, and not a deliberate

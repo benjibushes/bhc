@@ -889,6 +889,17 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
 
         if (shouldSend) {
           try {
+            // Signing CTA (audit 2026-07-21): every reminder in this sequence
+            // said "ready to sign" but contained ZERO links — the rancher's
+            // only path was digging up the original signing email. Mint a
+            // fresh agreement-signing JWT per reminder (same shape/expiry as
+            // setup/request-agreement) so the door has a handle.
+            const signingToken = jwt.sign(
+              { type: 'agreement-signing', rancherId: rancher.id, email: String(email).toLowerCase() },
+              JWT_SECRET,
+              { expiresIn: '30d' }
+            );
+            const signingLink = `${SITE_URL}/rancher/sign-agreement?token=${signingToken}`;
             // 2026-06-09 P1 fix (audit BUG #1): pass templateName + replyContext
             // so guardedSend's suppression check + frequency cap + Email Sends
             // audit log all fire. Without this, rancher reminders bypass every
@@ -898,6 +909,10 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
               subject,
               html: `<div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;">
                 ${bodyHtml}
+                <div style="text-align:center;margin:28px 0;">
+                  <a href="${signingLink}" style="display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:bold;font-size:13px;letter-spacing:1px;text-transform:uppercase;">Sign the agreement →</a>
+                </div>
+                <p style="font-size:12px;color:#A7A29A;text-align:center;">The link is good for 30 days — takes about 2 minutes.</p>
                 <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Benjamin, Founder<br>BuyHalfCow</p>
               </div>`,
               templateName: `rancher_docs_reminder_${newStage}`,
