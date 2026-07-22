@@ -1,20 +1,30 @@
 import { NextResponse } from 'next/server';
-import { getAllRecords, updateRecord, isInvalidFilterFormulaError } from '@/lib/airtable';
+import { getAllRecords, updateRecord, escapeAirtableValue, isInvalidFilterFormulaError } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { mailableConsumersFormula } from '@/lib/cronReadFilters';
 import { isMaintenanceMode } from '@/lib/maintenance';
-import { sendBroadcastEmail } from '@/lib/email';
+import { sendBroadcastEmail, getSuppressionList, didSuppressionListBuildFail } from '@/lib/email';
+import { primeFrequencyCapCache } from '@/lib/emailFrequencyGuard';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 
-export const maxDuration = 60;
+export const maxDuration = 120;
 
-const BATCH_SIZE = 10;
+// Scale audit 2026-07-22: batch concurrency dropped 10 → 3. Ten concurrent
+// sendBroadcastEmail calls each cost an Airtable log write — at :00 alongside
+// the other hourly crons that alone saturated the base's 5 req/s ceiling and
+// triggered 429 storms. 3-concurrent keeps the pipe warm without owning it.
+const BATCH_SIZE = 3;
 const BATCH_DELAY_MS = 1000;
-// Per cron run: at 10/batch + 1s/batch that's ~40s of sends, safely under the
-// 60s maxDuration. Larger audiences resume on the next hourly tick via the
-// 'Sent' cursor instead of getting killed mid-send.
-const MAX_PER_RUN = 400;
+// Per cron run: at 3/batch + 1s/batch that's ~50 batches ≈ 75-100s of sends
+// against maxDuration=120, with the RUN_DEADLINE guard below as the hard
+// stop. Larger audiences resume on the next hourly tick via the Email Sends
+// identity dedupe instead of getting killed mid-send.
+const MAX_PER_RUN = 150;
+// Exit the send loop cleanly at 80% of maxDuration — a maxDuration kill dies
+// before `finally`/status writes run; a clean early exit reports partial
+// progress and resumes next tick.
+const RUN_DEADLINE_MS = maxDuration * 1000 * 0.8;
 
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -122,23 +132,72 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     return { status: 'success', recordsTouched: 0, notes: 'no campaigns due' };
   }
 
+  // FAIL CLOSED for bulk (scale audit 2026-07-22): if the suppression list
+  // can't be built (Airtable 429 storm/outage), a broadcast would run against
+  // an EMPTY set — CAN-SPAM sends to unsubscribed addresses. Abort the whole
+  // tick; the identity dedupe below makes the resume next hour safe.
+  // Transactional sends elsewhere keep their fail-open behavior.
+  await getSuppressionList();
+  if (didSuppressionListBuildFail()) {
+    return {
+      status: 'partial',
+      recordsTouched: 0,
+      notes: 'suppression-list build FAILED — bulk send aborted (fail closed), will retry next tick',
+    };
+  }
+
   let totalSent = 0;
   let totalFailed = 0;
+  let deadlineHit = false;
+  const startedMs = Date.now();
   // Per-run recipient budget — keeps a single cron run well under maxDuration so
   // a large audience can't get killed mid-send. Remaining recipients (and any
-  // remaining campaigns) resume on the next hourly tick via the 'Sent' cursor.
+  // remaining campaigns) resume on the next hourly tick via the Email Sends
+  // identity dedupe.
   let runBudget = MAX_PER_RUN;
 
   for (const campaign of due) {
-    if (runBudget <= 0) break; // out of budget — finish on the next tick
+    if (runBudget <= 0 || deadlineHit) break; // out of budget — finish on the next tick
     const audienceType = campaign['Audience'] || 'consumers';
+    const campaignName = String(campaign['Campaign Name'] || '').trim();
+    if (!campaignName) {
+      // Without a name there is no Email Sends dedupe key — sending would
+      // re-send the whole audience every tick. Skip loudly.
+      console.error(`Campaign ${campaign.id} has no Campaign Name — cannot dedupe, skipping`);
+      continue;
+    }
     const recipients = await getRecipients(audienceType);
 
-    // Resume cursor: how many of this audience we've already sent in prior runs.
-    // recipients come back in Airtable's stable order, so slicing is consistent.
+    // Identity-based resume cursor (scale audit 2026-07-22). The old cursor
+    // was POSITIONAL (`recipients.slice(Sent)`) over a live re-read with no
+    // stable sort — any unsubscribe/bounce/new-signup between hourly ticks
+    // shifted every position, double-sending some recipients and silently
+    // skipping others, and it advanced by SUCCESS count so every failed or
+    // cap-suppressed send re-sent the previous batch's tail. Dedupe against
+    // Email Sends {Campaign, Recipient} instead: every guardedSend (sent,
+    // suppressed, or failed) logs a row with the campaign name, so each
+    // recipient is attempted at most once per campaign regardless of order.
+    let attempted: Set<string>;
+    try {
+      const rows = await getAllRecords(
+        TABLES.EMAIL_SENDS,
+        `{Campaign}="${escapeAirtableValue(campaignName)}"`,
+      ) as any[];
+      attempted = new Set(
+        rows
+          .map((r: any) => String(r['Recipient Email'] || '').trim().toLowerCase())
+          .filter(Boolean),
+      );
+    } catch (e) {
+      // No dedupe set = double-send risk. Skip this campaign this tick.
+      console.error(`Failed to read Email Sends dedupe set for "${campaignName}" — skipping this tick:`, e);
+      continue;
+    }
+
+    // Counters (display truth on the Campaigns row — no longer a cursor).
     const alreadySent = Number(campaign['Sent'] || 0);
     const startFailed = Number(campaign['Failed'] || 0);
-    const remaining = recipients.slice(alreadySent);
+    const remaining = recipients.filter(r => !attempted.has(r.email));
     if (remaining.length === 0) {
       // Already fully sent (e.g. a 'Sending' row stranded right at the end) —
       // finalize so it leaves the queue.
@@ -185,8 +244,18 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
 
     let sent = 0;
     let failed = 0;
+    let processed = 0;
     const thisRun = remaining.slice(0, runBudget);
+    // One Email Sends read for the whole recipient set instead of one
+    // frequency-cap count read PER RECIPIENT (sendBroadcastEmail is not
+    // whitelisted, and unique campaign recipients never hit the 60s cache).
+    await primeFrequencyCapCache(thisRun.map(r => r.email));
     for (let i = 0; i < thisRun.length; i += BATCH_SIZE) {
+      if (Date.now() - startedMs > RUN_DEADLINE_MS) {
+        // Exit cleanly before a maxDuration kill can eat the status writes.
+        deadlineHit = true;
+        break;
+      }
       const batch = thisRun.slice(i, i + BATCH_SIZE);
       const results = await Promise.allSettled(
         batch.map(recipient =>
@@ -208,28 +277,35 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
       );
       sent += results.filter(r => r.status === 'fulfilled' && (r.value as any)?.success).length;
       failed += results.filter(r => r.status === 'rejected' || (r.status === 'fulfilled' && !(r.value as any)?.success)).length;
+      processed += batch.length;
 
-      // Persist the cursor after EACH batch so a mid-run crash resumes from here
-      // instead of re-sending the front (or stranding the campaign).
+      // Persist the counters after EACH batch so a mid-run crash still shows
+      // progress. These are DISPLAY counters — the resume cursor is the
+      // Email Sends identity dedupe above, so a lost update can't double-send.
       try {
         await updateRecord(TABLES.CAMPAIGNS, campaign.id, {
           'Sent': alreadySent + sent,
           'Failed': startFailed + failed,
         });
-      } catch { /* cursor persist best-effort */ }
+      } catch { /* counter persist best-effort */ }
 
       if (i + BATCH_SIZE < thisRun.length) {
         await sleep(BATCH_DELAY_MS);
       }
     }
-    runBudget -= sent;
+    // Budget burns by positions PROCESSED, not successes — advancing by
+    // successes made failed/suppressed sends re-extend the run.
+    runBudget -= processed;
 
     // Mirror the immediate-send path in /api/admin/broadcast: flip to 'Partial'
     // if any failures occurred, else 'Sent'. Operators rely on this status to
     // know whether to investigate Resend failures or move on.
     const totalDone = alreadySent + sent;
     const cumFailed = startFailed + failed;
-    const isComplete = totalDone >= recipients.length;
+    // Complete only when every remaining recipient was actually attempted
+    // this run (each attempt leaves an Email Sends row, so next tick's
+    // remaining would be empty).
+    const isComplete = processed >= remaining.length;
     try {
       await updateRecord(TABLES.CAMPAIGNS, campaign.id, {
         // Only finalize when the WHOLE audience is exhausted; otherwise stay
@@ -250,14 +326,14 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
   return {
     status: totalFailed > 0 ? 'partial' : 'success',
     recordsTouched: totalSent,
-    notes: `processed ${due.length} campaign(s), sent ${totalSent}, failed ${totalFailed}`,
+    notes: `processed ${due.length} campaign(s), sent ${totalSent}, failed ${totalFailed}${deadlineHit ? ' — run deadline hit, resuming next tick' : ''}`,
   };
 }
 
 async function authedHandler(request: Request): Promise<Response> {
   const denied = requireCron(request);
   if (denied) return denied;
-  return withCronRun('send-scheduled', realHandler)(request);
+  return withCronRun('send-scheduled', realHandler, { heartbeat: true })(request);
 }
 
 export const GET = authedHandler;

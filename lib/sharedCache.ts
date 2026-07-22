@@ -159,3 +159,41 @@ export async function cacheDel(key: string, client?: RedisLike): Promise<void> {
 export function isSharedCacheEnabled(): boolean {
   return getRedis() !== null;
 }
+
+// ── Shared counter (cross-instance rate limiting) ────────────────────────
+// Scale audit 2026-07-22: the Resend token bucket in lib/email.ts lives in
+// module state — per lambda instance — so concurrent crons (demand-router +
+// send-scheduled + qualified-no-action) could aggregate past Resend's 10/s.
+// A shared INCR on a per-second key makes the bucket global.
+
+// Minimal structural type for the counter ops. Same injectable-fake pattern
+// as RedisLike above — see sharedCache.test.ts.
+export interface RedisCounterLike {
+  incr(key: string): Promise<number>;
+  expire(key: string, seconds: number): Promise<unknown>;
+}
+
+/**
+ * Atomically increment `key`, setting a TTL of `ttlSeconds` on first
+ * increment so the counter self-expires. Returns the post-increment count,
+ * or undefined when:
+ *   - Redis not configured (env unset) → callers fall back to per-process
+ *   - any Redis error                  → fail-open, console.warn
+ * NEVER throws.
+ */
+export async function cacheIncrWithTtl(
+  key: string,
+  ttlSeconds: number,
+  client?: RedisCounterLike,
+): Promise<number | undefined> {
+  const redis = (client ?? getRedis()) as RedisCounterLike | null;
+  if (!redis) return undefined;
+  try {
+    const n = await redis.incr(key);
+    if (n === 1) await redis.expire(key, Math.max(1, ttlSeconds));
+    return n;
+  } catch (e: any) {
+    console.warn(`[sharedCache] incr(${key}) failed, falling back to per-process:`, e?.message);
+    return undefined;
+  }
+}
