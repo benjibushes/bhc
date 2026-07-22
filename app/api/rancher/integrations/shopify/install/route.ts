@@ -35,8 +35,11 @@ export async function POST(request: Request) {
 
   const creds = publicAppCreds();
   if (!creds) {
+    // Don't reference "the token form below" — the card only calls this from
+    // the one-click layout, where that form isn't rendered (the card swaps
+    // layouts itself on a 503).
     return NextResponse.json(
-      { error: 'One-click connect is not enabled yet — use the token form below, or text Ben.' },
+      { error: 'One-click connect is not available right now — connect with the token steps instead, or text Ben.' },
       { status: 503 },
     );
   }

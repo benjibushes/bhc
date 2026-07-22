@@ -70,10 +70,18 @@ export async function connectShopifyStore(input: ConnectStoreInput): Promise<{ o
   if (!valid.ok) return { ok: false, report: [`Validation failed: ${valid.detail}`] };
   const report: string[] = [valid.detail];
 
-  // Register fulfillment webhooks (+ catalog webhook for sync mode).
+  // Register fulfillment webhooks (+ catalog webhooks for sync mode).
   // Duplicate-address userErrors (re-running /connectstore) are reported,
-  // not fatal — the subscription already exists.
-  const topics = ['FULFILLMENTS_CREATE', 'FULFILLMENTS_UPDATE', ...(input.mode === 'sync' ? ['PRODUCTS_UPDATE'] : [])];
+  // not fatal — the subscription already exists. APP_UNINSTALLED is the only
+  // real-time uninstall signal (shop/redact lags ~48h and never fires for
+  // custom-app installs) — without it, synced listings stay live on /shop
+  // with a dead fulfillment rail (audit 2026-07-21).
+  const topics = [
+    'FULFILLMENTS_CREATE',
+    'FULFILLMENTS_UPDATE',
+    'APP_UNINSTALLED',
+    ...(input.mode === 'sync' ? ['PRODUCTS_UPDATE', 'PRODUCTS_DELETE'] : []),
+  ];
   const webhookFailures: string[] = [];
   for (const topic of topics) {
     try {

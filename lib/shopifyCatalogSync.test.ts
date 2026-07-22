@@ -65,6 +65,59 @@ test('zero inventory or non-ACTIVE product maps Active:false', () => {
   assert.equal(draft['Active'], false);
 });
 
+test('untracked inventory (tracked:false) treats variant as in-stock, not qty 0', () => {
+  const f = mapVariantToProductFields({
+    product: { id: 'p', title: 'Made-to-order Box', status: 'ACTIVE' },
+    variant: {
+      id: 'v', title: 'Default Title', sku: 'MTO-1', price: '40', inventoryQuantity: 0,
+      inventoryPolicy: 'DENY', inventoryItem: { tracked: false },
+    },
+    markupPercent: null,
+    approved: true,
+  });
+  assert.equal(f['Orders Left'], 999);
+  assert.equal(f['Active'], true);
+});
+
+test('continue-selling policy treats variant as in-stock even at qty 0', () => {
+  const f = mapVariantToProductFields({
+    product: { id: 'p', title: 'POD Cap', status: 'ACTIVE' },
+    variant: {
+      id: 'v', title: 'Default Title', sku: 'CAP-1', price: '25', inventoryQuantity: 0,
+      inventoryPolicy: 'CONTINUE', inventoryItem: { tracked: true },
+    },
+    markupPercent: null,
+    approved: true,
+  });
+  assert.equal(f['Orders Left'], 999);
+  assert.equal(f['Active'], true);
+});
+
+test('tracked + DENY at qty 0 stays out of stock (no regression)', () => {
+  const f = mapVariantToProductFields({
+    product: { id: 'p', title: 'Jerky', status: 'ACTIVE' },
+    variant: {
+      id: 'v', title: 'Default Title', sku: 'J-1', price: '12', inventoryQuantity: 0,
+      inventoryPolicy: 'DENY', inventoryItem: { tracked: true },
+    },
+    markupPercent: null,
+    approved: true,
+  });
+  assert.equal(f['Orders Left'], 0);
+  assert.equal(f['Active'], false);
+});
+
+test('missing inventoryPolicy/inventoryItem (old query shape) keeps qty semantics', () => {
+  const f = mapVariantToProductFields({
+    product: { id: 'p', title: 'X', status: 'ACTIVE' },
+    variant: { id: 'v', title: 'Default Title', sku: 'S', price: '10', inventoryQuantity: 7 },
+    markupPercent: null,
+    approved: true,
+  });
+  assert.equal(f['Orders Left'], 7);
+  assert.equal(f['Active'], true);
+});
+
 test('curation gate: unapproved products are never Active, even in stock', () => {
   const f = mapVariantToProductFields({
     product: { id: 'p', title: 'X', status: 'ACTIVE' },
