@@ -434,6 +434,12 @@ ${prepListHtml}
       message: 'Agreement signed successfully',
       signed_at: now,
       dashboardLink,
+      // Live truth for the wizard's Done step (2026-07-21): a legacy rancher
+      // can sign without a price (Step-3 guard requires a payment link, not
+      // a price), leaving readyToGoLive=false — signed but DARK, awaiting
+      // Ben's rverify tap. The Done step must not tell them "your page is
+      // live" when it isn't.
+      wentLive: readyToGoLive,
     });
   } catch (error: any) {
     console.error('Sign agreement POST error:', error);

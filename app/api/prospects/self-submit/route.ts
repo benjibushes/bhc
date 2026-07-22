@@ -62,6 +62,38 @@ function slugify(s: string, suffix?: string): string {
   return suffix ? `${base}-${suffix}` : base;
 }
 
+// Collision-safe slug (2026-07-21) — same guard /api/apply's mintUniqueSlug
+// grew on 2026-07-08 (comment there cites the two-"Bar S Ranch" failure).
+// The dedupe above only catches EXACT lowercase ranch-name + state matches,
+// so name variants ('Bar-S Ranch' vs 'Bar S Ranch', same TX) slugify to the
+// same 'bar-s-ranch-tx' — and getRancherOrProspectBySlug is maxRecords:1, so
+// the second record's public page / wizard preview / Telegram "View listing"
+// all render the FIRST ranch's data. Append -2, -3, … until free; on lookup
+// failure fall back to a random-suffixed slug rather than risk a collision.
+// Also covers the all-non-latin ranch name whose kebab base is empty (would
+// otherwise mint slug '-tx').
+async function mintUniqueSlug(ranchName: string, state: string): Promise<string> {
+  const nameSlug =
+    slugify(ranchName) || `ranch-${Math.random().toString(36).slice(2, 8)}`;
+  const base = `${nameSlug}-${state.toLowerCase()}`;
+  let unique = base;
+  try {
+    for (let n = 2; n < 50; n++) {
+      const safe = escapeAirtableValue(unique);
+      const taken = (await getAllRecords(
+        TABLES.RANCHERS,
+        `LOWER({Slug}) = "${safe}"`
+      )) as any[];
+      if (taken.length === 0) break;
+      unique = `${base}-${n}`;
+    }
+  } catch (e: any) {
+    console.warn('[self-submit] slug collision check failed:', e?.message);
+    unique = `${base}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+  return unique;
+}
+
 function hostOf(url: string): string {
   try {
     return new URL(url.startsWith('http') ? url : `https://${url}`).hostname.replace(
@@ -294,7 +326,7 @@ export async function POST(req: Request) {
   const composedNotes = noteLines.join('\n');
 
   // ── Insert ──
-  const slug = slugify(ranchName, state.toLowerCase());
+  const slug = await mintUniqueSlug(ranchName, state);
   const fields: Record<string, any> = {
     'Ranch Name': ranchName,
     'Operator Name': operatorName || ranchName,

@@ -18,10 +18,15 @@ import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 // (volume band, biggest constraint, channels, deposit-capability) +
 // basic contact. On success:
 //
-//   • Creates Airtable Ranchers record w/ Status='Pending',
-//     Onboarding Status='Lead', Pricing Model defaults to 'legacy'
-//     (e-sign + own payment link go-live; the Stripe-Connect SSN wall
-//     killed 73% of cold signups — Connect/tier_v2 is a later upgrade).
+//   • Creates Airtable Ranchers record w/ Status='Pending'; Onboarding
+//     Status is intentionally left BLANK — blank is what routes the record
+//     into rancher-followup's New Applicant chase path (its `if (!status)`
+//     branch; STALL_THRESHOLDS has no 'Lead' key and onboarding-stuck has
+//     no Lead bucket). Writing 'Lead' here would silently hide every
+//     applicant from the only rail that chases them. Pricing Model
+//     defaults to 'legacy' (e-sign + own payment link go-live; the
+//     Stripe-Connect SSN wall killed 73% of cold signups — Connect/tier_v2
+//     is a later upgrade).
 //   • Mints a collision-safe Slug from Ranch Name (2026-07-08) — without
 //     it an /apply rancher can never reach a live public page self-serve:
 //     sign-agreement auto-go-live requires a Slug, the wizard PATCH
@@ -234,7 +239,7 @@ export async function POST(req: Request) {
 
   let rancherId: string;
   try {
-    const { record, created } = await findOrCreateRancherByEmail(
+    const { record, created, matchedBy } = await findOrCreateRancherByEmail(
       email,
       {
         'Operator Name': body.operatorName.trim(),
@@ -270,6 +275,63 @@ export async function POST(req: Request) {
         } catch (e: any) {
           console.warn('[apply] slug backfill failed (non-fatal):', e?.message);
         }
+      }
+
+      // Re-apply recovery (2026-07-21): the old path returned the wizard URL
+      // and dropped everything else on the floor — no contact update, no
+      // Operation Details append, no Telegram. Concrete failure: a rancher
+      // whose record carries a bounced email (Vale Creek class) re-applies
+      // with the CORRECTED email, matches by phone / ranch+state, and the
+      // record KEEPS the dead email forever while Ben never learns they
+      // came back. Persist the fresh truth (non-fatal — wizard URL still
+      // goes out if the write hiccups).
+      try {
+        const resubmitFields: Record<string, string> = {};
+        // Email: only when the match came via phone / ranch+state — i.e. the
+        // submitted email exists NOWHERE on the record (corrected-email
+        // recovery). An 'email' match is identical; a 'team' match must not
+        // clobber the primary owner's email with a team member's.
+        if (
+          (matchedBy === 'phone' || matchedBy === 'ranch+state') &&
+          email !== String(record['Email'] || '').trim().toLowerCase()
+        ) {
+          resubmitFields['Email'] = email;
+        }
+        const submittedPhone = body.phone?.trim() || '';
+        if (
+          submittedPhone &&
+          submittedPhone.replace(/\D/g, '') !==
+            String(record['Phone'] || '').replace(/\D/g, '')
+        ) {
+          resubmitFields['Phone'] = submittedPhone;
+        }
+        if (body.city?.trim() && !record['City']) {
+          resubmitFields['City'] = body.city.trim();
+        }
+        // Always append the fresh fit-check — volume/constraint/notes are
+        // qualification signal Ben triages on.
+        resubmitFields['Operation Details'] = [
+          String(record['Operation Details'] || ''),
+          opDetails,
+        ]
+          .filter(Boolean)
+          .join('\n\n');
+        await updateRecord(TABLES.RANCHERS, record.id, resubmitFields);
+      } catch (e: any) {
+        console.warn('[apply] existing-rancher resubmit update failed (non-fatal):', e?.message);
+      }
+      try {
+        await sendTelegramMessage(
+          TELEGRAM_ADMIN_CHAT_ID,
+          `↩️ <b>EXISTING rancher re-applied</b> · /apply\n\n` +
+            `<b>${body.operatorName}</b> · ${body.ranchName} (${body.state})\n` +
+            `${email}${body.phone ? ` · ${body.phone}` : ''}\n` +
+            `Matched by: ${matchedBy || '?'}\n\n` +
+            `<i>Fresh fit-check appended to Operation Details. Existing wizard link re-issued.</i>\n\n` +
+            `Rancher ${record.id}`
+        );
+      } catch (e: any) {
+        console.warn('[apply] resubmit Telegram alert failed (non-fatal):', e?.message);
       }
 
       const existingToken = jwt.sign(
@@ -308,8 +370,21 @@ export async function POST(req: Request) {
   // rancher can resume even after closing the browser tab. Non-fatal —
   // log + continue if Resend hiccups (rancher still has URL in client
   // response + Telegram alert lets Ben follow up manually).
+  //
+  // EMAIL TRUTH (2026-07-21): guardedSend NEVER throws on a failed/suppressed
+  // send — it RESOLVES {success:false} (dead Resend key, frequency cap,
+  // bounce suppression). The old try/catch only caught throws, so those
+  // failures were invisible: no warning, no stamp, and the Telegram alert
+  // claimed all was well while the rancher had NO copy of their wizard link
+  // (the exact 2026-07-14 dead-key / 503-cap shape). Capture the result,
+  // persist the truth on the record, and warn Ben with the link so he can
+  // send it manually.
+  let welcomeEmail: { success: boolean; suppressed?: boolean; reason?: string } = {
+    success: false,
+    reason: 'send threw',
+  };
   try {
-    const emailRes = await sendRancherApplyAutoApproved({
+    welcomeEmail = await sendRancherApplyAutoApproved({
       operatorName: body.operatorName.trim(),
       ranchName: body.ranchName.trim(),
       email,
@@ -317,22 +392,26 @@ export async function POST(req: Request) {
       score,
       hotLead: hot,
     });
-    // guardedSend does NOT throw on suppression/failure — it returns
-    // {success:false}. Either way the rancher has NO link in their inbox
-    // (this is the only email persisting it); route to the same fallback.
-    if (!emailRes.success) {
-      throw new Error(emailRes.reason || (emailRes.suppressed ? 'suppressed' : 'send failed'));
-    }
   } catch (e: any) {
-    console.warn('[apply] auto-approved welcome email failed (non-fatal):', e?.message);
-    // Tab closed → wizard link exists NOWHERE. Telegram Ben the link so he
-    // can send it manually (mirrors /api/partners' fallback).
+    welcomeEmail = { success: false, reason: e?.message || 'send threw' };
+  }
+  if (!welcomeEmail.success) {
+    console.warn(
+      '[apply] auto-approved welcome email failed/suppressed (non-fatal):',
+      welcomeEmail.reason
+    );
+    // Persist the truth on the record (existing field — no schema change).
     try {
-      await sendTelegramMessage(
-        TELEGRAM_ADMIN_CHAT_ID,
-        `⚠️ <b>Wizard welcome email FAILED</b> for applicant ${body.ranchName} (${email}) — ${e?.message || 'unknown'}\nWizard link: ${wizardUrl}\nSend it manually or resend docs from the admin dashboard.`
-      );
-    } catch {}
+      await updateRecord(TABLES.RANCHERS, rancherId, {
+        'Operation Details':
+          opDetails +
+          `\n⚠️ Welcome email ${welcomeEmail.suppressed ? 'SUPPRESSED' : 'FAILED'} (${
+            welcomeEmail.reason || 'unknown'
+          }) ${new Date().toISOString().slice(0, 10)} — rancher may have no copy of wizard link`,
+      });
+    } catch (e: any) {
+      console.warn('[apply] welcome-email-failure stamp failed (non-fatal):', e?.message);
+    }
   }
 
   // Telegram alert — tier the emoji + label so Ben can triage at a glance
@@ -349,8 +428,13 @@ export async function POST(req: Request) {
         `Channels: ${channelsList}\n` +
         `Deposits online: ${body.acceptsDeposits || '?'}\n` +
         `Score: ${score}/9${body.website ? ` · ${body.website}` : ''}\n\n` +
-        `<i>Pricing Model defaulted to legacy. Wizard token minted — they'll be redirected.</i>\n\n` +
-        `Rancher ${rancherId}`
+        `<i>Pricing Model defaulted to legacy. Wizard token minted — they'll be redirected.</i>\n` +
+        (welcomeEmail.success
+          ? ''
+          : `\n⚠️ <b>Welcome email ${welcomeEmail.suppressed ? 'SUPPRESSED' : 'FAILED'}</b> (${
+              welcomeEmail.reason || 'unknown'
+            }) — they have NO emailed copy of the wizard link. Send it manually:\n${wizardUrl}\n`) +
+        `\nRancher ${rancherId}`
     );
   } catch (e: any) {
     console.warn('[apply] Telegram alert failed (non-fatal):', e?.message);

@@ -228,10 +228,16 @@ export default function AddRancherForm() {
               required={submitterType === 'self'}
               placeholder="ranch@example.com"
             />
+            {/* PHONE REQUIRED on the self path (2026-07-20 #413, Vale Creek):
+                the server 400s a self submission without 10 digits — mirror
+                it client-side so the browser blocks inline instead of a
+                below-the-fold error banner after a full form fill. */}
             <Field
               label={submitterType === 'self' ? 'Your phone' : 'Rancher phone (optional)'}
               name="rancherPhone"
               type="tel"
+              required={submitterType === 'self'}
+              pattern={submitterType === 'self' ? '(\\D*\\d){10,}\\D*' : undefined}
               placeholder="(555) 555-5555"
             />
           </div>
