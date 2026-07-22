@@ -191,3 +191,35 @@ test('public-app state carries pub/mode/markup/shop and roundtrips', () => {
     assert.equal(plain.payload.mode, undefined);
   }
 });
+
+// ── public-app live gate ───────────────────────────────────────────────────
+// (audit 2026-07-21): creds set during Shopify review must NOT offer the
+// one-click flow — only SHOPIFY_PUBLIC_APP_LIVE=1|true unlocks it.
+
+test('publicAppLive: false without the flag even when creds are set', () => {
+  const { publicAppLive } = require('./shopifyOauth');
+  const prev = {
+    id: process.env.SHOPIFY_APP_CLIENT_ID,
+    secret: process.env.SHOPIFY_APP_CLIENT_SECRET,
+    live: process.env.SHOPIFY_PUBLIC_APP_LIVE,
+  };
+  try {
+    process.env.SHOPIFY_APP_CLIENT_ID = 'cid';
+    process.env.SHOPIFY_APP_CLIENT_SECRET = 'csecret';
+    delete process.env.SHOPIFY_PUBLIC_APP_LIVE;
+    assert.equal(publicAppLive(), false);
+    process.env.SHOPIFY_PUBLIC_APP_LIVE = 'false';
+    assert.equal(publicAppLive(), false);
+    process.env.SHOPIFY_PUBLIC_APP_LIVE = '1';
+    assert.equal(publicAppLive(), true);
+    process.env.SHOPIFY_PUBLIC_APP_LIVE = 'true';
+    assert.equal(publicAppLive(), true);
+    // Flag alone without creds is not enough either.
+    delete process.env.SHOPIFY_APP_CLIENT_ID;
+    assert.equal(publicAppLive(), false);
+  } finally {
+    if (prev.id === undefined) delete process.env.SHOPIFY_APP_CLIENT_ID; else process.env.SHOPIFY_APP_CLIENT_ID = prev.id;
+    if (prev.secret === undefined) delete process.env.SHOPIFY_APP_CLIENT_SECRET; else process.env.SHOPIFY_APP_CLIENT_SECRET = prev.secret;
+    if (prev.live === undefined) delete process.env.SHOPIFY_PUBLIC_APP_LIVE; else process.env.SHOPIFY_PUBLIC_APP_LIVE = prev.live;
+  }
+});

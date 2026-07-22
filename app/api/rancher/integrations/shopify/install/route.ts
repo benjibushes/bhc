@@ -13,6 +13,7 @@ import { randomBytes } from 'crypto';
 import { requireRancher } from '@/lib/rancherAuth';
 import {
   publicAppCreds,
+  publicAppLive,
   isValidShopDomain,
   mintOauthState,
   buildAuthorizeUrl,
@@ -33,10 +34,15 @@ export async function POST(request: Request) {
   const rl = await rateLimit(`shopify-pub-install:${getRequestIp(request)}`, { requests: 5, window: '15m' });
   if (!rl.ok) return NextResponse.json({ error: 'Too many attempts — wait a few minutes.' }, { status: 429 });
 
+  // Gate on publicAppLive, not creds-presence (audit 2026-07-21): during
+  // Shopify review the creds are set (compliance-webhook HMAC needs them) but
+  // merchant installs are refused — starting the flow would dead-end the
+  // rancher on a Shopify-owned error page. SHOPIFY_PUBLIC_APP_LIVE flips on
+  // the approval email; until then the token form carries everyone.
   const creds = publicAppCreds();
-  if (!creds) {
+  if (!creds || !publicAppLive()) {
     return NextResponse.json(
-      { error: 'One-click connect is not enabled yet — use the token form below, or text Ben.' },
+      { error: 'One-click connect is not live yet — use the token form instead (5 minutes), or text Ben.' },
       { status: 503 },
     );
   }

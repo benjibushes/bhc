@@ -11,6 +11,8 @@ import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { getConnectAccountStatus } from '@/lib/stripeConnect';
 import { computeConnectResync } from '@/lib/connectResync';
 import { requireRancher } from '@/lib/rancherAuth';
+import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
+import { sendOperatorSignal } from '@/lib/operatorSignal';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 20;
@@ -113,6 +115,45 @@ export async function POST(req: Request) {
     }
   }
 
+  // ── PAUSED RANCHER FINISHED PAYMENT SETUP (audit 2026-07-21) ─────────────
+  // migration-deadline auto-pauses overdue ranchers (Active Status='Paused',
+  // Migration Status='paused_overdue'). When they later complete the upgrade,
+  // NOTHING unpauses them: webhook auto-go-live requires a pre-live Onboarding
+  // Status (a previously-live rancher carries 'Live'), and every other writer
+  // touches only Connect/Migration fields — so they silently receive zero
+  // buyers. Loud ops signal so Ben unpauses; never auto-flip Active Status
+  // (rule 5: no status flips without Ben's per-rancher OK).
+  const activeStatusRaw = rancher['Active Status'];
+  const activeStatus = String(
+    typeof activeStatusRaw === 'object' && activeStatusRaw?.name
+      ? activeStatusRaw.name
+      : activeStatusRaw || '',
+  );
+  if (decision.changed && decision.isNowActive && activeStatus === 'Paused') {
+    const label = String(
+      rancher['Ranch Name'] || rancher['Operator Name'] || rancher['Email'] || session.rancherId,
+    );
+    await sendOperatorSignal({
+      urgency: 'loud',
+      kind: 'connect',
+      summary: `UPGRADE COMPLETE — UNPAUSE ${label}`,
+      detail:
+        `Connect just went active but Active Status is still 'Paused' ` +
+        `(Migration Status was '${String(rancher['Migration Status'] || '(blank)')}').\n` +
+        `Nothing auto-unpauses a previously-live rancher — flip Active Status to 'Active' ` +
+        `from /admin/ranchers/${session.rancherId} or they silently receive zero buyers.`,
+      refs: [{ type: 'rancher', id: session.rancherId, label }],
+      dedupeKey: `paused-connect-active:${session.rancherId}`,
+      dedupeWindowMs: 24 * 3600 * 1000,
+    });
+  }
+
+  // "Deposits will land" must be TRUE, not just Connect-active: a Paused
+  // rancher (e.g. migration-deadline auto-pause) is invisible to buyers even
+  // with a live bank. Gate the copy on the full operational check, evaluated
+  // on the post-write field state.
+  const operational = isRancherOperationalForBuyers({ ...rancher, ...decision.writeFields });
+
   return NextResponse.json({
     ok: true,
     changed: decision.changed,
@@ -122,7 +163,9 @@ export async function POST(req: Request) {
     onboardingComplete: live.onboardingComplete,
     requirementsStatus: live.requirementsStatus,
     message: decision.isNowActive
-      ? "You're all set — your bank is connected and deposits will land in your account."
+      ? operational
+        ? "You're all set — your bank is connected and deposits will land in your account."
+        : "Your bank is connected. We're doing one final check on our side before buyers start routing to you — nothing more needed from you."
       : live.status === 'restricted'
         ? 'Stripe still needs more info. Open the portal to clear the flag.'
         : "Stripe hasn't finished verifying you yet. Resume onboarding to finish the remaining steps.",

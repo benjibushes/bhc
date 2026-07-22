@@ -71,6 +71,12 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   'sendRancherConnectAttention',
   'sendRancherSelfSubmitWelcome',
   'sendProspectClaimMagicLink',
+  // The ONLY email persisting the 60-day wizard link for /apply + /partners
+  // rancher signups — its copy says "Bookmark this email". A rancher who
+  // already had 3 sends in 7 days (self-submit welcome + drips before
+  // applying) was silently cap-suppressed: tab closed → link exists nowhere →
+  // stall (audit 2026-07-21). One-shot per application, cannot create volume.
+  'sendRancherApplyAutoApproved',
   // Customer-expected order confirmation after wholesale checkout.
   'sendWholesaleConfirmation',
   // Customer-expected confirmation that their brand listing is live.

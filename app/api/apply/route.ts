@@ -309,7 +309,7 @@ export async function POST(req: Request) {
   // log + continue if Resend hiccups (rancher still has URL in client
   // response + Telegram alert lets Ben follow up manually).
   try {
-    await sendRancherApplyAutoApproved({
+    const emailRes = await sendRancherApplyAutoApproved({
       operatorName: body.operatorName.trim(),
       ranchName: body.ranchName.trim(),
       email,
@@ -317,8 +317,22 @@ export async function POST(req: Request) {
       score,
       hotLead: hot,
     });
+    // guardedSend does NOT throw on suppression/failure — it returns
+    // {success:false}. Either way the rancher has NO link in their inbox
+    // (this is the only email persisting it); route to the same fallback.
+    if (!emailRes.success) {
+      throw new Error(emailRes.reason || (emailRes.suppressed ? 'suppressed' : 'send failed'));
+    }
   } catch (e: any) {
     console.warn('[apply] auto-approved welcome email failed (non-fatal):', e?.message);
+    // Tab closed → wizard link exists NOWHERE. Telegram Ben the link so he
+    // can send it manually (mirrors /api/partners' fallback).
+    try {
+      await sendTelegramMessage(
+        TELEGRAM_ADMIN_CHAT_ID,
+        `⚠️ <b>Wizard welcome email FAILED</b> for applicant ${body.ranchName} (${email}) — ${e?.message || 'unknown'}\nWizard link: ${wizardUrl}\nSend it manually or resend docs from the admin dashboard.`
+      );
+    } catch {}
   }
 
   // Telegram alert — tier the emoji + label so Ben can triage at a glance

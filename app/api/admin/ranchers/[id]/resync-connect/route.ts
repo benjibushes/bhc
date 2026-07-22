@@ -127,7 +127,10 @@ export async function POST(
     // Connect is active.)
     const pricingModel = String(rancher['Pricing Model'] || '').toLowerCase();
     const migStatus = String(rancher['Migration Status'] || '').toLowerCase();
-    const incompleteMig = new Set(['', 'not_invited', 'invited', 'call_scheduled', 'upgrading']);
+    // 'paused_overdue' included (audit 2026-07-21) — mirrors lib/connectResync
+    // INCOMPLETE_MIGRATION: an active flip means the paused-overdue rancher
+    // finished the upgrade; the tracker must advance (unpause stays manual).
+    const incompleteMig = new Set(['', 'not_invited', 'invited', 'call_scheduled', 'upgrading', 'paused_overdue']);
     if (isNowActive && pricingModel === 'tier_v2' && incompleteMig.has(migStatus)) {
       writeFields['Migration Status'] = 'completed';
     }

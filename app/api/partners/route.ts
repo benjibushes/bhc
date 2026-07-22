@@ -180,7 +180,7 @@ export async function POST(request: Request) {
       // Resend hiccup, but loudly alerted — the client response still carries
       // wizardUrl, and Ben can follow up from the Telegram alert.
       try {
-        await sendRancherApplyAutoApproved({
+        const emailRes = await sendRancherApplyAutoApproved({
           operatorName,
           ranchName,
           email,
@@ -191,6 +191,12 @@ export async function POST(request: Request) {
           score: 0,
           hotLead: false,
         });
+        // guardedSend does NOT throw on suppression/failure — it returns
+        // {success:false}. Either way the rancher has NO link in their
+        // inbox; route to the same Telegram fallback below.
+        if (!emailRes.success) {
+          throw new Error(emailRes.reason || (emailRes.suppressed ? 'suppressed' : 'send failed'));
+        }
       } catch (e: any) {
         console.error('[partners] auto-approved welcome email failed:', e?.message);
         try {

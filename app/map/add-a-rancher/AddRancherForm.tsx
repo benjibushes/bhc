@@ -24,7 +24,7 @@ export default function AddRancherForm() {
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<
     | { kind: 'idle' }
-    | { kind: 'success'; ranchName: string; submitterType: SubmitterType }
+    | { kind: 'success'; ranchName: string; submitterType: SubmitterType; message?: string }
     | { kind: 'error'; message: string }
   >({ kind: 'idle' });
 
@@ -72,11 +72,15 @@ export default function AddRancherForm() {
       } else {
         // Community-submit (or fallback if setupUrl mint failed) — show the
         // success card. Community-submits don't go to a wizard because the
-        // submitter isn't the rancher.
+        // submitter isn't the rancher. Dedupe hits carry the server's honest
+        // message ("already a verified partner" / "already on the map") —
+        // surface it instead of the generic "just landed as a yellow pin"
+        // copy, which is false when nothing was created (audit 2026-07-21).
         setResult({
           kind: 'success',
           ranchName: payload.ranchName,
           submitterType,
+          message: data?.dedupe && typeof data?.message === 'string' ? data.message : undefined,
         });
         setSubmitting(false);
       }
@@ -98,7 +102,17 @@ export default function AddRancherForm() {
         </h2>
         <div className="prose-bhc">
           <p>
-            {isSelf ? (
+            {result.message ? (
+              // Dedupe hit — the record already existed; tell the truth
+              // (server message, which already names the ranch) instead of
+              // claiming a new pin just landed.
+              <>
+                <strong>{result.message}</strong>
+                {isSelf && (
+                  <> Fastest path from here: grab 15 minutes with me and we&rsquo;ll get you sorted.</>
+                )}
+              </>
+            ) : isSelf ? (
               <>
                 <strong>{result.ranchName}</strong> just landed as a yellow pin on the
                 public discover map. Fastest path from here: grab 15 minutes with me and

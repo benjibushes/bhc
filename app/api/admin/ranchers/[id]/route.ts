@@ -7,6 +7,7 @@ import { getMaxActiveReferrals, MAX_ACTIVE_REFERRALS_FIELD } from '@/lib/rancher
 import { goLiveRancher } from '@/lib/goLiveRancher';
 import { logAuditEntry, buildAirtableUpdateReverse } from '@/lib/auditLog';
 import { geocodeRancher } from '@/lib/geocode';
+import { runPaymentPathSmoke } from '@/lib/paymentPathSmoke';
 
 export async function PATCH(
   request: NextRequest,
@@ -104,6 +105,30 @@ export async function PATCH(
       delete fields['Onboarding Status'];
       delete fields['Active Status'];
       delete fields['Page Live'];
+      // ── Payment-path smoke test (audit 2026-07-21) ────────────────────
+      // Mirrors POST /go-live: goLiveGates has NO slug/price gate and NO
+      // payment-link gate for legacy, so this PATCH door could mint a Live
+      // legacy rancher with nothing to buy (the '49 onboarded-but-no-rail'
+      // pattern) that only the nightly canary caught ~24h later. LIVE-probe
+      // the payment path before flipping; body.force is the escape hatch.
+      if (body.force !== true) {
+        const smokeRancher: any = await getRecordById(TABLES.RANCHERS, id).catch(() => null);
+        if (smokeRancher) {
+          const smoke = await runPaymentPathSmoke(smokeRancher);
+          if (!smoke.ok) {
+            return NextResponse.json(
+              {
+                error: `Payment-path smoke test failed — rancher cannot take money: ${smoke.failures.join(' · ')}`,
+                code: 'payment_path_smoke_failed',
+                failures: smoke.failures,
+                hint: 'Fix the gates above, or re-send with force:true to override (logged).',
+              },
+              { status: 409 },
+            );
+          }
+        }
+        // smokeRancher===null falls through: goLiveRancher owns the 404 contract.
+      }
       goLiveResult = await goLiveRancher(id, {
         force: body.force === true,
         actor: 'admin-rancher-patch',

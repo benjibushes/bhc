@@ -642,7 +642,11 @@ async function syncRancherConnectStatus(accountId: string): Promise<void> {
     !shouldAutoFlip
   ) {
     const currentMigStatus = String(rancher['Migration Status'] || '').toLowerCase();
-    const incompleteStatuses = new Set(['', 'not_invited', 'invited', 'call_scheduled', 'upgrading']);
+    // 'paused_overdue' (audit 2026-07-21): migration-deadline auto-paused this
+    // rancher; Connect going active means they finished — advance the tracker
+    // (mirrors lib/connectResync INCOMPLETE_MIGRATION). Active Status is NOT
+    // touched here — the paused-rancher alert below tells ops to unpause.
+    const incompleteStatuses = new Set(['', 'not_invited', 'invited', 'call_scheduled', 'upgrading', 'paused_overdue']);
     if (incompleteStatuses.has(currentMigStatus)) {
       writeFields['Migration Status'] = 'completed';
     }
@@ -821,6 +825,35 @@ async function syncRancherConnectStatus(accountId: string): Promise<void> {
       // active but not yet Live" state which ops can manually resolve.
       console.error('[stripe-connect webhook] auto-go-live failed:', e?.message);
     }
+  }
+
+  // ── PAUSED RANCHER FINISHED PAYMENT SETUP (audit 2026-07-21) ──────────────
+  // migration-deadline auto-pauses overdue ranchers (Active Status='Paused',
+  // Migration Status='paused_overdue'). When they later finish the upgrade,
+  // NOTHING unpauses them: the auto-go-live gate above requires a pre-live
+  // Onboarding Status (a previously-live rancher carries 'Live' → never
+  // fires), rancher-go-live-sync excludes Paused rows, and admin resume is
+  // manual — so the rancher completes everything and silently receives zero
+  // buyers. Loud ops signal at the completion moment; never auto-flip Active
+  // Status (rule 5: no status flips without Ben's per-rancher OK).
+  // sendOperatorSignal never throws (catches internally) and dedupes.
+  if (isNowActive && !shouldAutoGoLive && currentActiveStatus === 'Paused') {
+    const pausedLabel = String(
+      rancher['Ranch Name'] || rancher['Operator Name'] || rancher['Email'] || accountId,
+    );
+    await sendOperatorSignal({
+      urgency: 'loud',
+      kind: 'connect',
+      summary: `UPGRADE COMPLETE — UNPAUSE ${pausedLabel}`,
+      detail:
+        `Connect just went active but Active Status is still 'Paused' ` +
+        `(Migration Status was '${String(rancher['Migration Status'] || '(blank)')}').\n` +
+        `Nothing auto-unpauses a previously-live rancher — flip Active Status to 'Active' ` +
+        `from /admin/ranchers/${rancher.id} or they silently receive zero buyers.`,
+      refs: [{ type: 'rancher', id: rancher.id, label: pausedLabel }],
+      dedupeKey: `paused-connect-active:${rancher.id}`,
+      dedupeWindowMs: 24 * 3600 * 1000,
+    });
   }
 
   // Telegram celebration when Connect goes active for the first time

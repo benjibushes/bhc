@@ -22,8 +22,8 @@
 //     third-party Payment Link URLs is a false-positive machine (bot walls,
 //     transient 5xx), so their link liveness is deliberately not probed.
 //
-// Used by: the human go-live doors (rancher activate, admin go-live,
-// Telegram spgolive) as a BLOCK, and the nightly-rancher-audit as a per-
+// Used by: the human go-live doors (rancher activate, admin go-live, admin
+// Mark-Live PATCH, Telegram spgolive) as a BLOCK, and the nightly-rancher-audit as a per-
 // Active-rancher canary (1d). The stripe-connect webhook auto-go-live door
 // is intentionally untouched — Connect-active IS its trigger.
 //

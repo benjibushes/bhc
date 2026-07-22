@@ -47,12 +47,18 @@ export interface ConnectResyncDecision {
 
 // Migration states that are not yet "done" — an active Connect flip advances
 // these to 'completed'. Mirrors app/api/admin/ranchers/[id]/resync-connect.
+// 'paused_overdue' (audit 2026-07-21): migration-deadline auto-paused this
+// rancher; when Connect later flips active they HAVE finished the upgrade, so
+// the tracker must advance — leaving it 'paused_overdue' made the completion
+// invisible forever. NOTE: nothing here touches Active Status — the caller
+// must alert ops to unpause (rule 5: no status flips without Ben's OK).
 const INCOMPLETE_MIGRATION = new Set([
   '',
   'not_invited',
   'invited',
   'call_scheduled',
   'upgrading',
+  'paused_overdue',
 ]);
 
 /**

@@ -47,6 +47,27 @@ test('active flip on already-completed migration does not rewrite it', () => {
   assert.equal(d.migrationCompleted, false);
 });
 
+test('active flip on paused_overdue rancher advances migration to completed', () => {
+  // migration-deadline auto-paused this rancher; finishing Connect means the
+  // upgrade is done — the tracker must advance (Active Status unpause stays
+  // a manual ops step, alerted by the callers).
+  const d = computeConnectResync({ ...base, liveStatus: 'active', migrationStatus: 'paused_overdue' });
+  assert.equal(d.changed, true);
+  assert.equal(d.writeFields['Migration Status'], 'completed');
+  assert.equal(d.migrationCompleted, true);
+});
+
+test('paused_overdue + active flip on legacy rancher still leaves Migration Status alone', () => {
+  const d = computeConnectResync({
+    ...base,
+    liveStatus: 'active',
+    pricingModel: 'legacy',
+    migrationStatus: 'paused_overdue',
+  });
+  assert.equal(d.writeFields['Migration Status'], undefined);
+  assert.equal(d.migrationCompleted, false);
+});
+
 test('non-active status change writes only the status field', () => {
   const d = computeConnectResync({
     ...base,
