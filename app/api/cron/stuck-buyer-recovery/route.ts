@@ -227,7 +227,13 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
             intentScore: c['Intent Score'] || 0,
             intentClassification: c['Intent Classification'] || '',
             notes: c['Notes'] || '',
-            warmupEngaged: true, // hot-lead bypass — they already said YES
+            // Hot-lead bypass ONLY for buyers who actually clicked a warmup
+            // YES ('Warmup Engaged At' — the same signal batch-approve reads).
+            // Eligibility above also admits Qualified-At-only buyers who never
+            // opted in; hardcoding true routed the entire recovery pool (up to
+            // 50/day) around the per-state fairness sub-cap and the cold soft
+            // cap — hot-lead bypass became the default path at scale.
+            warmupEngaged: !!c['Warmup Engaged At'],
           }),
         });
         if (matchRes.ok) {

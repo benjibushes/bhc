@@ -10,6 +10,7 @@ import { bulkRouteStateToRancher } from '@/lib/bulkRoute';
 import { getOperationalServedStates } from '@/lib/rancherEligibility';
 import { isQualifiedForRouting } from '@/lib/qualification';
 import { HELD_REFERRAL_STATUSES } from '@/lib/capacityCount';
+import { setCapacityCounter } from '@/lib/rancherCapacity';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
@@ -105,11 +106,14 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
         const actual = actualCounts[rancher.id] || 0;
         if (stored !== actual) {
           try {
-            await updateRecord(TABLES.RANCHERS, rancher.id, {
-              'Current Active Referrals': actual,
-            });
-            capacityFixed++;
-            console.log(`Capacity fix: ${rancher['Operator Name'] || rancher['Ranch Name']} ${stored} → ${actual}`);
+            // Write Redis AND the Airtable mirror together (setCapacityCounter).
+            // Rewriting only the mirror left the Redis counter — the value the
+            // matcher's atomic INCR guard actually gates on — drifted through
+            // the very run whose self-heal just "fixed" capacity, and the next
+            // syncCapacityToAirtable re-poisoned the mirror this wrote.
+            const { redisOk, airtableOk } = await setCapacityCounter(rancher.id, actual);
+            if (redisOk || airtableOk) capacityFixed++;
+            console.log(`Capacity fix: ${rancher['Operator Name'] || rancher['Ranch Name']} ${stored} → ${actual} (redis=${redisOk} airtable=${airtableOk})`);
           } catch (e: any) {
             console.error(`Capacity fix error for ${rancher.id}:`, e.message);
           }
@@ -542,7 +546,14 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
           });
           if (matchRes.ok) {
             const matchData = await matchRes.json().catch(() => ({}));
-            if (matchData.matchFound || matchData.referralId) {
+            // MISMATCH FIX (2026-07-22): count a match ONLY as matchFound &&
+            // !waitlisted — the same canonical predicate the pending loop uses.
+            // Capacity-bounce responses (reason=capacity_race/hard_ceiling)
+            // return waitlisted=true; counting them burned the daily intro
+            // budget on bounces AND stamped Warmup Stage='matched' on buyers
+            // who were actually waitlisted (never re-warmed, never introduced).
+            const didMatch = !!(matchData.matchFound && !matchData.waitlisted);
+            if (didMatch) {
               waitlistedMatched++;
               const rid = matchData.suggestedRancher?.id;
               if (rid) perRancherToday.set(rid, (perRancherToday.get(rid) || 0) + 1);
@@ -551,6 +562,17 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
                 try {
                   await updateRecord(TABLES.CONSUMERS, consumer.id, { 'Warmup Stage': 'matched' });
                 } catch { /* non-fatal */ }
+              }
+            } else if (Array.isArray(matchData.bouncedRancherIds)) {
+              // Capacity-bounced ranchers are at their valve — saturate their
+              // per-rancher counter so the excludeRancherIds computation below
+              // skips them for every remaining COLD buyer this run, instead of
+              // re-picking the same over-cap rancher for the whole cohort.
+              // (Hot leads still bypass — they send an empty exclude list.)
+              for (const rid of matchData.bouncedRancherIds) {
+                if (typeof rid === 'string' && rid) {
+                  perRancherToday.set(rid, Math.max(perRancherToday.get(rid) || 0, PER_RANCHER_DAILY_CAP));
+                }
               }
             }
           }
