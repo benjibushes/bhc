@@ -37,9 +37,11 @@ export async function GET(request: Request) {
     return NextResponse.redirect(`${SITE_URL}/access`, 302);
   }
 
+  let statePrefill = '';
   try {
     const buyer: any = await getRecordById(TABLES.CONSUMERS, consumerId);
     if (buyer) {
+      statePrefill = String(buyer['State'] || '').trim();
       const prevQualifiedAt = String(buyer['Qualified At'] || '');
       await updateRecord(TABLES.CONSUMERS, consumerId, {
         'Qualified At': new Date().toISOString(),
@@ -51,7 +53,11 @@ export async function GET(request: Request) {
     console.warn('[buyer/reconfirm] re-stamp failed:', e?.message);
   }
 
-  // Land on /access with the resume flag — the funnel recognizes them and
-  // shows the matched/waitlist state rather than restarting the quiz.
-  return NextResponse.redirect(`${SITE_URL}/access?resume=1&reconfirmed=1`, 302);
+  // Land on /access with the welcome-back flags: the page shows a
+  // "welcome back — you're confirmed still looking" banner and prefills the
+  // state dropdown. The quiz itself re-runs on purpose — freshness is the
+  // point of this rail, so matching uses the buyer's CURRENT answers.
+  const params = new URLSearchParams({ resume: '1', reconfirmed: '1' });
+  if (statePrefill) params.set('state', statePrefill);
+  return NextResponse.redirect(`${SITE_URL}/access?${params.toString()}`, 302);
 }

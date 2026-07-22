@@ -29,7 +29,12 @@ import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { getOperatorBookingUrl } from '@/lib/calBooking';
 import { isDepositCapableMatch } from '@/lib/depositOptionality';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
-import { buildQualifyConsumerUpdates, isExplicitlyNotReady } from '@/lib/qualifyUpdates';
+import {
+  buildQualifyConsumerUpdates,
+  isExplicitlyNotReady,
+  normalizeLegacyTiming,
+  timingFromNotes,
+} from '@/lib/qualifyUpdates';
 // B4 (2026-07-01): matching/suggest is invoked IN-PROCESS (imported route
 // handler + synthetic Request) instead of fetch()ing our own deployment over
 // the network — that self-call was an edge round-trip plus a SECOND serverless
@@ -161,14 +166,27 @@ export async function POST(request: Request) {
   // REAL order), then fall back to low-intent defaults so we never reject a
   // legitimate resume. A NON-empty invalid value (smuggled freeform) still 400s
   // below — only the empty case is hydrated.
+  // LEGACY VOCAB (2026-07-22): the pre-06-18 /access form never wrote the
+  // Timing FIELD — it used '1-3 months' vocab and stored it in Notes as
+  // '[Timing: …]'. Without the mapping + Notes fallback, EVERY legacy-created
+  // WAITING buyer hydrated to 'Just exploring' and was auto-held as
+  // "explicitly not ready" — a self-ID they never gave. When a default is
+  // still needed, flag it so the hold branch stays non-terminal (no Funnel
+  // Completed At stamp — see lib/qualifyUpdates).
+  let tierDefaulted = false;
+  let timingDefaulted = false;
   if (!tier || !timing) {
     try {
       const c: any = await getRecordById(TABLES.CONSUMERS, consumerId);
       if (!tier) tier = String(c?.['Order Type'] || '').trim() as Tier;
-      if (!timing) timing = String(c?.['Timing'] || '').trim() as Timing;
+      if (!timing) {
+        const storedTiming =
+          String(c?.['Timing'] || '').trim() || timingFromNotes(String(c?.['Notes'] || ''));
+        timing = normalizeLegacyTiming(storedTiming) as Timing;
+      }
     } catch { /* fall through to defaults */ }
-    if (!VALID_TIERS.includes(tier)) tier = 'Not Sure';
-    if (!VALID_TIMINGS.includes(timing)) timing = 'Just exploring';
+    if (!VALID_TIERS.includes(tier)) { tier = 'Not Sure'; tierDefaulted = true; }
+    if (!VALID_TIMINGS.includes(timing)) { timing = 'Just exploring'; timingDefaulted = true; }
   }
 
   if (!VALID_TIERS.includes(tier)) {
@@ -205,6 +223,8 @@ export async function POST(request: Request) {
     score,
     completedAt,
     ackConfirmedAt,
+    tierDefaulted,
+    timingDefaulted,
   });
 
   // FUNNEL = QUALIFIED (founder rule 2026-07-08): completing the quiz routes
