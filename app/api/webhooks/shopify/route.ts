@@ -51,6 +51,27 @@ export async function POST(request: Request) {
           const { parseIntegration: pi2 } = await import('@/lib/fulfillmentConnector');
           for (const rr of rs) {
             if (pi2(rr['Fulfillment Integration'])?.shop === shop) {
+              // Pull their synced listings off /shop BEFORE clearing the
+              // config — a redacted store has no fulfillment rail, and rows
+              // left Active kept selling with frozen stock (audit 2026-07-21).
+              // Backstop for stores connected before APP_UNINSTALLED existed.
+              try {
+                const { deactivateSyncManagedProducts } = await import('@/lib/shopifyCatalogSync');
+                const pulled = await deactivateSyncManagedProducts(String(rr.id));
+                if (pulled > 0) {
+                  const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+                  await sendOperatorSignal({
+                    urgency: 'loud',
+                    kind: 'system-error',
+                    summary: `Store redacted — ${shop}: ${pulled} listing${pulled === 1 ? '' : 's'} pulled off /shop`,
+                    detail: `Shopify sent shop/redact (app uninstalled ~48h ago). Integration config cleared; ${pulled} sync-managed products deactivated.`,
+                    dedupeKey: `shopify-redact-${shop}`,
+                    dedupeWindowMs: 24 * 60 * 60 * 1000,
+                  }).catch(() => {});
+                }
+              } catch (e: any) {
+                console.error('[shopify-webhook] shop/redact listing pull error:', e?.message);
+              }
               await updateRecord(TABLES.RANCHERS, rr.id, { 'Fulfillment Integration': '' }).catch(() => {});
             }
           }
@@ -80,6 +101,37 @@ export async function POST(request: Request) {
     if (!verifyShopifyHmac(raw, request.headers.get('x-shopify-hmac-sha256'), secret)) {
       console.warn(`[shopify-webhook] HMAC fail for ${shop} topic=${topic}`);
       return NextResponse.json({ ok: false, error: 'invalid signature' }, { status: 401 });
+    }
+
+    // Real-time uninstall (registered at connect time): the token is revoked
+    // the moment the store owner removes the app, so every later push/sync
+    // fails — pull the synced listings NOW, clear the config, and ring Ben
+    // (buyers were paying for products with no fulfillment rail, audit
+    // 2026-07-21). Signed with the same secret as the other topics: the
+    // config still holds it at delivery time.
+    if (topic === 'app/uninstalled') {
+      let pulled = 0;
+      try {
+        const { deactivateSyncManagedProducts } = await import('@/lib/shopifyCatalogSync');
+        pulled = await deactivateSyncManagedProducts(String(rancher.id));
+      } catch (e: any) {
+        console.error('[shopify-webhook] uninstall listing pull error:', e?.message);
+      }
+      await updateRecord(TABLES.RANCHERS, rancher.id, { 'Fulfillment Integration': '' }).catch(() => {});
+      try {
+        const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+        await sendOperatorSignal({
+          urgency: 'loud',
+          kind: 'system-error',
+          summary: `Store UNINSTALLED — ${shop}: ${pulled} listing${pulled === 1 ? '' : 's'} pulled off /shop`,
+          detail:
+            `${String(rancher['Ranch Name'] || rancher['Operator Name'] || shop)} removed the BuyHalfCow app from their Shopify store.\n` +
+            `Integration config cleared; ${pulled} sync-managed products deactivated. Orders already paid but not yet pushed will NOT auto-fulfill — check for stuck 'New' orders.`,
+          dedupeKey: `shopify-uninstalled-${shop}`,
+          dedupeWindowMs: 60 * 60 * 1000,
+        });
+      } catch { /* best-effort */ }
+      return NextResponse.json({ ok: true, processed: topic, pulled });
     }
 
     // Catalog freshness (sync mode): a product edit in their store re-syncs

@@ -41,8 +41,11 @@ export async function POST(request: Request) {
   // the approval email; until then the token form carries everyone.
   const creds = publicAppCreds();
   if (!creds || !publicAppLive()) {
+    // Don't reference "the token form below" — the card only calls this from
+    // the one-click layout, where that form isn't rendered (the card swaps
+    // layouts itself on a 503).
     return NextResponse.json(
-      { error: 'One-click connect is not live yet — use the token form instead (5 minutes), or text Ben.' },
+      { error: 'One-click connect is not available right now — connect with the token steps instead, or text Ben.' },
       { status: 503 },
     );
   }
