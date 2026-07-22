@@ -9,6 +9,8 @@ import { sendSMSToConsumer } from '@/lib/twilio';
 import { isSmsWindow } from '@/lib/sendWindow';
 import { normalizeState, normalizeStates } from '@/lib/states';
 import { hopDistance, adjacencyViolations } from '@/lib/stateAdjacency';
+import { distanceCmp, rancherDistanceMiles, isOutOfDeliveryRadius } from '@/lib/geoDistance';
+import { resolveBuyerCentroid } from '@/lib/zipCentroids';
 import jwt from 'jsonwebtoken';
 import { getMaxActiveReferrals, incrementCapacity, decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { isActiveDealReferral } from '@/lib/capacityCount';
@@ -739,6 +741,52 @@ export async function POST(request: Request) {
       }
     }
 
+    // ── REAL-MILES ROUTING (2026-07-22, founder directive "local demand hot") ──
+    // Precision layer UNDER the existing state gates, never a bypass of them:
+    // Routing States still decides WHO is eligible; miles only decide the ORDER
+    // within that set (and, for delivery-only ranchers, whether they can
+    // physically serve at all).
+    //
+    // The buyer's point comes from their `Zip` cross-checked against the state
+    // we route on (lib/zipCentroids) — a static offline table, zero network
+    // calls on the money path. No ZIP, an out-of-state ZIP, or a rancher with
+    // no Latitude/Longitude ⇒ null ⇒ every helper below is a no-op and the
+    // hopDistance sort governs exactly as it did before this change.
+    const buyerPoint = resolveBuyerCentroid(buyerRecForGate['Zip'], normalizedBuyerState);
+    const milesCache = new Map<string, number | null>();
+    /** Great-circle miles from the buyer to this rancher — null if unmeasurable. */
+    function milesToBuyer(r: any): number | null {
+      if (!buyerPoint) return null;
+      const key = String(r?.id || '');
+      const cached = milesCache.get(key);
+      if (cached !== undefined) return cached;
+      const d = rancherDistanceMiles(buyerPoint, r);
+      milesCache.set(key, d);
+      return d;
+    }
+    /**
+     * True ONLY for a delivery-only rancher whose own `Delivery Radius Miles`
+     * can't reach this buyer. Fail-open everywhere else — see
+     * lib/geoDistance.isDeliveryOnly for why a rancher who also pickups or
+     * ships must never be gated on their delivery radius.
+     */
+    function outOfDeliveryRadius(r: any): boolean {
+      return isOutOfDeliveryRadius(buyerPoint, r);
+    }
+    // DROP vs DEMOTE. Default DEMOTES an out-of-radius rancher (sorted last,
+    // still matchable) rather than dropping them, mirroring the existing
+    // ROUTING_ADJACENCY_ENFORCE knob. Rationale: a mis-typed radius would
+    // otherwise silently black-hole a rancher's entire lead flow, and
+    // waitlisting a buyer when a willing rancher exists is the more expensive
+    // error while supply is the constraint. Flip ROUTING_RADIUS_ENFORCE=strict
+    // to actually exclude them.
+    const radiusStrict = process.env.ROUTING_RADIUS_ENFORCE === 'strict';
+    if (buyerPoint) {
+      console.log(
+        `[match] buyer ${buyerLabel} ZIP ${buyerPoint.zip} → ${buyerPoint.lat},${buyerPoint.lng} — ranking by real miles (radius gate ${radiusStrict ? 'STRICT' : 'demote'})`,
+      );
+    }
+
     let topMatch: any = null;
     // Remaining eligible candidates in sorted order — the capacity-claim loop
     // below falls through to these when the top pick bounces off its capacity
@@ -811,9 +859,29 @@ export async function POST(request: Request) {
         // get routed to Half/Whole-only ranchers, etc. Empty Tier Specialty =
         // no filter applied (legacy default).
         if (!isTierFit(r)) return false;
+        // ── DELIVERY-RADIUS GATE (2026-07-22) ────────────────────────────
+        // Strict mode only. In the default mode the same verdict demotes the
+        // rancher in the sort below instead of removing them, so a buyer is
+        // never waitlisted while a reachable rancher sits in the pool.
+        if (radiusStrict && outOfDeliveryRadius(r)) return false;
         return true;
       });
       const localEligible = localEligibleAll.filter(isPriceFit);
+
+      // No silent caps: say out loud when the radius gate removed supply.
+      if (radiusStrict && buyerPoint) {
+        const radiusDropped = allRanchers.filter(
+          (r: any) => isEligibleBase(r) && isTierFit(r) && outOfDeliveryRadius(r),
+        );
+        if (radiusDropped.length > 0) {
+          console.log(
+            `[match] ROUTING_RADIUS_ENFORCE=strict dropped ${radiusDropped.length} delivery-only rancher(s) out of range for ${buyerLabel}: ` +
+              radiusDropped
+                .map((r: any) => `${r['Ranch Name'] || r.id} (${Math.round(milesToBuyer(r) || 0)}mi > ${r['Delivery Radius Miles']}mi)`)
+                .join(', '),
+          );
+        }
+      }
 
       // If price-fit eliminated all candidates but there WERE state-eligible
       // ranchers, log so we can see the budget-gap pattern over time.
@@ -826,6 +894,15 @@ export async function POST(request: Request) {
       matchType = localEligible.length > 0 ? 'local' : null;
 
       eligible.sort((a: any, b: any) => {
+        // 0. CAN'T-SERVE SINKS FIRST (2026-07-22). A delivery-only rancher
+        //    whose own radius doesn't reach this buyer goes last — ahead of
+        //    even the primary-state preference, because "is in your state" is
+        //    worth nothing if they can't get the beef to you. Never a drop in
+        //    this mode: if they're the only candidate they still match.
+        const aOut = outOfDeliveryRadius(a);
+        const bOut = outOfDeliveryRadius(b);
+        if (aOut !== bOut) return aOut ? 1 : -1;
+
         // 1. PRIMARY STATE WINS. A rancher whose Primary State === buyer's
         //    state should always beat a rancher who only "serves" the buyer's
         //    state via States Served. Otherwise a low-load multi-state
@@ -846,10 +923,20 @@ export async function POST(request: Request) {
           if (p !== 0) return p;
         }
 
-        // 1c. FOOD MILES (2026-07-08): among non-primary candidates who reach
-        //     this buyer via Routing States, the geographically CLOSER home
-        //     state wins — a bordering-state rancher beats one two states
-        //     over. Zero effect when hops tie (falls through to load-balance).
+        // 1c. REAL MILES (2026-07-22): when the buyer's ZIP resolves AND both
+        //     ranchers are geocoded, the actually-nearer ranch wins — the
+        //     20-miles-away ranch beats the 400-miles-away one that state
+        //     granularity called a tie. Undecidable (either side unmeasurable)
+        //     returns 0 and falls through to the hop sort below, so a buyer
+        //     with no ZIP behaves exactly as before this change.
+        const dCmp = distanceCmp(milesToBuyer(a), milesToBuyer(b));
+        if (dCmp !== 0) return dCmp;
+
+        // 1d. FOOD MILES (2026-07-08) — the coarse fallback when miles aren't
+        //     available: among non-primary candidates who reach this buyer via
+        //     Routing States, the geographically CLOSER home state wins — a
+        //     bordering-state rancher beats one two states over. Zero effect
+        //     when hops tie (falls through to load-balance).
         const aHops = hopDistance(normalizeState(a['State']) || '', normalizedBuyerState);
         const bHops = hopDistance(normalizeState(b['State']) || '', normalizedBuyerState);
         if (aHops !== bHops) return aHops - bHops;
@@ -922,9 +1009,16 @@ export async function POST(request: Request) {
         // No primary-state preference here (none are in-state). Load-balance →
         // round-robin → performance, same tiebreakers as the local sort.
         nationwideEligible.sort((a: any, b: any) => {
-          // FOOD MILES (2026-07-08): even in the nationwide fallback, the
-          // geographically nearest approved rancher wins — an adjacent-state
-          // shipper beats a cross-country one before any other tiebreak.
+          // REAL MILES (2026-07-22): nearest approved shipper first when the
+          // buyer's ZIP resolves and both are geocoded. No radius gate here by
+          // design — these ranchers are cold-chain shippers, and their local
+          // delivery radius says nothing about how far they can ship.
+          const dCmp = distanceCmp(milesToBuyer(a), milesToBuyer(b));
+          if (dCmp !== 0) return dCmp;
+          // FOOD MILES (2026-07-08) — coarse fallback: even in the nationwide
+          // fallback, the geographically nearest approved rancher wins — an
+          // adjacent-state shipper beats a cross-country one before any other
+          // tiebreak.
           const aHops = hopDistance(normalizeState(a['State']) || '', normalizedBuyerState);
           const bHops = hopDistance(normalizeState(b['State']) || '', normalizedBuyerState);
           if (aHops !== bHops) return aHops - bHops;
@@ -1160,6 +1254,18 @@ export async function POST(request: Request) {
       // global cap, so this stamp is harmless but always present.
       'State Allocation': normalizedBuyerState,
     };
+
+    // Routing visibility (2026-07-22): how far the buyer actually is from the
+    // rancher we picked. 'unknown' whenever the ZIP didn't resolve — which is
+    // the honest reading of "we ranked this one on state hops, not miles".
+    {
+      const matchMiles = milesToBuyer(topMatch);
+      console.log(
+        `[match] ${buyerLabel} (${normalizedBuyerState}) → ${topMatch['Ranch Name'] || topMatch.id} ` +
+          `(${topMatch['State'] || '?'}) type=${matchType} ` +
+          `distance=${matchMiles === null ? 'unknown (no resolvable buyer ZIP)' : `${Math.round(matchMiles)}mi`}`,
+      );
+    }
 
     let referral: any;
     try {
