@@ -389,6 +389,7 @@ test('ready chase selector: supply gate + oldest-first ordering + batch cap', ()
 test('ready chase selector: batchCap 0 or empty input selects nothing', () => {
   assert.deepEqual(selectReadyBuyersForChase([readyBuyer()], { ...OPTS, batchCap: 0 }), []);
   assert.deepEqual(selectReadyBuyersForChase([], OPTS), []);
+});
 
 // ── cross-rail cooldown (audit 2026-07-22) ───────────────────────────────────
 // The demand-router campaign stamps 'Campaign Last Sent At'; the waiting-
