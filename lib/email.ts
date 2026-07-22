@@ -5294,7 +5294,7 @@ export async function sendRancherApplyAutoApproved(data: {
   wizardUrl: string;
   score: number;
   hotLead: boolean;
-}): Promise<{ success: boolean; error?: any }> {
+}): Promise<{ success: boolean; suppressed?: boolean; reason?: string }> {
   const first = (data.operatorName || 'there').split(' ')[0] || 'there';
   const subject = `${first} — ${data.ranchName} is approved. Your setup link inside.`;
   const hotLine = data.hotLead

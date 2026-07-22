@@ -7,8 +7,20 @@ import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 import { getOperatorBookingUrl } from '@/lib/calBooking';
+import jwt from 'jsonwebtoken';
+import { JWT_SECRET } from '@/lib/secrets';
 
 export const maxDuration = 60;
+
+// Same rancher-setup JWT rail as /api/apply and onboarding-stuck — 60d,
+// resolves to /rancher/setup. Minted fresh per nudge so an /apply dropout
+// who lost the original link (closed tab + welcome email failed) gets a
+// working one.
+function mintSetupUrl(rancherId: string): string {
+  const SITE = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
+  const token = jwt.sign({ type: 'rancher-setup', rancherId }, JWT_SECRET, { expiresIn: '60d' });
+  return `${SITE}/rancher/setup?token=${token}`;
+}
 
 // Per-run ceiling — protects against unbounded outreach under cohort growth.
 // Matches existing caps on buyer-pulse + email-sequences.
@@ -223,18 +235,41 @@ ${stageEmoji[stage] || '⏳'} Stage: <b>${stage}</b>
           const first = (rancher['Operator Name'] || '').toString().split(' ')[0] || 'there';
           const ranchName = (rancher['Ranch Name'] || rancher['Operator Name'] || 'your ranch').toString();
           const calLink = await getOperatorBookingUrl('rancher');
-          try {
-            await sendEmail({
-              to: rancherEmail,
-              subject: `${first}, ${ranchName} is on the map — what's next?`,
-              html: `<!DOCTYPE html><html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px;">
-<div style="max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A;">
-  <h1 style="font-family:Georgia,serif;font-size:24px;margin:0 0 18px;">Hey ${first},</h1>
-  <p>Just a quick check-in &mdash; <strong>${ranchName}</strong> has been on the BuyHalfCow map for a couple days now. Yellow pin, visible to buyers, but not yet routed customers.</p>
+          // Two distinct blank-status populations land here (2026-07-21 fix):
+          //   • Map self-submits (Self-Submitted At set) — they DO have a
+          //     yellow pin, so the "on the map" copy is true.
+          //   • /apply applicants (no Self-Submitted At) — NO live page, no
+          //     pin. The old copy lied to them AND omitted the one URL that
+          //     unsticks them: this is the ONLY automated rail that reaches
+          //     an /apply dropout (they fall through every onboarding-stuck
+          //     bucket and the self-submit drip), so if the welcome email
+          //     failed they had no way back into the wizard. Give them the
+          //     setup link + honest "finish your 5-minute setup" copy.
+          const isMapSelfSubmit = !!rancher['Self-Submitted At'];
+          const setupUrl = mintSetupUrl(rancher.id);
+          const subject = isMapSelfSubmit
+            ? `${first}, ${ranchName} is on the map — what's next?`
+            : `${first}, ${ranchName} is approved — 5 minutes to finish your page`;
+          const bodyHtml = isMapSelfSubmit
+            ? `<p>Just a quick check-in &mdash; <strong>${ranchName}</strong> has been on the BuyHalfCow map for a couple days now. Yellow pin, visible to buyers, but not yet routed customers.</p>
   <p>The fastest way to flip from "visible" to "getting leads" is a 15-minute call. I'll show you what we do, ask how you sell today, and we figure out together if it's a fit.</p>
   <div style="text-align:center;margin:30px 0;">
     <a href="${calLink}" style="display:inline-block;padding:14px 30px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px;">Book the 15-min call</a>
+  </div>`
+            : `<p>Just a quick check-in &mdash; <strong>${ranchName}</strong> is approved on BuyHalfCow, but your page isn't set up yet, so buyers can't find you.</p>
+  <p>Finish your 5-minute setup &mdash; prices, the payment link you already use, one e-signature &mdash; and your page goes live the moment you do.</p>
+  <div style="text-align:center;margin:30px 0;">
+    <a href="${setupUrl}" style="display:inline-block;padding:14px 30px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px;">Finish my setup</a>
   </div>
+  <p style="font-size:13px;color:#6B4F3F;">Rather talk it through first? <a href="${calLink}" style="color:#6B4F3F;">Grab 15 minutes with me</a> and we'll walk it together.</p>`;
+          try {
+            await sendEmail({
+              to: rancherEmail,
+              subject,
+              html: `<!DOCTYPE html><html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px;">
+<div style="max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A;">
+  <h1 style="font-family:Georgia,serif;font-size:24px;margin:0 0 18px;">Hey ${first},</h1>
+  ${bodyHtml}
   <p style="font-size:13px;color:#6B4F3F;">If now isn't the right time, just reply and let me know. No pressure.</p>
   <p style="font-size:12px;color:#A7A29A;margin-top:30px;">&mdash; Ben<br>Founder, BuyHalfCow</p>
 </div></body></html>`,

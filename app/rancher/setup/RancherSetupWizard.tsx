@@ -271,6 +271,17 @@ export default function RancherSetupWizard() {
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [signingToken, setSigningToken] = useState('');
   const [dashboardLink, setDashboardLink] = useState('');
+  // Live truth from POST /sign-agreement (2026-07-21): true = the sign
+  // request itself flipped the page live; false = signed but DARK (e.g.
+  // legacy signed without a price — awaits Ben's rverify tap). null until a
+  // sign happens this session — Done step then falls back to
+  // rancher.pageLive (the already-signed re-entry path).
+  const [wentLive, setWentLive] = useState<boolean | null>(null);
+  // True once THIS session completed signing. Gates the top-level
+  // "already onboarded" early-return so the just-signed rancher isn't
+  // yanked out of the Done step's readiness checklist on the next render
+  // (rancher.agreementSigned flips true in local state at sign time now).
+  const [signedThisSession, setSignedThisSession] = useState(false);
   const [autoAboutLoading, setAutoAboutLoading] = useState(false);
   const [autoAboutHint, setAutoAboutHint] = useState('');
   const [websiteForAbout, setWebsiteForAbout] = useState('');
@@ -916,6 +927,19 @@ export default function RancherSetupWizard() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || 'Signing failed');
       if (data?.dashboardLink) setDashboardLink(data.dashboardLink);
+      // Sync local state with what the server just did (2026-07-21). Leaving
+      // rancher.agreementSigned stale-false meant the Done step's nudge CTAs
+      // ('Set pricing →' / 'Add a photo →') walked the just-signed rancher
+      // back through Step 8, whose onContinue took the unsigned branch into
+      // SignStep — where request-agreement returns {alreadySigned:true} with
+      // NO signingToken, so 'Sign & go live' sat disabled forever (in-session
+      // dead end, only a full reload recovered). signedThisSession keeps the
+      // top-level "already onboarded" early-return from hijacking the render.
+      setSignedThisSession(true);
+      setWentLive(data?.wentLive === true);
+      setRancher((r) =>
+        r ? { ...r, agreementSigned: true, pageLive: data?.wentLive === true || r.pageLive } : r
+      );
       setStep(6);
     } catch (e: any) {
       setError(e?.message || 'Signing failed');
@@ -1140,7 +1164,14 @@ export default function RancherSetupWizard() {
   // Without this branch, every legacy rancher who clicks the v2 upgrade
   // invite email lands in the "all set" dead-end and never reaches tier
   // pick. Pre-2026-06-04 audit found 0/16 ranchers could complete upgrade.
-  if (rancher.agreementSigned) {
+  //
+  // signedThisSession guard (2026-07-21): agreementSigned now flips true in
+  // LOCAL state the moment signing succeeds (see signAgreement) — without
+  // the guard this branch would immediately hijack the just-signed rancher
+  // out of the Done step's readiness checklist (and out of its nudge CTAs)
+  // into the "already onboarded" screen. This branch is for RE-ENTRY on a
+  // fresh load only.
+  if (rancher.agreementSigned && !signedThisSession) {
     const pm = String(rancher['Pricing Model'] || '').toLowerCase();
     const isLegacy = pm !== 'tier_v2';
     // 2026-06-09 P0 fix: tier_v2 ranchers MID-FLOW (just picked Legacy
@@ -1189,9 +1220,15 @@ export default function RancherSetupWizard() {
             <h1 className="font-serif text-3xl text-charcoal">
               {rancher.ranchName}, you’re all set.
             </h1>
+            {/* Live-truth gate (2026-07-21): a signed legacy rancher can be
+                DARK (signed without a price → auto-go-live never fired, Page
+                Live unset, awaiting Ben's verify). Don't tell them "your page
+                is live" unless the record says so — point them at the
+                dashboard to finish instead. */}
             <p className="text-saddle">
-              Your agreement is signed and your page is live. Edit anything from
-              your rancher dashboard.
+              {rancher.pageLive
+                ? 'Your agreement is signed and your page is live. Edit anything from your rancher dashboard.'
+                : 'Your agreement is signed — one more step and your page goes live. Open your rancher dashboard to finish (a share price is the usual missing piece) and request go-live.'}
             </p>
             <div className="flex flex-wrap justify-center gap-3 pt-2">
               <Link
@@ -2625,6 +2662,15 @@ export default function RancherSetupWizard() {
             </div>
           );
 
+          // Live truth (2026-07-21): the sign POST reports whether it flipped
+          // the page live (wentLive). A legacy rancher CAN sign without a
+          // price (Step-3 guard only requires a payment link), leaving them
+          // signed but DARK at 'Agreement Signed' — this step used to claim
+          // "your page is live" anyway, so they left believing they were
+          // routing when they weren't. Fall back to rancher.pageLive for the
+          // already-signed re-entry path (no sign this session).
+          const liveNow = wentLive !== null ? wentLive : rancher.pageLive;
+
           // Nothing missing → keep the celebratory done state unchanged.
           if (missing.length === 0) {
             return (
@@ -2636,9 +2682,19 @@ export default function RancherSetupWizard() {
                   Welcome to the network.
                 </h2>
                 <p className="text-charcoal/85 max-w-md mx-auto leading-relaxed">
-                  <strong>{rancher.ranchName}</strong> is signed and <strong>live</strong>.
-                  Your page is up and buyers can route to you starting now — no
-                  verification step, no waiting. Edit anything from your dashboard.
+                  {liveNow ? (
+                    <>
+                      <strong>{rancher.ranchName}</strong> is signed and <strong>live</strong>.
+                      Your page is up and buyers can route to you starting now — no
+                      verification step, no waiting. Edit anything from your dashboard.
+                    </>
+                  ) : (
+                    <>
+                      <strong>{rancher.ranchName}</strong> is signed — one more step
+                      and your page goes live. Open your dashboard to finish and
+                      request go-live.
+                    </>
+                  )}
                 </p>
                 {dashboardCtas}
               </section>
@@ -2651,19 +2707,26 @@ export default function RancherSetupWizard() {
           // with the payout connection so a rancher never leaves thinking
           // they're ready to take deposits when they can't.
           const bankBlocks = missing.some((m) => m.key === 'bank');
+          // Not-live extends the same honesty rule beyond the bank case: a
+          // signed-but-dark rancher (no price at sign time) must see "almost
+          // live", not "page live".
+          const almostLive = bankBlocks || !liveNow;
           return (
             <section className="space-y-6 bg-bone border-2 border-charcoal p-7 md:p-8">
               <header className="space-y-2 text-center">
                 <p className="text-xs uppercase tracking-[0.2em] text-sage-dark font-bold">
-                  {bankBlocks ? 'Agreement signed · almost live' : 'Agreement signed · page live'}
+                  {almostLive ? 'Agreement signed · almost live' : 'Agreement signed · page live'}
                 </p>
                 <h2 className="font-serif text-3xl md:text-4xl text-charcoal">
-                  {rancher.ranchName}, you&rsquo;re {bankBlocks ? 'almost there.' : 'in.'}
+                  {rancher.ranchName}, you&rsquo;re {almostLive ? 'almost there.' : 'in.'}
                 </h2>
                 <p className="text-charcoal/85 max-w-md mx-auto leading-relaxed">
                   {bankBlocks
                     ? <>Your page is up — but buyers can&rsquo;t reserve a share until your payout account is connected. Finish{' '}
                         {missing.length === 1 ? 'this' : `these ${missing.length}`} to go fully live:</>
+                    : !liveNow
+                    ? <>Your page isn&rsquo;t live yet — finish{' '}
+                        {missing.length === 1 ? 'this' : `these ${missing.length}`} and it goes live:</>
                     : <>Your page is live. To start closing deals, finish{' '}
                         {missing.length === 1 ? 'this' : `these ${missing.length}`}:</>}
                 </p>
@@ -2697,8 +2760,9 @@ export default function RancherSetupWizard() {
               </ul>
 
               <p className="text-xs text-saddle italic text-center max-w-md mx-auto leading-relaxed">
-                You can do all of this now or later from your dashboard — your
-                page stays live either way.
+                {liveNow
+                  ? 'You can do all of this now or later from your dashboard — your page stays live either way.'
+                  : 'You can do this now or later from your dashboard — your page goes live once it’s done.'}
               </p>
 
               {dashboardCtas}
