@@ -842,6 +842,47 @@ export async function sendWaitingActivationNudge(data: {
   });
 }
 
+// ── READY chase nudge (waiting-activation cron, stage 2 — 2026-07-22) ────────
+// For READY buyers who finished qualifying but never matched (capacity
+// overflow at qualify time) and whose nurture-drip lane has ended. Honest
+// copy for that cohort: they DID finish — the CTA is the in-state rancher's
+// page (or /map), never the "finish your quiz" claim. Same guardedSend +
+// unsubscribe-header conventions as sendWaitingActivationNudge above.
+export async function sendReadyChaseNudge(data: {
+  firstName: string;
+  email: string;
+  state?: string;
+  rancherUrl: string;
+}): Promise<{ success: boolean; suppressed?: boolean; reason?: string }> {
+  const first = data.firstName || 'there';
+  const stateLabel = data.state ? esc(data.state) : 'your area';
+  const subject = `A rancher in ${data.state || 'your area'} has open slots`;
+  return guardedSend({
+    templateName: 'sendReadyChaseNudge',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 18px}p{margin:14px 0;color:#2A2A2A}.cta{display:inline-block;padding:16px 36px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px}.divider{height:1px;background:#A7A29A;margin:24px 0}</style>
+</head><body><div class="container">
+  <h1>Hey ${esc(first)} —</h1>
+  <p>You qualified with BuyHalfCow a while back, and at the time every rancher near you was booked up. That's changed.</p>
+  <p>A verified rancher serving ${stateLabel} has open slots right now. You're already qualified — no quiz, no forms. Take a look and grab a slot if the timing works.</p>
+  <div style="text-align:center;margin:30px 0;">
+    <a href="${data.rancherUrl}" class="cta">See your rancher &rarr;</a>
+  </div>
+  <p style="font-size:14px;color:#6B4F3F;">If the timing's off, no problem — just reply and tell me.</p>
+  <div class="divider"></div>
+  <p style="font-size:12px;color:#A7A29A;">- Ben<br>BuyHalfCow</p>
+</div></body></html>`,
+    }),
+  });
+}
+
 // ── T2.3 (2026-07-02): replenishment nudge ───────────────────────────────────
 // A share runs out on a schedule (quarter ~4mo, half ~6mo, whole ~10mo). This
 // is the reorder ask at the freezer-low moment — sent by the replenishment

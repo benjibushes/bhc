@@ -326,6 +326,17 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   // (Agreement Signed already true) — so whitelisting cannot create volume.
   'sendRancherSignedLive',
   'sendRancherSignedAlmostLive',
+  // Waiting-activation rail (2026-07-22 audit): both nudges stamp CLAIM-
+  // BEFORE-SEND on Consumers (Waiting/Ready Nudge Last Sent At + Count:
+  // 14d cooldown, 3 lifetime), so a cap-suppress burned one of the buyer's
+  // 3 lifetime touches with nothing delivered — three collisions with the
+  // live nurture-drip and the buyer permanently exited the reactivation
+  // pool having received ZERO nudges. The cron's DB-state throttle is
+  // stronger than the generic 3/week cap (same argument as the whitelisted
+  // reserveRecoveryEmail / sendRancherFulfillmentNudge stamp-before-send
+  // rails), so the campaign engine — not the frequency guard — owns cadence.
+  'sendWaitingActivationNudge',
+  'sendReadyChaseNudge',
 ]);
 
 // T1 (2026-06-10): dynamic-name templates whose names contain a stage
@@ -343,6 +354,14 @@ export const TRANSACTIONAL_WHITELIST_PREFIXES: readonly string[] = [
  */
 const _countCache: Map<string, { count: number; ts: number }> = new Map();
 const CACHE_TTL_MS = 60_000;
+
+// Per-template pause-check memo (2026-07-22 audit): the Cron Pauses read ran
+// on EVERY send — a 50-buyer cron run paid 50 identical uncached Airtable
+// round-trips, pressing the shared 5 req/s ceiling and stretching runtime
+// toward maxDuration. 60s TTL: an operator's /pausemail still bites within a
+// minute (the emergency stop stays fast), while a batch run reads once.
+const _pauseCache: Map<string, { paused: boolean; ts: number }> = new Map();
+const PAUSE_CACHE_TTL_MS = 60_000;
 
 export interface FrequencyGateResult {
   ok: boolean;
@@ -376,11 +395,19 @@ export async function checkFrequencyCap(
   // `/pausemail <template>` can halt even a transactional template
   // when it's misbehaving. Emergency stop must always win.
   try {
-    const pauses = await getAllRecords(
-      TABLES.CRON_PAUSES,
-      `AND({Name}="${escapeAirtableValue(templateName)}", {Paused}=TRUE())`,
-    ) as any[];
-    if (pauses.length > 0) {
+    let paused: boolean;
+    const cachedPause = _pauseCache.get(templateName);
+    if (cachedPause && Date.now() - cachedPause.ts < PAUSE_CACHE_TTL_MS) {
+      paused = cachedPause.paused;
+    } else {
+      const pauses = await getAllRecords(
+        TABLES.CRON_PAUSES,
+        `AND({Name}="${escapeAirtableValue(templateName)}", {Paused}=TRUE())`,
+      ) as any[];
+      paused = pauses.length > 0;
+      _pauseCache.set(templateName, { paused, ts: Date.now() });
+    }
+    if (paused) {
       return { ok: false, reason: 'paused', weekCount: 0, cap };
     }
   } catch (e: any) {
