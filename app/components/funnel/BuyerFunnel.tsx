@@ -188,6 +188,10 @@ export default function BuyerFunnel({
   // user can still change it via the <select>; the geo-prefill effect below
   // won't clobber a non-empty value.
   const [state, setState] = useState(initialState || '');
+  // OPTIONAL ZIP (2026-07-22). State decides WHO can serve the buyer; ZIP only
+  // sharpens WHICH of them is nearest (lib/zipCentroids → real-miles routing).
+  // It must never gate the funnel: blank ZIP routes on state exactly as before.
+  const [zip, setZip] = useState('');
 
   // TCPA-compliant SMS consent. UNCHECKED by default and NOT a condition of
   // purchase — completing the funnel never depends on this box. When false,
@@ -385,6 +389,13 @@ export default function BuyerFunnel({
     if (!phone.trim()) { setError('phone is required so your rancher can reach you.'); return; }
     if (!phoneValid) { setError('please enter a valid phone number (at least 10 digits).'); return; }
     if (!state) { setError('please pick your state.'); return; }
+    // ZIP is optional — but a HALF-typed one is a typo, not a choice. Catch it
+    // here rather than storing "787" and silently never resolving a centroid.
+    const zipTrimmed = zip.trim();
+    if (zipTrimmed && !/^\d{5}$/.test(zipTrimmed)) {
+      setError('please enter a 5-digit ZIP code, or leave it blank.');
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -401,6 +412,10 @@ export default function BuyerFunnel({
           // no number can't enable sends.
           smsOptIn,
           state,
+          // Optional 5-digit ZIP — '' when skipped. Server writes it only when
+          // it's a real ZIP; routing cross-checks it against `state` before
+          // trusting it for distance.
+          zip: zipTrimmed,
           tier,
           timing,
           // Optional budget chip — '' when skipped; server whitelists against
@@ -713,6 +728,26 @@ export default function BuyerFunnel({
                     <option key={s.code} value={s.code}>{s.name}</option>
                   ))}
                 </select>
+              </Field>
+
+              {/* OPTIONAL — never gates the submit. Buyers who skip it route on
+                  state exactly as they always have; a ZIP just lets matching
+                  pick the ranch that's actually closest to them. */}
+              <Field label="ZIP code" hint="optional — matches you to the closest ranch">
+                {/* NO maxLength — it fights the digit-strip below. The browser
+                    caps RAW characters before onChange runs, so a stray letter
+                    (or a pasted "78701-1234") would eat real digits and leave a
+                    silently truncated ZIP. The handler alone bounds it: strip
+                    non-digits, then take 5. */}
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="postal-code"
+                  value={zip}
+                  onChange={(e) => setZip(e.target.value.replace(/\D/g, '').slice(0, 5))}
+                  className="funnel-input"
+                  placeholder="78701"
+                />
               </Field>
             </div>
 

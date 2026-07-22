@@ -14,6 +14,12 @@
 
 import { ZIP_CENTROID_TABLE } from './zipCentroids.data';
 import { normalizeState } from './states';
+import { normalizeZip } from './zipFormat';
+
+// Re-exported for convenience — but callers that ONLY need to normalize a ZIP
+// should import from './zipFormat' directly so they don't pull the 1 MB table
+// into their bundle (the funnel signup route does exactly that).
+export { normalizeZip };
 
 export interface ZipCentroid {
   zip: string;
@@ -21,18 +27,6 @@ export interface ZipCentroid {
   lng: number;
   /** 2-letter state code the USPS assigns this ZIP. */
   state: string;
-}
-
-/** "78701-1234" / " 78701 " / 78701 → "78701". null when not a US 5-digit ZIP. */
-export function normalizeZip(raw: unknown): string | null {
-  if (raw === null || raw === undefined) return null;
-  // Numbers lose leading zeros ("01001" → 1001), so pad before matching —
-  // otherwise every New England ZIP would silently miss.
-  const s = typeof raw === 'number'
-    ? String(Math.trunc(raw)).padStart(5, '0')
-    : String(raw).trim();
-  const m = /^(\d{5})(?:[- ]?\d{4})?$/.exec(s);
-  return m ? m[1] : null;
 }
 
 let table: Map<string, ZipCentroid> | null = null;
