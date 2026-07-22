@@ -141,3 +141,34 @@ test('referral formula selects Intro Sent + blank deposit + Intro Sent At window
   assert.ok(!formula.includes('Buyer Stage'), 'selector must be Referrals-native');
   assert.ok(!formula.includes('Qualified At'), 'window anchors on Intro Sent At, not Qualified At');
 });
+
+// ── per-referral dedup (2026-07-22 — reactivation audit) ────────────────────
+
+test('per-referral dedup: same-referral stamp blocks, other-referral stamp does not', () => {
+  const stamped = consumerFields({ 'Notes': '[no-action-nudge recAAA 2026-07-01] quiz score 9/10' });
+  assert.equal(isNudgeEligibleConsumer(stamped, { referralId: 'recAAA', nowMs: NOW }), false);
+  // A re-matched buyer (NEW referral) must be eligible again — the old
+  // per-buyer-forever stamp silently excluded them from every future match.
+  assert.equal(isNudgeEligibleConsumer(stamped, { referralId: 'recBBB', nowMs: NOW }), true);
+});
+
+test('per-referral dedup: legacy id-less stamp blocks only within 48h (deploy-transition belt)', () => {
+  const recent = consumerFields({ 'Notes': '[no-action-nudge 2026-07-01] x' }); // 42h before NOW
+  const old = consumerFields({ 'Notes': '[no-action-nudge 2026-05-01] x' });
+  assert.equal(isNudgeEligibleConsumer(recent, { referralId: 'recAAA', nowMs: NOW }), false);
+  assert.equal(isNudgeEligibleConsumer(old, { referralId: 'recAAA', nowMs: NOW }), true);
+});
+
+test('no referral context: any stamp still blocks (back-compat behavior)', () => {
+  assert.equal(
+    isNudgeEligibleConsumer(consumerFields({ 'Notes': '[no-action-nudge recAAA 2026-01-01] x' })),
+    false,
+  );
+});
+
+test('per-referral dedup: suppression trio still blocks regardless of referral', () => {
+  assert.equal(
+    isNudgeEligibleConsumer(consumerFields({ 'Unsubscribed': true }), { referralId: 'recBBB', nowMs: NOW }),
+    false,
+  );
+});

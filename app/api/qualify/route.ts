@@ -500,15 +500,45 @@ export async function POST(request: Request) {
           });
           // DEPOSIT-ABANDON RAIL (2026-07-05): stamp the invite so the
           // deposit-request-nudge cron chases this quiz-complete buyer if they
-          // don't pay. Fire-and-forget — a stamp failure must never block the
-          // qualify response or the (already-sent) email. Only stamps when the
-          // invite actually went out (inside the success path).
+          // don't pay. Best-effort — a stamp failure must never block the
+          // qualify response or the (already-sent) email — but NOT silent
+          // (2026-07-22, reactivation audit): the stamp is the ONLY thing that
+          // makes this buyer visible to rail B's abandon chase, so retry once
+          // (rate-limit blips are the likely failure at burst volume) and fire
+          // an operator signal on final failure. Verified-persisted, not just
+          // no-throw: updateRecord silently strips unknown fields.
           if (referralId) {
-            updateRecord(TABLES.REFERRALS, referralId, {
-              'Deposit Invite Sent At': new Date().toISOString(),
-            }).catch((e: any) =>
-              console.warn('[/api/qualify] deposit-invite stamp failed (non-fatal):', e?.message),
-            );
+            const inviteStamp = { 'Deposit Invite Sent At': new Date().toISOString() };
+            let inviteStamped = false;
+            for (let attempt = 1; attempt <= 2 && !inviteStamped; attempt++) {
+              try {
+                const updated: any = await updateRecord(TABLES.REFERRALS, referralId, inviteStamp);
+                inviteStamped = !!updated?.['Deposit Invite Sent At'];
+              } catch (e: any) {
+                console.warn(`[/api/qualify] deposit-invite stamp attempt ${attempt} failed:`, e?.message);
+              }
+              if (!inviteStamped && attempt === 1) {
+                await new Promise((r) => setTimeout(r, 500));
+              }
+            }
+            if (!inviteStamped) {
+              try {
+                const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+                await sendOperatorSignal({
+                  urgency: 'normal',
+                  kind: 'system-error',
+                  summary: `deposit-invite stamp failed for referral ${referralId}`,
+                  detail:
+                    `invite email SENT to ${buyerEmail} but "Deposit Invite Sent At" did not persist — ` +
+                    `buyer is invisible to the deposit-abandon nudge rail; stamp the referral manually.`,
+                  refs: [{ type: 'referral', id: referralId }],
+                  dedupeKey: `qualify-invite-stamp-${referralId}`,
+                  dedupeWindowMs: 6 * 60 * 60 * 1000,
+                });
+              } catch (e: any) {
+                console.warn('[/api/qualify] deposit-invite stamp operator signal failed:', e?.message);
+              }
+            }
           }
         } catch (e: any) {
           console.warn('[/api/qualify] deposit invite fire failed:', e?.message);

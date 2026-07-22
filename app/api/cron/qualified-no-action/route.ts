@@ -9,8 +9,9 @@
 // pushy; later = forgotten. Email + optional SMS (gated on opt-in).
 //
 // Schedule: hourly. Window: Intro Sent At 30min-4h ago.
-// Dedup: stamp Consumer Notes "[no-action-nudge YYYY-MM-DD]" so each buyer
-// fires at most once.
+// Dedup: stamp Consumer Notes "[no-action-nudge <refId> YYYY-MM-DD]" so each
+// REFERRAL fires at most once (2026-07-22: was per-buyer-forever, which
+// silently excluded every re-matched buyer from the abandon-cart touch).
 //
 // SELECTOR HISTORY (why this cron queries REFERRALS, not Consumers):
 // the previous Consumers formula excluded {Buyer Stage}='MATCHED', while the
@@ -46,6 +47,14 @@ import { requireCron } from '@/lib/cronAuth';
 export const maxDuration = 120;
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
+
+// Per-run send cap + pacing (2026-07-22, reactivation audit): a batch-approve
+// or demand-router wave can drop 150+ referrals into the 30min-4h window at
+// once; unpaced serial sends risk a mid-run kill (maxDuration) and stack
+// against the shared Airtable ~5 req/s ceiling. The unprocessed tail is still
+// inside the 4h window next hourly run. Mirrors deposit-request-nudge.
+const MAX_SENDS_PER_RUN = Number(process.env.NO_ACTION_NUDGE_MAX_PER_RUN) || 50;
+const SEND_PACE_MS = 300;
 
 interface CronResult {
   status: 'success' | 'partial' | 'error' | 'maintenance-blocked';
@@ -133,12 +142,16 @@ async function realHandler(_request: Request): Promise<CronResult> {
 
   let nudgedEmail = 0;
   let nudgedSms = 0;
+  let claimed = 0; // buyers claimed (stamp written → send attempted) this run
   const failures: string[] = [];
   // A buyer with multiple in-window referrals gets at most ONE nudge per run
-  // (the Notes stamp already guarantees once-ever; this guards within-run).
+  // (the Notes stamp already guarantees once-per-referral; this guards
+  // within-run).
   const seenBuyers = new Set<string>();
 
   for (const ref of candidateRefs) {
+    if (claimed >= MAX_SENDS_PER_RUN) break; // pace: drain the rest next run
+
     // Re-check the formula's promise in JS — the inline formula burned this
     // cron once already (see header).
     if (!isNudgeEligibleReferral(ref, now)) continue;
@@ -155,7 +168,9 @@ async function realHandler(_request: Request): Promise<CronResult> {
       // Lookup failed — skip rather than nudge blind (suppression unknown).
       continue;
     }
-    if (!isNudgeEligibleConsumer(c)) continue;
+    // Per-REFERRAL dedup: pass this referral's id so a re-matched buyer with
+    // an old (other-referral) stamp is still eligible for THIS intro.
+    if (!isNudgeEligibleConsumer(c, { referralId: String(ref.id || ''), nowMs: now })) continue;
 
     const email = String(c['Email'] || '').trim();
     const firstName = String(c['Full Name'] || '').split(' ')[0] || 'there';
@@ -184,13 +199,15 @@ async function realHandler(_request: Request): Promise<CronResult> {
     // would double-nudge by email AND SMS on any stamp hiccup.
     try {
       const existing = String(c['Notes'] || '');
+      // Marker carries the REFERRAL id → dedup is per-intro, not per-buyer.
       await updateRecord(TABLES.CONSUMERS, buyerId, {
-        'Notes': `[no-action-nudge ${new Date().toISOString().slice(0, 10)}] ${existing}`.slice(0, 2000),
+        'Notes': `[no-action-nudge ${ref.id} ${new Date().toISOString().slice(0, 10)}] ${existing}`.slice(0, 2000),
       });
     } catch (e: any) {
       failures.push(`${email}: stamp ${e?.message || 'unknown'} (skipped send to avoid dup)`);
       continue;
     }
+    claimed++;
 
     // One-tap deep link for THIS referral (cookie-setting magic hop):
     // deposit page when the rail can take money, member dashboard otherwise.
@@ -236,6 +253,9 @@ async function realHandler(_request: Request): Promise<CronResult> {
         failures.push(`${email}: sms ${e?.message || 'unknown'}`);
       }
     }
+
+    // Pace between sends (Resend deliverability + shared Airtable ceiling).
+    await new Promise((r) => setTimeout(r, SEND_PACE_MS));
   }
 
   // Operator visibility — only fire Telegram if we actually nudged
@@ -253,7 +273,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
   return {
     status,
     recordsTouched: nudgedEmail + nudgedSms,
-    notes: `refsInWindow=${candidateRefs.length} email=${nudgedEmail} sms=${nudgedSms} failures=${failures.length}`,
+    notes: `refsInWindow=${candidateRefs.length} claimed=${claimed}/${MAX_SENDS_PER_RUN} email=${nudgedEmail} sms=${nudgedSms} failures=${failures.length}`,
   };
 }
 
