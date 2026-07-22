@@ -68,6 +68,7 @@ import {
   NO_PAYMENT_INTENT,
   type FinalInvoiceDunningAction,
 } from '@/lib/finalInvoiceDunning';
+import { mintFinalInvoiceLinkToken, isDurableFinalInvoiceUrl } from '@/lib/finalInvoiceLink';
 
 export const maxDuration = 60;
 
@@ -294,7 +295,7 @@ async function realHandler(_request: Request): Promise<DunningResult> {
       bump('buyer_email_missing');
       continue;
     }
-    const checkoutUrl = String(ref['Final Invoice URL'] || '').trim();
+    let checkoutUrl = String(ref['Final Invoice URL'] || '').trim();
     if (!checkoutUrl) {
       bump('pay_link_missing');
       continue;
@@ -375,6 +376,36 @@ async function realHandler(_request: Request): Promise<DunningResult> {
       continue;
     }
     // dunAction === 'dun' → PI retrievable + definitively unpaid. Proceed.
+
+    // ── LINK SELF-HEAL (Dana incident closeout, 2026-07-22) ────────────────
+    // A legacy or mint-fallback row can still hold a RAW Stripe URL, which
+    // Stripe expired ~24h after mint — re-sending it duns the buyer with a
+    // dead link (exactly how Dana + Bren got stuck on $2,249, twice). Before
+    // any send, re-mint our durable /r/f link and stamp it so every future
+    // touch — cron or human — reads the durable one. If the mint fails
+    // (JWT_SECRET unset is the only real cause), page the operator and still
+    // send the stored URL: 24h beats zero, but NEVER silently.
+    if (!isDurableFinalInvoiceUrl(checkoutUrl)) {
+      try {
+        const durableUrl = `${SITE_URL}/r/f/${mintFinalInvoiceLinkToken({ referralId })}`;
+        await updateRecord(TABLES.REFERRALS, referralId, { 'Final Invoice URL': durableUrl });
+        checkoutUrl = durableUrl;
+        bump('link_healed_durable');
+      } catch (e: any) {
+        bump('link_heal_failed');
+        errors.push(`${referralId}: durable re-mint (${e?.message?.slice(0, 60)})`);
+        try {
+          if (TELEGRAM_ADMIN_CHAT_ID) {
+            await sendTelegramMessage(
+              TELEGRAM_ADMIN_CHAT_ID,
+              `⚠️ <b>Final-invoice durable re-mint FAILED</b> · ref=${referralId.slice(-6)}\n\n` +
+                `Dunning is about to re-send a RAW Stripe URL (dies in ~24h). ` +
+                `Check JWT_SECRET. Buyer: ${buyerEmail} · $${balanceAmount.toFixed(2)} at risk.`,
+            );
+          }
+        } catch {}
+      }
+    }
 
     const priorCount = dunningTouchCount(ref);
     const escalate = shouldEscalateDunning(ref, { now });

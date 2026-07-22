@@ -54,6 +54,27 @@ export function mintFinalInvoiceLinkToken(claims: FinalInvoiceLinkClaims): strin
 }
 
 /**
+ * True when a stored 'Final Invoice URL' is one of OUR durable /r/f links,
+ * false for raw Stripe-hosted Checkout URLs (which Stripe expires in ~24h)
+ * and anything malformed. Two call sites (Dana incident closeout, 2026-07-22):
+ * the dunning cron self-heals non-durable rows by re-minting BEFORE re-sending,
+ * and the send-route fallback alarm uses it to page the operator whenever a
+ * raw URL is about to go out. Origin-agnostic on purpose — prod, preview, and
+ * localhost all count; only the /r/f/<token> path shape matters.
+ */
+export function isDurableFinalInvoiceUrl(url: unknown): boolean {
+  const s = String(url ?? '').trim();
+  if (!s) return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(s);
+  } catch {
+    return false;
+  }
+  return parsed.pathname.startsWith('/r/f/') && parsed.pathname.length > '/r/f/'.length;
+}
+
+/**
  * Verify a final-invoice link token. Discriminated result, never throws —
  * the /r/f route branches every failure mode to a safe 302, never a 500.
  */

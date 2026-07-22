@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   mintFinalInvoiceLinkToken,
   verifyFinalInvoiceLinkToken,
+  isDurableFinalInvoiceUrl,
   FINAL_INVOICE_GRANT_PURPOSE,
 } from './finalInvoiceLink';
 import { mintDepositGrantToken } from './campaignReserve';
@@ -50,6 +51,36 @@ test('a deposit-grant token must NOT open the final-invoice rail', () => {
   const verified = verifyFinalInvoiceLinkToken(depositGrant);
   assert.equal(verified.ok, false);
   if (!verified.ok) assert.equal(verified.reason, 'wrong-purpose');
+});
+
+// isDurableFinalInvoiceUrl — the dunning self-heal + fallback-alarm detector
+// (Dana incident closeout, 2026-07-22). True ONLY for our own /r/f/<token>
+// links; raw Stripe URLs and anything malformed must read as NOT durable so
+// the cron re-mints before re-sending.
+test('isDurableFinalInvoiceUrl accepts our /r/f links on any origin', () => {
+  assert.equal(
+    isDurableFinalInvoiceUrl('https://www.buyhalfcow.com/r/f/eyJhbGciOi.abc.def'),
+    true,
+  );
+  assert.equal(isDurableFinalInvoiceUrl('http://localhost:3456/r/f/tok.en.x'), true);
+});
+
+test('isDurableFinalInvoiceUrl rejects raw Stripe checkout URLs', () => {
+  assert.equal(
+    isDurableFinalInvoiceUrl('https://checkout.stripe.com/c/pay/cs_live_a1B2c3D4#frag'),
+    false,
+  );
+});
+
+test('isDurableFinalInvoiceUrl rejects empty / malformed / wrong-rail values', () => {
+  assert.equal(isDurableFinalInvoiceUrl(''), false);
+  assert.equal(isDurableFinalInvoiceUrl(null), false);
+  assert.equal(isDurableFinalInvoiceUrl(undefined), false);
+  assert.equal(isDurableFinalInvoiceUrl('not a url'), false);
+  // Deposit rail (/r/p) is a different credential — never confuse the two.
+  assert.equal(isDurableFinalInvoiceUrl('https://www.buyhalfcow.com/r/p/tok.en.x'), false);
+  // A bare /r/f/ with no token is not a payable link.
+  assert.equal(isDurableFinalInvoiceUrl('https://www.buyhalfcow.com/r/f/'), false);
 });
 
 // Regression guard for the dunning heal-or-skip gate: a durable /r/f URL

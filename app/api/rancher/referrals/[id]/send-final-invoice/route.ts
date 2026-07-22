@@ -298,9 +298,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     durableUrl = `${SITE_URL}/r/f/${mintFinalInvoiceLinkToken({ referralId })}`;
   } catch (e: any) {
     // JWT_SECRET missing is the only real failure — fall back to the raw
-    // Stripe URL rather than sending nothing (24h beats zero).
+    // Stripe URL rather than sending nothing (24h beats zero). But NEVER
+    // silently (Dana incident closeout, 2026-07-22): a raw URL going out means
+    // the buyer has a ~24h window before their pay link dies, so the operator
+    // gets paged the moment this path fires — not 3 days later via dunning.
     console.error('[final-invoice] durable link mint failed, falling back to raw URL:', e?.message);
     durableUrl = checkoutUrl;
+    try {
+      if (TELEGRAM_ADMIN_CHAT_ID) {
+        await sendTelegramMessage(
+          TELEGRAM_ADMIN_CHAT_ID,
+          `⚠️ <b>Final-invoice durable mint FAILED — raw Stripe URL sent</b> · ref=${referralId.slice(-6)}\n\n` +
+            `The buyer's pay link dies in ~24h. Check JWT_SECRET on Vercel. ` +
+            `(${String(e?.message || '').slice(0, 80)})`,
+        );
+      }
+    } catch {}
   }
 
   const nowISO = new Date().toISOString();
