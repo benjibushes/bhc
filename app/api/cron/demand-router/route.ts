@@ -60,6 +60,7 @@ import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 import { logAuditEntry } from '@/lib/auditLog';
 import { getMaxActiveReferrals, getLiveCapacity } from '@/lib/rancherCapacity';
+import { countClosedWonReferrals } from '@/lib/capacityCount';
 import { mintCampaignReserveToken } from '@/lib/campaignReserve';
 import { type Cut } from '@/lib/reserveDeposit';
 import {
@@ -211,6 +212,19 @@ async function readCapacity(ids: readonly string[]): Promise<{
     return fallback;
   }
 
+  // CAPACITY = CLOSED SALES (#358, 2026-07-22): campaign open slots gate on
+  // Closed Won — the physical head remaining — not the held-lead mirror.
+  // Throttling invites on held pipeline depth idled campaign capacity the
+  // founder rule says must keep flowing (held is a load-balance tiebreak,
+  // never a gate). One scan serves both slots; on a failed scan we fall back
+  // to the held counter (conservative: throttles, never over-invites).
+  let campaignWonRefs: any[] | null = null;
+  try {
+    campaignWonRefs = (await getAllRecords(TABLES.REFERRALS, `{Status} = "Closed Won"`)) as any[];
+  } catch (e: any) {
+    console.warn('[demand-router] Closed Won scan failed — falling back to held counter:', e?.message);
+  }
+
   async function resolveSlot(
     id: string,
     label: string,
@@ -272,9 +286,13 @@ async function readCapacity(ids: readonly string[]): Promise<{
     }
 
     const max = getMaxActiveReferrals(rec);
-    const cur = await getLiveCapacity(id).catch(
-      () => Number(rec?.['Current Active Referrals'] || 0),
-    );
+    // Closed Won is the capacity gate (#358); the held counter is only the
+    // degraded fallback when the Closed Won scan above failed.
+    const cur = campaignWonRefs
+      ? countClosedWonReferrals(id, campaignWonRefs)
+      : await getLiveCapacity(id).catch(
+          () => Number(rec?.['Current Active Referrals'] || 0),
+        );
     return { open: openSlotsFor({ max, current: cur }), max, cur, target, name, servedStates };
   }
 

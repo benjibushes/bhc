@@ -24,6 +24,7 @@ import {
   parseRoutingWeightOverride,
 } from '@/lib/routingPriority';
 import { nationwideAllowed, nationwideRoutingEnabled, NATIONWIDE_PREFERENCE_FIELD } from '@/lib/nationwidePreference';
+import { isExcludingLossReason } from '@/lib/lossReasons';
 import { leadFactsHtml, closeCtaHtml, readyBannerHtml } from '@/lib/rancherLeadEmail';
 
 export const maxDuration = 90;
@@ -330,8 +331,21 @@ export async function POST(request: Request) {
           });
         }
         // Build terminal-outcome exclusion set.
+        //
+        // CLOSED-LOST SCOPING (reactivation 2026-07-22): a Closed Lost row
+        // excludes the (buyer, rancher) pairing ONLY when its 'Loss Reason'
+        // marks a genuine rancher pass/decline (isExcludingLossReason —
+        // lib/lossReasons). Forensics showed ~89% of historical Closed Lost
+        // rows are cron noise with NO Loss Reason; excluding on those
+        // permanently bricked buyers in 1-rancher states (zero candidates →
+        // daily waitlist loop with no exit). Closed Won keeps the
+        // unconditional exclude (buyer already bought from that rancher).
         for (const ref of existingRefs) {
-          if (['Closed Lost', 'Closed Won'].includes(ref['Status'])) {
+          const status = ref['Status'];
+          const excludesPairing =
+            status === 'Closed Won' ||
+            (status === 'Closed Lost' && isExcludingLossReason(ref['Loss Reason']));
+          if (excludesPairing) {
             for (const id of (ref['Rancher'] || [])) closedRancherIds.add(id);
             for (const id of (ref['Suggested Rancher'] || [])) closedRancherIds.add(id);
           }
@@ -422,44 +436,12 @@ export async function POST(request: Request) {
         return null;
       }
     };
-    // Pull all active Intro Sent referrals once so we can bucket per (rancher, state).
-    // Reading-once + grouping avoids one Airtable call per rancher × state.
-    let activeRefsByRancherState = new Map<string, Map<string, number>>();
-    try {
-      // Count the SAME slot-holding statuses the global counter holds (Current
-      // Active Referrals is incremented at Intro Sent and held through later
-      // statuses). Counting only 'Intro Sent' here let in-state leads that
-      // progressed vanish from the per-state count while still consuming a global
-      // slot — so a multi-state rancher could take 2× their per-state cap.
-      const activeReferrals = (await getAllRecords(
-        TABLES.REFERRALS,
-        `OR({Status} = "Intro Sent", {Status} = "Rancher Contacted", {Status} = "Negotiation", {Status} = "Awaiting Payment", {Status} = "Slot Locked")`,
-      )) as any[];
-      for (const ref of activeReferrals) {
-        const rancherIds = (Array.isArray(ref['Rancher']) ? ref['Rancher'] : []) as string[];
-        if (rancherIds.length === 0) continue;
-        // Prefer the State Allocation stamp (added 2026-05-27). Fall back
-        // to Buyer State for legacy referrals created before this fix —
-        // they still bucket correctly since the buyer's home state is the
-        // source state for the sub-cap math by design.
-        const allocRaw = ref['State Allocation'] || ref['Buyer State'] || '';
-        const allocState = normalizeState(String(allocRaw));
-        if (!allocState) continue;
-        for (const rid of rancherIds) {
-          let inner = activeRefsByRancherState.get(rid);
-          if (!inner) {
-            inner = new Map<string, number>();
-            activeRefsByRancherState.set(rid, inner);
-          }
-          inner.set(allocState, (inner.get(allocState) || 0) + 1);
-        }
-      }
-    } catch (e: any) {
-      console.error('[matching/suggest] active-referrals-by-state load failed:', e?.message);
-      // Fail open: empty map → sub-cap behaves as "no allocations yet,"
-      // matching falls back to global cap (legacy behavior).
-      activeRefsByRancherState = new Map();
-    }
+    // NOTE (2026-07-22): the per-(rancher, state) HELD-referral scan that used
+    // to live here was deleted — its only consumer (getActiveInState) became
+    // dead code when the #358 change moved the per-state sub-cap onto Closed
+    // Won counts (see closedWonByRancherState below). Every matching call was
+    // paying a full held-status REFERRALS scan for nothing, eating into the
+    // 5 req/s Airtable budget that the load-bearing Closed Won scan needs.
     const getStateSubCap = (
       rancher: any,
       state: string,
@@ -484,16 +466,13 @@ export async function POST(request: Request) {
       // the sub-cap) still bounds total load, so this can never over-route.
       return equalStateSubCap(maxReferrals, states.length);
     };
-    const getActiveInState = (rancherId: string, state: string): number => {
-      return activeRefsByRancherState.get(rancherId)?.get(state) || 0;
-    };
-
     // ── CAPACITY = CLOSED SALES (founder rule 2026-07-08) ────────────────────
     // Closed Won live counts — a tiny terminal-only result set — bucketed per
     // rancher (global sold-out cap) and per rancher+state (per-state cap). The
     // held maps above are demoted to the load-balance tiebreak in the sort.
     const closedWonByRancher = new Map<string, number>();
     const closedWonByRancherState = new Map<string, Map<string, number>>();
+    let closedWonScanOk = true;
     try {
       const wonRefs = (await getAllRecords(TABLES.REFERRALS, `{Status} = "Closed Won"`)) as any[];
       for (const ref of wonRefs) {
@@ -508,7 +487,29 @@ export async function POST(request: Request) {
           inner.set(allocState, (inner.get(allocState) || 0) + 1);
         }
       }
-    } catch { /* fail-open: no sales counted → everyone has capacity */ }
+    } catch (e: any) {
+      // FAIL CLOSED (2026-07-22): this scan is the ONLY capacity predicate in
+      // isEligibleBase — the old silent fail-open ("no sales counted →
+      // everyone has capacity") deleted the sold-out gate exactly under the
+      // blast-load 429s that make the scan fail. Capacity-unknown ⇒ every
+      // rancher is ineligible for THIS request; the buyer waitlists and the
+      // daily retry rails re-attempt when Airtable recovers. Operator signal
+      // (deduped hourly) keeps blast-window routing auditable.
+      closedWonScanOk = false;
+      console.error('[matching/suggest] Closed Won capacity scan failed — failing CLOSED:', e?.message);
+      try {
+        await sendOperatorSignal({
+          urgency: 'normal',
+          kind: 'system-error',
+          summary: 'Matching Closed-Won capacity scan failed — request failed CLOSED (no rancher eligible).',
+          detail:
+            `Buyer ${buyerLabel} (${normalizedBuyerState}): ${String(e?.message || 'unknown').slice(0, 200)}. ` +
+            'Likely an Airtable 429 under load. Buyer waitlisted; retry rails re-attempt.',
+          dedupeKey: 'matching-closedwon-scan-fail',
+          dedupeWindowMs: 60 * 60 * 1000,
+        });
+      } catch { /* signal is best-effort */ }
+    }
     const getClosedWonInState = (rancherId: string, state: string): number =>
       closedWonByRancherState.get(rancherId)?.get(state) || 0;
 
@@ -567,6 +568,8 @@ export async function POST(request: Request) {
     };
     const isEligibleBase = (r: any) => {
       if (excludeIds.has(r.id)) return false;
+      // Capacity-unknown (Closed Won scan failed) → fail closed per-rancher.
+      if (!closedWonScanOk) return false;
       // Operational check (Active + Agreement Signed + Onboarding Live) lives
       // in lib/rancherEligibility.ts as the SINGLE source of truth shared with
       // the signup gate + warmup cron. Don't inline a copy here — drift is
@@ -737,6 +740,12 @@ export async function POST(request: Request) {
     }
 
     let topMatch: any = null;
+    // Remaining eligible candidates in sorted order — the capacity-claim loop
+    // below falls through to these when the top pick bounces off its capacity
+    // valve (capacity_race / hard_ceiling), instead of waitlisting the buyer
+    // while eligible supply idles. Direct pins have no fallback by design
+    // (the buyer asked for THAT rancher).
+    let fallbackCandidates: any[] = [];
 
     if (directMatchRancher) {
       // Lead came from this rancher's page — assign directly to them
@@ -862,6 +871,7 @@ export async function POST(request: Request) {
       });
 
       topMatch = eligible.length > 0 ? eligible[0] : null;
+      fallbackCandidates = eligible.slice(1);
 
       // ── CONTROLLED NATIONWIDE FALLBACK (re-enabled 2026-06-20, admin-gated) ─
       // Local/regional always WINS (handled above). Only when NO local rancher
@@ -934,6 +944,7 @@ export async function POST(request: Request) {
         });
         if (nationwideEligible.length > 0) {
           topMatch = nationwideEligible[0];
+          fallbackCandidates = nationwideEligible.slice(1);
           matchType = 'nationwide';
         }
       }
@@ -1018,6 +1029,111 @@ export async function POST(request: Request) {
       });
     }
 
+    // ── ATOMIC CAPACITY CLAIM + NEXT-CANDIDATE FALLBACK (2026-07-22) ───────
+    // Claim a slot BEFORE persisting the referral row. Previously the row was
+    // created first and an over-cap INCR downgraded it to Status='Waitlisted'
+    // with no retry — one over-cap primary rancher waitlisted every cold buyer
+    // in the state while eligible fallbacks idled, and each attempt accreted a
+    // junk Waitlisted row. Now a capacity bounce DECRs back and falls through
+    // to the NEXT eligible candidate (#358: Closed Won is the capacity GATE —
+    // the held-count guard here is a burst-protection valve, never a
+    // starvation mechanism), and the referral row is only created after a
+    // successful claim.
+    //
+    // Redis INCR is atomic + distributed (see lib/rancherCapacity): two
+    // concurrent buyers routed to the same rancher cannot both observe the
+    // same N+1. Exactly one caller per overflow event sees the bounce path.
+    const now = new Date().toISOString();
+    const candidateQueue: any[] = [topMatch, ...fallbackCandidates];
+    const bouncedRancherIds: string[] = [];
+    let bounceReason = '';
+    let claimedRancher: any = null;
+    // Post-INCR counter for the claimed rancher — returned in the response so
+    // Telegram + dashboards see post-claim reality, not a stale snapshot.
+    let finalActiveReferrals = 0;
+    // False only on the legacy fail-open path (the INCR machinery itself
+    // threw) — the match proceeds but the mirror write + capacity alerts are
+    // skipped, exactly like the old catch-all behavior.
+    let capacityClaimOk = true;
+    for (const candidate of candidateQueue) {
+      try {
+        const maxRefsForGuard = getMaxActiveReferrals(candidate);
+        const HARD_CEILING = Math.ceil(maxRefsForGuard * HARD_CEILING_MULTIPLIER);
+        const newRefs = await incrementCapacity(candidate.id);
+        // Hot leads bypass the soft cap by design (warmup-engaged opt-ins
+        // shouldn't sit in queue) but never smash past the 1.2× safety valve
+        // (audit finding 2026-05-20 #18); cold leads gate at the soft cap.
+        const overValve =
+          maxRefsForGuard > 0 && newRefs > (isHotLead ? HARD_CEILING : maxRefsForGuard);
+        if (!overValve) {
+          claimedRancher = candidate;
+          finalActiveReferrals = newRefs;
+          break;
+        }
+        // Over the valve — undo the slot claim, signal, try the next candidate.
+        bounceReason = isHotLead ? 'hard_ceiling' : 'capacity_race';
+        bouncedRancherIds.push(candidate.id);
+        let restored = newRefs - 1;
+        try {
+          restored = await decrementCapacity(candidate.id);
+        } catch (e) {
+          console.error('Capacity-bounce DECR rollback failed:', e);
+        }
+        try {
+          await syncCapacityToAirtable(candidate.id, restored);
+        } catch {}
+        const candName = candidate['Operator Name'] || candidate['Ranch Name'] || 'Unknown';
+        try {
+          await sendOperatorSignal({
+            urgency: isHotLead ? 'loud' : 'digest',
+            kind: 'capacity',
+            summary: isHotLead
+              ? `HOT-LEAD HARD CEILING HIT: ${candName} (${candidate['State'] || '?'}) at ${newRefs}/${HARD_CEILING} — slot released, trying next eligible rancher.`
+              : `CAPACITY RACE CAUGHT: ${candName} (${candidate['State'] || '?'}) hit cap on atomic INCR — slot released, trying next eligible rancher.`,
+            detail: 'Buyer falls through to the next eligible candidate; waitlisted only if every candidate is at its valve.',
+            refs: [{ type: 'rancher', id: candidate.id, label: candName }],
+            dedupeKey: `${isHotLead ? 'hard-ceiling' : 'capacity-race'}:${candidate.id}`,
+          });
+        } catch (e) {
+          console.error('Capacity-bounce operator signal failed:', e);
+        }
+      } catch (e) {
+        // Legacy fail-open: an error in the INCR machinery never blocks the
+        // match (incrementCapacity already degrades internally; this is the
+        // last-ditch belt so a Redis+Airtable double-outage can't strand a
+        // qualified buyer).
+        console.error('Error incrementing rancher referral count:', e);
+        claimedRancher = candidate;
+        finalActiveReferrals = candidate['Current Active Referrals'] || 0;
+        capacityClaimOk = false;
+        break;
+      }
+    }
+
+    if (!claimedRancher) {
+      // EVERY eligible candidate bounced off its capacity valve. Waitlist the
+      // BUYER (consumer-level — no junk referral row) so the daily retry
+      // rails pick them up when capacity opens. bouncedRancherIds lets
+      // batch-approve exclude these ranchers for the rest of its run.
+      try {
+        await updateRecord(TABLES.CONSUMERS, buyerId, {
+          'Referral Status': 'Waitlisted',
+          'Last Match Attempt At': now,
+        });
+      } catch (e: any) {
+        console.warn('[matching] consumer waitlist update failed:', e?.message);
+      }
+      return NextResponse.json({
+        success: true,
+        matchFound: false,
+        waitlisted: true,
+        reason: bounceReason || 'capacity_race',
+        bouncedRancherIds,
+        message: 'All eligible ranchers are at their capacity valve — buyer waitlisted; will retry when capacity opens.',
+      });
+    }
+    topMatch = claimedRancher;
+
     const referralFields: Record<string, any> = {
       'Buyer': [buyerId],
       'Status': 'Pending Approval',
@@ -1050,6 +1166,16 @@ export async function POST(request: Request) {
       referral = await createReferral(referralFields);
     } catch (e: any) {
       console.warn('Could not create referral record:', e?.message);
+      // Release the slot claimed above — there is no row to hold it. Without
+      // this the counter strands one phantom slot per create failure.
+      if (capacityClaimOk) {
+        try {
+          const restored = await decrementCapacity(topMatch.id);
+          await syncCapacityToAirtable(topMatch.id, restored);
+        } catch (rollbackErr: any) {
+          console.error('[matching/suggest] capacity rollback after referral-create failure failed:', rollbackErr?.message);
+        }
+      }
       return NextResponse.json({
         success: false,
         error: 'Referrals table not accessible. Please check Airtable API token permissions.',
@@ -1062,126 +1188,19 @@ export async function POST(request: Request) {
       }, { status: 503 });
     }
 
-    // Increment rancher's active referral count so capacity limit works in real-time
-    const now = new Date().toISOString();
-    // MISMATCH FIX: hoist newRefs so we can return the post-INCR value in
-    // the response. Was: response returned `topMatch['Current Active
-    // Referrals'] || 0` from the pre-INCR snapshot → Telegram + dashboard
-    // showed counter one-less than reality.
-    let finalActiveReferrals = topMatch ? (topMatch['Current Active Referrals'] || 0) : 0;
-    if (topMatch) {
+    // Mirror the claimed counter into Airtable + stamp Last Assigned At in
+    // the same write so dashboards see both fields update together. Direct
+    // updateRecord (instead of syncCapacityToAirtable) lets us bundle the
+    // timestamp field; the counter value is already authoritative from the
+    // atomic INCR in the claim loop above. Skipped entirely on the fail-open
+    // path (claim machinery errored — same as the old catch-all behavior).
+    if (capacityClaimOk) {
       try {
-        // ── Atomic capacity bump via Upstash Redis INCR ──────────────────
-        // Pre-2026-05-24: this was a check-then-write against Airtable. Two
-        // concurrent buyers routed to the same rancher could both pass the
-        // gate + both write N+1, overflowing capacity by 1-2 under burst.
-        // Round 6 audit deferred as Tier 2 hardening; shipped now.
-        //
-        // New flow:
-        //   1. INCR Redis counter → get atomic newRefs
-        //   2. If newRefs > cap (or > hard ceiling for hot leads), DECR
-        //      back to undo the slot claim, downgrade referral to
-        //      Waitlisted, and short-circuit. Counter stays consistent.
-        //   3. Otherwise sync the new value back to Airtable so
-        //      dashboards + cron reads see it.
-        //
-        // Failure mode: if Redis env missing OR INCR throws, the lib falls
-        // back to legacy Airtable read+1 (race-prone but functional) with
-        // console.error so the regression surfaces.
-        const maxRefsForGuard = getMaxActiveReferrals(topMatch);
-        const HARD_CEILING = Math.ceil(maxRefsForGuard * 1.2);
-        const newRefs = await incrementCapacity(topMatch.id);
-
-        // Hot-lead hard-ceiling guard: hot leads bypass the soft cap by
-        // design (warmup-engaged opt-ins shouldn't sit in queue), but a
-        // burst of YES clicks shouldn't smash past the 1.2× safety valve.
-        // Audit finding 2026-05-20 #18.
-        if (isHotLead && maxRefsForGuard > 0 && newRefs > HARD_CEILING) {
-          // Undo the slot claim — return the counter to its pre-INCR value
-          // so we don't strand capacity on a referral we're about to waitlist.
-          let restored = newRefs - 1;
-          try {
-            restored = await decrementCapacity(topMatch.id);
-          } catch (e) {
-            console.error('Hot-lead hard-ceiling DECR rollback failed:', e);
-          }
-          try {
-            await syncCapacityToAirtable(topMatch.id, restored);
-          } catch {}
-          try {
-            await updateRecord(TABLES.REFERRALS, referral.id, {
-              'Status': 'Waitlisted',
-              'Notes': `[capacity-race-hot] Atomic INCR hit ${newRefs}/${HARD_CEILING} hard ceiling; hot-lead waitlisted + slot released.`,
-            });
-            await sendOperatorSignal({
-              urgency: 'loud',
-              kind: 'capacity',
-              summary: `HOT-LEAD HARD CEILING HIT: ${topMatch['Operator Name'] || topMatch['Ranch Name'] || 'Unknown'} (${topMatch['State'] || '?'}) at ${newRefs}/${HARD_CEILING}. Buyer waitlisted to protect rancher.`,
-              detail: 'Hot-lead burst would have overflowed 1.2× safety valve.',
-              refs: [{ type: 'rancher', id: topMatch.id, label: topMatch['Operator Name'] || topMatch['Ranch Name'] }],
-              dedupeKey: `hard-ceiling:${topMatch.id}`,
-            });
-          } catch (e) {
-            console.error('Hot-lead hard-ceiling downgrade failed:', e);
-          }
-          return NextResponse.json({
-            success: true,
-            matchFound: false,
-            waitlisted: true,
-            reason: 'hard_ceiling',
-            referralId: referral.id,
-          });
-        }
-        // Cold-lead soft-cap guard. Atomic INCR makes this the authoritative
-        // gate — if we ended up over cap, exactly one buyer per overflow
-        // event sees the rollback path (the others observed a safe newRefs).
-        if (!isHotLead && maxRefsForGuard > 0 && newRefs > maxRefsForGuard) {
-          let restored = newRefs - 1;
-          try {
-            restored = await decrementCapacity(topMatch.id);
-          } catch (e) {
-            console.error('Capacity-race DECR rollback failed:', e);
-          }
-          try {
-            await syncCapacityToAirtable(topMatch.id, restored);
-          } catch {}
-          try {
-            await updateRecord(TABLES.REFERRALS, referral.id, {
-              'Status': 'Waitlisted',
-              'Notes': `[capacity-race] Atomic INCR hit ${newRefs}/${maxRefsForGuard}; waitlisted + slot released.`,
-            });
-            await sendOperatorSignal({
-              urgency: 'digest',
-              kind: 'capacity',
-              summary: `CAPACITY RACE CAUGHT: ${topMatch['Operator Name'] || topMatch['Ranch Name'] || 'Unknown'} (${topMatch['State'] || '?'}) hit cap on atomic INCR — buyer routed to Waitlisted instead of overflowing counter.`,
-              detail: 'Indicates burst-traffic scenario.',
-              refs: [{ type: 'rancher', id: topMatch.id, label: topMatch['Operator Name'] || topMatch['Ranch Name'] }],
-              dedupeKey: `capacity-race:${topMatch.id}`,
-            });
-          } catch (e) {
-            console.error('Capacity-race waitlist downgrade failed:', e);
-          }
-          return NextResponse.json({
-            success: true,
-            matchFound: false,
-            waitlisted: true,
-            reason: 'capacity_race',
-            referralId: referral.id,
-          });
-        }
-        // Within cap — sync to Airtable + stamp Last Assigned At in the same
-        // write so dashboards see both fields update together. Direct
-        // updateRecord (instead of syncCapacityToAirtable) lets us bundle
-        // the timestamp field; the counter value is already authoritative
-        // from the atomic INCR above.
+        const newRefs = finalActiveReferrals;
         await updateRecord(TABLES.RANCHERS, topMatch.id, {
           'Current Active Referrals': newRefs,
           'Last Assigned At': now,
         });
-        // MISMATCH FIX: persist newRefs for the response builder so the
-        // returned activeReferrals reflects post-INCR reality, not the
-        // stale pre-INCR snapshot from `topMatch['Current Active Referrals']`.
-        finalActiveReferrals = newRefs;
 
         // Capacity alerts
         const maxRefs = getMaxActiveReferrals(topMatch);
@@ -1227,7 +1246,7 @@ export async function POST(request: Request) {
           // surfaces 80%+ ranchers for slower planning.
         }
       } catch (e) {
-        console.error('Error incrementing rancher referral count:', e);
+        console.error('Error syncing rancher referral count:', e);
       }
     }
 

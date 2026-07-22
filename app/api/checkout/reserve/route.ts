@@ -22,7 +22,7 @@ import {
   escapeAirtableValue,
   getRecordById,
 } from '@/lib/airtable';
-import { incrementCapacity, decrementCapacity, syncCapacityToAirtable, claimOnce } from '@/lib/rancherCapacity';
+import { claimOnce } from '@/lib/rancherCapacity';
 import { resolveBuyerSession, setBuyerSessionCookie } from '@/lib/buyerAuth';
 import { checkOriginGuard } from '@/lib/csrfGuard';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
@@ -324,17 +324,20 @@ export async function POST(req: Request) {
     }
   }
 
-  // Hold the slot during checkout (mirror orders/request:220-228). Transient:
-  // an abandoned Pending referral is reconciled by capacity-drift-check.
-  // Only on a FRESH referral — a reused row already holds its slot (the
-  // double-hold was exactly the drift this guard exists to prevent).
+  // NO capacity INCR here (2026-07-22): reserve rows are Status='Pending' —
+  // NOT a held status (lib/capacityCount HELD_REFERRAL_STATUSES) — so both
+  // daily reconcilers (capacity-drift-check, batch-approve self-heal)
+  // recompute the counter WITHOUT them. INCRing on mint inflated the shared
+  // Redis counter with phantom load the reconcilers then reset — a sawtooth
+  // that waitlisted cold matching for that rancher for hours after a burst
+  // of /r reserve clicks. The counter INCRs when the row reaches a held
+  // status; abandoned Pending rows need no release. Round-robin freshness
+  // (Last Assigned At) still stamps on a fresh row.
   if (!reusedReferral) {
     try {
-      const newCount = await incrementCapacity(rancher.id);
-      await syncCapacityToAirtable(rancher.id, newCount);
       await updateRecord(TABLES.RANCHERS, rancher.id, { 'Last Assigned At': new Date().toISOString() });
     } catch (e: any) {
-      console.warn('[checkout/reserve] capacity bump skipped:', e?.message);
+      console.warn('[checkout/reserve] Last Assigned At stamp skipped:', e?.message);
     }
   }
 
@@ -367,10 +370,10 @@ export async function POST(req: Request) {
     }
 
     // U3: never tell the buyer "check your inbox" when the email did NOT send.
-    // Void the hold we just created (referral → Lost + release the capacity
-    // bump, together so we don't leave a counter-drift), then return an honest,
+    // Void the hold we just created (referral → Lost), then return an honest,
     // retryable error. Leaving it as-is would strand a phantom Pending lead the
-    // rancher sees + a buyer waiting on an email that never comes.
+    // rancher sees + a buyer waiting on an email that never comes. (No capacity
+    // release needed — Pending mints no longer bump the counter, see above.)
     if (!emailSent) {
       try {
         await updateRecord(TABLES.REFERRALS, referral.id, {
@@ -379,12 +382,6 @@ export async function POST(req: Request) {
         });
       } catch (voidErr: any) {
         console.warn('[checkout/reserve] orphan referral void skipped:', voidErr?.message);
-      }
-      try {
-        const newCount = await decrementCapacity(rancher.id);
-        await syncCapacityToAirtable(rancher.id, newCount);
-      } catch (capErr: any) {
-        console.warn('[checkout/reserve] capacity release after email fail skipped:', capErr?.message);
       }
       return NextResponse.json(
         { error: "We couldn't email your secure sign-in link just now. Please try again in a moment — or log in from the member page to finish reserving." },
