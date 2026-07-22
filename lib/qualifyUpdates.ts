@@ -24,6 +24,37 @@ export interface QualifyUpdatesInput {
   // Raw body.ackConfirmedAt — unknown until validated here. Present + parseable
   // ⇔ the buyer tapped the commitment button.
   ackConfirmedAt?: unknown;
+  // True when the value is a resume-mode hydration DEFAULT ('Not Sure' /
+  // 'Just exploring' coerced from an empty POST + no usable stored answer),
+  // NOT something the buyer actually chose. A hold that rests solely on
+  // defaults must not stamp Funnel Completed At — that stamp would fabricate
+  // a "not ready" self-ID and permanently drop the buyer from the
+  // abandoned-quiz-nudge drip ({Funnel Completed At}="" clause).
+  tierDefaulted?: boolean;
+  timingDefaulted?: boolean;
+}
+
+// Legacy /access form vocab (pre-2026-06-18) → quiz Timing vocab. The legacy
+// form never used the quiz's values, so an unmapped hydration coerced every
+// legacy-created WAITING buyer to 'Just exploring' — an auto-hold they never
+// chose. Unknown values pass through (the caller's VALID_TIMINGS check still
+// gates what's accepted).
+const LEGACY_TIMING_MAP: Record<string, string> = {
+  '1-3 months': 'Within 60 days',
+  '3-6 months': 'Within 90 days',
+};
+
+export function normalizeLegacyTiming(raw: string): string {
+  const v = String(raw || '').trim();
+  return LEGACY_TIMING_MAP[v] || v;
+}
+
+// Pre-06-18 signups stored timing in Notes ('[Timing: 1-3 months]'), not the
+// Timing field (app/api/consumers/route.ts legacy branch). Parse it back out
+// so resume-mode hydration can score legacy buyers on their real answer.
+export function timingFromNotes(notes: string): string {
+  const m = /\[Timing:\s*([^\]]+)\]/.exec(String(notes || ''));
+  return m ? m[1].trim() : '';
 }
 
 // Buyer explicitly self-identified as not ready — held in nurture, not routed.
@@ -40,12 +71,23 @@ export function buildQualifyConsumerUpdates(input: QualifyUpdatesInput): Record<
   const updates: Record<string, any> = {
     'Qualification Answers': input.answersJson,
     'Qualification Score': input.score,
-    // Every completed funnel gets the completion stamp — hold or route.
-    'Funnel Completed At': input.completedAt,
   };
 
+  // Every completed funnel gets the completion stamp — hold or route — EXCEPT
+  // when the hold rests SOLELY on hydration defaults (see tierDefaulted /
+  // timingDefaulted above): the buyer never said "not ready", so the record
+  // stays chaseable by the abandoned-quiz-nudge drip instead of dead-ending.
+  const notReady = isExplicitlyNotReady(input.tier, input.timing);
+  const holdFromDefaultsOnly =
+    notReady &&
+    !(input.tier === 'Not Sure' && !input.tierDefaulted) &&
+    !(input.timing === 'Just exploring' && !input.timingDefaulted);
+  if (!holdFromDefaultsOnly) {
+    updates['Funnel Completed At'] = input.completedAt;
+  }
+
   // Route-eligible ONLY: `Qualified At` is the routing gate's ready signal.
-  if (!isExplicitlyNotReady(input.tier, input.timing)) {
+  if (!notReady) {
     updates['Qualified At'] = input.completedAt;
   }
 

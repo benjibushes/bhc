@@ -7,6 +7,8 @@ import {
   buildQualifyConsumerUpdates,
   isExplicitlyNotReady,
   isValidAckConfirmedAt,
+  normalizeLegacyTiming,
+  timingFromNotes,
 } from './qualifyUpdates';
 
 const NOW = '2026-07-15T12:00:00.000Z';
@@ -73,6 +75,52 @@ test('isExplicitlyNotReady covers exactly the two self-ID holds', () => {
   assert.equal(isExplicitlyNotReady('Half', 'Just exploring'), true);
   assert.equal(isExplicitlyNotReady('Half', 'Within 30 days'), false);
   assert.equal(isExplicitlyNotReady('Whole', 'Within 60 days'), false);
+});
+
+// ── Legacy vocab hydration (2026-07-22, reactivation audit) ────────────────
+
+test('normalizeLegacyTiming maps legacy /access vocab to quiz vocab', () => {
+  assert.equal(normalizeLegacyTiming('1-3 months'), 'Within 60 days');
+  assert.equal(normalizeLegacyTiming('3-6 months'), 'Within 90 days');
+  // Quiz vocab + unknowns pass through untouched.
+  assert.equal(normalizeLegacyTiming('ASAP'), 'ASAP');
+  assert.equal(normalizeLegacyTiming('Within 30 days'), 'Within 30 days');
+  assert.equal(normalizeLegacyTiming('  1-3 months  '), 'Within 60 days');
+  assert.equal(normalizeLegacyTiming(''), '');
+  assert.equal(normalizeLegacyTiming('garbage'), 'garbage');
+});
+
+test('timingFromNotes parses the legacy [Timing: …] Notes tag', () => {
+  assert.equal(timingFromNotes('[Timing: 1-3 months]'), '1-3 months');
+  assert.equal(timingFromNotes('[Timing: ASAP]\nsome other notes'), 'ASAP');
+  assert.equal(timingFromNotes('no tag here'), '');
+  assert.equal(timingFromNotes(''), '');
+});
+
+test('hold from hydration DEFAULTS only → NO Funnel Completed At (stays nudge-chaseable)', () => {
+  const u = base({
+    tier: 'Not Sure',
+    timing: 'Just exploring',
+    tierDefaulted: true,
+    timingDefaulted: true,
+  });
+  assert.equal('Funnel Completed At' in u, false);
+  assert.equal('Qualified At' in u, false);
+  // Answers + score still persisted for drop-off analytics.
+  assert.equal(u['Qualification Score'], 90);
+});
+
+test('EXPLICIT not-ready answer still stamps Funnel Completed At even when the other value defaulted', () => {
+  // Buyer really chose "Not Sure"; timing fell back to the default.
+  const u = base({ tier: 'Not Sure', timing: 'Just exploring', timingDefaulted: true });
+  assert.equal(u['Funnel Completed At'], NOW);
+  assert.equal('Qualified At' in u, false);
+});
+
+test('defaulted flags on a route-eligible submit change nothing', () => {
+  const u = base({ tierDefaulted: true, timingDefaulted: true });
+  assert.equal(u['Qualified At'], NOW);
+  assert.equal(u['Funnel Completed At'], NOW);
 });
 
 test('isValidAckConfirmedAt accepts only parseable ISO strings', () => {

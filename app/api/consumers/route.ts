@@ -13,6 +13,7 @@ import { sendTelegramConsumerSignup, sendTelegramHotLeadAlert } from '@/lib/tele
 import { transitionBuyerStage } from '@/lib/contracts';
 import { funnelRecord } from '@/lib/funnelMetrics';
 import { computeFunnelIntentScore, classifyFunnelIntent } from '@/lib/funnelIntentScore';
+import { guardFunnelUpsertFields } from '@/lib/funnelUpsert';
 import { BUDGET_OPTIONS } from '@/lib/funnelConfig';
 import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
 import { metaEventId } from '@/lib/analytics';
@@ -185,12 +186,16 @@ export async function POST(request: Request) {
       // the wizard with the same email should resume their record, not be
       // blocked. Fail-open on lookup error (create a fresh record).
       let existingIdQ: string | null = null;
+      let existingRecQ: Record<string, unknown> | null = null;
       try {
         const existingQ = await getAllRecords(
           TABLES.CONSUMERS,
           `LOWER({Email}) = "${escapeAirtableValue(emailLowerQ)}"`
         ) as any[];
-        if (existingQ.length > 0) existingIdQ = existingQ[0].id;
+        if (existingQ.length > 0) {
+          existingIdQ = existingQ[0].id;
+          existingRecQ = existingQ[0];
+        }
       } catch (e) {
         console.error('[funnel] duplicate-email lookup failed:', e);
       }
@@ -270,7 +275,15 @@ export async function POST(request: Request) {
       let funnelRec: any;
       try {
         if (existingIdQ) {
-          await updateRecord(TABLES.CONSUMERS, existingIdQ, funnelFields);
+          // Re-entry guard (2026-07-22): never downgrade Buyer Stage (a
+          // MATCHED/CLOSED buyer clicking a reactivation email must not
+          // regress to WAITING) and never stomp Created / Approved At /
+          // Source when already set — signup-date + first-touch truth.
+          await updateRecord(
+            TABLES.CONSUMERS,
+            existingIdQ,
+            guardFunnelUpsertFields(funnelFields, existingRecQ) as Record<string, any>,
+          );
           funnelRec = { id: existingIdQ };
         } else {
           funnelRec = await createRecord(TABLES.CONSUMERS, funnelFields);
