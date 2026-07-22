@@ -389,4 +389,23 @@ test('ready chase selector: supply gate + oldest-first ordering + batch cap', ()
 test('ready chase selector: batchCap 0 or empty input selects nothing', () => {
   assert.deepEqual(selectReadyBuyersForChase([readyBuyer()], { ...OPTS, batchCap: 0 }), []);
   assert.deepEqual(selectReadyBuyersForChase([], OPTS), []);
+
+// ── cross-rail cooldown (audit 2026-07-22) ───────────────────────────────────
+// The demand-router campaign stamps 'Campaign Last Sent At'; the waiting-
+// activation rail must treat that touch as recent contact so one buyer never
+// gets both streams (conflicting CTAs) in the same window.
+
+test('cross-rail: a recent Campaign Last Sent At blocks the waiting nudge', () => {
+  const b = buyer({ 'Campaign Last Sent At': daysAgo(2) });
+  assert.equal(isWaitingNudgeEligible(b, OPTS), false);
+});
+
+test('cross-rail: a campaign touch older than the cooldown does NOT block', () => {
+  const b = buyer({ 'Campaign Last Sent At': daysAgo(OPTS.cooldownDays + 1) });
+  assert.equal(isWaitingNudgeEligible(b, OPTS), true);
+});
+
+test('cross-rail: a corrupt Campaign Last Sent At skips (never storms)', () => {
+  const b = buyer({ 'Campaign Last Sent At': 'not-a-date' });
+  assert.equal(isWaitingNudgeEligible(b, OPTS), false);
 });

@@ -417,6 +417,9 @@ export function lastActivityMs(buyer: Record<string, unknown>): number {
     'Campaign Last Sent At',
     'Last Contacted At',
     'Last Contacted',
+    // Cross-rail cooldown (audit 2026-07-22): the waiting-activation cron's
+    // nudge stamp counts as activity so a freshly-nudged buyer isn't 18-month-dead.
+    'Waiting Nudge Last Sent At',
     'Last Email Event At',
     'Last Email Delivered At',
     'Last Email Opened At',
@@ -477,12 +480,21 @@ export function suppressionReason(
   // If we treated our own Msg1 as "recent contact" we'd permanently stall the
   // arc at Msg1 and Msg2/Msg3 would never fire. (`Campaign Last Sent At` still
   // counts as activity in lastActivityMs above, so it keeps the buyer alive.)
-  const lastContacted = buyer['Last Contacted At'] || buyer['Last Contacted'];
-  if (lastContacted) {
-    const t = new Date(lastContacted as string).getTime();
-    if (Number.isFinite(t) && now - t < RECENT_CONTACT_DAYS * DAY_MS) {
-      return 'recent-contact';
-    }
+  // CROSS-RAIL COOLDOWN (audit 2026-07-22): the waiting-activation nudge rail
+  // stamps 'Waiting Nudge Last Sent At' — a recent nudge is recent contact, so
+  // the campaign never piles a Msg1 deposit push onto a buyer the other rail
+  // just emailed with a conflicting "finish your qualification" CTA. Take the
+  // MAX across all three fields (a stale Last Contacted At must not mask a
+  // fresh nudge stamp).
+  let lastContactMs = 0;
+  for (const f of ['Last Contacted At', 'Last Contacted', 'Waiting Nudge Last Sent At']) {
+    const v = buyer[f];
+    if (!v) continue;
+    const t = new Date(v as string).getTime();
+    if (Number.isFinite(t) && t > lastContactMs) lastContactMs = t;
+  }
+  if (lastContactMs && now - lastContactMs < RECENT_CONTACT_DAYS * DAY_MS) {
+    return 'recent-contact';
   }
   return null;
 }
@@ -757,6 +769,11 @@ export interface CampaignPlan {
   waitlist: PlannedWaitlist[];
   sunset: PlannedSunset[];
   suppressed: Record<SuppressReason, number>;
+  /**
+   * Per-rancher capacity accounting — present only when the plan was built
+   * with the N-rancher pool model (opts.pools). Ordered like the pools.
+   */
+  poolCapacity?: PoolCapacityReport[];
   /** Open vs filled per rancher, for the report. */
   capacity: {
     // open = open deposit slots; outstanding = already-invited-unconverted
@@ -781,7 +798,8 @@ export interface CampaignPlan {
 
 export interface BuildPlanOpts {
   now: number;
-  capacity: CapacityInput;
+  /** Legacy 2-pool open-slot counts. Ignored when `pools` is provided. */
+  capacity?: CapacityInput;
   dailyCap?: number;
   conversionBuffer?: number;
   /** Waves that have an SMS variant (only Msg2 per CAMPAIGN-SENDS.md). */
@@ -812,6 +830,15 @@ export interface BuildPlanOpts {
    * gated-out/dark rancher can never be routed to.
    */
   ranchers?: CampaignRanchers;
+  /**
+   * N-RANCHER POOL MODEL (audit 2026-07-22). When provided, SUPERSEDES
+   * `capacity` + `ranchers`: each pool carries its own rancher, open slots and
+   * a serves(state) predicate (built by buildCampaignPools — Routing-States
+   * gated), and the planner budgets/assigns per pool with fall-through to the
+   * next eligible pool when one is at capacity. 1-2 configured pools reproduce
+   * the legacy coast split (back-compat); 3+ route purely by served states.
+   */
+  pools?: CampaignPool[];
 }
 
 const DEFAULT_SMS_WAVES: ReadonlySet<Wave> = new Set<Wave>(['Msg2']);
@@ -861,7 +888,13 @@ export function buildCampaignPlan(
   buyers: CampaignBuyer[],
   opts: BuildPlanOpts,
 ): CampaignPlan {
-  const { now, capacity } = opts;
+  // N-rancher pool model (audit 2026-07-22): a pools option routes through the
+  // per-rancher planner (Routing-States gate + capacity fall-through). The
+  // legacy 2-pool path below is byte-identical for existing callers/tests.
+  if (opts.pools) return buildPlanWithPools(buyers, opts, opts.pools);
+
+  const { now } = opts;
+  const capacity = opts.capacity ?? { west: 0, eastCentral: 0 };
   const smsWaves = opts.smsWaves ?? DEFAULT_SMS_WAVES;
   const excludeBuyerIds = opts.excludeBuyerIds ?? new Set<string>();
   // A2: configured rancher per pool — defaults to the original pair so callers
@@ -1058,6 +1091,373 @@ export function buildCampaignPlan(
         planned: sends.filter((s) => s.coast !== 'WEST').length,
       },
     },
+    byWave,
+    waitlistByState,
+    skippedNoRancher,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// N-RANCHER POOL MODEL  (audit 2026-07-22, findings 1+2)
+//
+// The campaign was structurally capped at exactly two ranchers (positional
+// env slots) and never consulted Routing States — a regional rancher swapped
+// into a slot would take real deposits from states it does not serve. The
+// pool model fixes both:
+//   • Every configured rancher becomes a pool with its own openSlots and a
+//     serves(state) predicate. For NON-default ranchers the predicate is the
+//     rancher's ACTUAL served set (getOperationalServedStates — Routing
+//     States, admin-gated). The curated default pair (Foodstead/Silverline)
+//     ships nationwide BY DESIGN (docs/NATIONWIDE-2-RANCHER-CAMPAIGN.md), so
+//     the cron passes servedStates=null for them — byte-identical behavior.
+//   • 1-2 configured pools keep the legacy positional coast split (1st=WEST,
+//     2nd=EAST+CENTRAL) ANDed with the served-set gate; 3+ pools route purely
+//     by served states in configured order, with capacity FALL-THROUGH: a
+//     buyer whose first eligible pool has no new-invite budget goes to the
+//     NEXT eligible pool instead of being dropped.
+// ─────────────────────────────────────────────────────────────────────
+
+export interface CampaignPoolInput {
+  target: RancherTarget;
+  openSlots: number;
+  /**
+   * Normalized 2-letter codes the rancher serves, or null = serves EVERY
+   * state (reserved for the curated nationwide default pair).
+   */
+  servedStates: ReadonlySet<string> | null;
+}
+
+export interface CampaignPool {
+  rancher: RancherTarget;
+  openSlots: number;
+  /** True iff this pool may be routed a buyer in the (normalized) state. */
+  serves: (stateCode: string) => boolean;
+}
+
+/**
+ * Build the campaign pools from resolved config slots. Pure. `slots` is
+ * POSITIONAL (index = configured order); null entries are disabled pools
+ * (gated-out/unreadable rancher) kept for position so a 2-id config whose
+ * 1st rancher is dark still treats the 2nd as the EAST+CENTRAL pool.
+ *
+ * ≤2 configured slots → legacy coast split (1st=WEST, 2nd=EAST+CENTRAL)
+ * ANDed with the served-set gate; 3+ → served-set only (configured order is
+ * the routing priority).
+ */
+export function buildCampaignPools(
+  slots: ReadonlyArray<CampaignPoolInput | null>,
+): CampaignPool[] {
+  const positional = slots.length <= 2;
+  const pools: CampaignPool[] = [];
+  slots.forEach((s, i) => {
+    if (!s) return;
+    const servedStates = s.servedStates;
+    const inServed = (code: string): boolean =>
+      servedStates === null || servedStates.has(code);
+    const serves = positional
+      ? (code: string): boolean =>
+          (i === 0 ? WEST_STATES.has(code) : !WEST_STATES.has(code)) && inServed(code)
+      : inServed;
+    pools.push({
+      rancher: { ...s.target },
+      openSlots: Math.max(0, Math.floor(s.openSlots)),
+      serves,
+    });
+  });
+  return pools;
+}
+
+/** The buyer's stamped Campaign Rancher link id ('' when unstamped). */
+export function stampedCampaignRancherId(fields: Record<string, unknown>): string {
+  const links = fields['Campaign Rancher'];
+  if (Array.isArray(links) && links.length > 0 && links[0]) return String(links[0]);
+  return '';
+}
+
+// Attribution for OUTSTANDING/sent-today accounting: which pool an in-arc
+// buyer's invite belongs to. Stamped Campaign Rancher wins (the invite
+// happened — no serves re-check); unstamped legacy rows fall back to the
+// first pool serving their state.
+function attributedPool(
+  fields: Record<string, unknown>,
+  pools: readonly CampaignPool[],
+): CampaignPool | null {
+  const stamped = stampedCampaignRancherId(fields);
+  if (stamped) return pools.find((p) => p.rancher.id === stamped) || null;
+  const code = normalizeState(fields['State']);
+  if (!code) return null;
+  return pools.find((p) => p.serves(code)) || null;
+}
+
+/**
+ * ROUTING for continuations + SMS-recovery links: the buyer's stamped
+ * campaign rancher — but ONLY when that rancher's pool is live this run AND
+ * serves the buyer's state (Routing-States gate applies to every touch, so a
+ * swapped-in regional rancher never keeps mailing out-of-coverage buyers).
+ * Unstamped buyers get the first pool serving their state. Pure.
+ */
+export function campaignRancherForBuyer(
+  fields: Record<string, unknown>,
+  pools: readonly CampaignPool[],
+): RancherTarget | null {
+  const code = normalizeState(fields['State']);
+  if (!code) return null;
+  const stamped = stampedCampaignRancherId(fields);
+  if (stamped) {
+    const p = pools.find((pl) => pl.rancher.id === stamped);
+    return p && p.serves(code) ? { ...p.rancher } : null;
+  }
+  const p = pools.find((pl) => pl.serves(code));
+  return p ? { ...p.rancher } : null;
+}
+
+/** Start of the UTC day containing `now` (ms). The daily-cap day boundary. */
+export function startOfUtcDayMs(now: number): number {
+  const d = new Date(now);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+}
+
+export interface PoolCapacityReport {
+  rancherId: string;
+  name: string;
+  open: number;
+  outstanding: number;
+  /** Msg1 invites already sent this UTC day (true daily-cap accounting). */
+  sentToday: number;
+  newBudget: number;
+  planned: number;
+}
+
+// The pool-model planner. Same suppression/tier/wave semantics as the legacy
+// path; capacity is budgeted PER RANCHER with fall-through, and the daily cap
+// is a TRUE per-UTC-day cap (Msg1s already sent today — visible on the
+// already-fetched rows — are subtracted, so the hourly cron can't grant a
+// fresh dailyCap every run).
+function buildPlanWithPools(
+  buyers: CampaignBuyer[],
+  opts: BuildPlanOpts,
+  pools: CampaignPool[],
+): CampaignPlan {
+  const { now } = opts;
+  const smsWaves = opts.smsWaves ?? DEFAULT_SMS_WAVES;
+  const excludeBuyerIds = opts.excludeBuyerIds ?? new Set<string>();
+  const suppressed = emptySuppressed();
+  const sunset: PlannedSunset[] = [];
+  const skippedNoRancher = { west: 0, eastCentral: 0 };
+
+  const activeDeals = activeDealBuyerKeys(opts.activeDealReferrals);
+  const isMidDeal = (b: CampaignBuyer): boolean => {
+    if (hasActiveReferral(b.fields)) return true;
+    if (activeDeals.ids.has(b.id)) return true;
+    const email = String(b.fields['Email'] || '').trim().toLowerCase();
+    return !!email && activeDeals.emails.has(email);
+  };
+
+  // Per-pool cumulative terms: outstanding invited-but-unconverted population
+  // (the openSlots×buffer ceiling term) + Msg1s already sent this UTC day.
+  const outstandingByPool = new Map<string, number>();
+  const sentTodayByPool = new Map<string, number>();
+  for (const p of pools) {
+    outstandingByPool.set(p.rancher.id, 0);
+    sentTodayByPool.set(p.rancher.id, 0);
+  }
+  const dayStart = startOfUtcDayMs(now);
+  for (const b of buyers) {
+    const f = b.fields;
+    const stage = readEnumOrString(f['Campaign Stage']);
+    const invited = stage === 'Msg1 Sent' || stage === 'Msg2 Sent' || stage === 'Msg3 Sent';
+    if (!invited) continue;
+    const pool = attributedPool(f, pools);
+    if (!pool) continue;
+    const pid = pool.rancher.id;
+    if (stage === 'Msg1 Sent') {
+      const raw = f['Campaign Last Sent At'];
+      const t = raw ? new Date(raw as string).getTime() : 0;
+      // Sent-today counts regardless of conversion/sunset — the deliverability
+      // budget was consumed either way.
+      if (Number.isFinite(t) && t >= dayStart && t <= now) {
+        sentTodayByPool.set(pid, (sentTodayByPool.get(pid) || 0) + 1);
+      }
+    }
+    if (f['Campaign Sunset At']) continue; // sunset → slot released
+    if (isMidDeal(b)) continue; // converted → consumes a real slot, not an invite
+    outstandingByPool.set(pid, (outstandingByPool.get(pid) || 0) + 1);
+  }
+
+  const dailyCap = opts.dailyCap ?? DEFAULT_DAILY_CAP;
+  const budgetByPool = new Map<string, number>();
+  for (const p of pools) {
+    const pid = p.rancher.id;
+    const capLeftToday = Math.max(0, dailyCap - (sentTodayByPool.get(pid) || 0));
+    budgetByPool.set(
+      pid,
+      newInviteBudget(p.openSlots, outstandingByPool.get(pid) || 0, {
+        dailyCap: capLeftToday,
+        conversionBuffer: opts.conversionBuffer,
+      }),
+    );
+  }
+
+  interface Cand extends PlannedSend {
+    sortIntent: number;
+  }
+  const makeCand = (
+    b: CampaignBuyer,
+    f: Record<string, unknown>,
+    rancher: RancherTarget,
+    coast: Coast,
+    tier: Tier,
+    wave: Wave,
+  ): Cand => {
+    const smsOptIn = asBool(f['SMS Opt-In']);
+    const phone = String(f['Phone'] || '').trim();
+    return {
+      buyerId: b.id,
+      email: String(f['Email'] || '').trim(),
+      firstName: firstNameOf(f),
+      state: normalizeState(f['State']),
+      coast,
+      rancher,
+      tier,
+      wave,
+      sms: smsOptIn && !!phone && smsWaves.has(wave),
+      phone,
+      cut: cutForBuyer(f),
+      sortIntent: num(f['Intent Score']) + num(f['Qualification Score']),
+    };
+  };
+
+  const contCands: Cand[] = [];
+  const newCands: Cand[] = [];
+
+  for (const b of buyers) {
+    const f = b.fields;
+    if (excludeBuyerIds.has(b.id)) {
+      suppressed['in-reserve-recovery']++;
+      continue;
+    }
+    const sr = suppressionReason(f, now);
+    if (sr) {
+      suppressed[sr]++;
+      continue;
+    }
+    if (isMidDeal(b)) {
+      suppressed['active-deal']++;
+      continue;
+    }
+    if (shouldSunset(f, now)) {
+      sunset.push({ buyerId: b.id, reason: 'full-arc-no-engagement' });
+      continue;
+    }
+    const coast = coastForState(f['State']);
+    if (!coast) continue; // unroutable state
+    const tier = classifyTier(f);
+    if (!tier) continue;
+    const decision = decideWave(f, now);
+    if (!decision.send) continue;
+    const wave = decision.wave;
+    const stateCode = normalizeState(f['State']);
+    const coastKey = coast === 'WEST' ? ('west' as const) : ('eastCentral' as const);
+
+    if (wave !== 'Msg1') {
+      // CONTINUATION — the buyer's stamped rancher, serves-gated. A dark /
+      // swapped-out / non-serving rancher → held back untouched (no stamp).
+      const rancher = campaignRancherForBuyer(f, pools);
+      if (!rancher) {
+        skippedNoRancher[coastKey]++;
+        continue;
+      }
+      contCands.push(makeCand(b, f, rancher, coast, tier, wave));
+      continue;
+    }
+    // NEW invite — must have at least one pool serving the state.
+    const firstServing = pools.find((p) => p.serves(stateCode));
+    if (!firstServing) {
+      skippedNoRancher[coastKey]++;
+      continue;
+    }
+    newCands.push(makeCand(b, f, { ...firstServing.rancher }, coast, tier, wave));
+  }
+
+  // Priority: tier rank asc, intent desc, buyerId — same as the legacy path.
+  const byPriority = (a: Cand, b: Cand): number => {
+    const t = TIER_RANK[a.tier] - TIER_RANK[b.tier];
+    if (t !== 0) return t;
+    if (b.sortIntent !== a.sortIntent) return b.sortIntent - a.sortIntent;
+    return a.buyerId < b.buyerId ? -1 : a.buyerId > b.buyerId ? 1 : 0;
+  };
+  newCands.sort(byPriority);
+
+  const stripSort = (c: Cand): PlannedSend => {
+    const { sortIntent: _omit, ...rest } = c;
+    return rest;
+  };
+
+  const sends: PlannedSend[] = [];
+  const waitlist: PlannedWaitlist[] = [];
+  const plannedByPool = new Map<string, number>();
+  for (const p of pools) plannedByPool.set(p.rancher.id, 0);
+
+  // Continuations ALWAYS send — already counted in the outstanding population.
+  for (const c of contCands) {
+    sends.push(stripSort(c));
+    plannedByPool.set(c.rancher.id, (plannedByPool.get(c.rancher.id) || 0) + 1);
+  }
+
+  // New invites: highest-priority first; each takes the FIRST eligible pool
+  // with remaining budget (capacity fall-through to the next eligible pool).
+  const remaining = new Map(budgetByPool);
+  for (const c of newCands) {
+    const target = pools.find(
+      (p) => p.serves(c.state) && (remaining.get(p.rancher.id) || 0) > 0,
+    );
+    if (target) {
+      remaining.set(target.rancher.id, (remaining.get(target.rancher.id) || 0) - 1);
+      plannedByPool.set(target.rancher.id, (plannedByPool.get(target.rancher.id) || 0) + 1);
+      sends.push({ ...stripSort(c), rancher: { ...target.rancher } });
+    } else if (c.tier !== 'warm') {
+      waitlist.push({
+        buyerId: c.buyerId,
+        state: c.state,
+        coast: c.coast,
+        reason: 'rancher-at-capacity',
+      });
+    }
+  }
+
+  const byWave: Record<Wave, number> = { Msg1: 0, Msg2: 0, Msg3: 0 };
+  for (const s of sends) byWave[s.wave]++;
+  const waitlistByState: Record<string, number> = {};
+  for (const w of waitlist) {
+    const key = w.state || 'unknown';
+    waitlistByState[key] = (waitlistByState[key] || 0) + 1;
+  }
+
+  const poolCapacity: PoolCapacityReport[] = pools.map((p) => ({
+    rancherId: p.rancher.id,
+    name: p.rancher.name,
+    open: p.openSlots,
+    outstanding: outstandingByPool.get(p.rancher.id) || 0,
+    sentToday: sentTodayByPool.get(p.rancher.id) || 0,
+    newBudget: budgetByPool.get(p.rancher.id) || 0,
+    planned: plannedByPool.get(p.rancher.id) || 0,
+  }));
+  const capEntry = (r?: PoolCapacityReport) => ({
+    open: r?.open ?? 0,
+    outstanding: r?.outstanding ?? 0,
+    newBudget: r?.newBudget ?? 0,
+    planned: r?.planned ?? 0,
+  });
+
+  return {
+    sends,
+    waitlist,
+    sunset,
+    suppressed,
+    poolCapacity,
+    // Legacy report shape: first two pools mirror the historical WEST /
+    // EAST+CENTRAL slots (zeros when a slot is disabled).
+    capacity: { west: capEntry(poolCapacity[0]), eastCentral: capEntry(poolCapacity[1]) },
     byWave,
     waitlistByState,
     skippedNoRancher,

@@ -64,11 +64,12 @@ import { mintCampaignReserveToken } from '@/lib/campaignReserve';
 import { type Cut } from '@/lib/reserveDeposit';
 import {
   buildCampaignPlan,
+  buildCampaignPools,
+  campaignRancherForBuyer,
   renderMessage,
   renderSmsRecovery,
   rancherPageUrl,
   parseCampaignRancherIds,
-  campaignRancherForState,
   activeDealBuyerKeys,
   type ActiveDealKeys,
   CAMPAIGN_RANCHER_IDS_ENV,
@@ -85,12 +86,17 @@ import {
   FOODSTEAD,
   SILVERLINE,
   type CampaignBuyer,
-  type CampaignRanchers,
+  type CampaignPool,
+  type CampaignPoolInput,
+  type PoolCapacityReport,
   type PlannedSend,
   type CampaignPlan,
   type RancherTarget,
 } from '@/lib/demandRouter';
-import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
+import {
+  isRancherOperationalForBuyers,
+  getOperationalServedStates,
+} from '@/lib/rancherEligibility';
 import { isEmailWindow, isSmsWindow } from '@/lib/sendWindow';
 import { normalizeState } from '@/lib/states';
 import {
@@ -175,28 +181,21 @@ async function resolveLink(rancher: RancherTarget, send: PlannedSend): Promise<s
  * the "campaign routes to a dark rancher" hole.
  */
 async function readCapacity(ids: readonly string[]): Promise<{
-  west: number;
-  eastCentral: number;
-  targets: CampaignRanchers;
-  detail: { westName: string; westMax: number; westCur: number; eastName: string; eastMax: number; eastCur: number };
+  /** Every operational configured rancher, as a campaign pool (N-rancher model). */
+  pools: CampaignPool[];
+  /** Per-pool report detail, aligned with `pools` order. */
+  poolDetail: Array<{ name: string; max: number; cur: number }>;
   degraded: string[];
   skipped: string[];
 }> {
   // FAIL-CLOSED on a missing/failed rancher record. getMaxActiveReferrals(null)
   // returns DEFAULT_MAX=5 — a transient fetch failure would otherwise INVENT 5
   // open slots and trigger unintended live sends. For a money-adjacent sender we
-  // must never fabricate capacity: a null record → 0 slots for that coast (skip
+  // must never fabricate capacity: a null record → 0 slots for that pool (skip
   // it this run). The `degraded` list surfaces the skip in the report.
   const degraded: string[] = [];
   // Operational-gate + config skips — operator-visible in the Telegram report.
   const skipped: string[] = [];
-
-  const [westId, eastCentralId] = ids;
-  if (ids.length > 2) {
-    skipped.push(
-      `${ids.length - 2} extra configured rancher id(s) ignored — the campaign has exactly two slots (1st=WEST, 2nd=EAST+CENTRAL)`,
-    );
-  }
 
   // The default pair keeps its curated display fields (and short report names,
   // byte-identical to the legacy report); any OTHER configured rancher is
@@ -213,15 +212,16 @@ async function readCapacity(ids: readonly string[]): Promise<{
   }
 
   async function resolveSlot(
-    id: string | undefined,
-    label: 'WEST' | 'EAST+CENTRAL',
-  ): Promise<{ open: number; max: number; cur: number; target: RancherTarget | null; name: string }> {
-    if (!id) {
-      skipped.push(`${label}: no rancher configured (${CAMPAIGN_RANCHER_IDS_ENV} has fewer than 2 ids) → pool disabled this run`);
-      console.warn(`[demand-router] ${label} pool has no configured campaign rancher — pool disabled this run`);
-      return { open: 0, max: 0, cur: 0, target: null, name: 'no rancher' };
-    }
-
+    id: string,
+    label: string,
+  ): Promise<{
+    open: number;
+    max: number;
+    cur: number;
+    target: RancherTarget | null;
+    name: string;
+    servedStates: ReadonlySet<string> | null;
+  }> {
     const rec = (await getRecordById(TABLES.RANCHERS, id).catch(() => null)) as any;
     if (!rec) {
       // For the known default pair, keep the curated target so mid-arc
@@ -231,11 +231,11 @@ async function readCapacity(ids: readonly string[]): Promise<{
       const curated = curatedTargetFor(id);
       if (curated) {
         degraded.push(`${displayNameFor(id, curated.name)} (${label}): rancher record unavailable → capacity forced to 0 (skipped)`);
-        return { open: 0, max: 0, cur: 0, target: curated, name: displayNameFor(id, curated.name) };
+        return { open: 0, max: 0, cur: 0, target: curated, name: displayNameFor(id, curated.name), servedStates: null };
       }
       skipped.push(`${label}: configured rancher ${id} could not be read → pool disabled this run`);
       console.warn(`[demand-router] configured campaign rancher ${id} (${label}) unreadable — pool disabled this run`);
-      return { open: 0, max: 0, cur: 0, target: null, name: id };
+      return { open: 0, max: 0, cur: 0, target: null, name: id, servedStates: null };
     }
 
     const recName = String(rec['Ranch Name'] || rec['Operator Name'] || id).trim() || id;
@@ -246,43 +246,63 @@ async function readCapacity(ids: readonly string[]): Promise<{
     if (!isRancherOperationalForBuyers(rec)) {
       skipped.push(`${name} (${label}): failed the operational gate (isRancherOperationalForBuyers) → NOT routed to this run`);
       console.warn(`[demand-router] configured campaign rancher ${name} (${id}, ${label}) failed isRancherOperationalForBuyers — pool disabled this run`);
-      return { open: 0, max: 0, cur: 0, target: null, name };
+      return { open: 0, max: 0, cur: 0, target: null, name, servedStates: null };
     }
 
     const target = curatedTargetFor(id) ?? hydrateTarget(id, rec);
     if (!target) {
       skipped.push(`${name} (${label}): operational but has no Slug → cannot build campaign links → NOT routed to this run`);
       console.warn(`[demand-router] configured campaign rancher ${name} (${id}, ${label}) has no Slug — pool disabled this run`);
-      return { open: 0, max: 0, cur: 0, target: null, name };
+      return { open: 0, max: 0, cur: 0, target: null, name, servedStates: null };
+    }
+
+    // ROUTING-STATES GATE (audit 2026-07-22, finding 1): a NON-default
+    // configured rancher only serves the states its record says it serves
+    // (getOperationalServedStates — home state + admin-approved Routing
+    // States, the SAME rule the real matching engine uses). The curated
+    // default pair ships nationwide BY DESIGN (the campaign's premise), so it
+    // keeps servedStates=null (serves every state — byte-identical behavior).
+    let servedStates: ReadonlySet<string> | null = null;
+    if (!curatedTargetFor(id)) {
+      servedStates = new Set(getOperationalServedStates(rec));
+      if (servedStates.size === 0) {
+        skipped.push(`${name} (${label}): no served states on record (blank State, no approved Routing States) → pool cannot route any buyer this run`);
+        console.warn(`[demand-router] configured campaign rancher ${name} (${id}, ${label}) has no served states — pool routes nothing`);
+      }
     }
 
     const max = getMaxActiveReferrals(rec);
     const cur = await getLiveCapacity(id).catch(
       () => Number(rec?.['Current Active Referrals'] || 0),
     );
-    return { open: openSlotsFor({ max, current: cur }), max, cur, target, name };
+    return { open: openSlotsFor({ max, current: cur }), max, cur, target, name, servedStates };
   }
 
-  const [fs, sl] = await Promise.all([
-    resolveSlot(westId, 'WEST'),
-    resolveSlot(eastCentralId, 'EAST+CENTRAL'),
-  ]);
+  // N-RANCHER MODEL (finding 2): EVERY configured id resolves to a pool —
+  // extras are no longer discarded. 1-2 ids keep the legacy positional coast
+  // labels (and buildCampaignPools keeps their coast split); 3+ route by
+  // served states.
+  const labels = ids.length <= 2
+    ? ids.map((_, i) => (i === 0 ? 'WEST' : 'EAST+CENTRAL'))
+    : ids.map((_, i) => `POOL ${i + 1}`);
+  const resolved = await Promise.all(ids.map((id, i) => resolveSlot(id, labels[i])));
+  if (ids.length === 1) {
+    skipped.push(`EAST+CENTRAL: no rancher configured (${CAMPAIGN_RANCHER_IDS_ENV} has fewer than 2 ids) → pool disabled this run`);
+    console.warn('[demand-router] EAST+CENTRAL pool has no configured campaign rancher — pool disabled this run');
+  }
 
-  return {
-    west: fs.open,
-    eastCentral: sl.open,
-    targets: { west: fs.target, eastCentral: sl.target },
-    detail: {
-      westName: fs.name,
-      westMax: fs.max,
-      westCur: fs.cur,
-      eastName: sl.name,
-      eastMax: sl.max,
-      eastCur: sl.cur,
-    },
-    degraded,
-    skipped,
-  };
+  // Positional slot inputs (null = disabled pool, position preserved so a
+  // dark 1st rancher doesn't shift the 2nd into the WEST slot).
+  const slotInputs: Array<CampaignPoolInput | null> = resolved.map((r) =>
+    r.target ? { target: r.target, openSlots: r.open, servedStates: r.servedStates } : null,
+  );
+  while (slotInputs.length < 2) slotInputs.push(null);
+  const pools = buildCampaignPools(slotInputs);
+  const poolDetail = resolved
+    .filter((r) => r.target)
+    .map((r) => ({ name: r.name, max: r.max, cur: r.cur }));
+
+  return { pools, poolDetail, degraded, skipped };
 }
 
 /** Build a RancherTarget for a non-default configured rancher from its record. */
@@ -367,7 +387,7 @@ async function stampSunset(buyerId: string, now: Date): Promise<void> {
 function buildReport(plan: CampaignPlan, opts: {
   live: boolean;
   smsOn: boolean;
-  capDetail: { westName: string; westMax: number; westCur: number; eastName: string; eastMax: number; eastCur: number };
+  poolDetail: Array<{ name: string; max: number; cur: number }>;
   failures: string[];
   degraded: string[];
   /** Configured-rancher skips (operational gate / config) — operator-visible. */
@@ -385,9 +405,7 @@ function buildReport(plan: CampaignPlan, opts: {
   };
 }): string {
   const mode = opts.live ? '🟢 LIVE' : '🟡 DRY-RUN (nothing sent)';
-  const d = opts.capDetail;
-  const w = plan.capacity.west;
-  const ec = plan.capacity.eastCentral;
+  const poolCap: PoolCapacityReport[] = plan.poolCapacity || [];
   const suppressedTotal = Object.values(plan.suppressed).reduce((a, b) => a + b, 0);
   const suppressedBreak = Object.entries(plan.suppressed)
     .filter(([, n]) => n > 0)
@@ -401,10 +419,14 @@ function buildReport(plan: CampaignPlan, opts: {
   const lines: string[] = [
     `🐄 <b>DEMAND ROUTER</b> · ${mode} · combined email+SMS`,
     '',
-    '<b>Capacity</b> (open slots / cap · outstanding-invited / new-invite budget)',
-    `• ${d.westName} (WEST): ${w.open} open / ${d.westMax} cap · ${w.outstanding} out / ${w.newBudget} new-budget → filling ${w.planned}`,
-    `• ${d.eastName} (EAST+CENTRAL): ${ec.open} open / ${d.eastMax} cap · ${ec.outstanding} out / ${ec.newBudget} new-budget → filling ${ec.planned}`,
+    '<b>Capacity</b> (open slots / cap · outstanding-invited / new-invite budget · Msg1 sent today)',
+    ...poolCap.map((p, i) =>
+      `• ${opts.poolDetail[i]?.name || p.name}: ${p.open} open / ${opts.poolDetail[i]?.max ?? '?'} cap · ${p.outstanding} out / ${p.newBudget} new-budget · ${p.sentToday} today → filling ${p.planned}`,
+    ),
   ];
+  if (poolCap.length === 0) {
+    lines.push('• no operational campaign rancher this run');
+  }
   if (opts.rancherSkips.length > 0) {
     // A2: configured rancher failed the operational gate / config anomaly —
     // that pool is DISABLED this run (nothing sent, not even continuations).
@@ -465,8 +487,32 @@ async function executeSend(
   now: Date,
   socialProof: string,
   failures: string[],
+  /**
+   * The buyer's PRE-CLAIM campaign fields (from the already-fetched row) so a
+   * failed — not suppressed — send can revert the claim stamp and the next run
+   * retries the wave (audit 2026-07-22: a Resend-level failure resolves
+   * {success:false, suppressed:false} without throwing, and the claim-before-
+   * send stamp would otherwise mark the wave sent forever with nothing
+   * delivered).
+   */
+  prior: { stage: string | null; lastSent: string | null; rancher: string[] | null },
 ): Promise<{ emailOk: boolean; deferred: boolean }> {
   let emailOk = false;
+
+  // Revert the claim stamp to its pre-claim values so the wave is retried on a
+  // later run. Failure to revert is itself surfaced — the claim then stays
+  // burned (the pre-existing behavior) rather than risking a double-send.
+  const revertClaim = async (why: string): Promise<void> => {
+    try {
+      await updateRecord(TABLES.CONSUMERS, send.buyerId, {
+        'Campaign Stage': prior.stage,
+        'Campaign Last Sent At': prior.lastSent,
+        'Campaign Rancher': prior.rancher,
+      });
+    } catch (e: any) {
+      failures.push(`${send.email}: claim revert failed after ${why} — wave burned — ${e?.message?.slice(0, 80) || 'unknown'}`);
+    }
+  };
 
   // SEND-WINDOW GATE (Upgrade C) — BEFORE render/claim so a deferred send
   // consumes nothing: no stamp, no wave advance. The next hourly run that lands
@@ -524,10 +570,19 @@ async function executeSend(
     });
     emailOk = !!res?.success;
     if (res?.suppressed) {
+      // Suppressed (unsub/bounce/complaint) is terminal — keep the stamp so we
+      // never retry into a suppression.
       failures.push(`${send.email}: email suppressed — ${res.reason || 'unknown'}`);
+    } else if (!res?.success) {
+      // FAILED, not suppressed (dead key, rate-limit, provider error): the wave
+      // was claimed but nothing was delivered. Record it AND revert the claim
+      // so the next in-window run retries instead of silently burning the wave.
+      failures.push(`${send.email}: email failed — ${res?.reason || 'unknown'} (claim reverted, will retry)`);
+      await revertClaim('send failure');
     }
   } catch (e: any) {
-    failures.push(`${send.email}: email failed — ${e?.message || 'unknown'}`);
+    failures.push(`${send.email}: email failed — ${e?.message || 'unknown'} (claim reverted, will retry)`);
+    await revertClaim('send throw');
   }
 
   // Audit (best-effort, reversible stamp).
@@ -615,7 +670,7 @@ async function runSmsRecovery(
   live: boolean,
   smsOn: boolean,
   proof: SocialProof,
-  targets: CampaignRanchers,
+  pools: CampaignPool[],
   activeDeals: ActiveDealKeys,
   failures: string[],
 ): Promise<{ planned: number; sent: number; deferred: number }> {
@@ -643,9 +698,10 @@ async function runSmsRecovery(
 
   for (const b of eligible) {
     const f = b.fields;
-    // A2: CONFIGURED campaign rancher for the buyer's coast — a gated-out /
-    // skipped pool (null) is never routed to, so no recovery SMS link either.
-    const rancher = campaignRancherForState(f['State'], targets);
+    // A2/N-pool: the buyer's STAMPED campaign rancher (serves-gated) — a
+    // gated-out / skipped / non-serving pool is never routed to, so no
+    // recovery SMS link either.
+    const rancher = campaignRancherForBuyer(f, pools);
     if (!rancher) continue; // unroutable state or pool disabled → can't build a link
     planned++;
 
@@ -746,26 +802,29 @@ async function readRecoveryReferrals(
   nowMs: number,
   campaignRancherIds: ReadonlySet<string>,
 ): Promise<RecoveryRow[]> {
-  // Pull deposit-intent referrals that have NOT paid a deposit. Keep the formula
-  // permissive (the pure selector enforces status/refund/age) and refund-field-
-  // free (mirrors deposit-accept-sla: {Refunded At} may not exist on Referrals,
-  // and an unknown field errors the whole query).
-  let rows: RecoveryRow[] = [];
-  try {
-    rows = (await getAllRecords(
-      TABLES.REFERRALS,
-      `AND({Deposit Paid At} = '', FIND('Deposit', {Match Type} & ''))`,
-    )) as RecoveryRow[];
-  } catch (e: any) {
-    console.warn('[demand-router] recovery referral read failed:', e?.message);
-    return [];
-  }
-
   const recoveryHours = Number(process.env.RESERVE_RECOVERY_HOURS || DEFAULT_RESERVE_RECOVERY_HOURS);
   // A7: max-age cap (created within N days, default 14) so a first LIVE run can't
   // blast a huge historical backlog, AND rancher scope to the campaign ranchers.
   const maxAgeDays = Number(process.env.RESERVE_RECOVERY_MAX_AGE_DAYS || 14);
   const minCreated = nowMs - maxAgeDays * 24 * 60 * 60 * 1000; // not older than this
+
+  // Pull deposit-intent referrals that have NOT paid a deposit. Keep the formula
+  // permissive (the pure selector enforces status/refund/age) and refund-field-
+  // free (mirrors deposit-accept-sla: {Refunded At} may not exist on Referrals,
+  // and an unknown field errors the whole query). The CREATED_TIME() bound
+  // (audit 2026-07-22) pushes the A7 max-age cap server-side so the read stops
+  // returning every unpaid deposit-intent referral ever — the JS filter below
+  // re-applies the exact window as the belt.
+  let rows: RecoveryRow[] = [];
+  try {
+    rows = (await getAllRecords(
+      TABLES.REFERRALS,
+      `AND({Deposit Paid At} = '', FIND('Deposit', {Match Type} & ''), IS_AFTER(CREATED_TIME(), '${new Date(minCreated).toISOString()}'))`,
+    )) as RecoveryRow[];
+  } catch (e: any) {
+    console.warn('[demand-router] recovery referral read failed:', e?.message);
+    return [];
+  }
   const maxCreated = nowMs - recoveryHours * 60 * 60 * 1000; // old enough to consider
 
   const prelim = rows.filter((r) => {
@@ -887,6 +946,26 @@ async function runReserveRecovery(
   const emailEligible = selectRecoveryEmail(rows, opts);
   const smsEligible = selectRecoverySms(rows, opts);
 
+  // PER-RUN CACHES (audit 2026-07-22): the email and SMS passes used to N+1
+  // re-fetch the SAME rancher + consumer per referral in BOTH loops. Cache by
+  // linked-record id so each rancher/consumer is fetched at most once per run.
+  const rancherCache = new Map<string, Awaited<ReturnType<typeof rancherForReferral>>>();
+  const consumerCache = new Map<string, any>();
+  const cachedRancherForReferral = async (ref: RecoveryRow) => {
+    const links = (ref.Rancher || ref['Suggested Rancher']) as unknown;
+    const rid = Array.isArray(links) ? String(links[0] || '') : '';
+    if (!rid) return null;
+    if (!rancherCache.has(rid)) rancherCache.set(rid, await rancherForReferral(ref));
+    return rancherCache.get(rid) ?? null;
+  };
+  const cachedConsumerForReferral = async (ref: RecoveryRow) => {
+    const links = ref.Buyer as unknown;
+    const cid = Array.isArray(links) ? String(links[0] || '') : '';
+    if (!cid) return null;
+    if (!consumerCache.has(cid)) consumerCache.set(cid, await consumerForReferral(ref));
+    return consumerCache.get(cid) ?? null;
+  };
+
   let emailPlanned = 0;
   let emailSent = 0;
   let emailDeferred = 0;
@@ -896,10 +975,10 @@ async function runReserveRecovery(
 
   // ── Recovery EMAIL ──
   for (const ref of emailEligible) {
-    const rancher = await rancherForReferral(ref);
+    const rancher = await cachedRancherForReferral(ref);
     if (!rancher) continue;
     // A1: pull the Consumer — authoritative State (window gate) + identity.
-    const consumer = await consumerForReferral(ref);
+    const consumer = await cachedConsumerForReferral(ref);
     if (!consumer) continue;
     const consumerId = String(consumer.id || '');
     const email = String(consumer['Email'] || ref['Buyer Email'] || '').trim();
@@ -945,19 +1024,36 @@ async function runReserveRecovery(
         campaign: RECOVERY_CAMPAIGN_NAME,
       });
       if (res?.success) emailSent++;
-      if (res?.suppressed) failures.push(`reserve-recovery-email ${email}: suppressed — ${res.reason || 'unknown'}`);
+      if (res?.suppressed) {
+        failures.push(`reserve-recovery-email ${email}: suppressed — ${res.reason || 'unknown'}`);
+      } else if (!res?.success) {
+        // FAILED, not suppressed (audit 2026-07-22): the ONE-SHOT recovery
+        // stamp was already claimed — revert it (it was empty by selector
+        // definition) so a later run retries instead of burning the recovery.
+        failures.push(`reserve-recovery-email ${email}: send failed — ${res?.reason || 'unknown'} (stamp reverted, will retry)`);
+        try {
+          await updateRecord(TABLES.REFERRALS, ref.id, { [RESERVE_RECOVERY_EMAIL_FIELD]: null });
+        } catch (e2: any) {
+          failures.push(`reserve-recovery-email ${ref.id}: stamp revert failed — recovery burned — ${e2?.message?.slice(0, 80) || 'unknown'}`);
+        }
+      }
     } catch (e: any) {
-      failures.push(`reserve-recovery-email ${email}: send failed — ${e?.message?.slice(0, 80) || 'unknown'}`);
+      failures.push(`reserve-recovery-email ${email}: send failed — ${e?.message?.slice(0, 80) || 'unknown'} (stamp reverted, will retry)`);
+      try {
+        await updateRecord(TABLES.REFERRALS, ref.id, { [RESERVE_RECOVERY_EMAIL_FIELD]: null });
+      } catch (e2: any) {
+        failures.push(`reserve-recovery-email ${ref.id}: stamp revert failed — recovery burned — ${e2?.message?.slice(0, 80) || 'unknown'}`);
+      }
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
 
   // ── Recovery SMS (opt-in only, later, distinct angle) ──
   for (const ref of smsEligible) {
-    const rancher = await rancherForReferral(ref);
+    const rancher = await cachedRancherForReferral(ref);
     if (!rancher) continue;
     // A1: pull the Consumer — authoritative State (window gate) + opt-in/phone.
-    const consumer = await consumerForReferral(ref);
+    const consumer = await cachedConsumerForReferral(ref);
     if (!consumer) continue;
     const consumerId = String(consumer.id || '');
     const state = consumer['State']; // A1: NOT ref['Buyer State']
@@ -1038,16 +1134,35 @@ async function realHandler(_request: Request): Promise<CronResult> {
   const campaignRancherIds = parseCampaignRancherIds(process.env);
   const campaignRancherIdSet: ReadonlySet<string> = new Set(campaignRancherIds);
 
-  // 1. Capacity + 2. buyers + Upgrade B social proof + Upgrade A recovery
-  // referrals (parallel reads). Recovery rows are read BEFORE the plan so their
-  // buyers can be excluded from the wave arc (A4 double-touch fix).
-  const [cap, buyers, proof, recoveryRows, activeDealRows] = await Promise.all([
-    readCapacity(campaignRancherIds),
+  // 1. Capacity FIRST (audit 2026-07-22): when NO configured rancher survives
+  // the operational gate, nothing can send this run — not new invites, not
+  // continuations, not recovery (all links route to campaign ranchers) — so we
+  // short-circuit BEFORE the four broad table reads (near-full Consumers scan
+  // + three Referrals reads) instead of burning the shared Airtable budget.
+  const cap = await readCapacity(campaignRancherIds);
+  if (cap.pools.length === 0) {
+    const why = cap.skipped.concat(cap.degraded).join(' | ') || 'no ids resolved';
+    return {
+      status: 'success',
+      recordsTouched: 0,
+      notes: `no-op: no operational campaign rancher this run — skipped all table reads (${why.slice(0, 300)})`,
+    };
+  }
+
+  // 2. Buyers + Upgrade B social proof + Upgrade A recovery referrals
+  // (parallel reads). Recovery rows are read BEFORE the plan so their buyers
+  // can be excluded from the wave arc (A4 double-touch fix).
+  const [buyers, proof, recoveryRows, activeDealRows] = await Promise.all([
     readBuyers(),
     readSocialProof(nowMs, campaignRancherIds),
     readRecoveryReferrals(nowMs, campaignRancherIdSet),
     readActiveDealReferrals(),
   ]);
+
+  // Row lookup for claim-revert (pre-claim campaign fields) + waitlist
+  // already-stamped skips — pure in-memory, no extra reads.
+  const buyerFieldsById = new Map<string, Record<string, unknown>>();
+  for (const b of buyers) buyerFieldsById.set(b.id, b.fields);
 
   // FINDING 1: index the mid-deal buyers once (referral truth) — shared by the
   // pure planner (wave arc) and the SMS-recovery pass below.
@@ -1068,13 +1183,15 @@ async function realHandler(_request: Request): Promise<CronResult> {
   // a simultaneous Msg2 SMS — SMS is a separate recovery touch (Upgrade C).
   const plan = buildCampaignPlan(buyers, {
     now: nowMs,
-    capacity: { west: cap.west, eastCentral: cap.eastCentral },
     dailyCap: Number(process.env.CAMPAIGN_DAILY_CAP || 25),
     conversionBuffer: Number(process.env.CAMPAIGN_CONVERSION_BUFFER || 3),
     smsWaves: new Set(), // email-led; SMS handled by runSmsRecovery
     excludeBuyerIds, // A4: skip buyers owned by reserve-recovery this run
     activeDealReferrals: activeDealRows, // finding 1: mid-deal buyers are hands-off
-    ranchers: cap.targets, // A2: configured + operational-gated rancher per pool
+    // N-RANCHER POOL MODEL (audit 2026-07-22): every configured + operational
+    // rancher, Routing-States gated, per-rancher budgets with fall-through,
+    // true per-UTC-day Msg1 cap.
+    pools: cap.pools,
   });
 
   const failures: string[] = [];
@@ -1087,7 +1204,17 @@ async function realHandler(_request: Request): Promise<CronResult> {
     // ── EXECUTE: backfill email sends (window-gated, claim-before-send). ──
     for (const send of plan.sends) {
       try {
-        const result = await executeSend(send, now, proofForRancher(proof, send.rancher.id), failures);
+        // Pre-claim campaign fields for the failed-send claim revert.
+        const pf = buyerFieldsById.get(send.buyerId);
+        const priorRancherLinks = Array.isArray(pf?.['Campaign Rancher'])
+          ? (pf!['Campaign Rancher'] as unknown[]).map(String)
+          : null;
+        const prior = {
+          stage: pf?.['Campaign Stage'] ? String((pf['Campaign Stage'] as any)?.name ?? pf['Campaign Stage']) : null,
+          lastSent: pf?.['Campaign Last Sent At'] ? String(pf['Campaign Last Sent At']) : null,
+          rancher: priorRancherLinks && priorRancherLinks.length > 0 ? priorRancherLinks : null,
+        };
+        const result = await executeSend(send, now, proofForRancher(proof, send.rancher.id), failures, prior);
         if (result.emailOk) emailsSent++;
         if (result.deferred) emailsDeferred++;
         // Gentle pace between sends (deliverability) — the email lib also rate-
@@ -1099,8 +1226,15 @@ async function realHandler(_request: Request): Promise<CronResult> {
     }
     for (const w of plan.waitlist) {
       try {
+        // Idempotent skip (audit 2026-07-22): the same over-budget buyers
+        // re-enter plan.waitlist EVERY hourly run — an identical stamp already
+        // on the row (pure in-memory check, field is in the buyers read) means
+        // no write. Real writes are paced like the send loop.
+        const f = buyerFieldsById.get(w.buyerId);
+        if (f && String(f['Campaign Waitlist State'] || '').trim() === w.state) continue;
         await stampWaitlist(w.buyerId, w.state);
         waitlisted++;
+        await new Promise((resolve) => setTimeout(resolve, 250));
       } catch (e: any) {
         failures.push(`waitlist ${w.buyerId}: ${e?.message || 'unknown'}`);
       }
@@ -1122,7 +1256,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
   }
 
   // 4. Upgrade C — SMS recovery touch (runs in dry-run as a plan count too).
-  const smsRec = await runSmsRecovery(buyers, now, live, smsOn, proof, cap.targets, activeDeals, failures);
+  const smsRec = await runSmsRecovery(buyers, now, live, smsOn, proof, cap.pools, activeDeals, failures);
 
   // 5. Upgrade A — abandoned-reserve recovery (email then later SMS). Reuses the
   // already-read recoveryRows (scoped + age-bounded — A7) so no double read.
@@ -1135,7 +1269,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
       buildReport(plan, {
         live,
         smsOn,
-        capDetail: cap.detail,
+        poolDetail: cap.poolDetail,
         failures,
         degraded: cap.degraded,
         rancherSkips: cap.skipped,
@@ -1164,9 +1298,10 @@ async function realHandler(_request: Request): Promise<CronResult> {
   const skipNote = cap.skipped.length > 0
     ? ` · rancher-skips=${cap.skipped.length} (held-back buyers=${poolSkips}, see Telegram)`
     : '';
+  const slotsNote = cap.pools.map((p) => `${p.rancher.name}=${p.openSlots}`).join(' ') || 'none';
   const notes = live
-    ? `LIVE email=${emailsSent}/${planned} (deferred=${emailsDeferred}) ${recoSummary} waitlist=${waitlisted} sunset=${sunsetted} suppressed=${suppressedTotal} failures=${failures.length} (slots W=${cap.west} E/C=${cap.eastCentral})${skipNote}`
-    : `DRY-RUN would email=${planned} (defer=${emailsDeferred}) ${recoSummary} · waitlist=${plan.waitlist.length} sunset=${plan.sunset.length} suppressed=${suppressedTotal} (slots W=${cap.west} E/C=${cap.eastCentral})${skipNote} — set CAMPAIGN_LIVE=true to arm`;
+    ? `LIVE email=${emailsSent}/${planned} (deferred=${emailsDeferred}) ${recoSummary} waitlist=${waitlisted} sunset=${sunsetted} suppressed=${suppressedTotal} failures=${failures.length} (slots ${slotsNote})${skipNote}`
+    : `DRY-RUN would email=${planned} (defer=${emailsDeferred}) ${recoSummary} · waitlist=${plan.waitlist.length} sunset=${plan.sunset.length} suppressed=${suppressedTotal} (slots ${slotsNote})${skipNote} — set CAMPAIGN_LIVE=true to arm`;
 
   return { status, recordsTouched, notes };
 }
