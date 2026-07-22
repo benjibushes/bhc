@@ -8,6 +8,7 @@ import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 export const maxDuration = 90;
 import { sendConsumerConfirmation, sendAdminAlert, sendWelcomeAndReadyToBuy, sendStateWaitlistLetter, sendQuizInvite, getSuppressionList } from '@/lib/email';
 import { normalizeState } from '@/lib/states';
+import { normalizeZip } from '@/lib/zipFormat';
 import { hasOperationalRancherForState } from '@/lib/rancherEligibility';
 import { sendTelegramConsumerSignup, sendTelegramHotLeadAlert } from '@/lib/telegram';
 import { transitionBuyerStage } from '@/lib/contracts';
@@ -117,6 +118,12 @@ export async function POST(request: Request) {
       const emailQ = typeof body.email === 'string' ? body.email.trim() : '';
       const phoneQ = typeof body.phone === 'string' ? body.phone.trim() : '';
       const stateQ = typeof body.state === 'string' ? body.state.trim() : '';
+      // OPTIONAL ZIP (2026-07-22) — powers real-miles routing in
+      // matching/suggest. normalizeZip returns null for blank/short/garbage, so
+      // a buyer who skips it (or fat-fingers it) writes NOTHING and routes on
+      // state exactly as before. Never a 400: this field must not be able to
+      // block a signup.
+      const zipQ = normalizeZip(body.zip);
       const tierQ = typeof body.tier === 'string' ? body.tier.trim() : '';
       // Reuse the entry-level "now" → "Within 30 days" normalization so the
       // funnel and legacy paths speak the same Timing vocabulary downstream.
@@ -219,6 +226,7 @@ export async function POST(request: Request) {
         'Email': emailLowerQ,
         'Phone': phoneQ,
         'State': normalizeState(stateQ) || stateQ.toUpperCase(),
+        ...(zipQ ? { 'Zip': zipQ } : {}),
         'Order Type': tierQ,
         'Timing': timingQ,
         'Intent Score': funnelScoreQ,
@@ -650,6 +658,9 @@ export async function POST(request: Request) {
       // value. Form may submit "Montana", "montana", "MT", or " mt " —
       // they all collapse to "MT". Invalid input returns ''.
       'State': normalizeState(state) || state.toString().trim().toUpperCase(),
+      // Optional ZIP, same contract as the funnel path above: written only when
+      // it's a real 5-digit ZIP, never required, never a 400.
+      ...(normalizeZip(body.zip) ? { 'Zip': normalizeZip(body.zip) } : {}),
       'Interests': interests,
       'Status': status,
       'Segment': consumerSegment,
