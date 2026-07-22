@@ -108,6 +108,55 @@ export function isWatchdogTarget(r: WatchdogReferralLike, nowMs: number): boolea
   return watchdogSkipReason(r, nowMs) === null;
 }
 
+// ── SELF-HEAL (2026-07-22, false-alarm incident) ────────────────────────────
+// A blank 'Deposit Invite Sent At' does NOT prove the invite was never sent —
+// it can just mean the stamp field didn't exist when the send happened
+// (referrals invited before PR #410) or a send path we haven't audited didn't
+// stamp. Email Sends is the ground truth. Before the cron alarms a target, it
+// pulls that buyer's deposit-invite sends: if any 'sent' one exists, the field
+// gets BACKFILLED from that timestamp and NO alarm fires — the instrument
+// heals itself instead of crying wolf. Only a target with ZERO real
+// deposit-invite send is a genuine "never sent".
+
+// Templates that ARE a buyer deposit invite (the link that asks for the
+// deposit). Nudges (deposit_request_nudge_*) are follow-ups, not the invite,
+// so they do NOT count as proof the original invite went out.
+export const DEPOSIT_INVITE_TEMPLATES: ReadonlySet<string> = new Set([
+  'buyer_deposit_invoice',
+  'quiz_complete_deposit_invite',
+]);
+
+export interface EmailSendLike {
+  ['Template Name']?: unknown;
+  ['Status']?: unknown;
+  ['Sent At']?: unknown;
+  [key: string]: unknown;
+}
+
+/**
+ * The earliest SUCCESSFUL deposit-invite send timestamp (ISO) from a buyer's
+ * Email Sends rows, or null if none was ever sent. Pure — the cron passes the
+ * rows it fetched. Suppressed/failed sends do NOT count (the buyer never got a
+ * link), so a cap-suppressed-only history correctly stays a real alarm.
+ */
+export function earliestSentDepositInvite(rows: EmailSendLike[]): string | null {
+  if (!Array.isArray(rows)) return null;
+  let best: number | null = null;
+  let bestIso: string | null = null;
+  for (const row of rows) {
+    const template = String(row['Template Name'] || '').trim();
+    if (!DEPOSIT_INVITE_TEMPLATES.has(template)) continue;
+    if (String(row['Status'] || '').trim().toLowerCase() !== 'sent') continue;
+    const ms = parseMs(row['Sent At']);
+    if (ms === null) continue;
+    if (best === null || ms < best) {
+      best = ms;
+      bestIso = new Date(ms).toISOString();
+    }
+  }
+  return bestIso;
+}
+
 /**
  * Select the referrals to alert on this run: eligible per the predicate,
  * oldest anchor first (the longest-waiting buyer is bleeding hardest).
