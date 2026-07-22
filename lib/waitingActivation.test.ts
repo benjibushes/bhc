@@ -8,8 +8,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   isBuyerInSupply,
+  isReadyChaseEligible,
   isWaitingNudgeEligible,
+  parseNudgeKnob,
+  selectReadyBuyersForChase,
   selectWaitingBuyersForNudge,
+  READY_CHASE_MIN_STAMP_AGE_DAYS,
+  READY_CHASE_NURTURE_DONE_TOUCH,
+  READY_NUDGE_LIFETIME_CAP,
   WAITING_NUDGE_LIFETIME_CAP,
 } from './waitingActivation';
 
@@ -56,6 +62,16 @@ test('NOT eligible: suppressed via Unsubscribed / Bounced / Complained', () => {
   assert.equal(isWaitingNudgeEligible(buyer({ Unsubscribed: true }), OPTS), false);
   assert.equal(isWaitingNudgeEligible(buyer({ Bounced: true }), OPTS), false);
   assert.equal(isWaitingNudgeEligible(buyer({ Complained: true }), OPTS), false);
+});
+
+// ── funnel-completer exclusion (2026-07-22 audit) ────────────────────────────
+
+test('NOT eligible: funnel completers held at WAITING stay in the nurture lane', () => {
+  const held = buyer({ 'Funnel Completed At': daysAgo(5) });
+  assert.equal(isWaitingNudgeEligible(held, OPTS), false);
+  // blank / whitespace-only stamp still selects
+  assert.equal(isWaitingNudgeEligible(buyer({ 'Funnel Completed At': '' }), OPTS), true);
+  assert.equal(isWaitingNudgeEligible(buyer({ 'Funnel Completed At': '  ' }), OPTS), true);
 });
 
 // ── cooldown on Waiting Nudge Last Sent At ───────────────────────────────────
@@ -254,4 +270,143 @@ test('dry-run report: gate off → supplyStates null, droppedNoSupply 0', () => 
   assert.equal(report.droppedNoSupply, 0);
   const text = formatWaitingDryRunReport(report, { cooldownDays: 14, batchCap: 50 });
   assert.match(text, /Supply gate: OFF/);
+});
+
+// ── parseNudgeKnob (0-honoring env parse, 2026-07-22 audit) ──────────────────
+
+test('parseNudgeKnob: explicit 0 is honored (the mid-incident pause move)', () => {
+  assert.equal(parseNudgeKnob('0', 50), 0);
+});
+
+test('parseNudgeKnob: unset / blank / junk / negative fall back to the default', () => {
+  assert.equal(parseNudgeKnob(undefined, 50), 50);
+  assert.equal(parseNudgeKnob('', 50), 50);
+  assert.equal(parseNudgeKnob('   ', 50), 50);
+  assert.equal(parseNudgeKnob('banana', 50), 50);
+  assert.equal(parseNudgeKnob('-5', 50), 50);
+});
+
+test('parseNudgeKnob: ordinary positive values parse', () => {
+  assert.equal(parseNudgeKnob('25', 50), 25);
+  assert.equal(parseNudgeKnob('7', 14), 7);
+});
+
+// ── READY chase (2026-07-22 audit) ───────────────────────────────────────────
+
+// Minimal well-formed READY funnel-completer past nurture; overrides build
+// the edge cases.
+function readyBuyer(overrides: Record<string, unknown> = {}): Record<string, any> {
+  return {
+    id: 'recREADY001',
+    'Buyer Stage': 'READY',
+    Email: 'ready@example.com',
+    'Qualified At': daysAgo(30),
+    'Nurture Touch': READY_CHASE_NURTURE_DONE_TOUCH,
+    _createdTime: daysAgo(60),
+    ...overrides,
+  };
+}
+
+test('ready chase: eligible base case (READY, qualified, nurture done)', () => {
+  assert.equal(isReadyChaseEligible(readyBuyer(), OPTS), true);
+});
+
+test('ready chase NOT eligible: wrong stage, no email, suppression trio', () => {
+  assert.equal(isReadyChaseEligible(readyBuyer({ 'Buyer Stage': 'WAITING' }), OPTS), false);
+  assert.equal(isReadyChaseEligible(readyBuyer({ 'Buyer Stage': 'MATCHED' }), OPTS), false);
+  assert.equal(isReadyChaseEligible(readyBuyer({ Email: '' }), OPTS), false);
+  assert.equal(isReadyChaseEligible(readyBuyer({ Unsubscribed: true }), OPTS), false);
+  assert.equal(isReadyChaseEligible(readyBuyer({ Bounced: true }), OPTS), false);
+  assert.equal(isReadyChaseEligible(readyBuyer({ Complained: true }), OPTS), false);
+});
+
+test('ready chase: requires Qualified At OR Funnel Completed At', () => {
+  assert.equal(isReadyChaseEligible(readyBuyer({ 'Qualified At': '' }), OPTS), false);
+  assert.equal(
+    isReadyChaseEligible(readyBuyer({ 'Qualified At': '', 'Funnel Completed At': daysAgo(30) }), OPTS),
+    true,
+  );
+});
+
+test('ready chase: starts only after nurture ends (touch >= 4 OR stamp >= 25d old)', () => {
+  // nurture not done + fresh stamp → too early
+  const early = readyBuyer({ 'Nurture Touch': 2, 'Qualified At': daysAgo(10) });
+  assert.equal(isReadyChaseEligible(early, OPTS), false);
+  // nurture not done but stamp is old enough → drip window has passed
+  const oldStamp = readyBuyer({
+    'Nurture Touch': 2,
+    'Qualified At': daysAgo(READY_CHASE_MIN_STAMP_AGE_DAYS + 1),
+  });
+  assert.equal(isReadyChaseEligible(oldStamp, OPTS), true);
+  // no Nurture Touch field at all (never dripped) + old stamp → eligible
+  const noTouch = readyBuyer({ 'Nurture Touch': undefined, 'Qualified At': daysAgo(40) });
+  assert.equal(isReadyChaseEligible(noTouch, OPTS), true);
+  // no Nurture Touch + fresh stamp → too early
+  const noTouchFresh = readyBuyer({ 'Nurture Touch': undefined, 'Qualified At': daysAgo(5) });
+  assert.equal(isReadyChaseEligible(noTouchFresh, OPTS), false);
+});
+
+test('ready chase: lifetime cap on Ready Nudge Count', () => {
+  assert.equal(READY_NUDGE_LIFETIME_CAP, 3);
+  const capped = readyBuyer({ 'Ready Nudge Count': 3, 'Ready Nudge Last Sent At': daysAgo(60) });
+  const twoIn = readyBuyer({ 'Ready Nudge Count': 2, 'Ready Nudge Last Sent At': daysAgo(60) });
+  assert.equal(isReadyChaseEligible(capped, OPTS), false);
+  assert.equal(isReadyChaseEligible(twoIn, OPTS), true);
+});
+
+test('ready chase: cooldown on Ready Nudge Last Sent At; corrupt stamp skips', () => {
+  assert.equal(isReadyChaseEligible(readyBuyer({ 'Ready Nudge Last Sent At': daysAgo(13) }), OPTS), false);
+  assert.equal(isReadyChaseEligible(readyBuyer({ 'Ready Nudge Last Sent At': daysAgo(15) }), OPTS), true);
+  assert.equal(isReadyChaseEligible(readyBuyer({ 'Ready Nudge Last Sent At': 'not-a-date' }), OPTS), false);
+});
+
+test('ready chase selector: excludes buyers with a live referral', () => {
+  const a = readyBuyer({ id: 'recActive' });
+  const b = readyBuyer({ id: 'recFree' });
+  const picked = selectReadyBuyersForChase([a, b], {
+    ...OPTS,
+    activeBuyerIds: new Set(['recActive']),
+  });
+  assert.deepEqual(picked.map((c) => c.id), ['recFree']);
+});
+
+test('ready chase selector: supply gate + oldest-first ordering + batch cap', () => {
+  const supply = new Set(['MT']);
+  const consumers = [
+    readyBuyer({ id: 'recNEW', State: 'MT', _createdTime: daysAgo(30) }),
+    readyBuyer({ id: 'recOLD', State: 'MT', _createdTime: daysAgo(300) }),
+    readyBuyer({ id: 'recFL', State: 'FL', _createdTime: daysAgo(500) }),
+    readyBuyer({ id: 'recMID', State: 'MT', _createdTime: daysAgo(90) }),
+  ];
+  const picked = selectReadyBuyersForChase(consumers, {
+    ...OPTS,
+    batchCap: 2,
+    supplyStates: supply,
+  });
+  assert.deepEqual(picked.map((c) => c.id), ['recOLD', 'recMID']);
+});
+
+test('ready chase selector: batchCap 0 or empty input selects nothing', () => {
+  assert.deepEqual(selectReadyBuyersForChase([readyBuyer()], { ...OPTS, batchCap: 0 }), []);
+  assert.deepEqual(selectReadyBuyersForChase([], OPTS), []);
+});
+
+// ── cross-rail cooldown (audit 2026-07-22) ───────────────────────────────────
+// The demand-router campaign stamps 'Campaign Last Sent At'; the waiting-
+// activation rail must treat that touch as recent contact so one buyer never
+// gets both streams (conflicting CTAs) in the same window.
+
+test('cross-rail: a recent Campaign Last Sent At blocks the waiting nudge', () => {
+  const b = buyer({ 'Campaign Last Sent At': daysAgo(2) });
+  assert.equal(isWaitingNudgeEligible(b, OPTS), false);
+});
+
+test('cross-rail: a campaign touch older than the cooldown does NOT block', () => {
+  const b = buyer({ 'Campaign Last Sent At': daysAgo(OPTS.cooldownDays + 1) });
+  assert.equal(isWaitingNudgeEligible(b, OPTS), true);
+});
+
+test('cross-rail: a corrupt Campaign Last Sent At skips (never storms)', () => {
+  const b = buyer({ 'Campaign Last Sent At': 'not-a-date' });
+  assert.equal(isWaitingNudgeEligible(b, OPTS), false);
 });

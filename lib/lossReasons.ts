@@ -84,3 +84,35 @@ export function lossReasonFromQuickAction(reason: string | null | undefined): Lo
   if (isLossReasonChoice(reason)) return reason;
   return QUICK_ACTION_LEGACY_TO_LOSS[reason] ?? null;
 }
+
+// ── Matching pairing-exclusion scope (reactivation 2026-07-22) ──────────────
+// Does a Closed Lost referral's 'Loss Reason' mark a GENUINE rancher
+// pass/decline of this specific pairing — the only case where the matching
+// engine should permanently exclude the (buyer, rancher) pair? Forensics
+// (2026-07-15) showed ~89% of historical Closed Lost rows are cron noise with
+// NO Loss Reason at all; excluding on those bricked buyers in 1-rancher
+// states forever. Rule:
+//   - No / unknown reason → NOT excluding (noise-closed pairs become
+//     eligible again — the whole point of reactivation).
+//   - 'Out of service area' / 'Wrong intent (not a buyer)' → structural
+//     mismatch, re-pairing can never work → exclude.
+//   - 'Other' → the mapping target of explicit rancher passes (not_a_fit,
+//     at_capacity) → exclude to preserve rancher trust.
+//   - Buyer-side outcomes ('Price too high', 'Timing — buying later',
+//     "Couldn't reach buyer", 'Bought elsewhere') → the buyer re-engaging IS
+//     the new signal; the same rancher is a valid (often the only) match.
+// Accepts Airtable singleSelect shapes: string OR {name} object.
+const EXCLUDING_LOSS_REASONS = new Set<LossReason>([
+  'Out of service area',
+  'Wrong intent (not a buyer)',
+  'Other',
+]);
+
+export function isExcludingLossReason(raw: unknown): boolean {
+  const v =
+    raw && typeof raw === 'object' && 'name' in (raw as any)
+      ? String((raw as any).name)
+      : raw;
+  if (!isLossReasonChoice(v)) return false;
+  return EXCLUDING_LOSS_REASONS.has(v);
+}

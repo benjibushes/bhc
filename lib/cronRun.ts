@@ -1,4 +1,4 @@
-import { createRecord, getAllRecords, TABLES, escapeAirtableValue } from './airtable';
+import { createRecord, getAllRecords, updateRecord, TABLES, escapeAirtableValue } from './airtable';
 
 type CronStatus = 'success' | 'partial' | 'error' | 'maintenance-blocked' | 'paused';
 
@@ -66,6 +66,19 @@ async function maybeAlertTelegram(cron: string, status: CronStatus, notes: strin
 export function withCronRun<T extends CronRunResult>(
   name: string,
   fn: (request: Request) => Promise<T>,
+  opts?: {
+    /**
+     * Scale audit 2026-07-22: a Vercel maxDuration kill terminates the lambda
+     * before `finally` runs — a mid-batch death left NO Cron Runs row and no
+     * alarm, and the 25h dead-man never flags an hourly cron (the next tick
+     * writes a row). With heartbeat:true a 'started' row is written BEFORE
+     * the handler and UPDATED to completion in finally; a row stuck at
+     * 'started' >2h = killed mid-run, flagged by daily-health-digest.
+     * Opt-in (the long-running hourly campaign crons) so the other ~55 crons
+     * don't pay a second Airtable write per run.
+     */
+    heartbeat?: boolean;
+  },
 ): (request: Request) => Promise<Response> {
   return async function wrapped(request: Request): Promise<Response> {
     const startedAt = new Date();
@@ -75,6 +88,22 @@ export function withCronRun<T extends CronRunResult>(
     let notes = '';
     let skipReasonBreakdown: Record<string, number> | undefined;
     let returnedResponse: Response | null = null;
+    let heartbeatRowId: string | null = null;
+    if (opts?.heartbeat) {
+      try {
+        const started = await createRecord(TABLES.CRON_RUNS, {
+          Name: name,
+          'Started At': startedAt.toISOString(),
+          Status: 'started',
+          Notes: 'heartbeat — run in progress',
+        });
+        heartbeatRowId = (started as any)?.id || null;
+      } catch (hbErr: any) {
+        // Best-effort: no heartbeat row just degrades to the old behavior
+        // (row written only in finally).
+        console.error(`[withCronRun:${name}] heartbeat write failed:`, hbErr?.message);
+      }
+    }
     try {
       // Pause gate: if a Cron Pauses row exists with Paused=true matching
       // this cron's name, short-circuit. Operator controls via Telegram
@@ -134,7 +163,17 @@ export function withCronRun<T extends CronRunResult>(
         if (skipReasonBreakdown && Object.keys(skipReasonBreakdown).length > 0) {
           row['Skip Reason Breakdown'] = JSON.stringify(skipReasonBreakdown);
         }
-        await createRecord(TABLES.CRON_RUNS, row);
+        if (heartbeatRowId) {
+          // Complete the started-heartbeat row in place (don't write a second
+          // row — a duplicate would double cron-run counts in the digest).
+          try {
+            await updateRecord(TABLES.CRON_RUNS, heartbeatRowId, row);
+          } catch {
+            await createRecord(TABLES.CRON_RUNS, row);
+          }
+        } else {
+          await createRecord(TABLES.CRON_RUNS, row);
+        }
       } catch (logErr: any) {
         console.error(`[withCronRun:${name}] log write failed:`, logErr?.message);
       }

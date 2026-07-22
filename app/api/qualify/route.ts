@@ -29,7 +29,12 @@ import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { getOperatorBookingUrl } from '@/lib/calBooking';
 import { isDepositCapableMatch } from '@/lib/depositOptionality';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
-import { buildQualifyConsumerUpdates, isExplicitlyNotReady } from '@/lib/qualifyUpdates';
+import {
+  buildQualifyConsumerUpdates,
+  isExplicitlyNotReady,
+  normalizeLegacyTiming,
+  timingFromNotes,
+} from '@/lib/qualifyUpdates';
 // B4 (2026-07-01): matching/suggest is invoked IN-PROCESS (imported route
 // handler + synthetic Request) instead of fetch()ing our own deployment over
 // the network — that self-call was an edge round-trip plus a SECOND serverless
@@ -161,14 +166,27 @@ export async function POST(request: Request) {
   // REAL order), then fall back to low-intent defaults so we never reject a
   // legitimate resume. A NON-empty invalid value (smuggled freeform) still 400s
   // below — only the empty case is hydrated.
+  // LEGACY VOCAB (2026-07-22): the pre-06-18 /access form never wrote the
+  // Timing FIELD — it used '1-3 months' vocab and stored it in Notes as
+  // '[Timing: …]'. Without the mapping + Notes fallback, EVERY legacy-created
+  // WAITING buyer hydrated to 'Just exploring' and was auto-held as
+  // "explicitly not ready" — a self-ID they never gave. When a default is
+  // still needed, flag it so the hold branch stays non-terminal (no Funnel
+  // Completed At stamp — see lib/qualifyUpdates).
+  let tierDefaulted = false;
+  let timingDefaulted = false;
   if (!tier || !timing) {
     try {
       const c: any = await getRecordById(TABLES.CONSUMERS, consumerId);
       if (!tier) tier = String(c?.['Order Type'] || '').trim() as Tier;
-      if (!timing) timing = String(c?.['Timing'] || '').trim() as Timing;
+      if (!timing) {
+        const storedTiming =
+          String(c?.['Timing'] || '').trim() || timingFromNotes(String(c?.['Notes'] || ''));
+        timing = normalizeLegacyTiming(storedTiming) as Timing;
+      }
     } catch { /* fall through to defaults */ }
-    if (!VALID_TIERS.includes(tier)) tier = 'Not Sure';
-    if (!VALID_TIMINGS.includes(timing)) timing = 'Just exploring';
+    if (!VALID_TIERS.includes(tier)) { tier = 'Not Sure'; tierDefaulted = true; }
+    if (!VALID_TIMINGS.includes(timing)) { timing = 'Just exploring'; timingDefaulted = true; }
   }
 
   if (!VALID_TIERS.includes(tier)) {
@@ -205,6 +223,8 @@ export async function POST(request: Request) {
     score,
     completedAt,
     ackConfirmedAt,
+    tierDefaulted,
+    timingDefaulted,
   });
 
   // FUNNEL = QUALIFIED (founder rule 2026-07-08): completing the quiz routes
@@ -500,15 +520,45 @@ export async function POST(request: Request) {
           });
           // DEPOSIT-ABANDON RAIL (2026-07-05): stamp the invite so the
           // deposit-request-nudge cron chases this quiz-complete buyer if they
-          // don't pay. Fire-and-forget — a stamp failure must never block the
-          // qualify response or the (already-sent) email. Only stamps when the
-          // invite actually went out (inside the success path).
+          // don't pay. Best-effort — a stamp failure must never block the
+          // qualify response or the (already-sent) email — but NOT silent
+          // (2026-07-22, reactivation audit): the stamp is the ONLY thing that
+          // makes this buyer visible to rail B's abandon chase, so retry once
+          // (rate-limit blips are the likely failure at burst volume) and fire
+          // an operator signal on final failure. Verified-persisted, not just
+          // no-throw: updateRecord silently strips unknown fields.
           if (referralId) {
-            updateRecord(TABLES.REFERRALS, referralId, {
-              'Deposit Invite Sent At': new Date().toISOString(),
-            }).catch((e: any) =>
-              console.warn('[/api/qualify] deposit-invite stamp failed (non-fatal):', e?.message),
-            );
+            const inviteStamp = { 'Deposit Invite Sent At': new Date().toISOString() };
+            let inviteStamped = false;
+            for (let attempt = 1; attempt <= 2 && !inviteStamped; attempt++) {
+              try {
+                const updated: any = await updateRecord(TABLES.REFERRALS, referralId, inviteStamp);
+                inviteStamped = !!updated?.['Deposit Invite Sent At'];
+              } catch (e: any) {
+                console.warn(`[/api/qualify] deposit-invite stamp attempt ${attempt} failed:`, e?.message);
+              }
+              if (!inviteStamped && attempt === 1) {
+                await new Promise((r) => setTimeout(r, 500));
+              }
+            }
+            if (!inviteStamped) {
+              try {
+                const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+                await sendOperatorSignal({
+                  urgency: 'normal',
+                  kind: 'system-error',
+                  summary: `deposit-invite stamp failed for referral ${referralId}`,
+                  detail:
+                    `invite email SENT to ${buyerEmail} but "Deposit Invite Sent At" did not persist — ` +
+                    `buyer is invisible to the deposit-abandon nudge rail; stamp the referral manually.`,
+                  refs: [{ type: 'referral', id: referralId }],
+                  dedupeKey: `qualify-invite-stamp-${referralId}`,
+                  dedupeWindowMs: 6 * 60 * 60 * 1000,
+                });
+              } catch (e: any) {
+                console.warn('[/api/qualify] deposit-invite stamp operator signal failed:', e?.message);
+              }
+            }
           }
         } catch (e: any) {
           console.warn('[/api/qualify] deposit invite fire failed:', e?.message);

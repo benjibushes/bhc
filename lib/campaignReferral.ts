@@ -23,13 +23,21 @@ import {
   getRancherBySlug,
   escapeAirtableValue,
 } from '@/lib/airtable';
-import { incrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
+import {
+  incrementCapacity,
+  syncCapacityToAirtable,
+  getMaxActiveReferrals,
+  getLiveCapacity,
+} from '@/lib/rancherCapacity';
 import {
   assertReserveEligible,
   buildReserveReferralFields,
   CUT_LABELS,
   type Cut,
 } from '@/lib/reserveDeposit';
+import { getOperationalServedStates } from '@/lib/rancherEligibility';
+import { normalizeState } from '@/lib/states';
+import { DEFAULT_CAMPAIGN_RANCHER_IDS } from '@/lib/demandRouter';
 
 // Statuses that mean "this deposit intent is dead / already settled" — never
 // reuse one of these; the buyer needs a fresh referral. Mirrors the deposit
@@ -38,7 +46,20 @@ const REUSABLE_BLOCKED = new Set(['Closed Won', 'Closed Lost', 'Awaiting Payment
 
 export type CampaignReferralResult =
   | { ok: true; referralId: string; created: boolean; rancher: any }
-  | { ok: false; reason: 'rancher-not-found' | 'consumer-not-found' | 'ineligible' | 'io-error' };
+  | {
+      ok: false;
+      reason:
+        | 'rancher-not-found'
+        | 'consumer-not-found'
+        | 'ineligible'
+        | 'io-error'
+        // Rancher's live held count already fills their cap — never take a
+        // deposit for a share that doesn't exist (audit 2026-07-22).
+        | 'at-capacity'
+        // Buyer's state is outside the rancher's served set (Routing States
+        // belt for non-default campaign ranchers — audit 2026-07-22).
+        | 'state-not-served';
+    };
 
 /**
  * Resolve (find or create) the referral a campaign deposit link should land on.
@@ -104,6 +125,21 @@ export async function findOrCreateCampaignReferral(args: {
   const buyerEmail = String(buyer['Email'] || '').trim().toLowerCase();
   const buyerName = String(buyer['Full Name'] || '').trim();
 
+  // 2b) ROUTING-STATES BELT (audit 2026-07-22, finding 1): for a NON-default
+  //     campaign rancher, the buyer's state must be one the rancher actually
+  //     serves (getOperationalServedStates — the same rule the matching engine
+  //     and the campaign planner use). The curated default pair ships
+  //     nationwide by design and is exempt. A blank/unprovable buyer state
+  //     fails a regional rancher's gate (can't prove coverage) — the /r route
+  //     falls back to the rancher's public page, never a dead-end deposit.
+  if (!DEFAULT_CAMPAIGN_RANCHER_IDS.includes(rancher.id)) {
+    const served = getOperationalServedStates(rancher);
+    const buyerState = normalizeState(buyer['State']);
+    if (!buyerState || !served.includes(buyerState)) {
+      return { ok: false, reason: 'state-not-served' };
+    }
+  }
+
   // 3) Reuse an existing OPEN deposit-intent referral for this buyer↔rancher.
   //    Filter by Buyer Email (a flat field — link fields aren't formula-
   //    filterable) then confirm the Rancher link + reusable status in JS.
@@ -132,6 +168,25 @@ export async function findOrCreateCampaignReferral(args: {
     // A read failure here shouldn't block a brand-new buyer — fall through to
     // create. Worst case we create a referral that a prior tap already made;
     // capacity-drift-check reconciles abandoned Pending holds.
+  }
+
+  // 3b) CAPACITY GATE AT RESERVE TIME (audit 2026-07-22, finding 4): the
+  //     planner keeps openSlots×3 invites outstanding by design, so a same-hour
+  //     conversion burst can tap through MORE links than there are open slots.
+  //     Refuse to create a NEW deposit-intent referral once the live held count
+  //     fills the cap — the /r route falls back to the rancher's public page
+  //     instead of taking money for a share that doesn't exist. (Reuse above is
+  //     exempt: an existing open referral holds its slot already.) Fail-open on
+  //     a read error — the capacity-drift cron reconciles, and blocking a real
+  //     buyer on a Redis blip is worse than a rare over-hold.
+  try {
+    const max = getMaxActiveReferrals(rancher);
+    const current = await getLiveCapacity(rancher.id);
+    if (current >= max) {
+      return { ok: false, reason: 'at-capacity' };
+    }
+  } catch {
+    /* fail-open: proceed — drift check reconciles */
   }
 
   // 4) Create the deposit-intent referral (same shape as the reserve route).

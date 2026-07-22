@@ -70,10 +70,20 @@ async function realHandler(_request: Request): Promise<CronResult> {
   ]);
 
   // Cron health
+  // Stale heartbeat rows (scale audit 2026-07-22): the hourly campaign crons
+  // write a 'started' Cron Runs row before the handler and complete it in
+  // finally. A row still 'started' after 2h means the lambda was KILLED
+  // (maxDuration) before finally ran — previously invisible because the next
+  // hourly tick wrote a fresh row. Count them as failed runs.
+  const staleStartedRuns = cronRuns.filter((r: any) => {
+    if (String(r['Status'] || '').toLowerCase() !== 'started') return false;
+    const startedAt = new Date(String(r['Started At'] || '')).getTime();
+    return Number.isFinite(startedAt) && now - startedAt > 2 * 60 * 60 * 1000;
+  });
   const cronErrorRuns = cronRuns.filter((r: any) => {
     const s = String(r['Status'] || '').toLowerCase();
     return s === 'error' || s === 'partial';
-  });
+  }).concat(staleStartedRuns);
   const failedCronNames = Array.from(
     new Set(cronErrorRuns.map((r: any) => String(r['Name'] || 'unknown')))
   );

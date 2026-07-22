@@ -23,13 +23,17 @@ export default async function AccessPage({
   // ?state=XX is set by the geo landing pages (/access/[state] links to
   // /access?state=XX). Read + normalize it so BuyerFunnel can seed its state
   // dropdown; the buyer can still change it.
-  searchParams: Promise<{ rancher?: string; state?: string; error?: string }>;
+  // ?resume=1 / ?reconfirmed=1 arrive from re-engagement links (the
+  // waiting-activation drip and /api/buyer/reconfirm). They were dead params
+  // — the links promised "pick up where you left off" and landed on a
+  // pristine quiz.
+  searchParams: Promise<{ rancher?: string; state?: string; error?: string; resume?: string; reconfirmed?: string }>;
 }) {
   // Low-ticket picks (Phase 8): ≤3 real marketplace products for the reveal's
   // not-ready rail, so a buyer who balks at bulk still leaves with a priced
   // next step. loadMarketplaceProducts catches its own errors → [] → the rail
   // simply doesn't render; the quiz can never break on a catalog blip.
-  const [{ rancher, state, error }, cfg, products] = await Promise.all([
+  const [{ rancher, state, error, resume, reconfirmed }, cfg, products] = await Promise.all([
     searchParams,
     getAdminConfig(),
     loadMarketplaceProducts(),
@@ -47,7 +51,18 @@ export default async function AccessPage({
     'invalid-token': "that link didn't work — start fresh below, takes a minute.",
     'used-token': 'looks like that link was already used — pick up here.',
   };
-  const notice = error ? (NOTICES[error] || 'let’s pick up where you left off below.') : undefined;
+  // Welcome-back treatment for re-engagement links: an honest banner (+ state
+  // prefill via ?state= when the minting link carries it). The quiz itself
+  // re-runs on purpose — matching should use the buyer's CURRENT answers, and
+  // buyers with real funnel progress get the /qualify/<id>?token= rail
+  // instead of this page.
+  const notice = error
+    ? (NOTICES[error] || 'let’s pick up where you left off below.')
+    : reconfirmed
+      ? 'welcome back — you’re confirmed still looking. take a minute below so we match you on your current answers.'
+      : resume
+        ? 'welcome back — pick up right here below. takes about a minute.'
+        : undefined;
   return (
     <BuyerFunnel
       mode="fresh"

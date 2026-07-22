@@ -37,6 +37,27 @@ import { normalizeState } from './states';
 
 export const WAITING_NUDGE_LIFETIME_CAP = 3;
 
+// READY chase (2026-07-22 audit): second-stage selector for the same cron.
+// READY + never-matched buyers hit terminal silence — no email at no-match,
+// nurture ends at touch 4, and every other rail filters them out. The chase
+// starts only AFTER nurture is done with the buyer, and mirrors the WAITING
+// rail's cadence: 14d cooldown (shared knob) + 3 lifetime touches.
+export const READY_NUDGE_LIFETIME_CAP = 3;
+export const READY_CHASE_NURTURE_DONE_TOUCH = 4;
+export const READY_CHASE_MIN_STAMP_AGE_DAYS = 25;
+
+/**
+ * Parse a numeric env knob honoring an explicit 0 (2026-07-22 audit:
+ * `Number(env) || DEFAULT` turned WAITING_NUDGE_MAX_PER_RUN=0 — the natural
+ * "pause sends mid-incident" move — into the default 50). Blank/unset/junk/
+ * negative → fallback; any finite value >= 0 (including 0) is honored.
+ */
+export function parseNudgeKnob(raw: string | undefined, fallback: number): number {
+  if (raw == null || raw.trim() === '') return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
 export interface WaitingConsumerLike {
   id?: string;
   'Buyer Stage'?: unknown;
@@ -96,6 +117,14 @@ export function isWaitingNudgeEligible(
   // Suppression trio — any one set means never contact on this channel pair.
   if (c['Unsubscribed'] || c['Bounced'] || c['Complained']) return false;
 
+  // Funnel COMPLETERS (2026-07-22 audit): /api/qualify's hold branch leaves
+  // "Not Sure"/"Just exploring" buyers at WAITING with Funnel Completed At
+  // stamped. They FINISHED the funnel — the "you never finished the last
+  // step" nudge is a false claim aimed at the cohort most likely to spam-
+  // report. They stay in the nurture-drip lane (same clause abandoned-quiz-
+  // nudge added 2026-07-15 for the same reason).
+  if (String(c['Funnel Completed At'] || '').trim()) return false;
+
   // Lifetime cap: after WAITING_NUDGE_LIFETIME_CAP touches, stop forever.
   if (priorNudgeCount(c) >= WAITING_NUDGE_LIFETIME_CAP) return false;
 
@@ -103,6 +132,20 @@ export function isWaitingNudgeEligible(
   const rawStamp = String(c['Waiting Nudge Last Sent At'] || '').trim();
   if (rawStamp) {
     const lastMs = Date.parse(rawStamp);
+    if (!Number.isFinite(lastMs)) return false; // corrupt stamp → skip, never storm
+    const nowMs = Date.parse(opts.nowISO);
+    if (!Number.isFinite(nowMs)) return false;
+    if (nowMs - lastMs < opts.cooldownDays * DAY_MS) return false;
+  }
+
+  // CROSS-RAIL COOLDOWN (audit 2026-07-22): the demand-router campaign stamps
+  // 'Campaign Last Sent At' on every wave send. A buyer the campaign touched
+  // within cooldownDays must not ALSO get a "finish your qualification" nudge
+  // pointing at a conflicting CTA the same week — each rail treats the other's
+  // touch as recent contact (reads the existing stamp only; no new fields).
+  const campaignStamp = String(c['Campaign Last Sent At'] || '').trim();
+  if (campaignStamp) {
+    const lastMs = Date.parse(campaignStamp);
     if (!Number.isFinite(lastMs)) return false; // corrupt stamp → skip, never storm
     const nowMs = Date.parse(opts.nowISO);
     if (!Number.isFinite(nowMs)) return false;
@@ -139,6 +182,87 @@ export function selectWaitingBuyersForNudge<T extends WaitingConsumerLike>(
   if (!Array.isArray(consumers) || consumers.length === 0 || cap <= 0) return [];
   return consumers
     .filter((c) => isWaitingNudgeEligible(c, opts))
+    .filter((c) => isBuyerInSupply(c, opts.supplyStates))
+    .sort((a, b) => createdTimeMs(a) - createdTimeMs(b))
+    .slice(0, cap);
+}
+
+// ── READY CHASE (2026-07-22 audit) ───────────────────────────────────────────
+//
+// When matching fails, /api/qualify flips the buyer to READY and sends the
+// buyer NOTHING; nurture-drip's 4 generic touches end at day ~21 and the buyer
+// becomes permanently dead inventory (stuck-buyer-recovery re-tries routing
+// machine-side but is silent to the buyer). This second-stage selector chases
+// READY buyers who finished the funnel, have NO live referral, sit in a state
+// with operational supply, and are past the nurture-drip lane. Cadence mirrors
+// the WAITING rail (shared cooldown knob + 3 lifetime), on its own stamp pair:
+// `Ready Nudge Last Sent At` + `Ready Nudge Count` (Consumers — founder must
+// add both; the cron's claim-verify aborts the stage fail-loud until then).
+
+/**
+ * Per-record predicate: should this READY buyer get a chase nudge right now?
+ * Pure — reads only the record + options. The no-live-referral and supply
+ * gates live in selectReadyBuyersForChase (they need cross-table data).
+ */
+export function isReadyChaseEligible(
+  c: WaitingConsumerLike,
+  opts: Pick<WaitingNudgeOptions, 'nowISO' | 'cooldownDays'>,
+): boolean {
+  if (String(c['Buyer Stage'] || '').trim() !== 'READY') return false;
+
+  if (!String(c['Email'] || '').trim()) return false;
+
+  // Suppression trio — same rule as the WAITING rail.
+  if (c['Unsubscribed'] || c['Bounced'] || c['Complained']) return false;
+
+  // Must have actually finished the funnel — Qualified At (quiz pass) or
+  // Funnel Completed At. READY with neither stamp is data noise, not a buyer
+  // this chase can honestly address.
+  const doneStamp = String(c['Qualified At'] || c['Funnel Completed At'] || '').trim();
+  if (!doneStamp) return false;
+
+  const nowMs = Date.parse(opts.nowISO);
+  if (!Number.isFinite(nowMs)) return false;
+
+  // Start only AFTER nurture-drip is done with the buyer: all 4 touches sent,
+  // or the qualification stamp is old enough that the drip window has passed.
+  const touches = Number(c['Nurture Touch']);
+  const nurtureDone = Number.isFinite(touches) && touches >= READY_CHASE_NURTURE_DONE_TOUCH;
+  const doneMs = Date.parse(doneStamp);
+  const stampOldEnough =
+    Number.isFinite(doneMs) && nowMs - doneMs >= READY_CHASE_MIN_STAMP_AGE_DAYS * DAY_MS;
+  if (!nurtureDone && !stampOldEnough) return false;
+
+  // Lifetime cap on the chase's own stamp pair.
+  const priorChases = Number(c['Ready Nudge Count']);
+  if (Number.isFinite(priorChases) && priorChases >= READY_NUDGE_LIFETIME_CAP) return false;
+
+  // Cooldown — same conservative corrupt-stamp rule as the WAITING rail.
+  const rawStamp = String(c['Ready Nudge Last Sent At'] || '').trim();
+  if (rawStamp) {
+    const lastMs = Date.parse(rawStamp);
+    if (!Number.isFinite(lastMs)) return false; // corrupt stamp → skip, never storm
+    if (nowMs - lastMs < opts.cooldownDays * DAY_MS) return false;
+  }
+
+  return true;
+}
+
+/**
+ * Pick the READY buyers to chase this run: eligible per isReadyChaseEligible,
+ * NOT in activeBuyerIds (buyers with a live referral — isActiveDealReferral
+ * truth computed by the caller), inside the supply gate, oldest signup first,
+ * at most batchCap.
+ */
+export function selectReadyBuyersForChase<T extends WaitingConsumerLike>(
+  consumers: T[],
+  opts: WaitingNudgeOptions & { activeBuyerIds?: ReadonlySet<string> | null },
+): T[] {
+  const cap = Math.floor(opts.batchCap);
+  if (!Array.isArray(consumers) || consumers.length === 0 || cap <= 0) return [];
+  return consumers
+    .filter((c) => isReadyChaseEligible(c, opts))
+    .filter((c) => !opts.activeBuyerIds?.has(String(c.id || '')))
     .filter((c) => isBuyerInSupply(c, opts.supplyStates))
     .sort((a, b) => createdTimeMs(a) - createdTimeMs(b))
     .slice(0, cap);

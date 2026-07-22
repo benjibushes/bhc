@@ -71,12 +71,34 @@ export function isNudgeEligibleReferral(ref: NudgeReferralFields, nowMs: number)
  * claim-before-send dedup stamp isn't already in Notes, and an email exists.
  * (SMS opt-in + quiet hours are gated separately in the route — they only
  * decide the SMS channel, not selection.)
+ *
+ * PER-REFERRAL DEDUP (2026-07-22, reactivation audit): the stamp used to be
+ * per-BUYER (`[no-action-nudge <date>]`, blocked forever) — so a buyer whose
+ * old deal went Closed Lost and who was re-matched months later silently lost
+ * the abandon-cart touch on every future match. When `referralId` is passed,
+ * only a stamp carrying THAT referral id blocks (`[no-action-nudge <refId>
+ * <date>]`), plus a 48h belt on legacy id-less stamps (a buyer nudged under
+ * the old format may still be inside the 4h window at deploy time). Without a
+ * referralId the legacy any-stamp-blocks behavior is preserved.
  */
-export function isNudgeEligibleConsumer(consumer: NudgeConsumerFields): boolean {
+export function isNudgeEligibleConsumer(
+  consumer: NudgeConsumerFields,
+  opts: { referralId?: string; nowMs?: number } = {},
+): boolean {
   if (consumer['Unsubscribed'] === true) return false;
   if (consumer['Bounced'] === true) return false;
   if (consumer['Complained'] === true) return false;
-  if (String(consumer['Notes'] || '').includes('[no-action-nudge')) return false;
+  const notes = String(consumer['Notes'] || '');
+  if (opts.referralId) {
+    if (notes.includes(`[no-action-nudge ${opts.referralId}`)) return false;
+    const nowMs = opts.nowMs ?? Date.now();
+    const legacyRecent = [...notes.matchAll(/\[no-action-nudge (\d{4}-\d{2}-\d{2})\]/g)].some(
+      (m) => nowMs - Date.parse(m[1]) < 48 * 60 * 60 * 1000,
+    );
+    if (legacyRecent) return false;
+  } else if (notes.includes('[no-action-nudge')) {
+    return false;
+  }
   return String(consumer['Email'] || '').trim().length > 0;
 }
 

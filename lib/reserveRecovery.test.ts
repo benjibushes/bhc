@@ -7,6 +7,8 @@ import {
   nextRecoveryStep,
   selectRecoveryEmail,
   selectRecoverySms,
+  selectReserveAbandonRecovery,
+  DEFAULT_RESERVE_RECOVERY_MAX_AGE_DAYS,
   reserveCreatedMs,
   hoursSinceReserve,
   renderRecoveryEmail,
@@ -277,4 +279,61 @@ test('A2 recovery email omit: clean collapse, no empty paragraph, no glue', () =
   assert.doesNotMatch(m.text, /\n{3,}/, 'no empty paragraph');
   // The sentence before the (omitted) proof flows straight into the CTA line.
   assert.match(m.text, /we held your spot\.\n\nit's still here/);
+});
+
+// ─── ALL-RANCHER ABANDON RAIL selector (deposit-request-nudge rail C) ────────
+
+test('selectReserveAbandonRecovery: email + sms steps are disjoint by stamp', () => {
+  const needsEmail = liveReserve({ id: 'rE' });
+  const needsSms = liveReserve({
+    id: 'rS',
+    'Reserve Recovery Sent At': hoursAgo(DEFAULT_RESERVE_RECOVERY_SMS_HOURS + 1),
+  });
+  const { email, sms } = selectReserveAbandonRecovery([needsEmail, needsSms], { now: NOW });
+  assert.deepEqual(email.map((r) => r.id), ['rE']);
+  assert.deepEqual(sms.map((r) => r.id), ['rS']);
+});
+
+test('selectReserveAbandonRecovery: email step drops reserves older than maxAgeDays (blast-radius bound)', () => {
+  const fresh = liveReserve({ id: 'fresh' });
+  const ancient = liveReserve({
+    id: 'ancient',
+    _createdTime: hoursAgo((DEFAULT_RESERVE_RECOVERY_MAX_AGE_DAYS + 1) * 24),
+  });
+  const { email } = selectReserveAbandonRecovery([ancient, fresh], { now: NOW });
+  assert.deepEqual(email.map((r) => r.id), ['fresh']);
+});
+
+test('selectReserveAbandonRecovery: sms step is NOT age-capped (the email stamp already passed the cap)', () => {
+  const oldButEmailed = liveReserve({
+    id: 'oldSms',
+    _createdTime: hoursAgo((DEFAULT_RESERVE_RECOVERY_MAX_AGE_DAYS + 2) * 24),
+    'Reserve Recovery Sent At': hoursAgo(DEFAULT_RESERVE_RECOVERY_SMS_HOURS + 1),
+  });
+  const { email, sms } = selectReserveAbandonRecovery([oldButEmailed], { now: NOW });
+  assert.deepEqual(email, []);
+  assert.deepEqual(sms.map((r) => r.id), ['oldSms']);
+});
+
+test('selectReserveAbandonRecovery: oldest first + batchCap', () => {
+  const a = liveReserve({ id: 'a', _createdTime: hoursAgo(10) });
+  const b = liveReserve({ id: 'b', _createdTime: hoursAgo(20) });
+  const c = liveReserve({ id: 'c', _createdTime: hoursAgo(15) });
+  const { email } = selectReserveAbandonRecovery([a, b, c], { now: NOW, batchCap: 2 });
+  assert.deepEqual(email.map((r) => r.id), ['b', 'c'], 'oldest reserves leak first');
+});
+
+test('selectReserveAbandonRecovery: empty / garbage input → empty work', () => {
+  assert.deepEqual(selectReserveAbandonRecovery([], { now: NOW }), { email: [], sms: [] });
+  assert.deepEqual(selectReserveAbandonRecovery(undefined as any, { now: NOW }), { email: [], sms: [] });
+  assert.deepEqual(selectReserveAbandonRecovery([liveReserve()], { now: NOW, batchCap: 0 }), { email: [], sms: [] });
+});
+
+test('selectReserveAbandonRecovery: paid / terminal / already-recovered rows never selected', () => {
+  const paid = liveReserve({ id: 'paid', 'Deposit Paid At': hoursAgo(1) });
+  const closed = liveReserve({ id: 'closed', Status: 'Closed Won' });
+  const recovered = liveReserve({ id: 'rec', 'Reserve Recovery Sent At': hoursAgo(1) }); // < smsHours too
+  const { email, sms } = selectReserveAbandonRecovery([paid, closed, recovered], { now: NOW });
+  assert.deepEqual(email, []);
+  assert.deepEqual(sms, []);
 });

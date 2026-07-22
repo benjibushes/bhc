@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   LOSS_REASON_CHOICES,
   isLossReasonChoice,
+  isExcludingLossReason,
   lossReasonFromCloseReason,
   lossReasonFromPassReason,
   lossReasonFromQuickAction,
@@ -87,4 +88,31 @@ test('quick-action: unknown / absent writes nothing', () => {
   assert.equal(lossReasonFromQuickAction('Rancher passed via email link'), null);
   assert.equal(lossReasonFromQuickAction(''), null);
   assert.equal(lossReasonFromQuickAction(undefined), null);
+});
+
+// ── Matching pairing-exclusion scope ────────────────────────────────────────
+test('isExcludingLossReason: genuine rancher pass/decline reasons exclude', () => {
+  assert.equal(isExcludingLossReason('Out of service area'), true);
+  assert.equal(isExcludingLossReason('Wrong intent (not a buyer)'), true);
+  assert.equal(isExcludingLossReason('Other'), true);
+});
+
+test('isExcludingLossReason: buyer-side outcomes stay eligible for re-pairing', () => {
+  assert.equal(isExcludingLossReason('Price too high'), false);
+  assert.equal(isExcludingLossReason('Timing — buying later'), false);
+  assert.equal(isExcludingLossReason("Couldn't reach buyer"), false);
+  assert.equal(isExcludingLossReason('Bought elsewhere'), false);
+});
+
+test('isExcludingLossReason: cron-noise rows (no/unknown reason) never exclude', () => {
+  assert.equal(isExcludingLossReason(undefined), false);
+  assert.equal(isExcludingLossReason(null), false);
+  assert.equal(isExcludingLossReason(''), false);
+  assert.equal(isExcludingLossReason('stale-expiry auto-close'), false);
+});
+
+test('isExcludingLossReason: tolerates the Airtable {name} singleSelect shape', () => {
+  assert.equal(isExcludingLossReason({ name: 'Out of service area' }), true);
+  assert.equal(isExcludingLossReason({ name: 'Price too high' }), false);
+  assert.equal(isExcludingLossReason({ name: 'garbage' }), false);
 });

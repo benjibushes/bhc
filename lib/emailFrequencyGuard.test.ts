@@ -54,3 +54,34 @@ for (const template of MONEY_PATH_DIRECT_SENDS) {
     );
   });
 }
+
+// ── countSendsByEmail (pure — batch cap-prime helper, scale audit 2026-07-22) ─
+// primeFrequencyCapCache replaces one Email Sends count read PER RECIPIENT
+// with a single read for the whole cron run; this is its counting core.
+
+import { countSendsByEmail } from './emailFrequencyGuard';
+
+test('countSendsByEmail counts rows per recipient, case/whitespace-normalized', () => {
+  const counts = countSendsByEmail([
+    { 'Recipient Email': 'a@x.com' },
+    { 'Recipient Email': 'A@X.com ' },
+    { 'Recipient Email': ' b@x.com' },
+  ]);
+  assert.equal(counts.get('a@x.com'), 2);
+  assert.equal(counts.get('b@x.com'), 1);
+});
+
+test('countSendsByEmail skips rows with missing/blank recipient', () => {
+  const counts = countSendsByEmail([
+    {},
+    { 'Recipient Email': '' },
+    { 'Recipient Email': '   ' },
+    { 'Recipient Email': 'c@x.com' },
+  ]);
+  assert.equal(counts.size, 1);
+  assert.equal(counts.get('c@x.com'), 1);
+});
+
+test('countSendsByEmail on empty input returns an empty map (0-send recipients prime as 0)', () => {
+  assert.equal(countSendsByEmail([]).size, 0);
+});

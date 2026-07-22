@@ -149,7 +149,16 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
         skipReasons['not-stuck-yet'] = (skipReasons['not-stuck-yet'] || 0) + 1;
         continue;
       }
-      if (segment !== 'Beef Buyer') continue;
+      // Segment gate (2026-07-22, reactivation audit): a BLANK Segment is
+      // ELIGIBLE — plenty of import/signup paths never stamp it, and Qualified
+      // At / Ready to Buy above already prove buyer intent (quiz-required
+      // rule). Only an explicit non-buyer segment excludes, and the skip is
+      // COUNTED so "stuck=0" can never hide real READY buyers behind an
+      // unlogged filter.
+      if (segment && segment !== 'Beef Buyer') {
+        skipReasons['wrong-segment'] = (skipReasons['wrong-segment'] || 0) + 1;
+        continue;
+      }
       if (status === 'Rejected') continue;
       if (buyersWithActiveRef.has(c.id)) {
         skipReasons['already-recovered'] = (skipReasons['already-recovered'] || 0) + 1;
@@ -227,7 +236,13 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
             intentScore: c['Intent Score'] || 0,
             intentClassification: c['Intent Classification'] || '',
             notes: c['Notes'] || '',
-            warmupEngaged: true, // hot-lead bypass — they already said YES
+            // Hot-lead bypass ONLY for buyers who actually clicked a warmup
+            // YES ('Warmup Engaged At' — the same signal batch-approve reads).
+            // Eligibility above also admits Qualified-At-only buyers who never
+            // opted in; hardcoding true routed the entire recovery pool (up to
+            // 50/day) around the per-state fairness sub-cap and the cold soft
+            // cap — hot-lead bypass became the default path at scale.
+            warmupEngaged: !!c['Warmup Engaged At'],
           }),
         });
         if (matchRes.ok) {
@@ -285,10 +300,16 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
     }
 
     const matchedCount = retried.filter((r) => r.matched).length;
+    // Surface every skip reason (wrong-segment especially) so "stuck=0" is
+    // diagnosable from the Cron Runs note alone.
+    const skipNote = Object.keys(skipReasons).length
+      ? ` skips=${Object.entries(skipReasons).map(([k, v]) => `${k}:${v}`).join(',')}`
+      : '';
     return {
       status: 'success',
       recordsTouched: retried.length,
-      notes: `stuck=${stuck.length} retried=${retried.length} matched=${matchedCount}`,
+      notes: `stuck=${stuck.length} retried=${retried.length} matched=${matchedCount}${skipNote}`,
+      skipReasonBreakdown: skipReasons,
     };
   }
 }
