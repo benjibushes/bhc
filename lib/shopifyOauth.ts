@@ -230,3 +230,16 @@ export function publicAppCreds(): { clientId: string; clientSecret: string } | n
   const clientSecret = String(process.env.SHOPIFY_APP_CLIENT_SECRET || '').trim();
   return clientId && clientSecret ? { clientId, clientSecret } : null;
 }
+
+/** True only when the one-click public-app flow may be OFFERED to ranchers:
+ *  creds set AND SHOPIFY_PUBLIC_APP_LIVE=1|true (flip on Shopify's approval
+ *  email). Creds alone are NOT enough (audit 2026-07-21): they are set DURING
+ *  review so the compliance-webhook HMAC + OAuth callback keep working, but
+ *  Shopify refuses merchant installs of an in-review public app — offering
+ *  the flow then dead-ends every rancher on a Shopify-owned error page with
+ *  no callback and no operator alert. Gate the OFFER surfaces (status
+ *  publicApp field, install route) on this; never the webhook/callback. */
+export function publicAppLive(): boolean {
+  const flag = String(process.env.SHOPIFY_PUBLIC_APP_LIVE || '').trim().toLowerCase();
+  return (flag === '1' || flag === 'true') && publicAppCreds() !== null;
+}

@@ -108,6 +108,23 @@ export async function POST(req: Request) {
       console.error('[tier/select] Airtable persist failed:', e?.message);
       // Continue — Stripe account exists; webhook can resync
     }
+  } else if (
+    tier !== 'legacy_connect' &&
+    String(rancher['Pricing Model'] || '').toLowerCase() !== 'tier_v2'
+  ) {
+    // Pre-existing Connect account (audit 2026-07-21): connect/start creates
+    // accounts WITHOUT ever writing Pricing Model, so a rancher who touched
+    // connect/start first then picked a paid tier here kept 'legacy' — with a
+    // dead webhook they were evaluated by every go-live door under the legacy
+    // fork and skipped forever with 'legacy missing: Payment Link'. Stamp
+    // tier_v2 idempotently, matching what the create branch above (and the
+    // legacy_connect branch below) already do. Best-effort — the webhook
+    // auto-flip remains the backstop.
+    try {
+      await updateRecord(TABLES.RANCHERS, session.rancherId, { 'Pricing Model': 'tier_v2' });
+    } catch (e: any) {
+      console.error('[tier/select] Pricing Model stamp failed:', e?.message);
+    }
   }
 
   // 2026-06-09 hybrid path: legacy_connect skips Stripe Subscription

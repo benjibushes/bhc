@@ -168,7 +168,12 @@ export async function GET(req: Request) {
       console.error('[shopify-oauth] public connect flow error:', e?.message);
       return fail('store-validation');
     }
-    return clearNonce(NextResponse.redirect(`${SITE_URL}/store-connected?ok=1`, 302));
+    // Public installs are signed-in RANCHERS from the dashboard card, not
+    // Ben's emailed distributor links — send them back with a dashboard CTA,
+    // the curation-gate note, and payout-honest money copy (audit 2026-07-21:
+    // the generic page dead-ended them at the homepage).
+    const rancherParams = `&rancher=1${(state.payload.mode || 'sync') === 'sync' ? '&sync=1' : ''}`;
+    return clearNonce(NextResponse.redirect(`${SITE_URL}/store-connected?ok=1${rancherParams}`, 302));
   }
 
   const pending = parsePendingIntegration(raw);

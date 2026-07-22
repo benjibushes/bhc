@@ -37,7 +37,13 @@ export function mapVariantToProductFields(input: {
   const name = variant.title && variant.title !== 'Default Title'
     ? `${product.title} — ${variant.title}`
     : String(product.title || 'Product');
-  const qty = Number(variant.inventoryQuantity ?? 0);
+  // Untracked / continue-selling stores (made-to-order boxes, print-on-demand
+  // merch) report inventoryQuantity 0 forever — without this, every row
+  // imports with Orders Left 0 and can NEVER display, even after Ben approves
+  // it (audit 2026-07-21: silent stall, no report line explains why).
+  const alwaysInStock =
+    variant?.inventoryItem?.tracked === false || variant?.inventoryPolicy === 'CONTINUE';
+  const qty = alwaysInStock ? 999 : Number(variant.inventoryQuantity ?? 0);
   const display = computeDisplayPrice(base, markupPercent);
   return {
     'Product Name': name,
@@ -60,7 +66,7 @@ const PRODUCTS_PAGE = `query($cursor: String) {
     nodes {
       id title status description
       featuredMedia { preview { image { url } } }
-      variants(first: 50) { nodes { id title sku price inventoryQuantity } }
+      variants(first: 50) { nodes { id title sku price inventoryQuantity inventoryPolicy inventoryItem { tracked } } }
     }
   }
 }`;
@@ -78,14 +84,34 @@ export interface CatalogSyncResult {
   updated: number;
   skippedNoSku: number;
   skippedGuard: number;
+  deactivated: number;
   report: string[];
+}
+
+// Uninstall / redact cleanup: pull every sync-managed listing this rancher
+// has off /shop (Active=false). Only rows this engine owns — hand-created
+// rows are never touched. Returns the count pulled.
+export async function deactivateSyncManagedProducts(rancherId: string): Promise<number> {
+  const rows = (await getAllRecords(
+    TABLES.RANCHER_PRODUCTS,
+    `AND({Rancher Record ID} = "${escapeAirtableValue(rancherId)}", {Sync Managed} = TRUE(), {Active} = TRUE())`,
+  ).catch(() => [])) as any[];
+  let pulled = 0;
+  for (const row of rows) {
+    await updateRecord(TABLES.RANCHER_PRODUCTS, row.id, {
+      'Active': false,
+      'Last Synced At': new Date().toISOString(),
+    }).catch(() => {});
+    pulled++;
+  }
+  return pulled;
 }
 
 export async function syncShopifyCatalog(rancherId: string, opts?: { dryRun?: boolean }): Promise<CatalogSyncResult> {
   const rancher = await getRecordById(TABLES.RANCHERS, rancherId);
   const cfg = parseIntegration(rancher?.['Fulfillment Integration']);
   if (!cfg || cfg.mode !== 'sync') {
-    return { imported: 0, updated: 0, skippedNoSku: 0, skippedGuard: 0, report: ['not in sync mode'] };
+    return { imported: 0, updated: 0, skippedNoSku: 0, skippedGuard: 0, deactivated: 0, report: ['not in sync mode'] };
   }
   const rancherName = String(rancher['Ranch Name'] || rancher['Operator Name'] || '');
 
@@ -103,6 +129,10 @@ export async function syncShopifyCatalog(rancherId: string, opts?: { dryRun?: bo
   let updated = 0;
   let skippedNoSku = 0;
   let skippedGuard = 0;
+  // Every SKU present in the store THIS run (guard-blocked ones included) —
+  // rows whose SKU is absent from this set after a COMPLETE pagination run
+  // no longer exist in the store and get pulled off /shop.
+  const seenSkus = new Set<string>();
   let cursor: string | null = null;
   let pages = 0;
   do {
@@ -116,7 +146,7 @@ export async function syncShopifyCatalog(rancherId: string, opts?: { dryRun?: bo
     }).then((r) => r.json()).catch(() => null);
     const page = res?.data?.products;
     if (!page) {
-      return { imported, updated, skippedNoSku, skippedGuard, report: [`catalog fetch failed on page ${pages + 1} — partial: imported ${imported}, updated ${updated}`] };
+      return { imported, updated, skippedNoSku, skippedGuard, deactivated: 0, report: [`catalog fetch failed on page ${pages + 1} — partial: imported ${imported}, updated ${updated}`] };
     }
     for (const product of page.nodes || []) {
       for (const variant of product.variants?.nodes || []) {
@@ -124,6 +154,8 @@ export async function syncShopifyCatalog(rancherId: string, opts?: { dryRun?: bo
           skippedNoSku++;
           continue;
         }
+        const skuKey = String(variant.sku || '').trim();
+        seenSkus.add(skuKey);
         // Guardrails the hand-entry path enforces (share fence + $5 floor) —
         // synced rows must not bypass them.
         const candidateName = `${product.title || ''} ${variant.title || ''}`;
@@ -131,7 +163,6 @@ export async function syncShopifyCatalog(rancherId: string, opts?: { dryRun?: bo
           skippedGuard++;
           continue;
         }
-        const skuKey = String(variant.sku || '').trim();
         const row = bySku.get(skuKey);
         const fields = mapVariantToProductFields({
           product,
@@ -176,14 +207,38 @@ export async function syncShopifyCatalog(rancherId: string, opts?: { dryRun?: bo
     pages++;
   } while (cursor && pages < 40); // 40×50 products = plenty; hard stop vs pagination bugs
 
+  // Store-truth reconciliation (audit 2026-07-21): a product deleted in
+  // Shopify (or a renamed SKU) left its row Active forever — /shop kept
+  // selling it and the push failed AFTER the buyer paid. Deactivate
+  // sync-managed rows whose SKU no longer exists in the store — but ONLY
+  // after a COMPLETE pagination run (cursor drained; never the partial-fetch
+  // bail above or the 40-page cap), or a transient fetch failure would pull
+  // a healthy catalog off /shop.
+  let deactivated = 0;
+  if (cursor === null) {
+    for (const [sku, row] of bySku) {
+      if (seenSkus.has(sku)) continue;
+      if (row['Sync Managed'] !== true || row['Active'] !== true) continue;
+      if (!opts?.dryRun) {
+        await updateRecord(TABLES.RANCHER_PRODUCTS, row.id, {
+          'Active': false,
+          'Last Synced At': new Date().toISOString(),
+        }).catch(() => {});
+      }
+      deactivated++;
+    }
+  }
+
   return {
     imported,
     updated,
     skippedNoSku,
     skippedGuard,
+    deactivated,
     report: [
       `${opts?.dryRun ? '[dry-run] ' : ''}imported ${imported}, updated ${updated}, no-SKU skipped ${skippedNoSku}` +
-        (skippedGuard ? `, guard-blocked ${skippedGuard} (share-fence/$5 floor)` : ''),
+        (skippedGuard ? `, guard-blocked ${skippedGuard} (share-fence/$5 floor)` : '') +
+        (deactivated ? `, pulled ${deactivated} (SKU gone from store)` : ''),
     ],
   };
 }

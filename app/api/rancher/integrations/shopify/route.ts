@@ -15,7 +15,7 @@ import { NextResponse } from 'next/server';
 import { requireRancher } from '@/lib/rancherAuth';
 import { getRecordById, TABLES } from '@/lib/airtable';
 import { parseIntegration } from '@/lib/fulfillmentConnector';
-import { publicAppCreds } from '@/lib/shopifyOauth';
+import { publicAppLive } from '@/lib/shopifyOauth';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 
 export const dynamic = 'force-dynamic';
@@ -28,7 +28,10 @@ export async function GET(request: Request) {
 
   const rancher: any = await getRecordById(TABLES.RANCHERS, session.rancherId).catch(() => null);
   const cfg = parseIntegration(rancher?.['Fulfillment Integration']);
-  const publicApp = publicAppCreds() !== null;
+  // publicAppLive, NOT creds-presence (audit 2026-07-21): creds exist DURING
+  // Shopify review, when merchant installs are refused — the card must keep
+  // showing the token form until SHOPIFY_PUBLIC_APP_LIVE flips on approval.
+  const publicApp = publicAppLive();
   if (!cfg) return NextResponse.json({ connected: false, publicApp });
   return NextResponse.json({
     connected: true,

@@ -234,6 +234,10 @@ export async function POST(request: Request) {
         const esc = (s: string) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         await sendEmail({
           to: rancherEmail,
+          // Dedicated whitelisted templateName (audit 2026-07-21): the generic
+          // 'sendEmail' template is frequency-capped — a rancher who signed
+          // after 3 drips in the week had their go-live moment silently eaten.
+          templateName: 'sendRancherSignedLive',
           subject: `You're LIVE — ${esc(ranchName)} is on BuyHalfCow`,
           html: `
 <!DOCTYPE html>
@@ -273,8 +277,64 @@ export async function POST(request: Request) {
     } else if (rancherEmail) {
       try {
         const esc = (s: string) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        // preVetted tier_v2 (audit 2026-07-21): this same request already set
+        // Verification Status='Verified' + Onboarding Status='Verification
+        // Complete', and tier_v2 collects via Stripe Connect — telling them to
+        // "start verification" (done) and prepare a "payment link" (a rail
+        // tier_v2 must never use) was the exact confusion a prior audit
+        // flagged. Show only the real blockers, computed the same way
+        // readyToGoLive computes them.
+        const missingItems: string[] = [];
+        if (!hasSlug) missingItems.push('A URL slug for your page (in the My Page tab)');
+        if (!hasPrice) missingItems.push('Pricing for quarter, half, and/or whole');
+        const stepsHtml = preVetted
+          ? `
+    <div class="step step-done">✅ <strong>Agreement signed</strong> — Done</div>
+    <div class="step step-done">✅ <strong>Verification</strong> — Done (covered by your Stripe verification)</div>
+    <div class="step"><strong>🖥️ Finish your ranch page</strong> — ${missingItems.length ? `Still needed: ${missingItems.map((m) => esc(m)).join(' · ')}` : 'Add your logo, tagline, about text, and pricing.'}</div>
+    <div class="step"><strong>🟢 Go live</strong> — The moment your page has a slug and a price, it goes live and buyers start coming in.</div>`
+          : `
+    <div class="step step-done">✅ <strong>Agreement signed</strong> — Done</div>
+    <div class="step"><strong>🖥️ Set up your ranch page</strong> — Add your logo, tagline, about text, pricing, and payment links. This is what buyers will see.</div>
+    <div class="step"><strong>🔍 Start verification</strong> — Submit verification signals on your dashboard (3+ signals = instant approval).</div>
+    <div class="step"><strong>🟢 Go live</strong> — Once verified, your page goes live and buyers start coming in.</div>`;
+        const verificationHtml = preVetted
+          ? ''
+          : `
+    <div class="divider"></div>
+
+    <p><strong>🔍 Verification — Here's How:</strong></p>
+    <p>On your dashboard, fill in any of the following. <strong>3 or more = instant auto-approve.</strong> Fewer than 3 = we review within 24-48h.</p>
+    <ul style="color: #6B4F3F; line-height: 2;">
+      <li>2-3 customer references (name + contact info)</li>
+      <li>Google Reviews or Facebook Reviews link</li>
+      <li>Social media presence (Instagram and/or Facebook)</li>
+      <li>USDA processing facility name</li>
+      <li>Certifications (USDA, organic, grass-fed, etc.)</li>
+      <li>Gallery photos of your operation</li>
+    </ul>
+    <p>Once verified, your page goes live and buyers route to you on the next 2-hourly approval cycle.</p>`;
+        const prepListHtml = preVetted
+          ? `
+    <ul style="color: #6B4F3F; line-height: 2;">
+      <li>Ranch logo or photo</li>
+      <li>A short tagline (one sentence)</li>
+      <li>Your "about" story — why buyers should trust you</li>
+      <li>Pricing for quarter, half, and/or whole</li>
+    </ul>`
+          : `
+    <ul style="color: #6B4F3F; line-height: 2;">
+      <li>Ranch logo or photo</li>
+      <li>A short tagline (one sentence)</li>
+      <li>Your "about" story — why buyers should trust you</li>
+      <li>Pricing for quarter, half, and/or whole</li>
+      <li>Payment link (Square, Stripe, PayPal, etc.)</li>
+    </ul>`;
         await sendEmail({
           to: rancherEmail,
+          // Dedicated whitelisted templateName (audit 2026-07-21) — see the
+          // readyToGoLive branch above for rationale.
+          templateName: 'sendRancherSignedAlmostLive',
           subject: `Agreement signed — set up your ranch page, ${rancherName.split(' ')[0]}`,
           html: `
 <!DOCTYPE html>
@@ -300,44 +360,20 @@ export async function POST(request: Request) {
 
     <div class="divider"></div>
 
-    <p><strong>Two things to do right now:</strong></p>
-
-    <div class="step step-done">✅ <strong>Agreement signed</strong> — Done</div>
-    <div class="step"><strong>🖥️ Set up your ranch page</strong> — Add your logo, tagline, about text, pricing, and payment links. This is what buyers will see.</div>
-    <div class="step"><strong>🔍 Start verification</strong> — Submit verification signals on your dashboard (3+ signals = instant approval).</div>
-    <div class="step"><strong>🟢 Go live</strong> — Once verified, your page goes live and buyers start coming in.</div>
+    <p><strong>${preVetted ? "What's left:" : 'Two things to do right now:'}</strong></p>
+${stepsHtml}
 
     <div style="text-align: center; margin: 32px 0;">
       <a href="${dashboardLink}" class="btn">SET UP YOUR RANCH PAGE</a>
     </div>
     <p style="font-size: 12px; color: #A7A29A; text-align: center;">This link logs you in automatically. Valid for 14 days.</p>
-
-    <div class="divider"></div>
-
-    <p><strong>🔍 Verification — Here's How:</strong></p>
-    <p>On your dashboard, fill in any of the following. <strong>3 or more = instant auto-approve.</strong> Fewer than 3 = we review within 24-48h.</p>
-    <ul style="color: #6B4F3F; line-height: 2;">
-      <li>2-3 customer references (name + contact info)</li>
-      <li>Google Reviews or Facebook Reviews link</li>
-      <li>Social media presence (Instagram and/or Facebook)</li>
-      <li>USDA processing facility name</li>
-      <li>Certifications (USDA, organic, grass-fed, etc.)</li>
-      <li>Gallery photos of your operation</li>
-    </ul>
-    <p>Once verified, your page goes live and buyers route to you on the next 2-hourly approval cycle.</p>
-
+${verificationHtml}
     <div class="divider"></div>
 
     <p><strong>What to have ready for your page:</strong></p>
-    <ul style="color: #6B4F3F; line-height: 2;">
-      <li>Ranch logo or photo</li>
-      <li>A short tagline (one sentence)</li>
-      <li>Your "about" story — why buyers should trust you</li>
-      <li>Pricing for quarter, half, and/or whole</li>
-      <li>Payment link (Square, Stripe, PayPal, etc.)</li>
-    </ul>
+${prepListHtml}
 
-    <p><strong>The faster you set up your page and send a sample, the faster you're live and receiving buyer leads.</strong></p>
+    <p><strong>The faster you set up your page, the faster you're live and receiving buyer leads.</strong></p>
 
     <div class="footer">
       <p>— Benjamin, Founder<br>BuyHalfCow<br>Questions? Email ${ADMIN_EMAIL}</p>
@@ -398,6 +434,12 @@ export async function POST(request: Request) {
       message: 'Agreement signed successfully',
       signed_at: now,
       dashboardLink,
+      // Live truth for the wizard's Done step (2026-07-21): a legacy rancher
+      // can sign without a price (Step-3 guard requires a payment link, not
+      // a price), leaving readyToGoLive=false — signed but DARK, awaiting
+      // Ben's rverify tap. The Done step must not tell them "your page is
+      // live" when it isn't.
+      wentLive: readyToGoLive,
     });
   } catch (error: any) {
     console.error('Sign agreement POST error:', error);

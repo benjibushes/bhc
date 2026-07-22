@@ -53,6 +53,11 @@ export default function ShopifyConnectCard({ payoutsReady = true }: { payoutsRea
         window.location.href = data.authorizeUrl;
         return;
       }
+      if (res.status === 503) {
+        // One-click creds were pulled after page load — swap to the token
+        // layout so the rancher isn't told about a form that isn't rendered.
+        setStatus((s) => (s ? { ...s, publicApp: false } : s));
+      }
       setError(String(data?.error || 'Could not start the connection — try again.'));
     } catch {
       setError('Network error — try again.');

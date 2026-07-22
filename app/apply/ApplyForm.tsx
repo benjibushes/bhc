@@ -35,7 +35,7 @@ export default function ApplyForm() {
   // Live discovery-call Cal link, resolved at runtime. The hardcoded slug and
   // the 142d-old NEXT_PUBLIC_CALENDLY_LINK env are both stale (those events were
   // deleted), so embedding either renders a dead booker. /api/book/link confirms
-  // a live event via the Cal API; env stays as a fallback.
+  // a live event via the Cal API; no env fallback — see DISCOVERY_CAL below.
   const [resolvedDiscoveryCal, setResolvedDiscoveryCal] = useState('');
   useEffect(() => {
     let alive = true;
@@ -147,11 +147,12 @@ export default function ApplyForm() {
     // says yes. No live link → render a button to /book?purpose=rancher
     // (the on-site page that resolves the live event server-side and can
     // never 404) instead of embedding anything stale.
-    const DISCOVERY_CAL =
-      resolvedDiscoveryCal ||
-      process.env.NEXT_PUBLIC_CALENDLY_DISCOVERY_LINK ||
-      process.env.NEXT_PUBLIC_CALENDLY_LINK ||
-      '';
+    // No NEXT_PUBLIC_CALENDLY_* fallback (2026-07-21): those envs are 142d
+    // stale and point at DELETED events (per the comment above) — falling
+    // back to them when /api/book/link hiccups embedded the exact dead 404
+    // booker this block warns about. Live resolved link, or the /book
+    // button below (server-side resolve, can never 404) — nothing else.
+    const DISCOVERY_CAL = resolvedDiscoveryCal;
     const calEmbed = DISCOVERY_CAL
       ? DISCOVERY_CAL.includes('?')
         ? `${DISCOVERY_CAL}&embed=true&theme=light`
@@ -220,10 +221,13 @@ export default function ApplyForm() {
                 Book the 15-min call →
               </a>
             )}
+            {/* Copy honesty (2026-07-21): the old line promised the wizard
+                link would be re-emailed with the calendar invite — nothing
+                implements that (the Cal webhook only flips status + alerts
+                Ben). Point at the approval email that WAS just sent. */}
             <p className="text-xs text-saddle italic">
-              After booking, your wizard link stays available — we'll
-              email it again with the calendar invite. Or skip the call
-              and use the CTA above.
+              your wizard link is in the approval email we just sent —
+              good for 60 days. Or skip the call and use the CTA above.
             </p>
           </div>
         )}
@@ -294,7 +298,7 @@ export default function ApplyForm() {
           </div>
           <div>
             <label className="block text-sm font-medium text-charcoal mb-1.5">
-              Phone
+              Phone *
             </label>
             <input
               type="tel"

@@ -62,6 +62,38 @@ function slugify(s: string, suffix?: string): string {
   return suffix ? `${base}-${suffix}` : base;
 }
 
+// Collision-safe slug (2026-07-21) — same guard /api/apply's mintUniqueSlug
+// grew on 2026-07-08 (comment there cites the two-"Bar S Ranch" failure).
+// The dedupe above only catches EXACT lowercase ranch-name + state matches,
+// so name variants ('Bar-S Ranch' vs 'Bar S Ranch', same TX) slugify to the
+// same 'bar-s-ranch-tx' — and getRancherOrProspectBySlug is maxRecords:1, so
+// the second record's public page / wizard preview / Telegram "View listing"
+// all render the FIRST ranch's data. Append -2, -3, … until free; on lookup
+// failure fall back to a random-suffixed slug rather than risk a collision.
+// Also covers the all-non-latin ranch name whose kebab base is empty (would
+// otherwise mint slug '-tx').
+async function mintUniqueSlug(ranchName: string, state: string): Promise<string> {
+  const nameSlug =
+    slugify(ranchName) || `ranch-${Math.random().toString(36).slice(2, 8)}`;
+  const base = `${nameSlug}-${state.toLowerCase()}`;
+  let unique = base;
+  try {
+    for (let n = 2; n < 50; n++) {
+      const safe = escapeAirtableValue(unique);
+      const taken = (await getAllRecords(
+        TABLES.RANCHERS,
+        `LOWER({Slug}) = "${safe}"`
+      )) as any[];
+      if (taken.length === 0) break;
+      unique = `${base}-${n}`;
+    }
+  } catch (e: any) {
+    console.warn('[self-submit] slug collision check failed:', e?.message);
+    unique = `${base}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+  return unique;
+}
+
 function hostOf(url: string): string {
   try {
     return new URL(url.startsWith('http') ? url : `https://${url}`).hostname.replace(
@@ -71,6 +103,83 @@ function hostOf(url: string): string {
   } catch {
     return '';
   }
+}
+
+// Mint the 60d rancher-setup magic link for an EXISTING record — the dedupe
+// rescue (audit 2026-07-21). A rancher actively self-submitting who already
+// exists as a prospect (community-flagged earlier, cold-outreach seeded) used
+// to be silently bounced: 200 + dedupe:true, no setupUrl, no email, no
+// Telegram — the hottest lead type dead-ended on a false success card.
+// Returns '' on mint failure so callers degrade to the message-only response.
+async function mintSetupUrlFor(rancherId: string): Promise<string> {
+  try {
+    const jwtMod = await import('jsonwebtoken');
+    const { JWT_SECRET } = await import('@/lib/secrets');
+    const token = jwtMod.default.sign(
+      { type: 'rancher-setup', rancherId },
+      JWT_SECRET,
+      { expiresIn: '60d' }
+    );
+    return `${SITE_URL}/rancher/setup?token=${token}`;
+  } catch (e) {
+    console.error('[self-submit] dedupe setup token mint failed:', e);
+    return '';
+  }
+}
+
+// Shared dedupe response for both dedupe branches (email-match + ranch/state
+// match). Self-submitters hitting a non-Verified, non-Removed existing record
+// get routed INTO the wizard for that record (setupUrl → the form redirects)
+// + a Telegram alert so Ben knows a live rancher tried to self-serve.
+// Verified/Removed matches (and all community submits) keep the message-only
+// behavior — never hand a setup link to someone else's verified record.
+async function dedupeResponse(args: {
+  existing: any;
+  submitterType: 'self' | 'community';
+  ranchName: string;
+  city: string;
+  state: string;
+}): Promise<NextResponse> {
+  const status = (args.existing['Verification Status'] || '').toString();
+  const message =
+    status === 'Verified'
+      ? `${args.ranchName} is already a verified BuyHalfCow partner.`
+      : `${args.ranchName} is already on the map — we'll reach out.`;
+
+  let setupUrl = '';
+  if (args.submitterType === 'self' && status !== 'Verified' && status !== 'Removed') {
+    setupUrl = await mintSetupUrlFor(args.existing.id);
+    try {
+      if (TELEGRAM_ADMIN_CHAT_ID) {
+        await sendTelegramMessage(
+          TELEGRAM_ADMIN_CHAT_ID,
+          [
+            '🟡 SELF-SUBMIT (existing prospect re-submitted themselves)',
+            `Ranch: ${args.ranchName}`,
+            `City/State: ${args.city}, ${args.state}`,
+            `Existing status: ${status || '(blank)'}`,
+            `Airtable: ${args.existing.id}`,
+            setupUrl
+              ? 'They were sent straight into the setup wizard for the existing record.'
+              : '⚠️ Setup link mint FAILED — send them one manually.',
+          ].join('\n'),
+        );
+      }
+    } catch (e) {
+      console.error('[self-submit] dedupe telegram alert failed (non-blocking):', e);
+    }
+  }
+
+  return NextResponse.json(
+    {
+      success: true,
+      dedupe: true,
+      existingStatus: status,
+      message,
+      ...(setupUrl ? { setupUrl } : {}),
+    },
+    { status: 200 },
+  );
 }
 
 export async function POST(req: Request) {
@@ -170,19 +279,7 @@ export async function POST(req: Request) {
         { createIfMissing: false },
       );
       if (emailDup && (matchedBy === 'email' || matchedBy === 'team')) {
-        const status = (emailDup['Verification Status'] || '').toString();
-        return NextResponse.json(
-          {
-            success: true,
-            dedupe: true,
-            existingStatus: status,
-            message:
-              status === 'Verified'
-                ? `${ranchName} is already a verified BuyHalfCow partner.`
-                : `${ranchName} is already on the map — we'll reach out.`,
-          },
-          { status: 200 },
-        );
+        return await dedupeResponse({ existing: emailDup, submitterType, ranchName, city, state });
       }
     } catch (e) {
       console.error('[self-submit] email dedupe pre-check failed (continuing):', e);
@@ -207,21 +304,9 @@ export async function POST(req: Request) {
   }
 
   if (existing.length > 0) {
-    // Don't overwrite a verified record. Tell user it's already there.
-    const dup = existing[0];
-    const status = (dup['Verification Status'] || '').toString();
-    return NextResponse.json(
-      {
-        success: true,
-        dedupe: true,
-        existingStatus: status,
-        message:
-          status === 'Verified'
-            ? `${ranchName} is already a verified BuyHalfCow partner.`
-            : `${ranchName} is already on the map — we'll reach out.`,
-      },
-      { status: 200 }
-    );
+    // Don't overwrite a verified record — but a self-submitter matching a
+    // non-Verified prospect gets routed into the EXISTING record's wizard.
+    return await dedupeResponse({ existing: existing[0], submitterType, ranchName, city, state });
   }
 
   // ── Geocode (best effort) — ZIP-first for ~3-5 mi accuracy, city+state fallback (~city centroid). ──
@@ -241,7 +326,7 @@ export async function POST(req: Request) {
   const composedNotes = noteLines.join('\n');
 
   // ── Insert ──
-  const slug = slugify(ranchName, state.toLowerCase());
+  const slug = await mintUniqueSlug(ranchName, state);
   const fields: Record<string, any> = {
     'Ranch Name': ranchName,
     'Operator Name': operatorName || ranchName,

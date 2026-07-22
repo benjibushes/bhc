@@ -11,6 +11,7 @@ import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { getConnectAccountStatus } from '@/lib/stripeConnect';
 import { computeConnectResync } from '@/lib/connectResync';
 import { requireRancher } from '@/lib/rancherAuth';
+import { sendOperatorSignal } from '@/lib/operatorSignal';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 20;
@@ -113,6 +114,35 @@ export async function POST(req: Request) {
     }
   }
 
+  // Airtable single-selects sometimes arrive as {name} objects.
+  const activeStatusObj: any = rancher['Active Status'];
+  const activeStatus = String(
+    typeof activeStatusObj === 'object' && activeStatusObj?.name
+      ? activeStatusObj.name
+      : activeStatusObj || ''
+  );
+  const isPaused = activeStatus === 'Paused';
+
+  // paused_overdue dead-end (audit 2026-07-21): the migration-deadline cron
+  // pauses overdue ranchers, and NOTHING auto-unpauses them when they finish
+  // the upgrade — the webhook auto-go-live excludes previously-Live ranchers
+  // and go-live-sync excludes Paused. Without this signal the rancher
+  // completes everything and silently receives zero buyers. Loud ping so ops
+  // unpauses; 24h dedupe so dashboard polling can't storm the channel.
+  if (decision.wasPausedOverdue && isPaused) {
+    await sendOperatorSignal({
+      urgency: 'loud',
+      kind: 'stuck-rancher',
+      summary: `UPGRADE COMPLETE — UNPAUSE ${rancher['Ranch Name'] || rancher['Operator Name'] || session.rancherId}`,
+      detail:
+        `Rancher was auto-paused by the migration deadline (Migration Status was paused_overdue) and has now finished Stripe Connect (active).\n` +
+        `Active Status is still 'Paused' — flip it to 'Active' from /admin/ranchers/${session.rancherId} so buyers route again.`,
+      refs: [{ type: 'rancher', id: session.rancherId, label: String(rancher['Ranch Name'] || rancher['Operator Name'] || '') }],
+      dedupeKey: `paused-overdue-upgrade:${session.rancherId}`,
+      dedupeWindowMs: 24 * 3600 * 1000,
+    });
+  }
+
   return NextResponse.json({
     ok: true,
     changed: decision.changed,
@@ -121,8 +151,13 @@ export async function POST(req: Request) {
     cardPaymentsActive: live.cardPaymentsActive,
     onboardingComplete: live.onboardingComplete,
     requirementsStatus: live.requirementsStatus,
+    // Never claim "deposits will land" to a Paused rancher — buyer routing is
+    // gated off until ops reactivates them (isRancherOperationalForBuyers
+    // requires Active Status='Active').
     message: decision.isNowActive
-      ? "You're all set — your bank is connected and deposits will land in your account."
+      ? isPaused
+        ? "Your bank is connected. Your account is currently paused — we've pinged the team to reactivate it, no action needed on your side."
+        : "You're all set — your bank is connected and deposits will land in your account."
       : live.status === 'restricted'
         ? 'Stripe still needs more info. Open the portal to clear the flag.'
         : "Stripe hasn't finished verifying you yet. Resume onboarding to finish the remaining steps.",

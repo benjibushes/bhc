@@ -1767,8 +1767,38 @@ export async function sendRancherApproval(data: {
   operatorName: string;
   ranchName: string;
   email: string;
+  // Setup-wizard link (audit 2026-07-21): the old copy promised an
+  // "onboarding package arriving shortly", but the entry-rail consolidation
+  // (app/api/partners/route.ts) retired every automatic send-onboarding call —
+  // the promised docs only arrived if Ben manually resent them. The caller
+  // mints a 60d rancher-setup JWT (matching sendRancherApplyAutoApproved) so
+  // the approval email itself IS the next step. Optional so a legacy caller
+  // without a link still sends (with reply-to-us fallback copy).
+  wizardUrl?: string;
 }) {
   const subject = "You're Approved — BuyHalfCow Partnership";
+  const nextStepsHtml = data.wizardUrl
+    ? `
+            <p><strong>What Happens Next:</strong></p>
+            <ol style="color: #6B4F3F; line-height: 2;">
+              <li><strong>Finish your setup</strong> — About 10 minutes: prices, payment link, and one e-signature (the Commission Agreement is signed right inside the wizard)</li>
+              <li><strong>Verification</strong> — Add customer testimonials, operation photos, and/or social proof (Google Reviews, social media, certifications)</li>
+              <li><strong>Profile goes live</strong> — Once verified, we activate your profile and start sending you qualified buyers</li>
+            </ol>
+            <div style="text-align: center; margin: 28px 0;">
+              <a href="${data.wizardUrl}" style="display: inline-block; padding: 16px 40px; background: #0E0E0E; color: #F4F1EC; text-decoration: none; font-weight: bold; font-size: 14px; letter-spacing: 1px; text-transform: uppercase;">FINISH SETUP</a>
+            </div>
+            <div class="divider"></div>
+            <p>Bookmark this email — the setup link is good for 60 days.</p>`
+    : `
+            <p><strong>What Happens Next:</strong></p>
+            <ol style="color: #6B4F3F; line-height: 2;">
+              <li><strong>Finish your setup</strong> — We'll send your setup link so you can add prices, a payment link, and sign the Commission Agreement digitally</li>
+              <li><strong>Verification</strong> — Add customer testimonials, operation photos, and/or social proof (Google Reviews, social media, certifications)</li>
+              <li><strong>Profile goes live</strong> — Once verified, we activate your profile and start sending you qualified buyers</li>
+            </ol>
+            <div class="divider"></div>
+            <p>If your setup link doesn't arrive, just reply to this email and we'll resend it.</p>`;
   return guardedSend({
     templateName: 'sendRancherApproval',
     recipientEmail: data.email,
@@ -1798,14 +1828,7 @@ export async function sendRancherApproval(data: {
             <p><strong>Great news — ${esc(data.ranchName)} has been approved to join the BuyHalfCow network.</strong></p>
             <p>Thanks for taking the time to talk through your operation. We're confident this is a strong fit.</p>
             <div class="divider"></div>
-            <p><strong>What Happens Next:</strong></p>
-            <ol style="color: #6B4F3F; line-height: 2;">
-              <li><strong>Onboarding docs coming soon</strong> — You'll receive the Commission Agreement, Media Agreement, and Rancher Info Packet to review and sign digitally</li>
-              <li><strong>Verification</strong> — Provide customer testimonials, operation photos, and/or social proof (Google Reviews, social media, certifications)</li>
-              <li><strong>Profile goes live</strong> — Once verified, we activate your profile and start sending you qualified buyers</li>
-            </ol>
-            <div class="divider"></div>
-            <p>Keep an eye on your inbox — the onboarding package will arrive shortly.</p>
+            ${nextStepsHtml}
             <p>If you have any questions in the meantime, just reply to this email.</p>
             <div class="footer">
               <p>— Ben<br>BuyHalfCow<br>Questions? Email ${ADMIN_EMAIL}</p>
@@ -5294,7 +5317,7 @@ export async function sendRancherApplyAutoApproved(data: {
   wizardUrl: string;
   score: number;
   hotLead: boolean;
-}): Promise<{ success: boolean; error?: any }> {
+}): Promise<{ success: boolean; suppressed?: boolean; reason?: string }> {
   const first = (data.operatorName || 'there').split(' ')[0] || 'there';
   const subject = `${first} — ${data.ranchName} is approved. Your setup link inside.`;
   const hotLine = data.hotLead

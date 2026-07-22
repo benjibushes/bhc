@@ -39,15 +39,29 @@ const NEXT_STEPS: { title: string; body: string }[] = [
   { title: 'Money lands itself', body: 'Your cut arrives in your account the moment a customer pays. No invoices.' },
 ];
 
+// Signed-in rancher variant (one-click install from the dashboard card):
+// no instant-payout promise (that depends on their Stripe setup, which this
+// page can't see) and — sync mode — the curation-gate truth, so "connected
+// but nothing on /shop yet" doesn't read as broken.
+const RANCHER_NEXT_STEPS = (sync: boolean): { title: string; body: string }[] => [
+  ...(sync
+    ? [{ title: 'Products imported', body: 'Your catalog synced over. BuyHalfCow approves each product before it displays on the marketplace — nothing shows until then.' }]
+    : [{ title: 'Products match by SKU', body: 'List products from your Products tab and we match them to your store by SKU.' }]),
+  { title: 'Orders appear', body: 'Paid BuyHalfCow orders show up in your Shopify like any other order.' },
+  { title: 'Getting paid', body: 'Your cut pays out through the Stripe setup in your dashboard’s Money tab — finish that and sales go live.' },
+];
+
 export default async function StoreConnectedPage({
   searchParams,
 }: {
-  searchParams: Promise<{ ok?: string; why?: string; already?: string }>;
+  searchParams: Promise<{ ok?: string; why?: string; already?: string; rancher?: string; sync?: string }>;
 }) {
   const params = await searchParams;
   const ok = params.ok === '1';
   const why = String(params.why || '');
   const already = params.already === '1';
+  const rancher = params.rancher === '1';
+  const steps = rancher ? RANCHER_NEXT_STEPS(params.sync === '1') : NEXT_STEPS;
 
   return (
     <main className="min-h-[70vh] flex items-center justify-center px-6 py-20 bg-bone">
@@ -76,7 +90,7 @@ export default async function StoreConnectedPage({
               </p>
 
               <div className="grid sm:grid-cols-3 gap-6 sm:gap-0 mt-10 sm:divide-x sm:divide-divider/15 text-left sm:text-center">
-                {NEXT_STEPS.map((s) => (
+                {steps.map((s) => (
                   <div key={s.title} className="sm:px-5">
                     <p className="text-[11px] uppercase tracking-[0.18em] text-charcoal font-medium">
                       {s.title}
@@ -105,10 +119,10 @@ export default async function StoreConnectedPage({
 
         <p className="text-center mt-6">
           <Link
-            href="/"
+            href={rancher ? '/rancher' : '/'}
             className="text-[11px] uppercase tracking-[0.2em] text-saddle underline underline-offset-4 hover:text-charcoal transition-colors"
           >
-            buyhalfcow.com
+            {rancher ? 'Back to your dashboard' : 'buyhalfcow.com'}
           </Link>
         </p>
       </div>
