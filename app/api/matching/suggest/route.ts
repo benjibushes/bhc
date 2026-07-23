@@ -731,9 +731,31 @@ export async function POST(request: Request) {
       // buyer still gets the best eligible rancher or a clean waitlist.
       // Gate ADDITION only — capacity/exclusion semantics of the direct path
       // are unchanged for pins that pass.
-      if (pinned && (!passesTierV2CutFloor(pinned) || !isPriceFit(pinned))) {
+      // SOLD-OUT / SCAN-GUARD / EXCLUSION PARITY (audit 2026-07-23): the pin
+      // ran only the operational + price gates, so it BYPASSED the three hard
+      // guards every general candidate clears in isEligibleBase — the Closed
+      // Won sold-out cap, the fail-closed capacity scan, and the terminal-
+      // outcome exclusion set. A pinned rancher who already sold every head (or
+      // just passed on THIS buyer, or whose capacity scan failed under load)
+      // could still be force-matched. Fold the same three predicates into the
+      // fall-through so a pin that fails any of them drops to general matching
+      // (which re-excludes it via the identical checks → next rancher or a
+      // clean waitlist). Capacity-unknown fails closed for everyone.
+      const pinnedSoldOut =
+        !!pinned && (closedWonByRancher.get(pinned.id) || 0) >= getMaxActiveReferrals(pinned);
+      const pinnedExcluded = !!pinned && excludeIds.has(pinned.id);
+      if (
+        pinned &&
+        (!passesTierV2CutFloor(pinned) ||
+          !isPriceFit(pinned) ||
+          !closedWonScanOk ||
+          pinnedSoldOut ||
+          pinnedExcluded)
+      ) {
         console.log(
-          `[match] direct pin ${rancherSlug} failed the price gate (tier_v2 floor or budget fit) for ${buyerName || buyerId} — falling through to general matching`,
+          `[match] direct pin ${rancherSlug} failed a hard gate ` +
+            `(priceGate=${!passesTierV2CutFloor(pinned) || !isPriceFit(pinned)} scanOk=${closedWonScanOk} soldOut=${pinnedSoldOut} excluded=${pinnedExcluded}) ` +
+            `for ${buyerName || buyerId} — falling through to general matching`,
         );
       } else if (pinned) {
         directMatchRancher = pinned;

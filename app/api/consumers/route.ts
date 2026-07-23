@@ -287,10 +287,21 @@ export async function POST(request: Request) {
           // MATCHED/CLOSED buyer clicking a reactivation email must not
           // regress to WAITING) and never stomp Created / Approved At /
           // Source when already set — signup-date + first-touch truth.
+          const guardedFields = guardFunnelUpsertFields(funnelFields, existingRecQ) as Record<string, any>;
+          // Qualified-buyer guard (audit 2026-07-23): once /api/qualify has
+          // stamped Qualified At, the buyer's Intent Score / Order Type /
+          // Timing are the quiz-verified truth. A funnel re-entry (e.g. a
+          // reactivation click that re-runs the contact step) carries the
+          // funnel's coarser mid-flow values and must NOT overwrite them.
+          if (existingRecQ && existingRecQ['Qualified At']) {
+            delete guardedFields['Intent Score'];
+            delete guardedFields['Order Type'];
+            delete guardedFields['Timing'];
+          }
           await updateRecord(
             TABLES.CONSUMERS,
             existingIdQ,
-            guardFunnelUpsertFields(funnelFields, existingRecQ) as Record<string, any>,
+            guardedFields,
           );
           funnelRec = { id: existingIdQ };
         } else {
@@ -855,7 +866,16 @@ export async function POST(request: Request) {
         // preserved through the state-match cascade.
         let qualifyUrl: string | null = null;
         let redirectToQualify = false;
-        if (consumerSegment === 'Beef Buyer' && (hasInStateRancher || isRancherPageLead)) {
+        // DEAD-END FIX (audit 2026-07-23): a rancher-campaign lead classified
+        // 'Community' (e.g. low-intent timing) used to skip this block entirely
+        // — no qualifyUrl, no quiz invite — then the backgroundTasks
+        // matching/suggest call for rancher- campaigns 412'd on the missing
+        // Qualified At, so the buyer got NOTHING. Any rancher-page lead now
+        // gets the qualify-access token + quiz invite regardless of segment so
+        // they have a way to qualify (which suppresses that doomed background
+        // match via qualifyUrlForResponse). The prior Beef-Buyer + in-state
+        // path is unchanged; only Community rancher-page leads are added.
+        if ((consumerSegment === 'Beef Buyer' && hasInStateRancher) || isRancherPageLead) {
           // 30d expiry (was 24h): this qualifyUrl is also EMAILED as a backup
           // via sendQuizInvite below, so the buyer may click it days later. A
           // 24h window stranded those late clicks in the expired-link loop
@@ -952,16 +972,25 @@ export async function POST(request: Request) {
       await sendConsumerConfirmation({ firstName, email, state });
     }
 
-    // F9 — signup SMS (gated by ENABLE_SMS feature flag, default OFF)
-    try {
-      const { fireSMSEvent } = await import('@/lib/smsEvents');
-      await fireSMSEvent({
-        type: 'signup',
-        consumer: record.fields,
-        vars: { firstName },
-      });
-    } catch (e: any) {
-      console.warn('[/api/consumers] signup SMS fire failed:', e?.message);
+    // F9 — signup SMS (gated by ENABLE_SMS feature flag, default OFF).
+    // The abandoned-stub upgrade path builds `record = { id, ...consumerFields }`
+    // (no `.fields`), so `record.fields` was undefined there — the SMS fired
+    // with an undefined consumer. Resolve the field bag from whichever record
+    // shape we have (createRecord returns `.fields`; the stub upgrade spreads
+    // the fields onto `record` itself) and skip the send when there's no
+    // consumer or no phone rather than dispatching blind.
+    const smsConsumer = (record?.fields ?? record) as Record<string, any> | undefined;
+    if (smsConsumer && smsConsumer['Phone']) {
+      try {
+        const { fireSMSEvent } = await import('@/lib/smsEvents');
+        await fireSMSEvent({
+          type: 'signup',
+          consumer: smsConsumer,
+          vars: { firstName },
+        });
+      } catch (e: any) {
+        console.warn('[/api/consumers] signup SMS fire failed:', e?.message);
+      }
     }
 
     // ── RESPOND TO BUYER IMMEDIATELY — everything below runs without blocking ──
