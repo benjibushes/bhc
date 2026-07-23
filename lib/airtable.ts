@@ -842,7 +842,10 @@ function _pickCanonical(matches: any[]): any {
 // write window and stranded the rancher with no record + no alert. This narrows
 // the read to rows that COULD match so the caller's JS narrowing (unchanged) is
 // behavior-equivalent — only the candidate set shrinks. Pure/testable.
-//   • Email       — exact (trim+lower); JS re-checks with the same normalizer.
+//   • Email       — whitespace-insensitive (lower + strip ALL whitespace, the
+//                    SAME normalizer _normalizeEmail uses); JS re-checks with
+//                    the same normalizer. TRIM alone missed a stored email with
+//                    INNER whitespace so a real duplicate slipped the superset.
 //   • Team Emails  — substring superset; JS narrows to an exact split-list element.
 //   • Phone        — FIND on the last 4 digits (contiguous in every common US
 //                    format) is a superset; JS narrows to full digits-only equality.
@@ -858,7 +861,11 @@ export function buildRancherDedupeFormula(args: {
   const clauses: string[] = [];
   if (args.normalizedEmail) {
     const e = escapeAirtableValue(args.normalizedEmail);
-    clauses.push(`LOWER(TRIM({Email})) = "${e}"`);
+    // Whitespace-insensitive match — mirror _normalizeEmail (lower + strip ALL
+    // whitespace). TRIM only strips edges, so a stored email with an INNER space
+    // ("john doe@x.com") never entered the candidate set and the JS narrowing
+    // (which DOES strip inner whitespace) could never see the real duplicate.
+    clauses.push(`REGEX_REPLACE(LOWER({Email}), "\\s+", "") = "${e}"`);
     clauses.push(`FIND("${e}", LOWER({Team Emails})) > 0`);
   }
   if ((args.normalizedPhone || '').length >= 10) {
