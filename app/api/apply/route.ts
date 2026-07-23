@@ -419,7 +419,7 @@ export async function POST(req: Request) {
           `Phone: ${body.phone || '(none)'}\n` +
           `State: ${body.state}\n` +
           `Error: ${e?.message || 'unknown'}`,
-        dedupeKey: 'signup-create-fail:apply',
+        dedupeKey: `signup-create-fail:apply:${email}`,
       });
     } catch (sigErr: any) {
       console.error('[apply] rescue operator signal failed:', sigErr?.message);

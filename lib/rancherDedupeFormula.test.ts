@@ -19,7 +19,22 @@ test('email turns on BOTH the exact Email tier and the Team Emails superset', ()
   });
   assert.equal(
     f,
-    'OR(LOWER(TRIM({Email})) = "jesse@ranch.com", FIND("jesse@ranch.com", LOWER({Team Emails})) > 0)',
+    'OR(REGEX_REPLACE(LOWER({Email}), "\\s+", "") = "jesse@ranch.com", FIND("jesse@ranch.com", LOWER({Team Emails})) > 0)',
+  );
+});
+
+test('Email tier is whitespace-insensitive so a stored email with INNER whitespace is still in the superset', () => {
+  // The old TRIM-only clause only stripped edge whitespace, so a stored value
+  // like "john doe@ranch.com" was never pulled into the candidate set and the
+  // JS narrowing (which strips ALL whitespace via _normalizeEmail) could never
+  // narrow to the real duplicate. REGEX_REPLACE(..., "\\s+", "") mirrors the JS
+  // normalizer, matching that stored value against the whitespace-free input.
+  const f = buildRancherDedupeFormula({
+    normalizedEmail: 'johndoe@ranch.com',
+    normalizedPhone: '',
+  });
+  assert.ok(
+    f!.includes('REGEX_REPLACE(LOWER({Email}), "\\s+", "") = "johndoe@ranch.com"'),
   );
 });
 
@@ -72,7 +87,7 @@ test('all tiers together OR into one formula', () => {
   });
   assert.equal(
     f,
-    'OR(LOWER(TRIM({Email})) = "a@b.com", FIND("a@b.com", LOWER({Team Emails})) > 0, ' +
+    'OR(REGEX_REPLACE(LOWER({Email}), "\\s+", "") = "a@b.com", FIND("a@b.com", LOWER({Team Emails})) > 0, ' +
       'FIND("9876", {Phone}) > 0, ' +
       'AND(LOWER(TRIM({Ranch Name})) = "lazy bar", LOWER(TRIM({State})) = "mt"))',
   );
@@ -87,5 +102,5 @@ test('quotes in the email are escaped so the formula string stays well-formed', 
     normalizedEmail: 'we"ird@ranch.com',
     normalizedPhone: '',
   });
-  assert.ok(f!.includes('LOWER(TRIM({Email})) = "we\\"ird@ranch.com"'));
+  assert.ok(f!.includes('REGEX_REPLACE(LOWER({Email}), "\\s+", "") = "we\\"ird@ranch.com"'));
 });

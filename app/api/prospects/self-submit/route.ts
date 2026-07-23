@@ -382,7 +382,7 @@ export async function POST(req: Request) {
           `Phone: ${rancherPhone || '(none)'}\n` +
           `City/State: ${city}, ${state}\n` +
           `Error: ${e instanceof Error ? e.message : String(e)}`,
-        dedupeKey: 'signup-create-fail:self-submit',
+        dedupeKey: `signup-create-fail:self-submit:${ranchName}:${state}`,
       });
     } catch (sigErr) {
       console.error('[self-submit] rescue operator signal failed:', sigErr);
