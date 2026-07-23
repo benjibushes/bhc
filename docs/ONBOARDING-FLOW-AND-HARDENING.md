@@ -149,7 +149,23 @@ and no real-time watch on Email Sends failures.
 
 ---
 
-## 5. Systematization plan (ranked — build in this order)
+## ✅ STATUS 2026-07-23 — ALL 4 PHASES SHIPPED (#457)
+
+Every phase below is LIVE on main. New surfaces: `Signup Attempts` table
+(tblDDpQaVPwIIuSXz) + failure beacon (`/api/signup/failure-beacon`) + client
+`sendBeacon` on both forms; filtered dedupe + slug cap + deadline race +
+maxDuration 60 on `/api/apply`; loud rescue alerts on both create-failures;
+`findRancherByEmail` live-read fallback; `guardedSend` logs failed-before-throw;
+Resend hard-bounce → Telegram; `Welcome Email Failed At` stamped; synthetic
+`/apply` canary; `setup-link-undelivered` hourly cron; daily-health-digest
+"started-but-didn't-finish" buckets; chase crons alarm on empty read. 1491
+tests green.
+
+**⚠️ ONE BEN ACTION:** enable Resend `email.delivered` + `email.bounced`
+webhook events on webhook `5a321579` so the hard-bounce alert + undelivered
+sweep light up (they're env/webhook-gated until then).
+
+## 5. Systematization plan (ranked — build in this order) — ✅ DONE, see status above
 
 ### Phase 1 — KILL THE SILENT FAILURE (this week, before more ranchers)
 *Goal: it becomes impossible for a rancher to fail at the door without Ben knowing.*
