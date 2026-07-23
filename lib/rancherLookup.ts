@@ -4,7 +4,7 @@
 // so the public setup-link re-mint endpoint resolves the SAME canonical row a
 // password login or magic link would — one matching algorithm, no drift.
 
-import { getAllRecords, TABLES } from '@/lib/airtable';
+import { getAllRecords, escapeAirtableValue, TABLES } from '@/lib/airtable';
 
 /**
  * Resolve a Rancher record by email — direct {Email} match first, then
@@ -50,6 +50,29 @@ export async function findRancherByEmail(normalizedEmail: string): Promise<any |
   if (teamMatches.length > 1) {
     teamMatches.sort((a, b) => recencyMs(b) - recencyMs(a));
     return teamMatches[0];
+  }
+
+  // P4a read-after-write (2026-07-23): the scan above reads the CACHED unfiltered
+  // rancher list (getAllRecords L1/L2, ≤30s stale), so a rancher created seconds
+  // ago — a fresh /apply or /self-submit — is invisible here and the setup-link
+  // re-mint looks un-sent (the resend-link-missed-fresh-record bug). On a full
+  // miss do ONE filtered LIVE read (a filterByFormula bypasses the cache) before
+  // giving up, so a just-created row is found within seconds. Best-effort: a read
+  // failure degrades to the original null.
+  if (normalizedEmail) {
+    try {
+      const fresh = (await getAllRecords(
+        TABLES.RANCHERS,
+        `LOWER(TRIM({Email})) = "${escapeAirtableValue(normalizedEmail)}"`,
+      )) as any[];
+      if (fresh.length === 1) return fresh[0];
+      if (fresh.length > 1) {
+        fresh.sort((a, b) => recencyMs(b) - recencyMs(a));
+        return fresh[0];
+      }
+    } catch (e) {
+      console.error('[findRancherByEmail] fresh live-read fallback failed:', e);
+    }
   }
 
   return null;

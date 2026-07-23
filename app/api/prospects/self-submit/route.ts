@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import {
   createRecord,
+  updateRecord,
   getAllRecords,
   escapeAirtableValue,
   findOrCreateRancherByEmail,
@@ -11,6 +12,7 @@ import {
   sendRancherCommunityIntro,
 } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { geocodeRancher } from '@/lib/geocode';
 import { funnelRecord } from '@/lib/funnelMetrics';
 import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
@@ -362,6 +364,29 @@ export async function POST(req: Request) {
     created = await createRecord(TABLES.RANCHERS, fields);
   } catch (e) {
     console.error('[self-submit] Airtable create failed:', e);
+    // P1a: a pre-record-write failure used to leave ZERO trace (the Justin
+    // incident) — 500 + console.error only, no page to Ben. Fire a LOUD, deduped
+    // operator signal carrying the full submitted payload so Ben can hand-create
+    // the record + follow up.
+    try {
+      await sendOperatorSignal({
+        urgency: 'loud',
+        kind: 'system-error',
+        summary: `Signup create FAILED · self-submit · ${ranchName} (${state})`,
+        detail:
+          `A ${submitterType}-submit threw BEFORE any record was written — nothing saved. ` +
+          `Hand-create the Ranchers row + follow up.\n\n` +
+          `Ranch: ${ranchName}\n` +
+          `Operator: ${operatorName || '(none)'}\n` +
+          `Email: ${rancherEmail || '(none)'}\n` +
+          `Phone: ${rancherPhone || '(none)'}\n` +
+          `City/State: ${city}, ${state}\n` +
+          `Error: ${e instanceof Error ? e.message : String(e)}`,
+        dedupeKey: 'signup-create-fail:self-submit',
+      });
+    } catch (sigErr) {
+      console.error('[self-submit] rescue operator signal failed:', sigErr);
+    }
     return NextResponse.json(
       { error: 'Could not save submission — try again' },
       { status: 500 }
@@ -426,9 +451,15 @@ export async function POST(req: Request) {
   ]).catch((e) => console.error('[capi] self-submit fire failed:', e));
 
   // ── Fire welcome / intro email (best effort) ──
+  // P3a: the self-submit welcome result used to be discarded — a suppressed/
+  // failed setup email (bounce, unsub, dead key) was fully silent (the Vale
+  // Creek class). Capture it (mirror #446 in /api/apply), stamp a queryable
+  // field on failure, and surface it in the Telegram alert below so Ben resends
+  // by hand. Only the 'self' welcome carries the setup link that matters here.
+  let welcomeEmail: { success: boolean; suppressed?: boolean; reason?: string } | null = null;
   try {
     if (submitterType === 'self') {
-      await sendRancherSelfSubmitWelcome({
+      welcomeEmail = await sendRancherSelfSubmitWelcome({
         to: rancherEmail,
         ranchName,
         operatorName,
@@ -448,6 +479,18 @@ export async function POST(req: Request) {
     // via Telegram alert below.
   } catch (e) {
     console.error('[self-submit] welcome email failed (non-blocking):', e);
+    if (submitterType === 'self') welcomeEmail = { success: false, reason: 'send threw' };
+  }
+  if (submitterType === 'self' && welcomeEmail && !welcomeEmail.success) {
+    // Stamp the queryable field so a stranded rancher (setup link never
+    // delivered) is findable in one filter, not buried in free text.
+    try {
+      await updateRecord(TABLES.RANCHERS, created.id, {
+        'Welcome Email Failed At': new Date().toISOString(),
+      });
+    } catch (e) {
+      console.error('[self-submit] welcome-email-failure stamp failed (non-blocking):', e);
+    }
   }
 
   // ── Telegram alert with one-tap action buttons ──
@@ -476,6 +519,11 @@ export async function POST(req: Request) {
           : '',
         notes ? `Form notes: ${notes}` : '',
         coords ? `Coords: ${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)}` : '⚠️ No geocode — manual coords needed',
+        // P3a: surface a failed/suppressed welcome so Ben resends the setup link
+        // by hand (the setup link is the rancher's only way into the wizard).
+        welcomeEmail && !welcomeEmail.success
+          ? `⚠️ welcome email ${welcomeEmail.suppressed ? 'SUPPRESSED' : 'FAILED'} (${welcomeEmail.reason || 'unknown'}) — resend the setup link manually`
+          : '',
         `Airtable: ${created.id}`,
       ].filter(Boolean);
 

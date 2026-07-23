@@ -532,8 +532,24 @@ async function guardedSend(opts: {
     }
     return { success: true };
   } catch (error: any) {
-    // Don't log to Email Sends as 'sent' if Resend threw — that would
-    // poison the cap calc. Let the caller see the error.
+    // THROW-SHAPED FAILURE (2026-07-23, onboarding hardening P3c): the Resend
+    // SDK usually RESOLVES API errors as { error } (logged 'failed' above), but
+    // a network fault / DNS failure / thrown exception lands HERE. This path
+    // previously wrote NO Email Sends row — the one invisible send-failure
+    // shape — so a throw both escaped the audit log AND undercounted the
+    // frequency-cap denominator (an un-logged send silently shrinks the rolling
+    // 7-day count). Log it as 'failed' (mirror the resolved-error path) BEFORE
+    // re-throwing so the caller still sees the error. logEmailSend never throws.
+    const reason = String(error?.message || error).slice(0, 200);
+    await logEmailSend({
+      recipientEmail: opts.recipientEmail,
+      recipientConsumerId: opts.recipientConsumerId,
+      templateName: opts.templateName,
+      subject: opts.subject,
+      status: 'failed',
+      suppressionReason: reason,
+      campaign: opts.campaign,
+    });
     throw error;
   }
 }

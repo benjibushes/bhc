@@ -138,9 +138,23 @@ export async function POST(request: Request) {
         `🔗 <b>Setup link re-minted</b> (self-serve) for ${name} (${to})`,
       ).catch(() => {});
     } else {
-      // Suppressed/failed sends still answer neutral (no enumeration), but
-      // the operator should know a stuck rancher asked and got nothing.
+      // Suppressed/failed sends still answer neutral (no enumeration), but a
+      // stuck rancher re-requesting a link IS the bounced/suppressed case (the
+      // Vale Creek class) — the one rancher who most needs a human. Fire a loud
+      // signal so Ben can deliver the link by hand; the caller still gets the
+      // identical neutral 200.
       console.error('[setup/resend-link] send did not go out:', result?.reason || 'unknown');
+      try {
+        const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+        await sendOperatorSignal({
+          urgency: 'loud',
+          kind: 'stuck-rancher',
+          summary: 'Stuck rancher asked for a setup link — deliver manually',
+          detail: `${name} (${to}) requested a fresh setup link and the send was ${result?.suppressed ? 'suppressed' : `failed:${result?.reason || 'unknown'}`}. Deliver their /rancher/setup link by hand.`,
+          dedupeKey: `resend-link-stuck-${to}`,
+          dedupeWindowMs: 30 * 60 * 1000,
+        });
+      } catch {}
     }
 
     return NextResponse.json(NEUTRAL_RESPONSE);

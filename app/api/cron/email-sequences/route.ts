@@ -904,7 +904,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
             // so guardedSend's suppression check + frequency cap + Email Sends
             // audit log all fire. Without this, rancher reminders bypass every
             // safety gate — could spam an unsubscribed rancher silently.
-            await sendEmail({
+            const sendResult: any = await sendEmail({
               to: email,
               subject,
               html: `<div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;">
@@ -918,6 +918,15 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
               templateName: `rancher_docs_reminder_${newStage}`,
               _replyContext: { type: 'rnc', recordId: rancher.id },
             });
+            // Only advance the stage when the reminder actually went out. A
+            // suppressed/failed send that still stamped newStage would burn the
+            // milestone silently — the rancher never gets it and the drip skips
+            // to the next tier. On {success:false} leave the stage put so this
+            // milestone retries next run, and count it as held.
+            if (!sendResult?.success) {
+              skipReasons['rancher-reminder-not-sent'] = (skipReasons['rancher-reminder-not-sent'] || 0) + 1;
+              continue;
+            }
             await updateRecord(TABLES.RANCHERS, rancher.id, {
               'Rancher Sequence Stage': newStage,
             });

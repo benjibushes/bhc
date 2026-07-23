@@ -835,6 +835,48 @@ function _pickCanonical(matches: any[]): any {
   return [...matches].sort((a, b) => _rancherRecencyMs(b) - _rancherRecencyMs(a))[0];
 }
 
+// Server-side filter that returns a SUPERSET of every dedupe tier's true
+// matches (2026-07-23 hardening — the Justin incident). findOrCreateRancherByEmail
+// used to pull the ENTIRE Ranchers table on every signup and filter in JS; under
+// Airtable's 5 req/s cap that unfiltered scan threw/timed out in the pre-record-
+// write window and stranded the rancher with no record + no alert. This narrows
+// the read to rows that COULD match so the caller's JS narrowing (unchanged) is
+// behavior-equivalent — only the candidate set shrinks. Pure/testable.
+//   • Email       — exact (trim+lower); JS re-checks with the same normalizer.
+//   • Team Emails  — substring superset; JS narrows to an exact split-list element.
+//   • Phone        — FIND on the last 4 digits (contiguous in every common US
+//                    format) is a superset; JS narrows to full digits-only equality.
+//   • Ranch+State  — exact (trim+lower) on both.
+// Returns null when there is NOTHING to match on (no email/phone/ranch+state) so
+// the caller can skip the read entirely and go straight to create.
+export function buildRancherDedupeFormula(args: {
+  normalizedEmail: string;
+  normalizedPhone: string; // digits only; only used when >= 10 digits
+  ranchName?: string;
+  state?: string;
+}): string | null {
+  const clauses: string[] = [];
+  if (args.normalizedEmail) {
+    const e = escapeAirtableValue(args.normalizedEmail);
+    clauses.push(`LOWER(TRIM({Email})) = "${e}"`);
+    clauses.push(`FIND("${e}", LOWER({Team Emails})) > 0`);
+  }
+  if ((args.normalizedPhone || '').length >= 10) {
+    const last4 = escapeAirtableValue(args.normalizedPhone.slice(-4));
+    clauses.push(`FIND("${last4}", {Phone}) > 0`);
+  }
+  const ranch = (args.ranchName || '').trim();
+  const state = (args.state || '').trim();
+  if (ranch && state) {
+    clauses.push(
+      `AND(LOWER(TRIM({Ranch Name})) = "${escapeAirtableValue(ranch.toLowerCase())}", ` +
+        `LOWER(TRIM({State})) = "${escapeAirtableValue(state.toLowerCase())}")`,
+    );
+  }
+  if (clauses.length === 0) return null;
+  return clauses.length === 1 ? clauses[0] : `OR(${clauses.join(', ')})`;
+}
+
 export async function findOrCreateRancherByEmail(
   email: string,
   fields: Record<string, any>,
@@ -845,7 +887,22 @@ export async function findOrCreateRancherByEmail(
   matchedBy: 'email' | 'team' | 'phone' | 'ranch+state' | null;
 }> {
   const normalizedEmail = _normalizeEmail(email);
-  const all = (await getAllRecords(TABLES.RANCHERS)) as any[];
+  // Filtered candidate read (2026-07-23) — replaces the unfiltered full-table
+  // scan that threw/timed out in the pre-write window (the Justin incident).
+  // buildRancherDedupeFormula returns a SUPERSET of every tier's true matches,
+  // so the JS narrowing below is unchanged + behavior-equivalent. When there is
+  // nothing to match on it returns null → skip the read and go straight to
+  // create. getAllRecords wraps the read in withRateLimitRetry, so a transient
+  // 429/5xx backs off + retries instead of throwing bare.
+  const dedupeFormula = buildRancherDedupeFormula({
+    normalizedEmail,
+    normalizedPhone: (opts?.phone || '').replace(/\D/g, ''),
+    ranchName: opts?.ranchName,
+    state: opts?.state,
+  });
+  const all = (dedupeFormula
+    ? ((await getAllRecords(TABLES.RANCHERS, dedupeFormula)) as any[])
+    : []) as any[];
   const splitRe = /[\s,;\n]+/;
 
   // 1 + 2: email-based matches — SKIPPED ENTIRELY when there's no email, so we

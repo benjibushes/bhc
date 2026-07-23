@@ -30,7 +30,7 @@ type Channel =
 export default function ApplyForm() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState<{ wizardUrl?: string } | null>(null);
+  const [success, setSuccess] = useState<{ wizardUrl?: string; emailSent?: boolean } | null>(null);
 
   // Live discovery-call Cal link, resolved at runtime. The hardcoded slug and
   // the 142d-old NEXT_PUBLIC_CALENDLY_LINK env are both stale (those events were
@@ -114,23 +114,79 @@ export default function ApplyForm() {
     // sat hidden inside the closed <details>. Never re-add without moving the
     // fields out of the accordion.
     setSubmitting(true);
+
+    // Failed-submit beacon (Justin incident 2026-07-23). navigator.sendBeacon
+    // fires even as the page tears down, so a rancher who fails at the door —
+    // non-2xx, thrown fetch, network abort, or the client timeout below —
+    // still leaves a Signup Attempts trace + rescue path for Ben, instead of
+    // vanishing into a Vercel console.error nobody watches. Best-effort: it
+    // never throws into the submit UX. IP is derived server-side.
+    const fireFailureBeacon = (status: number, reason: string) => {
+      try {
+        if (typeof navigator === 'undefined' || !navigator.sendBeacon) return;
+        const payload = JSON.stringify({
+          email: form.email.trim(),
+          ranchName: form.ranchName.trim(),
+          state: form.state,
+          phone: form.phone,
+          ip: '',
+          door: 'apply',
+          status,
+          reason: String(reason || '').slice(0, 500),
+        });
+        navigator.sendBeacon(
+          '/api/signup/failure-beacon',
+          new Blob([payload], { type: 'application/json' }),
+        );
+      } catch {
+        /* telemetry must never break the submit */
+      }
+    };
+
+    // Client-side timeout guard (25s < the route's 30s maxDuration): abort a
+    // hung request BEFORE the server is killed, so the pre-write hang that made
+    // Justin invisible surfaces as a beaconed 'timeout' instead of a dead tab.
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, 25000);
+    let httpStatus = 0;
     try {
       const res = await fetch('/api/apply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
+        signal: controller.signal,
       });
+      httpStatus = res.status;
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || `Submit failed (${res.status})`);
       }
       const data = await res.json();
-      setSuccess({ wizardUrl: data.wizardUrl });
+      // emailSent is an optional field the server may add (welcome-email
+      // hardening): true/false when known, undefined on older responses.
+      setSuccess({ wizardUrl: data.wizardUrl, emailSent: data.emailSent });
       // Don't auto-redirect — user picks between book-discovery vs skip-to-wizard
       // via UI in the success state (2-call architecture).
     } catch (err: any) {
-      setError(err?.message || 'Could not submit application. Try again.');
+      const isAbort = timedOut || err?.name === 'AbortError';
+      const reason = isAbort
+        ? 'client timeout'
+        : err?.message || 'Could not submit application. Try again.';
+      // Beacon EVERY failure before rendering the error. httpStatus is the
+      // server code on a non-2xx throw; still 0 when fetch itself rejected
+      // (network abort / timeout) — the outcome mapper keys off both.
+      fireFailureBeacon(isAbort ? 0 : httpStatus, reason);
+      setError(
+        isAbort
+          ? 'That took too long — please try again, or use the book-a-call option.'
+          : reason,
+      );
     } finally {
+      clearTimeout(timer);
       setSubmitting(false);
     }
   };
@@ -224,11 +280,23 @@ export default function ApplyForm() {
             {/* Copy honesty (2026-07-21): the old line promised the wizard
                 link would be re-emailed with the calendar invite — nothing
                 implements that (the Cal webhook only flips status + alerts
-                Ben). Point at the approval email that WAS just sent. */}
-            <p className="text-xs text-saddle italic">
-              your wizard link is in the approval email we just sent —
-              good for 60 days. Or skip the call and use the CTA above.
-            </p>
+                Ben). Point at the approval email that WAS just sent.
+                emailSent===false (2026-07-23): the welcome email did NOT go out
+                (bounce/suppression — the Vale Creek/Justin class), so don't
+                promise an inbox — tell them the on-screen link IS the link. */}
+            {success.emailSent === false ? (
+              <p className="text-xs text-saddle italic">
+                heads up — our welcome email may not reach you, so use the
+                &ldquo;build my page&rdquo; link above <strong>now</strong>
+                {' '}(bookmark it — it&apos;s good for 60 days). Don&apos;t wait
+                on an email.
+              </p>
+            ) : (
+              <p className="text-xs text-saddle italic">
+                your wizard link is in the approval email we just sent —
+                good for 60 days. Or skip the call and use the CTA above.
+              </p>
+            )}
           </div>
         )}
       </div>

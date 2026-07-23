@@ -184,15 +184,38 @@ async function mintOnboardingUrl(
     // `if (!accountId)`), so re-entry/refresh never overwrites it. This anchors the
     // onboarding-stuck recovery-nudge cron, which targets ranchers who began Stripe
     // Connect and abandoned KYC.
-    try {
-      await updateRecord(TABLES.RANCHERS, rancherId, {
-        'Stripe Connect Account Id': accountId,
-        'Stripe Connect Status': 'onboarding',
-        'Connect Started At': new Date().toISOString(),
-      });
-    } catch (e: any) {
-      console.error('[connect/start] Airtable persist failed:', e?.message);
-      // Continue — Stripe account exists; webhook will resync status
+    // Retry the persist once — a real, billable Stripe account already exists,
+    // so a dropped write here orphans it (the next start mints ANOTHER account,
+    // and the webhook can't resync a row it can't find by Account Id).
+    let persisted = false;
+    for (let attempt = 1; attempt <= 2 && !persisted; attempt++) {
+      try {
+        await updateRecord(TABLES.RANCHERS, rancherId, {
+          'Stripe Connect Account Id': accountId,
+          'Stripe Connect Status': 'onboarding',
+          'Connect Started At': new Date().toISOString(),
+        });
+        persisted = true;
+      } catch (e: any) {
+        console.error(`[connect/start] Airtable persist failed (attempt ${attempt}):`, e?.message);
+      }
+    }
+    if (!persisted) {
+      // Both writes failed: the Account Id never landed on the rancher. Fire a
+      // loud signal carrying accountId + rancherId so Ben can attach the orphan
+      // by hand — otherwise a billable Connect account is silently unclaimed.
+      // Keep minting the link below so the rancher still proceeds.
+      try {
+        const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+        await sendOperatorSignal({
+          urgency: 'loud',
+          kind: 'connect',
+          summary: 'Orphan Connect account — attach manually',
+          detail: `rancher=${rancherId} (${String(rancher['Operator Name'] || rancher['Ranch Name'] || '')}) acct=${accountId} — Stripe account created but the Account Id persist failed twice. Attach it to the rancher record by hand before they start again (avoids a duplicate account).`,
+          dedupeKey: `connect-orphan-${rancherId}`,
+          dedupeWindowMs: 30 * 60 * 1000,
+        });
+      } catch {}
     }
   }
 

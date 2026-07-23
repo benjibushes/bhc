@@ -79,12 +79,22 @@ ${urgency}
 </body></html>`;
 }
 
-async function realHandler(_request: Request): Promise<{ status: 'success' | 'maintenance-blocked'; recordsTouched: number; notes: string }> {
+async function realHandler(_request: Request): Promise<{ status: 'success' | 'partial' | 'maintenance-blocked'; recordsTouched: number; notes: string }> {
   if (isMaintenanceMode()) {
     return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
   }
 
   const all = (await getAllRecords(TABLES.RANCHERS)) as any[];
+  // P4c: 0 ranchers from a table that always holds ~80 = a degraded/empty read.
+  // Return 'partial' (not a green 'success' with nothing nudged) so withCronRun
+  // alerts on a silently-broken chase. A throwing read already surfaces 'error'.
+  if (!Array.isArray(all) || all.length === 0) {
+    return {
+      status: 'partial',
+      recordsTouched: 0,
+      notes: 'ranchers read returned 0 rows — degraded/empty; not chasing on a blind read',
+    };
+  }
   const results: any[] = [];
   let sent = 0;
   let escalated = 0;

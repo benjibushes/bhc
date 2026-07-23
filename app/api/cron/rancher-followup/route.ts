@@ -38,7 +38,7 @@ const MAX_PER_RUN = 25;
 // on the find()-resolved rancher so Paused/Non-Compliant/Removed aren't nudged). The
 // daily wrapper + in-code Monday guard correctly works around Vercel Hobby dropping
 // day-of-week cron schedules. No silent-skip or double-nudge found — left as-is.
-async function realHandler(_request: Request): Promise<{ status: 'success' | 'maintenance-blocked'; recordsTouched: number; notes: string }> {
+async function realHandler(_request: Request): Promise<{ status: 'success' | 'partial' | 'maintenance-blocked'; recordsTouched: number; notes: string }> {
   if (isMaintenanceMode()) {
     return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
   }
@@ -49,6 +49,17 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
   const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
   const ranchers = await getAllRecords(TABLES.RANCHERS);
+    // P4c: a silently-broken read that returns 0 ranchers must NOT log a green
+    // 'success' with nothing chased — prod always has ~80 ranchers, so 0 = a
+    // degraded/empty read. Report 'partial' so withCronRun alerts. (A throwing
+    // read already surfaces as 'error'.)
+    if (!Array.isArray(ranchers) || ranchers.length === 0) {
+      return {
+        status: 'partial',
+        recordsTouched: 0,
+        notes: 'ranchers read returned 0 rows — degraded/empty; not chasing on a blind read',
+      };
+    }
     const now = new Date();
     const DAY_MS = 24 * 60 * 60 * 1000;
 

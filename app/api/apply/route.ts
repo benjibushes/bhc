@@ -9,6 +9,7 @@ import {
 } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendRancherApplyAutoApproved } from '@/lib/email';
+import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { JWT_SECRET } from '@/lib/secrets';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 
@@ -46,9 +47,27 @@ import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 //   • Rate limit per IP (basic — Vercel KV would be tighter, fine for v1).
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 30;
+// Raised 30→60 (2026-07-23 hardening) — the pre-record-write window (slug mint +
+// dedupe read + create) is what threw/timed out and stranded "Justin". More
+// headroom lets withRateLimitRetry actually back off + recover under an Airtable
+// rate-limit blip instead of the function being killed mid-write.
+export const maxDuration = 60;
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
+
+// P2c internal deadline (2026-07-23) — a Vercel HARD kill at maxDuration runs no
+// catch, so a slow-but-alive record write would still vanish without a trace.
+// Race the write against a deadline safely BELOW maxDuration; on breach we throw
+// this, fire the loud rescue signal with the full payload, and return 503 — a
+// near-kill now leaves a trail Ben can act on.
+class ApplyDeadlineError extends Error {}
+function withDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new ApplyDeadlineError('apply write deadline exceeded')), ms);
+  });
+  return Promise.race([p, deadline]).finally(() => clearTimeout(timer)) as Promise<T>;
+}
 
 type VolumeBand = '<5' | '5-25' | '25-100' | '100+';
 type Constraint = 'more_buyers' | 'better_pricing' | 'easier_logistics' | 'brand_visibility' | 'all_above';
@@ -121,14 +140,24 @@ async function mintUniqueSlug(
   const base = kebab(ranchName) || `ranch-${opts.fallbackSuffix}`;
   let unique = base;
   try {
-    for (let n = 2; n < 50; n++) {
+    // Cap the collision loop at a bounded handful (2026-07-23 hardening). The
+    // old ceiling of ~48 sequential filtered scans could burn most of the
+    // function budget on a common ranch name INSIDE the pre-write window (the
+    // Justin timeout). After a few numbered tries, fall back to the random
+    // suffix — globally unique in one more step instead of dozens of reads.
+    let resolved = false;
+    for (let n = 2; n <= 9; n++) {
       const safe = escapeAirtableValue(unique);
       const taken = (
         (await getAllRecords(TABLES.RANCHERS, `LOWER({Slug}) = "${safe}"`)) as any[]
       ).filter((r) => r.id !== opts.excludeRecordId);
-      if (taken.length === 0) break;
+      if (taken.length === 0) {
+        resolved = true;
+        break;
+      }
       unique = `${base}-${n}`;
     }
+    if (!resolved) unique = `${base}-${opts.fallbackSuffix}`;
   } catch (e: any) {
     console.warn('[apply] slug collision check failed:', e?.message);
     unique = `${base}-${opts.fallbackSuffix}`;
@@ -233,27 +262,43 @@ export async function POST(req: Request) {
   // Mint the Slug BEFORE create (2026-07-08). There's no record id yet, so
   // the no-collision fallback uses a random suffix instead of activate's
   // record-id suffix.
-  const slug = await mintUniqueSlug(body.ranchName.trim(), {
-    fallbackSuffix: Math.random().toString(36).slice(2, 8),
-  });
+  // Hoist the required-field values into consts BEFORE the race closure — the
+  // async IIFE below is a nested scope, so TS drops the guard-narrowing of the
+  // mutable `body` inside it. These are already validated non-empty above.
+  const operatorName = body.operatorName.trim();
+  const ranchNameTrimmed = body.ranchName.trim();
+  const phoneTrimmed = body.phone?.trim() || '';
 
   let rancherId: string;
   try {
-    const { record, created, matchedBy } = await findOrCreateRancherByEmail(
-      email,
-      {
-        'Operator Name': body.operatorName.trim(),
-        'Ranch Name': body.ranchName.trim(),
-        Email: email,
-        Phone: body.phone?.trim() || '',
-        City: body.city?.trim() || '',
-        State: body.state,
-        Status: 'Pending',
-        'Pricing Model': 'legacy',
-        'Operation Details': opDetails,
-        Slug: slug,
-      },
-      { phone: body.phone?.trim(), ranchName: body.ranchName.trim(), state: body.state },
+    // P2c: race slug-mint + find/create against an internal deadline (below
+    // maxDuration=60) so a slow-but-alive Airtable still leaves a trace — the
+    // catch below fires the loud rescue signal + 503 BEFORE Vercel hard-kills
+    // the function (a hard kill runs no catch at all). Slug mint moved inside
+    // the race so a hung collision loop is covered too.
+    const { record, created, matchedBy } = await withDeadline(
+      (async () => {
+        const slug = await mintUniqueSlug(ranchNameTrimmed, {
+          fallbackSuffix: Math.random().toString(36).slice(2, 8),
+        });
+        return findOrCreateRancherByEmail(
+          email,
+          {
+            'Operator Name': operatorName,
+            'Ranch Name': ranchNameTrimmed,
+            Email: email,
+            Phone: phoneTrimmed,
+            City: body.city?.trim() || '',
+            State: body.state,
+            Status: 'Pending',
+            'Pricing Model': 'legacy',
+            'Operation Details': opDetails,
+            Slug: slug,
+          },
+          { phone: phoneTrimmed, ranchName: ranchNameTrimmed, state: body.state },
+        );
+      })(),
+      45_000,
     );
 
     if (!created) {
@@ -349,10 +394,43 @@ export async function POST(req: Request) {
 
     rancherId = record.id;
   } catch (e: any) {
-    console.error('[apply] Airtable create failed:', e?.message);
+    // P1a + P2c: the pre-record-write window is where "Justin" vanished — a
+    // throw here logged console.error only (no page), and a hard timeout ran no
+    // catch at all. Fire a LOUD, deduped operator signal carrying the FULL
+    // submitted payload so Ben can hand-create the record + resend the wizard
+    // link in ~60s. withDeadline throws ApplyDeadlineError just below the
+    // maxDuration kill, so the slow-but-alive case now lands here too (503).
+    const timedOut = e instanceof ApplyDeadlineError;
+    console.error(
+      `[apply] Airtable create ${timedOut ? 'timed out' : 'failed'}:`,
+      e?.message,
+    );
+    try {
+      await sendOperatorSignal({
+        urgency: 'loud',
+        kind: 'system-error',
+        summary: `Signup ${timedOut ? 'TIMED OUT' : 'create FAILED'} · /apply · ${body.ranchName} (${body.state})`,
+        detail:
+          `A rancher's /apply submission ${timedOut ? 'is taking too long' : 'threw'} in the pre-record-write window — ` +
+          `nothing was saved. Hand-create the Ranchers row + resend the wizard link.\n\n` +
+          `Operator: ${body.operatorName}\n` +
+          `Ranch: ${body.ranchName}\n` +
+          `Email: ${email}\n` +
+          `Phone: ${body.phone || '(none)'}\n` +
+          `State: ${body.state}\n` +
+          `Error: ${e?.message || 'unknown'}`,
+        dedupeKey: 'signup-create-fail:apply',
+      });
+    } catch (sigErr: any) {
+      console.error('[apply] rescue operator signal failed:', sigErr?.message);
+    }
     return NextResponse.json(
-      { error: 'Could not save your application. Please try again or email ben@buyhalfcow.com.' },
-      { status: 500 }
+      {
+        error: timedOut
+          ? 'Saving your application is taking longer than expected. Please try again in a moment or email ben@buyhalfcow.com.'
+          : 'Could not save your application. Please try again or email ben@buyhalfcow.com.',
+      },
+      { status: timedOut ? 503 : 500 },
     );
   }
 
@@ -408,6 +486,10 @@ export async function POST(req: Request) {
           `\n⚠️ Welcome email ${welcomeEmail.suppressed ? 'SUPPRESSED' : 'FAILED'} (${
             welcomeEmail.reason || 'unknown'
           }) ${new Date().toISOString().slice(0, 10)} — rancher may have no copy of wizard link`,
+        // P4d: also stamp the queryable field (free-text buried in Operation
+        // Details is invisible to a sweep) so a "welcome never delivered" cohort
+        // is findable in one filter.
+        'Welcome Email Failed At': new Date().toISOString(),
       });
     } catch (e: any) {
       console.warn('[apply] welcome-email-failure stamp failed (non-fatal):', e?.message);
@@ -445,5 +527,8 @@ export async function POST(req: Request) {
     wizardUrl,
     manualReview,
     rancherId,
+    // P4d: let the client adapt its copy — "check your inbox" only when the
+    // welcome actually sent; otherwise it can lean on the on-screen wizard link.
+    emailSent: welcomeEmail.success,
   });
 }
