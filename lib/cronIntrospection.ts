@@ -64,6 +64,11 @@ export const EXPECTED_CRONS_24H = [
   'migration-deadline',
   'nightly-rancher-audit',
   'onboarding-stuck',
+  // "setup link may not have landed" sweep — env-gated (SETUP_LINK_UNDELIVERED_
+  // ENABLED) but the gate is INSIDE realHandler, so a Cron Runs row is written
+  // hourly either way (same as demand-router / stripe-reconcile). EXPECTED, not
+  // EXCLUDED.
+  'setup-link-undelivered',
   'deposit-request-nudge',
   'deposit-watchdog',
   'fulfillment-push-net',

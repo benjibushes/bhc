@@ -24,6 +24,7 @@ import { NextResponse } from 'next/server';
 import { getRecordById, deleteRecord, TABLES } from '@/lib/airtable';
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 
@@ -195,7 +196,86 @@ async function realHandler(_request: Request): Promise<E2EResult> {
     }
   }
 
-  // Report
+  // ── P1c: /apply DOOR canary (2026-07-23, Justin incident) ──────────────
+  // The buyer funnel above proves the BUYER door. Justin's incident was the
+  // RANCHER signup door (/api/apply) failing in its pre-record-write window
+  // (slug + dedupe scans under maxDuration=30) with ZERO trace — no record, no
+  // email, no alert. Exercise that door end-to-end: POST a clearly-tagged
+  // synthetic rancher, assert 200 + wizardUrl + a real Ranchers record landed,
+  // then HARD-DELETE it. The .test domain (RFC 6761) never resolves, so the
+  // welcome email never actually fires; the unique email/phone/ranch per run
+  // guarantee a fresh create (never a dedupe-UPDATE into a real rancher).
+  // Cleanup runs in `finally` even if an assertion throws.
+  let applyFailure: StepFailure | null = null;
+  let applyRancherId: string | null = null;
+  try {
+    const applyEmail = `synthetic+${runId}@buyhalfcow.test`;
+    // Unique 10-digit phone per run so a prior run's failed cleanup can't
+    // dedupe-match this submit into an UPDATE of a leftover row.
+    const applyPhone = `+1555${String(Date.now()).slice(-7)}`;
+    const r = await fetch(`${SITE_URL}/api/apply`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        operatorName: 'ZZ Synthetic Canary',
+        ranchName: `ZZ Synthetic Canary ${runId}`,
+        email: applyEmail,
+        phone: applyPhone,
+        state: 'MT',
+      }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      applyFailure = { step: 'POST /api/apply', error: `HTTP ${r.status}`, detail: j };
+    } else if (!j?.wizardUrl) {
+      applyFailure = { step: '/apply wizardUrl absent', error: 'response missing wizardUrl — the setup-link mint regressed', detail: j };
+    } else if (!j?.rancherId) {
+      applyFailure = { step: '/apply record create', error: 'no rancherId in response — record not created', detail: j };
+    } else {
+      const createdId: string = String(j.rancherId);
+      applyRancherId = createdId;
+      // Assert the row actually landed in Airtable (getRecordById is a direct
+      // find(), never the cached list — no read-after-write stale risk).
+      try {
+        const rec: any = await getRecordById(TABLES.RANCHERS, createdId);
+        if (!rec?.id) {
+          applyFailure = { step: '/apply record verify', error: 'rancherId not found in Airtable', detail: { applyRancherId: createdId } };
+        }
+      } catch (e: any) {
+        applyFailure = { step: '/apply record verify', error: e?.message || 'unknown' };
+      }
+    }
+  } catch (e: any) {
+    applyFailure = { step: 'POST /api/apply (network)', error: e?.message || 'unknown' };
+  } finally {
+    if (applyRancherId) {
+      try {
+        await deleteRecord(TABLES.RANCHERS, applyRancherId);
+        cleaned++;
+      } catch (e: any) {
+        console.warn('[synthetic-e2e cleanup] apply-canary rancher delete failed:', e?.message);
+      }
+    }
+  }
+
+  if (applyFailure) {
+    // Loud, deduped — a fully-broken signup door means qualified ranchers are
+    // failing silently RIGHT NOW (the Justin class). Rides SMS/email fallback.
+    await sendOperatorSignal({
+      urgency: 'loud',
+      kind: 'system-error',
+      summary: 'signup door /apply BROKEN',
+      detail:
+        `Synthetic /apply canary failed at: ${applyFailure.step} — ${applyFailure.error}\n` +
+        (applyFailure.detail ? `${JSON.stringify(applyFailure.detail).slice(0, 300)}\n\n` : '\n') +
+        `A qualified rancher submitting at /apply right now may be failing silently ` +
+        `in the pre-record-write window (the Justin incident). Run ID: ${runId}`,
+      dedupeKey: 'synthetic-apply-door-broken',
+      dedupeWindowMs: 60 * 60 * 1000,
+    }).catch(() => {});
+  }
+
+  // Report — either door failing is a red run.
   if (failure) {
     try {
       await sendTelegramMessage(
@@ -207,10 +287,16 @@ async function realHandler(_request: Request): Promise<E2EResult> {
           `<i>Funnel broken — investigate before more leads arrive. Run ID: ${runId}</i>`,
       );
     } catch {}
+  }
+  if (failure || applyFailure) {
+    const parts = [
+      failure ? `buyer:${failure.step} — ${failure.error}` : null,
+      applyFailure ? `apply:${applyFailure.step} — ${applyFailure.error}` : null,
+    ].filter(Boolean);
     return {
       status: 'error',
       recordsTouched: cleaned,
-      notes: `E2E broken at: ${failure.step} — ${failure.error}`,
+      notes: `E2E broken at: ${parts.join(' | ')}`,
     };
   }
 

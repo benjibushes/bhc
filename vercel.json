@@ -248,6 +248,10 @@
     {
       "path": "/api/cron/stripe-reconcile",
       "schedule": "20 10 * * *"
+    },
+    {
+      "path": "/api/cron/setup-link-undelivered",
+      "schedule": "40 * * * *"
     }
   ]
 }

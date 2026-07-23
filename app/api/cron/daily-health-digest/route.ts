@@ -37,6 +37,41 @@ interface CronResult {
   notes: string;
 }
 
+// P4b — "started but didn't finish" cohort. Pure so it's unit-testable off the
+// live Airtable read. Three buckets of ranchers who entered the funnel and
+// stalled somewhere no other digest line surfaces:
+//   - blankOver2d      : applied (Onboarding Status BLANK) >2 days ago, never advanced
+//   - signedNotLive    : Agreement Signed = true but Page Live = false (signed-but-dark)
+//   - welcomeFailed     : Welcome Email Failed At set (no emailed copy of the wizard link)
+export interface StuckOnboardingBuckets {
+  blankOver2d: Array<{ id: string; name: string; daysOld: number }>;
+  signedNotLive: Array<{ id: string; name: string }>;
+  welcomeFailed: Array<{ id: string; name: string }>;
+}
+
+export function aggregateStuckOnboarding(ranchers: any[], nowMs: number): StuckOnboardingBuckets {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const nameOf = (r: any) => String(r['Operator Name'] || r['Ranch Name'] || r.id || 'Unknown');
+  const out: StuckOnboardingBuckets = { blankOver2d: [], signedNotLive: [], welcomeFailed: [] };
+  for (const r of ranchers) {
+    const onboarding = String(r['Onboarding Status'] || '').trim();
+    if (!onboarding) {
+      const created = new Date(String(r['_createdTime'] || '')).getTime();
+      if (Number.isFinite(created)) {
+        const daysOld = Math.floor((nowMs - created) / DAY_MS);
+        if (daysOld >= 2) out.blankOver2d.push({ id: r.id, name: nameOf(r), daysOld });
+      }
+    }
+    if (r['Agreement Signed'] === true && r['Page Live'] !== true) {
+      out.signedNotLive.push({ id: r.id, name: nameOf(r) });
+    }
+    if (r['Welcome Email Failed At']) {
+      out.welcomeFailed.push({ id: r.id, name: nameOf(r) });
+    }
+  }
+  return out;
+}
+
 async function realHandler(_request: Request): Promise<CronResult> {
   const now = Date.now();
   const cutoff24h = new Date(now - 24 * 60 * 60 * 1000).toISOString();
@@ -55,7 +90,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
       return [];
     }
   };
-  const [cronRuns, ranchers, consumers, referrals, emailSends] = await Promise.all([
+  const [cronRuns, ranchers, consumers, referrals, emailSends, stuckRanchers, failedSignupAttempts] = await Promise.all([
     safeRead('cronRuns', getAllRecords('Cron Runs', `IS_AFTER({Started At}, '${cutoff24h}')`) as Promise<any[]>),
     safeRead('ranchers', getAllRecords(TABLES.RANCHERS, `{Active Status}='Active'`) as Promise<any[]>),
     safeRead('consumers', getAllRecords(
@@ -66,6 +101,18 @@ async function realHandler(_request: Request): Promise<CronResult> {
     safeRead('emailSends', getAllRecords(
       TABLES.EMAIL_SENDS,
       `IS_AFTER({Sent At}, '${cutoff24h}')`
+    ) as Promise<any[]>),
+    // P4b: started-but-didn't-finish cohort (superset filter — aggregateStuck-
+    // Onboarding refines the 2-day age on the blank bucket in JS). Active-only
+    // `ranchers` above misses these (they're Pending / signed-but-dark).
+    safeRead('stuckRanchers', getAllRecords(
+      TABLES.RANCHERS,
+      `OR({Onboarding Status}=BLANK(), AND({Agreement Signed}=TRUE(), {Page Live}!=TRUE()), NOT({Welcome Email Failed At}=BLANK()))`
+    ) as Promise<any[]>),
+    // P4b: failed signup attempts (any outcome except 'created') in last 24h.
+    safeRead('signupAttempts', getAllRecords(
+      'Signup Attempts',
+      `AND(IS_AFTER(CREATED_TIME(), '${cutoff24h}'), {Outcome}!='created')`
     ) as Promise<any[]>),
   ]);
 
@@ -173,6 +220,10 @@ async function realHandler(_request: Request): Promise<CronResult> {
   // since the 2026-07-14 email-truth fix. Nonzero = the pipe is sick TODAY.
   const failed24h = emailSends.filter((e: any) => String(e['Status'] || '') === 'failed').length;
 
+  // P4b — started-but-didn't-finish cohort + failed-signup-attempts count.
+  const stuck = aggregateStuckOnboarding(stuckRanchers, now);
+  const failedSignups24h = failedSignupAttempts.length;
+
   // ── MORNING-PULSE PROBES (2026-07-14) ──
   // Live assertions, not env-presence guesses: Stripe key, Resend key, Redis,
   // and the silent-killer env set — each red line carries its fix. Born from
@@ -218,6 +269,14 @@ async function realHandler(_request: Request): Promise<CronResult> {
       ? `🚨 <b>Email (24h):</b> ${sent24h} sent · ${failed24h} FAILED · ${suppressed24h} suppressed · ${bounced24h} bounced — failed sends mean the pipe is sick NOW`
       : `<b>Email (24h):</b> ${sent24h} sent · ${suppressed24h} suppressed · ${bounced24h} bounced`,
     '',
+    // P4b — the onboarding funnel's silent middle: ranchers who started and
+    // stalled where no other line catches them, + failed signup-door attempts.
+    `<b>Started, not finished:</b> ${stuck.blankOver2d.length} applied&gt;2d blank · ${stuck.signedNotLive.length} signed-not-live · ${stuck.welcomeFailed.length} welcome-email-failed`,
+    stuck.welcomeFailed.length > 0
+      ? `  ⚠️ welcome-email-failed: ${stuck.welcomeFailed.slice(0, 6).map((w) => w.name).join(', ')} — no emailed wizard link, resend manually`
+      : null,
+    `<b>Signup attempts (failed, 24h):</b> ${failedSignups24h} non-created (validation / rate-limit / server-error / timeout)`,
+    '',
     cronErrorRuns.length > 0
       ? `🚨 <b>Cron failures (24h):</b> ${cronErrorRuns.length} runs across ${failedCronNames.length} crons → ${failedCronNames.slice(0, 8).join(', ')}`
       : `✅ <b>Crons healthy</b> — 0 failures in 24h`,
@@ -229,15 +288,15 @@ async function realHandler(_request: Request): Promise<CronResult> {
   ];
 
   // Surface read failures IN the digest so a blind monitor is impossible.
-  // 6 reads total: the 5 parallel pulls + the watchdog's Cron Runs read.
+  // 8 reads total: the 7 parallel pulls + the watchdog's Cron Runs read.
   if (readErrors.length > 0) {
     lines.push(
       '',
-      `⚠️ <b>Health read errors:</b> ${readErrors.length}/6 Airtable reads failed (${readErrors.map((e) => e.split(':')[0]).join(', ')}) — numbers above are incomplete.`
+      `⚠️ <b>Health read errors:</b> ${readErrors.length}/8 Airtable reads failed (${readErrors.map((e) => e.split(':')[0]).join(', ')}) — numbers above are incomplete.`
     );
   }
 
-  await sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, lines.join('\n')).catch((e: any) =>
+  await sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, lines.filter((l) => l !== null).join('\n')).catch((e: any) =>
     console.warn('[daily-health-digest] telegram fire failed:', e?.message)
   );
 
@@ -252,7 +311,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
   return {
     status,
     recordsTouched: 1,
-    notes: `signups=${signups24h} qualified=${qualified24h} closed=${referralsClosedToday.length} cronErrors=${cronErrorRuns.length} missingCrons=${missingCrons === null ? 'read-failed' : missingCrons.length} readErrors=${readErrors.length}`,
+    notes: `signups=${signups24h} qualified=${qualified24h} closed=${referralsClosedToday.length} cronErrors=${cronErrorRuns.length} missingCrons=${missingCrons === null ? 'read-failed' : missingCrons.length} readErrors=${readErrors.length} stuck=${stuck.blankOver2d.length}/${stuck.signedNotLive.length}/${stuck.welcomeFailed.length} failedSignups24h=${failedSignups24h}`,
   };
 }
 
