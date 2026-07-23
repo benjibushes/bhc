@@ -2,6 +2,20 @@ import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { invalidateSuppressionCache } from '@/lib/email';
+import { findRancherByEmail } from '@/lib/rancherLookup';
+
+// Rancher front-door email templates (P3d, onboarding hardening 2026-07-23).
+// A HARD bounce / complaint on one of these means the rancher never received
+// their welcome / setup link / approval — the Vale Creek / Justin unreachable
+// class — and needs a HUMAN rescue now, not just the silent auto-unsub below.
+// These are the exact Template Name strings logged to Email Sends by the
+// matching senders in lib/email.ts.
+const RANCHER_ONBOARDING_TEMPLATES: ReadonlySet<string> = new Set([
+  'sendRancherApplyAutoApproved',
+  'sendRancherSelfSubmitWelcome',
+  'sendRancherSetupLink',
+  'sendRancherApproval',
+]);
 
 // Resend webhook handler — processes bounce, complaint, and delivery events.
 // Configure in Resend dashboard: Settings > Webhooks > Add endpoint
@@ -136,6 +150,62 @@ export async function POST(request: Request) {
         `${recipientEmail}\n` +
         `Auto-unsubscribed from future emails.`
       ).catch(() => {});
+
+      // ── RANCHER-ONBOARDING RESCUE (P3d, 2026-07-23) ─────────────────────
+      // The generic auto-unsub above is silent-by-design. But a dead address
+      // we used for a rancher's welcome / setup link / approval means the
+      // rancher is UNREACHABLE at the front door (Vale Creek / Justin class)
+      // and must be hand-rescued NOW. Fire a LOUD deduped signal on TOP of
+      // the auto-unsub. Complaints always qualify; bounces only when HARD —
+      // Resend's bounce.type is 'Permanent' for a dead mailbox vs 'Transient'
+      // / 'Undetermined' for a soft retry (treat unknown/blank as hard so a
+      // real dead address is never missed). Scope to the onboarding cohort by
+      // matching a recent Email Sends row for this recipient against
+      // RANCHER_ONBOARDING_TEMPLATES (the webhook payload carries the subject
+      // but not the template name). Deduped per Resend message-id so a
+      // redelivered webhook can't re-alarm.
+      try {
+        const bounceType = String(data.bounce?.type || '').toLowerCase();
+        const isHardBounce =
+          eventType === 'email.bounced' &&
+          (bounceType === '' || bounceType === 'permanent');
+        const isComplaint = eventType === 'email.complained';
+        if (isHardBounce || isComplaint) {
+          const sinceISO = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
+          const sends = await getAllRecords(
+            TABLES.EMAIL_SENDS,
+            `AND(LOWER({Recipient Email}) = "${recipientEmail}", {Sent At} > "${sinceISO}")`
+          ) as any[];
+          const onboardingSend = sends.find((s) =>
+            RANCHER_ONBOARDING_TEMPLATES.has(String(s['Template Name'] || ''))
+          );
+          if (onboardingSend) {
+            const rancher = await findRancherByEmail(recipientEmail).catch(() => null);
+            const who = rancher
+              ? String(rancher['Ranch Name'] || rancher['Operator Name'] || 'a rancher')
+              : 'a rancher';
+            const messageId = data.email_id || data.id || recipientEmail;
+            const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+            await sendOperatorSignal({
+              urgency: 'loud',
+              kind: 'stuck-rancher',
+              summary: `Setup/welcome email to ${recipientEmail} HARD ${isComplaint ? 'COMPLAINT' : 'BOUNCED'} — rancher unreachable by email, rescue manually`,
+              detail:
+                `${isComplaint ? 'Spam complaint' : 'Hard bounce'} on ${recipientEmail} ` +
+                `(onboarding template: ${onboardingSend['Template Name']}). ${who} never got their ` +
+                `welcome / setup link / approval and cannot be reached by email — hand-rescue now ` +
+                `(call / alternate address). This is the Vale Creek / Justin class.`,
+              refs: rancher
+                ? [{ type: 'rancher', id: rancher.id, label: String(rancher['Ranch Name'] || '') }]
+                : undefined,
+              dedupeKey: `rancher-onboarding-bounce:${messageId}`,
+              dedupeWindowMs: 24 * 60 * 60 * 1000,
+            });
+          }
+        }
+      } catch (e: any) {
+        console.error('[resend] rancher-onboarding rescue alert failed:', e?.message);
+      }
     }
 
     if (eventType === 'email.delivery_delayed') {
