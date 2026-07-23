@@ -14,6 +14,7 @@ import { setCapacityCounter } from '@/lib/rancherCapacity';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
+import { GO_LIVE_FIELDS } from '@/lib/goLiveGates';
 import jwt from 'jsonwebtoken';
 
 // 120 → 300 (2026-07-08): run durations grew 52s → 104s over a week as the
@@ -353,11 +354,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
 
       for (const rancher of readyToGoLive) {
         try {
-          await updateRecord(TABLES.RANCHERS, rancher.id, {
-            'Page Live': true,
-            'Onboarding Status': 'Live',
-            'Active Status': 'Active',
-          });
+          await updateRecord(TABLES.RANCHERS, rancher.id, { ...GO_LIVE_FIELDS });
           triggerLaunchWarmup(`batch-approve-auto-go-live:${rancher.id}`);
 
           const email = rancher['Email'];

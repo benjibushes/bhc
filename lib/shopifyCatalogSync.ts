@@ -13,6 +13,7 @@
 import { getAllRecords, createRecord, updateRecord, getRecordById, TABLES, escapeAirtableValue } from './airtable';
 import { parseIntegration } from './fulfillmentConnector';
 import { decryptSecret } from './integrationCrypto';
+import { claimOnce } from './rancherCapacity';
 
 export function computeDisplayPrice(base: number, markupPercent: number | null): number | null {
   if (markupPercent == null || !Number.isFinite(base) || base <= 0) return null;
@@ -114,6 +115,20 @@ export async function syncShopifyCatalog(rancherId: string, opts?: { dryRun?: bo
     return { imported: 0, updated: 0, skippedNoSku: 0, skippedGuard: 0, deactivated: 0, report: ['not in sync mode'] };
   }
   const rancherName = String(rancher['Ranch Name'] || rancher['Operator Name'] || '');
+
+  // Per-rancher concurrency guard (real writes only): a webhook-triggered sync
+  // and the scheduled catalog cron can fire for the same rancher near-
+  // simultaneously. Both read the same `existing` bySku map, neither sees the
+  // other's just-created rows, and each createRecord's the same (rancher, SKU)
+  // → duplicate rows on /shop. Serialize with a short claimOnce lock; if a run
+  // is already in flight, skip — it imports the same catalog. dryRun previews
+  // never write, so they don't contend.
+  if (!opts?.dryRun) {
+    const gotLock = await claimOnce(`shopify-sync-${rancherId}`, 30);
+    if (!gotLock) {
+      return { imported: 0, updated: 0, skippedNoSku: 0, skippedGuard: 0, deactivated: 0, report: ['skipped — a sync for this rancher is already in progress'] };
+    }
+  }
 
   const existing = (await getAllRecords(
     TABLES.RANCHER_PRODUCTS,
