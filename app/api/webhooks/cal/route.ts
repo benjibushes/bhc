@@ -76,6 +76,31 @@ function verifyCalSignature(rawBody: string, headers: Headers): boolean {
   }
 }
 
+// 2026-07-23 idempotency fix: the processed-flip must run on EVERY exit that
+// did work, not just the final rancher-onboarding branch. Otherwise a Cal
+// retry on a migration / buyer-sales / buyer-rancher / no-show event (all of
+// which early-return) finds the dedupe row still 'received' and re-fires
+// operator emails + Telegram alerts. Extracted so each early return can flip
+// it. No-op when dedupeKey is empty (bookingId missing) or the row is gone.
+async function markCalEventProcessed(dedupeKey: string): Promise<void> {
+  if (!dedupeKey) return;
+  try {
+    const safeKey = escapeAirtableValue(dedupeKey);
+    const evRows: any[] = await getAllRecords(
+      'Stripe Events',
+      `{Event Id} = "${safeKey}"`,
+    );
+    if (evRows[0]) {
+      await updateRecord('Stripe Events', evRows[0].id, {
+        'Status': 'processed',
+        'Processed At': new Date().toISOString(),
+      });
+    }
+  } catch (e: any) {
+    console.warn('[cal webhook] processed-flip failed:', e?.message);
+  }
+}
+
 export async function POST(request: Request) {
   // Read raw body once for signature verification + JSON parsing
   const rawBody = await request.text();
@@ -144,6 +169,7 @@ export async function POST(request: Request) {
       : '';
 
     if (!attendeeEmail) {
+      await markCalEventProcessed(dedupeKey);
       return NextResponse.json({ success: true, note: 'No attendee email found' });
     }
 
@@ -247,6 +273,7 @@ export async function POST(request: Request) {
             // NOISE CUT (2026-07-05): informational auto-advance; logged.
             console.info(`[cal webhook] migration call ended — ${rancher['Operator Name'] || rancher['Ranch Name']} → next: Connect + wizard step 4`);
           }
+          await markCalEventProcessed(dedupeKey);
           return NextResponse.json({
             success: true,
             event: triggerEvent,
@@ -466,6 +493,7 @@ export async function POST(request: Request) {
           console.warn('[cal webhook] buyer-sales Conversations log skipped:', e?.message);
         }
 
+        await markCalEventProcessed(dedupeKey);
         return NextResponse.json({
           success: true,
           event: triggerEvent,
@@ -570,6 +598,7 @@ export async function POST(request: Request) {
         } catch (e: any) {
           console.warn('[cal webhook] buyer-rancher Conversations log skipped:', e?.message);
         }
+        await markCalEventProcessed(dedupeKey);
         return NextResponse.json({
           success: true,
           event: triggerEvent,
@@ -663,6 +692,7 @@ export async function POST(request: Request) {
             ? `Reach out to rebook, or use /bhc-ops to advance manually if call did happen.</i>`
             : `Rancher not in DB either — likely junk booking.</i>`)
         );
+        await markCalEventProcessed(dedupeKey);
         return NextResponse.json({ success: true, event: triggerEvent, rancher: rancherName, noShow: true });
       }
 
@@ -794,23 +824,7 @@ export async function POST(request: Request) {
     }
 
     // 2026-06-09 P1 fix: mark event 'processed' so dedupe gate fires on retry.
-    if (dedupeKey) {
-      try {
-        const safeKey = escapeAirtableValue(dedupeKey);
-        const evRows: any[] = await getAllRecords(
-          'Stripe Events',
-          `{Event Id} = "${safeKey}"`,
-        );
-        if (evRows[0]) {
-          await updateRecord('Stripe Events', evRows[0].id, {
-            'Status': 'processed',
-            'Processed At': new Date().toISOString(),
-          });
-        }
-      } catch (e: any) {
-        console.warn('[cal webhook] processed-flip failed:', e?.message);
-      }
-    }
+    await markCalEventProcessed(dedupeKey);
     return NextResponse.json({ success: true, event: triggerEvent, rancher: rancherName });
   } catch (error: any) {
     // 2026-06-09 P0 fix: was status 500. Cal retries exponentially on 500 →
