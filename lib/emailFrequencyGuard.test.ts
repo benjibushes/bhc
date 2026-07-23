@@ -55,6 +55,24 @@ for (const template of MONEY_PATH_DIRECT_SENDS) {
   });
 }
 
+// Operator-facing 1:1 internal notices — every booking + alert routes to the
+// same operator inbox, so Ben trivially exceeds 3 sends/week. These are
+// once-per-event internal notices that cannot create volume; capping them
+// blinds him on a live sales call.
+const OPERATOR_INTERNAL_NOTICES = [
+  'sendOperatorPreCallBrief', // pre-call brief the moment a buyer books a sales call
+];
+
+for (const template of OPERATOR_INTERNAL_NOTICES) {
+  test(`TRANSACTIONAL_WHITELIST includes operator internal notice: ${template}`, () => {
+    assert.equal(
+      TRANSACTIONAL_WHITELIST.has(template),
+      true,
+      `${template} must be transactional-whitelisted so it can never be frequency-capped`
+    );
+  });
+}
+
 // ── countSendsByEmail (pure — batch cap-prime helper, scale audit 2026-07-22) ─
 // primeFrequencyCapCache replaces one Email Sends count read PER RECIPIENT
 // with a single read for the whole cron run; this is its counting core.
