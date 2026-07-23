@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import crypto from 'crypto';
 import { getAllRecords, getRecordById, updateRecord, createRecord, createReferral, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { getMaxActiveReferrals, getLiveCapacity, incrementCapacity, decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
@@ -609,9 +610,20 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'webhook secret not configured' }, { status: 401 });
     }
     console.warn('[telegram-webhook] TELEGRAM_WEBHOOK_SECRET unset (dev mode — accepting)');
-  } else if (headerSecret !== expectedSecret) {
-    console.warn('[telegram-webhook] webhook secret mismatch — refusing');
-    return NextResponse.json({ error: 'invalid webhook secret' }, { status: 401 });
+  } else {
+    // Constant-time compare — `!==` short-circuits on the first differing byte,
+    // leaking the secret one character at a time via response timing. Guard the
+    // length first (timingSafeEqual throws on unequal-length buffers, and a
+    // length mismatch is already a definitive reject).
+    const headerBuf = Buffer.from(headerSecret);
+    const expectedBuf = Buffer.from(expectedSecret);
+    if (
+      headerBuf.length !== expectedBuf.length ||
+      !crypto.timingSafeEqual(headerBuf, expectedBuf)
+    ) {
+      console.warn('[telegram-webhook] webhook secret mismatch — refusing');
+      return NextResponse.json({ error: 'invalid webhook secret' }, { status: 401 });
+    }
   }
 
   let update: any;
@@ -2540,81 +2552,40 @@ Output ONLY the email body. First line should be the subject line prefixed with 
             return NextResponse.json({ ok: true });
           }
 
-          const { logAuditEntry: logSpGolive, buildAirtableUpdateReverse: buildSpGoliveReverse } = await import('@/lib/auditLog');
-          const previousPageLive = rancher['Page Live'] ?? null;
-          const previousOnboardingStatus = rancher['Onboarding Status'] ?? null;
-          const spGoliveReverse = buildSpGoliveReverse(TABLES.RANCHERS, session.rancherId, {
-            'Page Live': previousPageLive,
-            'Onboarding Status': previousOnboardingStatus,
+          // ── THE rail: goLiveRancher owns the gates (Agreement Signed /
+          // Connect-active / Verification-Pending), the canonical 4-field
+          // write, audit log, warmup, waitlist blast, go-live email, and the
+          // operator Telegram note. The content checks + payment smoke above
+          // are this door's extra pre-gate. No force — the real gates must run
+          // (the inline write here used to bypass them, minting Live ranchers
+          // who were unsigned / verification-pending and silently unroutable).
+          const outcome = await goLiveRancher(session.rancherId, {
+            actor: 'telegram-spgolive',
           });
-          await updateRecord(TABLES.RANCHERS, session.rancherId, {
-            'Page Live': true,
-            'Onboarding Status': 'Live',
-            'Active Status': 'Active',
-          });
-          triggerLaunchWarmup(`telegram-spgolive:${session.rancherId}`);
-          await logSpGolive({
-            actor: 'manual',
-            tool: 'spgolive',
-            targetType: 'Rancher',
-            targetId: session.rancherId,
-            args: { callbackData },
-            result: { previousPageLive, previousOnboardingStatus, newPageLive: true, newOnboardingStatus: 'Live' },
-            reverseAction: spGoliveReverse,
-          });
+
+          if (!outcome.ok) {
+            await answerCallbackQuery(queryId, 'Go-live failed');
+            if (chatId) {
+              await sendTelegramMessage(chatId, `⚠️ Can't go live — ${escHtml(outcome.message)}`);
+            }
+            return NextResponse.json({ ok: true });
+          }
+
+          if (outcome.alreadyLive) {
+            await answerCallbackQuery(queryId, 'Already live');
+            if (chatId) {
+              await sendTelegramMessage(chatId, `⚠️ <b>${escHtml(session.rancherName)}</b> is already live. Skipping re-fire.`);
+            }
+            setupPageSessions.delete(chatId!);
+            return NextResponse.json({ ok: true });
+          }
+
           await answerCallbackQuery(queryId, '🚀 Page is live!');
           const liveUrl = `${SITE_URL}/ranchers/${slug}`;
-
-          // Build tier-aware commission language
-          const rancherTier = tierFor(rancher);
-          const commissionLine = (() => {
-            if (rancherTier === 'pasture') return 'BuyHalfCow earns 7% commission on referred sales (per your Pasture tier).';
-            if (rancherTier === 'ranch') return 'BuyHalfCow earns 3% commission on referred sales (per your Ranch tier).';
-            if (rancherTier === 'operator') return 'No per-deal commission (per your Operator tier flat subscription).';
-            return 'Commission per your tier — see /rancher/billing for details.';
-          })();
-
-          // Notify the rancher they're live
-          const rancherEmail = rancher['Email'];
-          if (rancherEmail) {
-            const name = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
-            await sendEmail({
-              to: rancherEmail,
-              subject: 'You\'re Live on BuyHalfCow!',
-              html: `<div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;">
-                <h1 style="font-family:Georgia,serif;font-size:22px;">You're Live!</h1>
-                <p>Hi ${escHtml(name)},</p>
-                <p>Your ranch page is now live on BuyHalfCow. Buyers can find you, learn about your operation, and purchase directly.</p>
-                <div style="margin:30px 0;text-align:center;">
-                  <a href="${liveUrl}" style="background:#2D5016;color:#fff;padding:14px 28px;text-decoration:none;font-weight:600;display:inline-block;">View Your Page</a>
-                </div>
-                <p><strong>What happens now:</strong></p>
-                <ul style="line-height:1.8;">
-                  <li>Buyers in your area will see your page in our directory</li>
-                  <li>When a buyer clicks to purchase, you'll get an email</li>
-                  <li>We'll send you qualified leads directly via email</li>
-                  <li>${commissionLine}</li>
-                </ul>
-                <p>Share your page: <a href="${liveUrl}">${liveUrl}</a></p>
-                <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Benjamin, BuyHalfCow</p>
-              </div>`,
-            });
-          }
-
           if (chatId) {
             await sendTelegramMessage(chatId,
-              `🚀 <b>${session.rancherName} is LIVE!</b>\n\n🔗 ${liveUrl}\n📧 Rancher notified\n✅ Status → Live\n\nShare this link and run ads to it.`
+              `🚀 <b>${escHtml(session.rancherName)} is LIVE!</b>\n\n🔗 ${liveUrl}\n📧 Rancher notified\n✅ Status → Live\n🚀 Auto-matched <b>${outcome.matched}</b> waiting buyer${outcome.matched === 1 ? '' : 's'}\n\nShare this link and run ads to it.`
             );
-          }
-
-          // Waitlist blast: auto-match waiting buyers in this rancher's state(s)
-          try {
-            const blast = await runWaitlistBlast(session.rancherId);
-            if (blast.matched > 0 && chatId) {
-              await sendTelegramMessage(chatId, `🚀 <b>${escHtml(blast.ranchName)}</b> is LIVE in <b>${escHtml(blast.state)}</b> — auto-matched <b>${blast.matched}</b> waiting buyer${blast.matched === 1 ? '' : 's'}`);
-            }
-          } catch (e) {
-            console.error('Waitlist blast error (spgolive):', e);
           }
 
           setupPageSessions.delete(chatId!);

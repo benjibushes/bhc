@@ -4095,6 +4095,12 @@ export async function sendEmail(params: {
 // so it is whitelisted in TRANSACTIONAL_WHITELIST and bypasses the
 // 3/week cap. Routing magic-link sends through generic sendEmail()
 // previously locked members out after 3 login attempts in a week.
+//
+// Also passes _bypassSuppression: true — login is auth, NOT marketing.
+// The suppression list (Unsubscribed/Bounced/Complained) must NOT gate
+// it: an unsubscribed-from-marketing member who never bounced was being
+// silently locked out of their own account with no operator signal.
+// Login must always send.
 // =====================================================
 
 export async function sendMagicLink(params: {
@@ -4112,6 +4118,7 @@ export async function sendMagicLink(params: {
       subject: params.subject,
       html: params.html,
       headers: getUnsubscribeHeaders(params.to),
+      _bypassSuppression: true,
     }),
   });
 }

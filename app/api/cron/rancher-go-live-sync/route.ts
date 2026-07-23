@@ -4,6 +4,7 @@ import { sendRancherGoLiveEmail } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
+import { GO_LIVE_FIELDS } from '@/lib/goLiveGates';
 
 export const maxDuration = 120;
 
@@ -25,10 +26,12 @@ export const maxDuration = 120;
 //                        + at least one Payment Link
 //                        (same criteria used by sign-agreement go-live gate)
 //
-// For each eligible rancher we flip:
+// For each eligible rancher we flip the canonical GO_LIVE_FIELDS union
+// (lib/goLiveGates) so every go-live rail writes an identical field set:
 //   Active Status   → 'Active'
 //   Onboarding Status → 'Live'
 //   Page Live       → true
+//   Status          → 'Active'
 //
 // Then fire launch warmup (fire-and-forget, idempotent) + Telegram note.
 // ─────────────────────────────────────────────────────────────────────────
@@ -210,11 +213,7 @@ async function realHandler(
     }
 
     try {
-      await updateRecord(TABLES.RANCHERS, rancher.id, {
-        'Active Status': 'Active',
-        'Onboarding Status': 'Live',
-        'Page Live': true,
-      });
+      await updateRecord(TABLES.RANCHERS, rancher.id, { ...GO_LIVE_FIELDS });
       flipped.push(name);
 
       // Fire-and-forget launch warmup so this state's waitlisted buyers

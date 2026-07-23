@@ -154,6 +154,9 @@ async function realHandler(_request: Request): Promise<CronResult> {
     )`.replace(/\s+/g, ' ');
 
   let candidates: any[] = [];
+  // Track a swallowed candidate-read failure so a broken Airtable read isn't
+  // reported as a green zero-touch run (item 4 — mirror rancher-followup).
+  let candidateReadFailed = false;
   try {
     candidates = (await getAllRecords(TABLES.CONSUMERS, candidateFormula(true))) as any[];
   } catch (e: any) {
@@ -161,9 +164,15 @@ async function realHandler(_request: Request): Promise<CronResult> {
       // {Waiting Nudge Last Sent At} missing → degrade to the created-time-only
       // window rather than silently killing the whole drip.
       console.warn('[abandoned-quiz-nudge] waiting-recency clause rejected; falling back to created-time window');
-      candidates = (await getAllRecords(TABLES.CONSUMERS, candidateFormula(false)).catch(() => [])) as any[];
+      try {
+        candidates = (await getAllRecords(TABLES.CONSUMERS, candidateFormula(false))) as any[];
+      } catch (e2: any) {
+        console.warn('[abandoned-quiz-nudge] fallback candidate read failed:', e2?.message);
+        candidateReadFailed = true;
+      }
     } else {
       console.warn('[abandoned-quiz-nudge] candidate read failed:', e?.message);
+      candidateReadFailed = true;
     }
   }
 
@@ -247,6 +256,18 @@ async function realHandler(_request: Request): Promise<CronResult> {
       TELEGRAM_ADMIN_CHAT_ID,
       `📨 <b>Quiz-invite drip</b> (served states): ${touched} sent (${breakdown}) · ${skipped} skipped · ${droppedUnserved} held (unserved state).`
     ).catch(() => {});
+  }
+
+  // A broken/degraded Airtable read must not be reported green (mirror
+  // rancher-followup): a swallowed candidate-read error, or a ranchers read
+  // returning 0 rows (prod always has ~80 → 0 = degraded/empty), yields a
+  // zero-touch run that looks clean. Surface 'partial' so withCronRun alerts.
+  if (candidateReadFailed || ranchers.length === 0) {
+    return {
+      status: 'partial',
+      recordsTouched: touched,
+      notes: `${candidateReadFailed ? 'candidate read failed' : 'ranchers read returned 0 rows — degraded/empty'}; not trusting a blind read. sent=${touched} skipped=${skipped}`,
+    };
   }
 
   return { status: 'success', recordsTouched: touched, notes: `sent=${touched} skipped=${skipped}` };

@@ -106,6 +106,13 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   'sendAdminAlert',
   // Operator-expected inquiry alerts so admins can respond in-band.
   'sendInquiryAlertToAdmin',
+  // Operator pre-call brief — lands in Ben's inbox the moment a buyer books
+  // an Operator-tier sales call. Same argument as sendAdminAlert: a 1:1
+  // once-per-booking internal notice that cannot create volume. Capping it
+  // silently strands Ben on a blind sales call once he's already received a
+  // few sends in the week (which he always has — every booking + alert routes
+  // to the same inbox).
+  'sendOperatorPreCallBrief',
   // Auth-critical: magic-link login. Capping this locks members out.
   'sendMagicLink',
   // Auth-critical: self-serve setup-link re-mint (wave B). For a pre-signed

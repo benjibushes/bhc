@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
+import { getAllRecords, updateRecord, escapeAirtableValue, TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { invalidateSuppressionCache } from '@/lib/email';
 import { findRancherByEmail } from '@/lib/rancherLookup';
@@ -86,6 +86,11 @@ export async function POST(request: Request) {
     if (!recipientEmail) {
       return NextResponse.json({ ok: true, skipped: 'no recipient' });
     }
+    // Escape before interpolating into any filterByFormula — an address like
+    // a"b@x.com would otherwise break out of the quoted literal (formula
+    // injection). Airtable stores the raw (unescaped) value, so equality still
+    // matches the real record.
+    const safeEmail = escapeAirtableValue(recipientEmail);
 
     const eventType = type as string;
     console.log(`Resend webhook: ${eventType} for ${recipientEmail}`);
@@ -99,7 +104,7 @@ export async function POST(request: Request) {
       try {
         const consumers = await getAllRecords(
           TABLES.CONSUMERS,
-          `LOWER({Email}) = "${recipientEmail}"`
+          `LOWER({Email}) = "${safeEmail}"`
         ) as any[];
         for (const c of consumers) {
           const updates: Record<string, any> = {
@@ -123,7 +128,7 @@ export async function POST(request: Request) {
       try {
         const ranchers = await getAllRecords(
           TABLES.RANCHERS,
-          `LOWER({Email}) = "${recipientEmail}"`
+          `LOWER({Email}) = "${safeEmail}"`
         ) as any[];
         for (const r of ranchers) {
           const rancherUpdates: Record<string, any> = {
@@ -174,7 +179,7 @@ export async function POST(request: Request) {
           const sinceISO = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
           const sends = await getAllRecords(
             TABLES.EMAIL_SENDS,
-            `AND(LOWER({Recipient Email}) = "${recipientEmail}", {Sent At} > "${sinceISO}")`
+            `AND(LOWER({Recipient Email}) = "${safeEmail}", {Sent At} > "${sinceISO}")`
           ) as any[];
           const onboardingSend = sends.find((s) =>
             RANCHER_ONBOARDING_TEMPLATES.has(String(s['Template Name'] || ''))
@@ -221,7 +226,7 @@ export async function POST(request: Request) {
         // Find Consumer for this recipient
         const consumers = await getAllRecords(
           TABLES.CONSUMERS,
-          `LOWER({Email}) = "${recipientEmail}"`
+          `LOWER({Email}) = "${safeEmail}"`
         ) as any[];
         for (const c of consumers) {
           const updates: Record<string, any> = { 'Last Email Event At': now };
@@ -249,7 +254,7 @@ export async function POST(request: Request) {
           const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
           const sends = await getAllRecords(
             TABLES.EMAIL_SENDS,
-            `AND({Recipient Email} = "${recipientEmail}", IS_AFTER({Sent At}, "${cutoff}"))`
+            `AND({Recipient Email} = "${safeEmail}", IS_AFTER({Sent At}, "${cutoff}"))`
           ) as any[];
           sends.sort((a, b) => String(b['Sent At'] || '').localeCompare(String(a['Sent At'] || '')));
           const latest = sends[0];

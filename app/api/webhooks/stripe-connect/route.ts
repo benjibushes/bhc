@@ -36,6 +36,7 @@ import { markDepositRefunded, markDepositDisputed, PAYMENTS_TABLE } from '@/lib/
 import { logAuditEntry } from '@/lib/auditLog';
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
+import { GO_LIVE_FIELDS } from '@/lib/goLiveGates';
 
 // Mirror the platform webhook's Stripe Events table for idempotency.
 const STRIPE_EVENTS_TABLE = 'Stripe Events';
@@ -816,11 +817,7 @@ async function syncRancherConnectStatus(accountId: string): Promise<void> {
 
   if (shouldAutoGoLive) {
     try {
-      await updateRecord(TABLES.RANCHERS, rancher.id, {
-        'Active Status': 'Active',
-        'Onboarding Status': 'Live',
-        'Page Live': true,
-      });
+      await updateRecord(TABLES.RANCHERS, rancher.id, { ...GO_LIVE_FIELDS });
 
       // Fire launch warmup so the rancher's state buyers get warmed up
       // immediately instead of waiting up to 24h for the scheduled cron.

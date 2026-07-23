@@ -33,6 +33,7 @@ import { canSendFinalInvoice } from '@/lib/refundLifecycle';
 import { createFinalInvoiceCheckout } from '@/lib/stripeConnect';
 import { mintFinalInvoiceLinkToken } from '@/lib/finalInvoiceLink';
 import { requireRancher } from '@/lib/rancherAuth';
+import { claimOnce } from '@/lib/rancherCapacity';
 import { sendBuyerFinalInvoice } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 
@@ -255,6 +256,34 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const orderType = String(referral['Order Type'] || 'Beef').trim();
   const ranchName = String(rancher['Ranch Name'] || rancher['Operator Name'] || 'the ranch').trim();
   const productLabel = `${orderType} Final Balance — ${ranchName}`;
+
+  // Serialize the mint per referral — the deposit rail guards its create the
+  // same way (claimOnce), and /r/f shares this exact key. The existing
+  // Final-Invoice-URL idempotency check above only catches SEQUENTIAL re-sends;
+  // two SIMULTANEOUS rancher clicks both read a blank URL and both mint = two
+  // open sessions on the largest charge. On lock-held, another send is in
+  // flight: re-read and return its durable link rather than minting a second.
+  // Degrades OPEN when Redis is down (the sequential URL check still protects
+  // the common re-send case).
+  if (!(await claimOnce(`final-mint:${referralId}`, 20))) {
+    let inflight: any = null;
+    try {
+      inflight = await getRecordById(TABLES.REFERRALS, referralId);
+    } catch {}
+    const inflightUrl = String(inflight?.['Final Invoice URL'] || '').trim();
+    if (inflightUrl) {
+      return NextResponse.json({
+        ok: true,
+        alreadySent: true,
+        url: inflightUrl,
+        message: 'Final invoice send already in progress — returning the existing link.',
+      });
+    }
+    return NextResponse.json(
+      { error: 'A final invoice for this referral is already being sent. Try again in a moment.' },
+      { status: 409 },
+    );
+  }
 
   // Create Stripe Connect Checkout Session (app_fee = 0)
   let checkoutUrl: string;
