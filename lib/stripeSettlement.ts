@@ -48,6 +48,22 @@ export class PermanentSettlementError extends Error {
 export function isPermanentSettlementError(e: unknown): boolean {
   return !!e && typeof e === 'object' && (e as any).permanent === true;
 }
+
+// Resolve the rancher-portion deposit (cents) to record as "Deposit Amount".
+//
+// Prefer the stamped `depositCents` metadata (rancher portion only). The old
+// `Number(metadata.depositCents || totalChargedCents)` fell back on ANY falsy
+// value and, more importantly, fell back to totalChargedCents — which is
+// deposit + BHC fee — so a missing/blank metadata value OVERSTATED the recorded
+// deposit by the fee. Fall back ONLY when the value is truly absent (undefined /
+// null / '' / non-finite), and CLAMP to totalChargedCents so a malformed or
+// oversized metadata value can never record a deposit larger than the charge.
+export function resolveDepositCents(rawDepositCents: unknown, totalChargedCents: number): number {
+  const absent = rawDepositCents === undefined || rawDepositCents === null || rawDepositCents === '';
+  const parsed = absent ? totalChargedCents : Number(rawDepositCents);
+  const resolved = Number.isFinite(parsed) ? parsed : totalChargedCents;
+  return Math.min(resolved, totalChargedCents);
+}
 import { sendPostPurchaseWelcome } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { markDepositSucceeded } from '@/lib/contracts/payments';
@@ -82,7 +98,7 @@ export async function settleBuyerDeposit(pi: any): Promise<void> {
   // (depositCents metadata stamped at session creation). Total charged
   // is used for the buyer-facing CAPI Purchase value below.
   const totalChargedCents = Number(pi.amount || 0);
-  const depositCents = Number(pi.metadata?.depositCents || totalChargedCents);
+  const depositCents = resolveDepositCents(pi.metadata?.depositCents, totalChargedCents);
   const platformFeeCents = Number(pi.metadata?.platformFeeCents || 0);
   // fullSaleCents = total sale value the rancher charges (Quarter/Half/Whole Price).
   // Used for "balance due at fulfillment" math on the rancher dashboard.

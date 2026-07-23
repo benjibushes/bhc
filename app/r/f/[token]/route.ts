@@ -22,6 +22,7 @@ import { canSendFinalInvoice } from '@/lib/refundLifecycle';
 import { createFinalInvoiceCheckout, getStripeClient } from '@/lib/stripeConnect';
 import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
+import { claimOnce } from '@/lib/rancherCapacity';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -136,6 +137,38 @@ export async function GET(req: Request, { params }: { params: Promise<{ token: s
       // resource_missing / transient — fall through to a fresh mint; the
       // create call below is the authoritative failure gate.
     }
+  }
+
+  // Serialize the fresh mint per referral — the deposit rail guards its create
+  // the same way (claimOnce key deposit-create:<id>). Two SIMULTANEOUS /r/f
+  // clicks that both find the stored session gone (expired / never stamped)
+  // would otherwise both mint = two open sessions on the LARGEST charge, a
+  // double-charge window. On lock-held, another click is minting right now:
+  // re-read the freshly-stamped session and reuse it rather than minting a
+  // second. Degrades OPEN (mints) when Redis is down — the reuse-at-top block
+  // still absorbs the common repeat-click case.
+  if (!(await claimOnce(`final-mint:${referralId}`, 20))) {
+    try {
+      const fresh: any = await getRecordById(TABLES.REFERRALS, referralId);
+      const sid = String(fresh?.['Final Invoice Checkout Session Id'] || '').trim();
+      if (sid) {
+        const stripe = getStripeClient();
+        const session: any = await stripe.checkout.sessions.retrieve(sid, {
+          stripeAccount: connectAccountId,
+        });
+        if (session?.status === 'open' && session?.url) {
+          return NextResponse.redirect(String(session.url), 302);
+        }
+        if (session?.status === 'complete') {
+          return NextResponse.redirect(`${base}/member?invoice=paid`, 302);
+        }
+      }
+    } catch {
+      /* fall through to safe fallback — never mint a second session */
+    }
+    // Couldn't recover the concurrent session — fail safe rather than mint a
+    // second one. The buyer can retry; the winner's session will be stamped.
+    return safeFallback();
   }
 
   // Fresh mint. Varying idempotency key — the fixed send-time key would hand
