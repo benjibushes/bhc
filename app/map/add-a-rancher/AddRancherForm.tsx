@@ -53,14 +53,51 @@ export default function AddRancherForm() {
       website2: String(fd.get('website2') || ''), // honeypot
     };
 
+    // Failed-submit beacon (Justin incident 2026-07-23) — mirror ApplyForm on
+    // the self-submit door. sendBeacon fires even as the page tears down, so a
+    // door failure (non-2xx, thrown fetch, network abort, client timeout) still
+    // leaves a Signup Attempts trace + rescue path instead of vanishing. IP is
+    // derived server-side; never throws into the submit UX.
+    const fireFailureBeacon = (status: number, reason: string) => {
+      try {
+        if (typeof navigator === 'undefined' || !navigator.sendBeacon) return;
+        const beacon = JSON.stringify({
+          email: payload.rancherEmail,
+          ranchName: payload.ranchName,
+          state: payload.state,
+          phone: payload.rancherPhone,
+          ip: '',
+          door: 'self-submit',
+          status,
+          reason: String(reason || '').slice(0, 500),
+        });
+        navigator.sendBeacon(
+          '/api/signup/failure-beacon',
+          new Blob([beacon], { type: 'application/json' }),
+        );
+      } catch {
+        /* telemetry must never break the submit */
+      }
+    };
+
+    // Client-side timeout guard — abort a hung request so it surfaces as a
+    // beaconed 'timeout' instead of a dead tab.
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, 25000);
     try {
       const res = await fetch('/api/prospects/self-submit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
+        signal: controller.signal,
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
+        fireFailureBeacon(res.status, data?.error || `Submission failed (${res.status})`);
         setResult({ kind: 'error', message: data?.error || 'Submission failed' });
         setSubmitting(false);
       } else if (submitterType === 'self' && data?.setupUrl) {
@@ -84,9 +121,18 @@ export default function AddRancherForm() {
         });
         setSubmitting(false);
       }
-    } catch {
-      setResult({ kind: 'error', message: 'Network error — try again' });
+    } catch (err: any) {
+      const isAbort = timedOut || err?.name === 'AbortError';
+      // fetch itself rejected (network abort / client timeout) — no HTTP
+      // status, so report 0 and let the server-side mapper key off the reason.
+      fireFailureBeacon(0, isAbort ? 'client timeout' : 'network error');
+      setResult({
+        kind: 'error',
+        message: isAbort ? 'That took too long — try again' : 'Network error — try again',
+      });
       setSubmitting(false);
+    } finally {
+      clearTimeout(timer);
     }
   }
 
