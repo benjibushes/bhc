@@ -175,7 +175,7 @@
     },
     {
       "path": "/api/cron/waiting-activation",
-      "schedule": "20 16 * * *"
+      "schedule": "23 16 * * *"
     },
     {
       "path": "/api/cron/replenishment",
@@ -183,7 +183,7 @@
     },
     {
       "path": "/api/cron/referral-record-id-backfill",
-      "schedule": "15 * * * *"
+      "schedule": "12 * * * *"
     },
     {
       "path": "/api/cron/deposit-request-nudge",
@@ -227,7 +227,7 @@
     },
     {
       "path": "/api/cron/nurture-drip",
-      "schedule": "30 16 * * *"
+      "schedule": "33 16 * * *"
     },
     {
       "path": "/api/cron/email-canary",

@@ -4,6 +4,7 @@ import { TABLES } from '@/lib/airtable';
 import { sendTelegramUpdate, sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendEmail } from '@/lib/email';
 import { getCommissionRate, normalizeCommissionRate } from '@/lib/commission';
+import { GO_LIVE_FIELDS, isAlreadyLive } from '@/lib/goLiveGates';
 import jwt from 'jsonwebtoken';
 
 import { JWT_SECRET } from '@/lib/secrets';
@@ -93,10 +94,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Rancher not found' }, { status: 404 });
     }
 
-    if (rancher['Agreement Signed']) {
-      return NextResponse.json({ error: 'Agreement has already been signed', already_signed: true }, { status: 400 });
-    }
-
     const now = new Date().toISOString();
     // Lock the rancher's Commission Rate at signing time so it can never
     // drift mid-pipeline. Pre-existing rate (admin pre-set OR sticky from
@@ -150,6 +147,35 @@ export async function POST(request: Request) {
       ? hasSlug && hasPrice && connectStatus === 'active'
       : hasSlug && hasPrice && hasPaymentLink;
 
+    // Already-signed handling. Don't hard-refuse: a rancher who signed BEFORE
+    // their page was content-ready (or whose earlier sign attempt wrote the
+    // agreement fields but never landed the go-live union) would be stranded
+    // signed-but-dark by a bare 400 — nothing written, never live. If they're
+    // now content-complete, complete the combined path here (the go-live union
+    // over the already-persisted agreement fields) instead of refusing. Skip
+    // the resend of the "you signed" emails/warmup already sent on first sign.
+    if (rancher['Agreement Signed']) {
+      if (!isAlreadyLive(rancher) && readyToGoLive) {
+        await updateRecord(TABLES.RANCHERS, decoded.rancherId, { ...GO_LIVE_FIELDS });
+        try {
+          const { triggerLaunchWarmup } = await import('@/lib/triggerLaunchWarmup');
+          triggerLaunchWarmup(`sign-agreement-relive:${decoded.rancherId}`);
+        } catch (e: any) {
+          console.warn('[sign-agreement] could not trigger launch warmup on re-live:', e?.message);
+        }
+        return NextResponse.json({
+          success: true,
+          already_signed: true,
+          wentLive: true,
+          message: 'Agreement already signed — your page is now live.',
+        });
+      }
+      return NextResponse.json(
+        { error: 'Agreement has already been signed', already_signed: true, wentLive: isAlreadyLive(rancher) },
+        { status: 400 },
+      );
+    }
+
     const updateFields: Record<string, unknown> = {
       'Agreement Signed': true,
       'Agreement Signed At': now,
@@ -178,10 +204,7 @@ export async function POST(request: Request) {
       // email the rancher. The rail's gates are provably satisfied here:
       // Agreement Signed is set in this very write, and readyToGoLive
       // already requires Connect active for tier_v2.
-      updateFields['Onboarding Status'] = 'Live';
-      updateFields['Active Status'] = 'Active';
-      updateFields['Page Live'] = true;
-      updateFields['Status'] = 'Active';
+      Object.assign(updateFields, GO_LIVE_FIELDS);
     } else if (preVetted) {
       // Skip verification — they're already vetted. They still need slug+price
       // to flip Live (handled by the next dashboard save / batch-approve cron /
