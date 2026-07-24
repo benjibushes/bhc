@@ -54,13 +54,38 @@ test('decidePushDisposition: already-pushed / cancelled → skip; recoverable st
   assert.deepEqual(decidePushDisposition({ 'External Push Status': 'failed:SKU not found' }), { action: 'push' }, 'fixed permanent failure re-pushes');
 });
 
-// ── H2: post-push TOCTOU guard. A refund/cancel that flipped Status DURING the
-// push network window must cancel the just-created live order, not stamp pushed.
-test('decidePostPushAction: Refunded/Cancelled → cancel; otherwise keep', () => {
-  assert.deepEqual(decidePostPushAction('Refunded'), { action: 'cancel', reason: 'Refunded' });
-  assert.deepEqual(decidePostPushAction('Cancelled'), { action: 'cancel', reason: 'Cancelled' });
-  assert.deepEqual(decidePostPushAction('New'), { action: 'keep' });
-  assert.deepEqual(decidePostPushAction(undefined), { action: 'keep' });
+// ── H2 + refund-verify (HOLE 1): post-push guard FAILS CLOSED. A refund/cancel
+// that flipped Status — or belt-stamped External Push Status='cancelled' — DURING
+// the push window must cancel the just-created live order, not stamp pushed. An
+// UNREADABLE re-read must route to 'verify-failed' (alert + never 'pushed'), never
+// silently fall through to 'keep'.
+test('decidePostPushAction: readOk=false → verify-failed (fail CLOSED, never keep)', () => {
+  // The HOLE 1 hazard: a transient re-read failure must NOT map to keep (which
+  // stamps 'pushed' over a possibly-refunded order). Status is irrelevant when
+  // the read itself is unconfirmed.
+  assert.deepEqual(decidePostPushAction(undefined, undefined, false), { action: 'verify-failed' });
+  assert.deepEqual(decidePostPushAction('New', '', false), { action: 'verify-failed' });
+  assert.deepEqual(decidePostPushAction('Refunded', 'cancelled', false), { action: 'verify-failed' });
+});
+
+test('decidePostPushAction: terminal Status (readOk) → cancel the live order', () => {
+  assert.deepEqual(decidePostPushAction('Refunded', '', true), { action: 'cancel', reason: 'Refunded' });
+  assert.deepEqual(decidePostPushAction('Cancelled', 'pushing', true), { action: 'cancel', reason: 'Cancelled' });
+});
+
+test('decidePostPushAction: belt-stamped External Push Status cancelled → cancel', () => {
+  // The blank-External-Order-Id race: a charge.refunded reconcile belt-stamped
+  // 'cancelled' WITHOUT calling Shopify cancel (the order did not exist yet).
+  // The push just created the live order — cancel it, never overwrite 'pushed'.
+  assert.deepEqual(decidePostPushAction('New', 'cancelled', true), { action: 'cancel', reason: 'belt-cancelled' });
+});
+
+test('decidePostPushAction: clean New/undefined but readOk → keep (pre-stamp pushing is NOT the belt signal)', () => {
+  assert.deepEqual(decidePostPushAction('New', '', true), { action: 'keep' });
+  // the runner pre-stamps 'pushing' before the push — a clean success re-reads it
+  // and must still map to keep; only an explicit 'cancelled' triggers belt-cancel.
+  assert.deepEqual(decidePostPushAction('New', 'pushing', true), { action: 'keep' });
+  assert.deepEqual(decidePostPushAction(undefined, undefined, true), { action: 'keep' });
 });
 
 // ── H1(c) source-shape pins: durable pre-stamp BEFORE the network call, and the
@@ -86,6 +111,35 @@ test('runner wraps the success stamp so a failed stamp cannot silently re-push',
 test('runner re-reads Status after push and cancels a refunded-in-window order', () => {
   assert.match(runnerSrc, /decidePostPushAction/, 'must branch on the post-push guard decision');
   assert.match(runnerSrc, /\.cancelOrder\(/, 'a refunded-in-window order gets its live external order cancelled');
+});
+
+// ── HOLE 1 source-shape pins: the post-push re-read must FAIL CLOSED. It passes
+// readOk (never silently maps a failed read to keep), branches to verify-failed,
+// leaves the row 'pushing' WITH the external id (traceable, no double-ship, never
+// 'pushed'), and rings the operator LOUD.
+test('runner post-push re-read fails CLOSED and passes readOk to the guard', () => {
+  // the third arg to decidePostPushAction is the readOk flag — the fail-closed
+  // signal that stops a transient null read from stamping 'pushed'.
+  assert.match(
+    runnerSrc,
+    /decidePostPushAction\(\s*fresh\?\.\['Status'\],\s*fresh\?\.\['External Push Status'\],\s*readOk\s*\)/,
+    'guard must receive (Status, External Push Status, readOk) — not Status alone',
+  );
+  assert.match(runnerSrc, /readOk\s*=\s*false/, 'the re-read must start unconfirmed and only flip true on a real row');
+});
+
+test('runner verify-failed branch never stamps pushed and alerts loud', () => {
+  assert.match(runnerSrc, /post\.action === 'verify-failed'/, 'a failed re-read routes to verify-failed, not keep');
+  assert.match(runnerSrc, /post-push refund-verify FAILED/, 'verify-failed must ring the operator');
+  assert.match(runnerSrc, /shopify-postpush-verify-fail-/, 'per-order dedupe key so the net cron does not re-alarm every run');
+  // the verify-failed write keeps the row traceable/cron-resolvable: external id
+  // stamped + 'pushing' (never a silent 'pushed').
+  const vfIdx = runnerSrc.indexOf("post.action === 'verify-failed'");
+  const nextReturn = runnerSrc.indexOf('return;', vfIdx);
+  const branch = runnerSrc.slice(vfIdx, nextReturn);
+  assert.match(branch, /'External Order Id': externalOrderId/, 'verify-failed stamps the external id so a re-push is blocked');
+  assert.match(branch, /'External Push Status': 'pushing'/, 'verify-failed leaves the row pushing (cron/operator-resolvable)');
+  assert.doesNotMatch(branch, /'External Push Status': 'pushed'/, 'verify-failed must NEVER stamp pushed');
 });
 
 // ── L4 source-shape pin: a paid order that cannot push for a missing SKU or

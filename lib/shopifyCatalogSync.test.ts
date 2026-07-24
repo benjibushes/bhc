@@ -226,27 +226,62 @@ test('M4: unlimited stock (untracked) ignores obligation — no finite count to 
   assert.equal(f['Active'], true);
 });
 
-test('M4: isUnpushedObligation — only blank|failed on a non-terminal order', () => {
+// ── HOLE 2: an obligation is any non-terminal BHC-sold unit whose decrement
+// Shopify does NOT yet reflect. Only 'pushed' (Shopify decremented) and
+// 'cancelled' (restocked) are NOT obligations — 'pushing' (settle→push window,
+// order not created yet) and 'skipped:*' (never pushes to Shopify at all) both
+// MUST count, or a catalog sync in that window re-shelves the already-sold unit.
+test('M4 (HOLE 2): isUnpushedObligation — everything owes except pushed/cancelled', () => {
   assert.equal(isUnpushedObligation({ 'Status': 'New', 'External Push Status': '' }), true);
   assert.equal(isUnpushedObligation({ 'Status': 'New', 'External Push Status': 'failed:config' }), true);
   assert.equal(isUnpushedObligation({ 'Status': 'New', 'External Push Status': 'failed: http 500' }), true);
-  assert.equal(isUnpushedObligation({ 'Status': 'New', 'External Push Status': 'pushed' }), false);      // Shopify already decremented
-  assert.equal(isUnpushedObligation({ 'Status': 'New', 'External Push Status': 'skipped:pickup' }), false); // spec: blank|failed only
+  assert.equal(isUnpushedObligation({ 'Status': 'New', 'External Push Status': 'pushing' }), true);        // Shopify NOT decremented yet
+  assert.equal(isUnpushedObligation({ 'Status': 'New', 'External Push Status': 'skipped:pickup' }), true);  // never pushes → still owes
+  assert.equal(isUnpushedObligation({ 'Status': 'New', 'External Push Status': 'skipped:deposit' }), true); // never pushes → still owes
+  assert.equal(isUnpushedObligation({ 'Status': 'New', 'External Push Status': 'pushed' }), false);       // Shopify already decremented
+  assert.equal(isUnpushedObligation({ 'Status': 'New', 'External Push Status': 'cancelled' }), false);    // restocked
   assert.equal(isUnpushedObligation({ 'Status': 'Refunded', 'External Push Status': '' }), false);       // terminal — restocked
   assert.equal(isUnpushedObligation({ 'Status': 'Cancelled', 'External Push Status': 'failed:x' }), false);
 });
 
-test('M4: outstandingObligationUnits sums Quantity over unpushed non-terminal orders', () => {
+test('M4 (HOLE 2): outstandingObligationUnits sums Quantity over every unreflected order', () => {
   const orders = [
     { 'Status': 'New', 'External Push Status': '', 'Quantity': 1 },                 // +1
     { 'Status': 'New', 'External Push Status': 'failed:http 500', 'Quantity': 2 },  // +2  (qty>1 proves sum, not count)
-    { 'Status': 'New', 'External Push Status': 'pushed', 'Quantity': 5 },           // skip
-    { 'Status': 'Refunded', 'External Push Status': '', 'Quantity': 4 },            // skip
-    { 'Status': 'New', 'External Push Status': 'skipped:pickup', 'Quantity': 3 },   // skip
+    { 'Status': 'New', 'External Push Status': 'pushing', 'Quantity': 4 },          // +4  (settle→push window counts now)
+    { 'Status': 'New', 'External Push Status': 'skipped:pickup', 'Quantity': 3 },   // +3  (never pushes → still owes)
+    { 'Status': 'New', 'External Push Status': 'pushed', 'Quantity': 5 },           // skip (Shopify decremented)
+    { 'Status': 'New', 'External Push Status': 'cancelled', 'Quantity': 7 },        // skip (restocked)
+    { 'Status': 'Refunded', 'External Push Status': '', 'Quantity': 9 },            // skip (terminal)
   ];
-  assert.equal(outstandingObligationUnits(orders), 3);
+  assert.equal(outstandingObligationUnits(orders), 10);
   assert.equal(outstandingObligationUnits([]), 0);
   assert.equal(outstandingObligationUnits(undefined as any), 0);
+});
+
+test('M4 (HOLE 2): mixed pushed/pushing orders compose into the right oversell floor', () => {
+  // Shopify still lists 10. Of BHC's sales, 2 are 'pushed' (Shopify already
+  // decremented those) and 3 are pushing/failed/skipped (Shopify has NOT). Only
+  // the 3 unreflected units are an obligation → Orders Left floors at 10-3=7,
+  // never re-shelving them. Confirms outstandingObligationUnits feeds the floor.
+  const orders = [
+    { 'Status': 'New', 'External Push Status': 'pushed', 'Quantity': 1 },
+    { 'Status': 'New', 'External Push Status': 'pushed', 'Quantity': 1 },
+    { 'Status': 'New', 'External Push Status': 'pushing', 'Quantity': 1 },
+    { 'Status': 'New', 'External Push Status': 'failed:http 500', 'Quantity': 1 },
+    { 'Status': 'New', 'External Push Status': 'skipped:pickup', 'Quantity': 1 },
+  ];
+  const obligation = outstandingObligationUnits(orders);
+  assert.equal(obligation, 3);
+  const f = mapVariantToProductFields({
+    product: { id: 'p', title: 'Beef Box', status: 'ACTIVE' },
+    variant: { id: 'v', title: 'Default Title', sku: 'BOX-10', price: '95', inventoryQuantity: 10 },
+    markupPercent: null,
+    approved: true,
+    outstandingObligation: obligation,
+  });
+  assert.equal(f['Orders Left'], 7);
+  assert.equal(f['Active'], true);
 });
 
 // ── L11: 40-page cap truncation must be loud, not silent ────────────────────
