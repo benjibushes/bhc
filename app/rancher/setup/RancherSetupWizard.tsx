@@ -7,6 +7,7 @@ import Container from '../../components/Container';
 import ImageUploader from '../../components/ImageUploader';
 import LivePreview from './LivePreview';
 import StripeConnectStep from './steps/StripeConnectStep';
+import OnboardingRoadmap from '../OnboardingRoadmap';
 import {
   deriveLadder,
   deriveDeposit,
@@ -1377,6 +1378,13 @@ export default function RancherSetupWizard() {
                 What you&rsquo;re joining
               </h2>
             </header>
+
+            {/* THE DEAL + THE ROAD (2026-07-24). Before we ask for anything:
+                how the money works, both ways to sell, and exactly what's
+                left — with the two steps only they can do marked as such.
+                Single source of truth = lib/onboardingPaths, so the wizard,
+                the dashboard and admin can never tell different stories. */}
+            <OnboardingRoadmap rancher={rancher as unknown as Record<string, unknown>} />
 
             {/* Stat grid — concrete promises up front, before the prose. The
                 "boom-boom-bam" anchor so ranchers see the deal at a glance.
