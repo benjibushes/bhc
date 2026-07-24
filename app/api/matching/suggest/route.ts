@@ -11,6 +11,7 @@ import { normalizeState, normalizeStates } from '@/lib/states';
 import { hopDistance, adjacencyViolations } from '@/lib/stateAdjacency';
 import { distanceCmp, rancherDistanceMiles, isOutOfDeliveryRadius } from '@/lib/geoDistance';
 import { resolveBuyerCentroid } from '@/lib/zipCentroids';
+import { buyerZipServedBy, hasServiceZipGate } from '@/lib/exclusiveZip';
 import jwt from 'jsonwebtoken';
 import { getMaxActiveReferrals, incrementCapacity, decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { isActiveDealReferral } from '@/lib/capacityCount';
@@ -577,6 +578,15 @@ export async function POST(request: Request) {
       // the signup gate + warmup cron. Don't inline a copy here — drift is
       // exactly how 48 buyers got stranded in TN/OR waitlists.
       if (!isRancherOperationalForBuyers(r)) return false;
+      // ── EXCLUSIVE-ZIP HARD GATE (2026-07-23) ─────────────────────────────
+      // A rancher with `Service ZIP Prefixes` set (Thomas Cattle = "77")
+      // serves ONLY buyers whose ZIP starts with one of those prefixes. This
+      // runs BEFORE any distance/radius/state logic and FAILS CLOSED: a
+      // ZIP-gated rancher is ineligible for a buyer with no/out-of-prefix ZIP,
+      // so a buyer outside the exclusive area can NEVER route here (local OR
+      // nationwide). Empty prefixes ⇒ no-op ⇒ every other rancher is unchanged.
+      // See lib/exclusiveZip for the tested verdict.
+      if (!buyerZipServedBy(buyerRecForGate['Zip'], r)) return false;
       // tier_v2 sub-floor / no-price guard — see passesTierV2CutFloor above.
       if (!passesTierV2CutFloor(r)) return false;
       const maxReferrals = getMaxActiveReferrals(r);
@@ -744,17 +754,25 @@ export async function POST(request: Request) {
       const pinnedSoldOut =
         !!pinned && (closedWonByRancher.get(pinned.id) || 0) >= getMaxActiveReferrals(pinned);
       const pinnedExcluded = !!pinned && excludeIds.has(pinned.id);
+      // EXCLUSIVE-ZIP PARITY (2026-07-23): the highest-intent path — a buyer who
+      // deep-linked to THIS rancher's page — must still respect the exclusive
+      // ZIP gate. Without this, an out-of-Houston buyer clicking Thomas's page
+      // would direct-match him, the one path isEligibleBase never guards.
+      // Fails closed (no/out-of-prefix ZIP) → drop to general matching, which
+      // re-excludes him via isEligibleBase → clean waitlist for the buyer.
+      const pinnedZipExcluded = !!pinned && !buyerZipServedBy(buyerRecForGate['Zip'], pinned);
       if (
         pinned &&
         (!passesTierV2CutFloor(pinned) ||
           !isPriceFit(pinned) ||
           !closedWonScanOk ||
           pinnedSoldOut ||
-          pinnedExcluded)
+          pinnedExcluded ||
+          pinnedZipExcluded)
       ) {
         console.log(
           `[match] direct pin ${rancherSlug} failed a hard gate ` +
-            `(priceGate=${!passesTierV2CutFloor(pinned) || !isPriceFit(pinned)} scanOk=${closedWonScanOk} soldOut=${pinnedSoldOut} excluded=${pinnedExcluded}) ` +
+            `(priceGate=${!passesTierV2CutFloor(pinned) || !isPriceFit(pinned)} scanOk=${closedWonScanOk} soldOut=${pinnedSoldOut} excluded=${pinnedExcluded} zipExcluded=${pinnedZipExcluded}) ` +
             `for ${buyerName || buyerId} — falling through to general matching`,
         );
       } else if (pinned) {
@@ -916,6 +934,18 @@ export async function POST(request: Request) {
       matchType = localEligible.length > 0 ? 'local' : null;
 
       eligible.sort((a: any, b: any) => {
+        // -1. EXCLUSIVE-ZIP OWNER WINS (2026-07-23, founder directive). A
+        //     rancher who EXCLUSIVELY serves this buyer's ZIP (Service ZIP
+        //     Prefixes set — Thomas Cattle owns Houston) takes the buyer ahead
+        //     of everyone. They only survived isEligibleBase for THIS buyer if
+        //     buyerZipServedBy passed, so a gate present here means an in-zone
+        //     match — Ben wants the exclusive supplier to get ALL qualifying
+        //     buyers in their zone. (Two exclusive ranchers on the same ZIP
+        //     tie here and fall through to the tiebreaks below.)
+        const aExcl = hasServiceZipGate(a);
+        const bExcl = hasServiceZipGate(b);
+        if (aExcl !== bExcl) return aExcl ? -1 : 1;
+
         // 0. CAN'T-SERVE SINKS FIRST (2026-07-22). A delivery-only rancher
         //    whose own radius doesn't reach this buyer goes last — ahead of
         //    even the primary-state preference, because "is in your state" is
@@ -1745,6 +1775,14 @@ export async function POST(request: Request) {
                 if (typeof raw === 'object' && 'name' in raw) return String(raw.name);
                 return String(raw);
               })(),
+              // BRAND STORY (2026-07-23): surface the rancher's own tagline +
+              // about text so the "meet your rancher" intro carries their full
+              // story, not just a name. Matters most for the exclusive
+              // supplier (Thomas) whose brand fields are backfilled — the
+              // buyer should meet the ranch, not a placeholder. Optional +
+              // trimmed → falsy fields simply don't render the block.
+              rancherTagline: String(topMatch['Tagline'] || '').trim() || undefined,
+              rancherAbout: String(topMatch['About Text'] || '').trim() || undefined,
             });
           } catch (e: any) {
             console.error('Buyer intro email failed:', e?.message);

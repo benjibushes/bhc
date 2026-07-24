@@ -168,9 +168,28 @@ export async function sendBuyerDepositInvoice(opts: {
   // text/call a real person about a real reservation. Optional — callers
   // without it keep working; the "text <first>" line simply drops.
   rancherPhone?: string;
+  // Rancher brand fields (2026-07-23). Optional — when present, a one-line
+  // tagline renders under the reservation so the deposit ask carries the
+  // ranch's identity (matters for the exclusive supplier). Blank ⇒ omitted.
+  rancherTagline?: string;
+  rancherAbout?: string;
 }) {
   const dep = ((opts.chargedCents ?? opts.depositCents) / 100).toFixed(0);
   const balance = ((opts.fullSaleCents - opts.depositCents) / 100).toFixed(0);
+  // Compact brand block: tagline as an italic line + (optional) short about.
+  // Renders only when a field is present so no empty header ever ships.
+  const brandTagline = opts.rancherTagline
+    ? `<p style="margin:2px 0 0 0;font-style:italic;font-size:14px;color:#6B4F3F">&ldquo;${escape(opts.rancherTagline)}&rdquo;</p>`
+    : '';
+  const brandAbout = opts.rancherAbout
+    ? `<p style="margin:12px 0 0 0;font-size:13px;color:#5A5752;line-height:1.6">${escape(opts.rancherAbout)}</p>`
+    : '';
+  const brandBlock = opts.rancherTagline || opts.rancherAbout
+    ? `<div style="border-left:3px solid #A7A29A;padding:2px 0 2px 14px;margin:18px 0">
+        <p style="margin:0;font-size:12px;letter-spacing:1px;text-transform:uppercase;color:#6B4F3F">About ${escape(opts.rancherName)}</p>
+        ${brandTagline}${brandAbout}
+      </div>`
+    : '';
   // LEAK 1 (2026-07-05, rancher-sent deposits 0-for-7): the old copy opened
   // "Great call." — presuming a phone call that (for cold dashboard sends)
   // never happened — with Ben as the actor. Buyers got thanked for a
@@ -188,6 +207,7 @@ export async function sendBuyerDepositInvoice(opts: {
     html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
       <p>hey ${escape(opts.buyerName)},</p>
       <p><strong>${escape(opts.rancherName)}</strong> set aside a <strong>${escape(opts.cutTier)}</strong> for you and sent over your deposit link.</p>
+      ${brandBlock}
       <div style="background:#FFFFFF;border:1px solid #A7A29A;padding:18px;margin:20px 0;font-size:15px">
         <strong>today:</strong> $${dep} deposit<br>
         <strong>at pickup:</strong> $${balance} balance to ${escape(opts.rancherName)}
