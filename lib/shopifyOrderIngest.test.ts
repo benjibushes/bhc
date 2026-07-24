@@ -129,6 +129,10 @@ test('webhook decrement is scoped to the rancher + uses the pure patch', () => {
 
 test('connect flow registers ORDERS_CREATE and alerts if it fails', () => {
   assert.match(connectSrc, /'ORDERS_CREATE'/, 'ORDERS_CREATE topic must be registered');
-  assert.match(connectSrc, /ordersCreateDead/, 'a failed ORDERS_CREATE registration must be surfaced');
+  // Batch F broadened the alert from an ORDERS_CREATE/FULFILLMENTS-only branch to
+  // fire on ANY webhook-registration failure; a failed ORDERS_CREATE is still
+  // surfaced by that guard (+ the loud reg-fail signal below).
+  assert.match(connectSrc, /webhookFailures\.length > 0/, 'a failed ORDERS_CREATE registration must be surfaced');
+  assert.match(connectSrc, /shopify-webhook-reg-fail-/, 'the failure must ring the loud operator signal');
   assert.match(connectSrc, /oversell/i, 'the alert must name the oversell consequence');
 });

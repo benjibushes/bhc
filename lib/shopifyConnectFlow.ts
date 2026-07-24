@@ -28,6 +28,48 @@ export interface ConnectStoreInput {
   mode: 'sync' | 'manual';
   markupPercent: number | null;
   category?: string | null;
+  /**
+   * Which door the connect came through. The OAuth callback already sends its
+   * own "Store INSTALLED" ping after this returns, so it passes 'oauth' to opt
+   * OUT of the clean-connect ping below (avoids a double notification). The
+   * live token-paste doors (Telegram /connectstore, rancher dashboard) leave
+   * this undefined → they GET the ping, which is the supply-stall fix: nobody
+   * was told a catalog was sitting unapproved (batch F, audit #9).
+   */
+  source?: 'oauth' | 'token-paste';
+}
+
+// Per-topic consequence copy for the webhook-registration-failure alert.
+// Broadened (batch F, audit #14) from #468's fulfillment+orders-only version:
+// ANY topic that fails to register (except a benign "already exists" on a
+// re-connect) now names itself AND the concrete breakage it causes, so a lone
+// APP_UNINSTALLED or PRODUCTS_* failure is no longer silent.
+const WEBHOOK_FAILURE_CONSEQUENCE: Record<string, string> = {
+  FULFILLMENTS_CREATE:
+    "tracking will NOT flow back — orders stay New forever and the SLA loop can't see them",
+  FULFILLMENTS_UPDATE:
+    'tracking updates will NOT flow back — shipment status on live orders goes stale',
+  ORDERS_CREATE:
+    'direct sales on their store will NOT decrement BHC stock in real time — oversell risk until the 6h catalog cron',
+  APP_UNINSTALLED:
+    'no real-time uninstall backstop — if they remove the app, synced listings can stay live on /shop with a dead fulfillment rail (shop/redact lags ~48h and NEVER fires for custom-app installs)',
+  PRODUCTS_UPDATE:
+    'price/stock edits on their store will NOT sync in real time — /shop can show a stale price or oversell until the catalog cron reconciles',
+  PRODUCTS_DELETE:
+    'products deleted on their store will NOT be pulled off /shop in real time — risk of selling a deleted product until the catalog cron reconciles',
+};
+
+// Turn ["ORDERS_CREATE: throttled", "APP_UNINSTALLED: scope"] into a named,
+// consequence-annotated block for the operator alert. Exported for tests.
+export function describeWebhookFailures(webhookFailures: string[]): string {
+  return webhookFailures
+    .map((f) => {
+      const topic = f.split(':')[0].trim();
+      const consequence =
+        WEBHOOK_FAILURE_CONSEQUENCE[topic] || `real-time ${topic} events will not reach BHC`;
+      return `• ${topic} — ${consequence}`;
+    })
+    .join('\n');
 }
 
 export async function connectShopifyStore(input: ConnectStoreInput): Promise<{ ok: boolean; report: string[] }> {
@@ -37,10 +79,16 @@ export async function connectShopifyStore(input: ConnectStoreInput): Promise<{ o
   // always wins.
   let markupPercent = input.markupPercent;
   let category = input.category || null;
+  // Captured for the clean-connect operator ping below; reused if the markup
+  // inherit already fetched the row so we don't double-read Airtable.
+  let rancherName: string | null = null;
   if (markupPercent == null || !category) {
     try {
       const { getRecordById, TABLES: T } = await import('./airtable');
       const existingRow: any = await getRecordById(T.RANCHERS, input.rancherId).catch(() => null);
+      if (existingRow) {
+        rancherName = String(existingRow['Ranch Name'] || existingRow['Operator Name'] || '') || null;
+      }
       const existing = parseIntegration(existingRow?.['Fulfillment Integration']);
       if (existing) {
         if (markupPercent == null && typeof existing.markupPercent === 'number') markupPercent = existing.markupPercent;
@@ -118,27 +166,27 @@ export async function connectShopifyStore(input: ConnectStoreInput): Promise<{ o
       webhookFailures.push(`${topic}: ${msg}`);
     }
   }
-  // Review 2026-07-21 + B2(a)/B3: a saved config with DEAD webhooks means orders
-  // push fine but the loop rots invisibly — tracking never flows back (FULFILLMENTS)
-  // and/or direct sales never decrement BHC stock (ORDERS_CREATE → oversell). Save
-  // anyway (token is good, push works) but ring Ben LOUD + actionable — re-running
-  // /connectstore or /storelink re-registers.
-  const fulfillmentDead = webhookFailures.some((f) => f.startsWith('FULFILLMENTS'));
-  const ordersCreateDead = webhookFailures.some((f) => f.startsWith('ORDERS_CREATE'));
-  if (fulfillmentDead || ordersCreateDead) {
-    const consequences = [
-      fulfillmentDead ? 'tracking will NOT flow back — orders stay New forever and the SLA loop can\'t see them' : '',
-      ordersCreateDead ? 'direct sales on their store will NOT decrement BHC stock in real time — oversell risk until the 6h catalog cron' : '',
-    ].filter(Boolean).join('\n');
+  // Review 2026-07-21 + B2(a)/B3 + #468 + batch F (audit #14): a saved config
+  // with ANY dead webhook means orders push fine but the loop rots invisibly in
+  // a topic-specific way — tracking stops (FULFILLMENTS), oversell opens
+  // (ORDERS_CREATE / PRODUCTS_*), or the uninstall backstop is gone
+  // (APP_UNINSTALLED). #468 alerted only when FULFILLMENTS or ORDERS_CREATE
+  // failed; broaden to fire on ANY non-"already-exists" topic failure and NAME
+  // each failed topic + its consequence, so a lone APP_UNINSTALLED / PRODUCTS_*
+  // failure is no longer silent. Save anyway (token is good, push works) but
+  // ring Ben LOUD + actionable — re-running /connectstore or /storelink
+  // re-registers.
+  if (webhookFailures.length > 0) {
+    const failedTopics = webhookFailures.map((f) => f.split(':')[0].trim());
     try {
       const { sendOperatorSignal } = await import('./operatorSignal');
       await sendOperatorSignal({
         urgency: 'loud',
         kind: 'system-error',
-        summary: `Store connected but webhooks FAILED — ${cfg.shop}`,
+        summary: `Store connected but ${failedTopics.length} webhook(s) FAILED — ${cfg.shop} (${failedTopics.join(', ')})`,
         detail:
-          `${webhookFailures.join('\n')}\n\n` +
-          `${consequences}\n\n` +
+          `${describeWebhookFailures(webhookFailures)}\n\n` +
+          `Raw errors:\n${webhookFailures.join('\n')}\n\n` +
           `Order push still works. Re-run the connect for this rancher to re-register the webhooks.`,
         dedupeKey: `shopify-webhook-reg-fail-${cfg.shop}`,
         dedupeWindowMs: 60 * 60 * 1000,
@@ -154,15 +202,61 @@ export async function connectShopifyStore(input: ConnectStoreInput): Promise<{ o
   report.push(`Saved — ${input.mode} mode${markupPercent != null ? `, ${markupPercent}% markup${input.markupPercent == null ? ' (kept from previous connection)' : ''}` : ''}.`);
 
   if (input.mode === 'sync') {
+    let syncPendingCount: number | null = null;
     try {
       const { syncShopifyCatalog } = await import('./shopifyCatalogSync');
       const dry = await syncShopifyCatalog(input.rancherId, { dryRun: true });
+      // imported = rows that WOULD be created; every new sync row imports
+      // unapproved (Active false), so this is the count waiting on /approvestore.
+      syncPendingCount = dry.imported;
       report.push(`Catalog dry-run: ${dry.report.join('; ')}`);
       report.push(
         'Imported products start OFF the marketplace — BHC reviews and approves each one before it displays (curation gate).',
       );
     } catch {
       report.push('Catalog dry-run unavailable (sync engine ships in PR-E) — connection itself is saved.');
+    }
+
+    // Supply-stall fix (batch F, audit #9): a CLEAN token-paste sync connect
+    // left NOBODY pinged that a catalog is now sitting unapproved — the
+    // products stay OFF /shop until someone happens to run /approvestore, so
+    // supply stalls invisibly. Mirror the OAuth "Store INSTALLED" ping so the
+    // operator knows to approve. Fire only on a CLEAN connect (all webhooks
+    // registered — a failed connect already rang the loud alert above, no point
+    // also cheering) and only when the caller didn't opt out (the OAuth callback
+    // passes source:'oauth' because it sends its own install ping).
+    if (webhookFailures.length === 0 && input.source !== 'oauth') {
+      if (rancherName == null) {
+        try {
+          const { getRecordById, TABLES: T } = await import('./airtable');
+          const row: any = await getRecordById(T.RANCHERS, input.rancherId).catch(() => null);
+          rancherName = row ? String(row['Ranch Name'] || row['Operator Name'] || '') : '';
+        } catch {
+          rancherName = '';
+        }
+      }
+      const label = rancherName || cfg.shop;
+      const hasCount = typeof syncPendingCount === 'number' && syncPendingCount > 0;
+      const pendingPhrase = hasCount
+        ? `${syncPendingCount} product${syncPendingCount === 1 ? '' : 's'} pending /approvestore`
+        : 'catalog pending approval';
+      try {
+        const { sendOperatorSignal } = await import('./operatorSignal');
+        await sendOperatorSignal({
+          urgency: 'normal',
+          kind: 'audit',
+          summary: `🔌 Store connected — ${pendingPhrase} for ${label}`,
+          detail:
+            `${cfg.shop} connected in sync mode (token paste).\n` +
+            (hasCount
+              ? `${syncPendingCount} synced product(s) are OFF /shop until approved. Run /approvestore ${label} to publish the catalog.`
+              : 'Synced products import OFF /shop (curation gate). Run /approvestore once the catalog import lands.'),
+          dedupeKey: `shopify-connect-pending-${cfg.shop}`,
+          dedupeWindowMs: 10 * 60 * 1000,
+        });
+      } catch {
+        /* best-effort */
+      }
     }
   }
   return { ok: true, report };
