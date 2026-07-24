@@ -13,11 +13,18 @@
 // 401 only on a real HMAC failure.
 
 import { NextResponse } from 'next/server';
-import { getAllRecords, updateRecord, TABLES, escapeAirtableValue } from '@/lib/airtable';
+import { getAllRecords, getFirstRecord, createRecord, updateRecord, TABLES, escapeAirtableValue } from '@/lib/airtable';
 import { parseIntegration } from '@/lib/fulfillmentConnector';
 import { verifyShopifyHmac } from '@/lib/shopifyWebhookVerify';
 import { publicAppCreds } from '@/lib/shopifyOauth';
 import { decryptSecret } from '@/lib/integrationCrypto';
+import {
+  isBhcOriginOrder,
+  extractOrderLineItems,
+  orderDecrementPatch,
+  shopifyOrderEventId,
+} from '@/lib/shopifyOrderIngest';
+import { claimOnce } from '@/lib/rancherCapacity';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 15;
@@ -145,6 +152,104 @@ export async function POST(request: Request) {
       } catch (e: any) {
         return NextResponse.json({ ok: true, processed: topic, sync: `failed: ${String(e?.message || '').slice(0, 100)}` });
       }
+    }
+
+    // Real-time inventory (B3): a DIRECT sale on the rancher's OWN store must
+    // decrement BHC 'Orders Left' NOW — otherwise /shop can oversell for up to
+    // 6h until the catalog cron / products/update webhook catches up.
+    if (topic === 'orders/create') {
+      let payload: any;
+      try {
+        payload = JSON.parse(raw);
+      } catch {
+        return NextResponse.json({ ok: true, skipped: 'bad json' });
+      }
+      // LANDMINE 1: BHC's OWN pushed orders ALSO fire orders/create, and they
+      // already decremented 'Orders Left' at settlement — decrementing again
+      // double-counts. Skip anything carrying the BHC source/tag markers.
+      if (isBhcOriginOrder(payload)) {
+        return NextResponse.json({ ok: true, skipped: 'bhc-origin (already decremented at settlement)' });
+      }
+      const lineItems = extractOrderLineItems(payload);
+      if (lineItems.length === 0) {
+        return NextResponse.json({ ok: true, processed: topic, decremented: 0, note: 'no SKU line items' });
+      }
+
+      // LANDMINE 2: IDEMPOTENCY. Shopify redelivers webhooks and decrement is
+      // not naturally idempotent. Two layers, mirroring the money webhooks:
+      //   • claimOnce (Redis SET NX) closes the tight concurrent-redelivery race
+      //     (degrades OPEN when Redis is absent — same as settlement).
+      //   • the DURABLE 'Stripe Events' table, keyed on the STABLE Shopify order
+      //     id, survives Redis absence + Shopify's up-to-48h redelivery window.
+      const eventId = shopifyOrderEventId(shop, payload);
+      const gotClaim = await claimOnce(`shopify-order-create:${eventId}`, 15 * 60);
+      if (!gotClaim) {
+        return NextResponse.json({ ok: true, skipped: 'in-flight duplicate' });
+      }
+      const safeEventId = escapeAirtableValue(eventId);
+      try {
+        const existing = await getFirstRecord('Stripe Events', `{Event Id} = "${safeEventId}"`);
+        if (existing && existing['Status'] === 'processed') {
+          return NextResponse.json({ ok: true, skipped: 'duplicate order event' });
+        }
+        if (!existing) {
+          await createRecord('Stripe Events', {
+            'Event Id': eventId,
+            'Event Type': 'shopify/orders/create',
+            'Account Id': shop,
+            'Received At': new Date().toISOString(),
+            'Status': 'received',
+          });
+        }
+      } catch (e: any) {
+        // Durable guard unavailable — do NOT decrement blind (a later redelivery
+        // would double-count with nothing to dedupe against). claimOnce already
+        // covered the tight race; bail SAFE and let the catalog cron reconcile.
+        console.error('[shopify-webhook] orders/create idempotency store unavailable, skipping decrement:', e?.message);
+        return NextResponse.json({ ok: true, skipped: 'idempotency store unavailable' });
+      }
+
+      // Decrement each SKU's Rancher Products row, scoped to THIS rancher (a SKU
+      // can collide across stores). orderDecrementPatch leaves unlimited stock
+      // untouched, floors at 0, and flips Active off at 0 (never on).
+      let decremented = 0;
+      const touchedIds = new Set<string>();
+      for (const li of lineItems) {
+        try {
+          const rows = (await getAllRecords(
+            TABLES.RANCHER_PRODUCTS,
+            `AND({Rancher Record ID} = "${escapeAirtableValue(String(rancher.id))}", {External SKU} = "${escapeAirtableValue(li.sku)}")`,
+          ).catch(() => [])) as any[];
+          for (const row of rows) {
+            const patch = orderDecrementPatch(row['Orders Left'], li.quantity);
+            if (patch) {
+              await updateRecord(TABLES.RANCHER_PRODUCTS, row.id, patch).catch(() => {});
+              decremented++;
+              touchedIds.add(String(row.id));
+            }
+          }
+        } catch (e: any) {
+          console.error('[shopify-webhook] orders/create decrement error:', e?.message);
+        }
+      }
+
+      // Flip the durable marker to 'processed' LAST — a crash before this leaves
+      // it 'received' so a retry re-processes; the residual off-by-one window is
+      // the one settlement already tolerates (Airtable has no atomic decrement)
+      // and self-corrects at the monthly stock check-in.
+      try {
+        const evRow = await getFirstRecord('Stripe Events', `{Event Id} = "${safeEventId}"`);
+        if (evRow) await updateRecord('Stripe Events', evRow.id, { 'Status': 'processed' }).catch(() => {});
+      } catch { /* best-effort */ }
+
+      if (touchedIds.size > 0) {
+        try {
+          const { revalidatePath } = await import('next/cache');
+          revalidatePath('/shop');
+          for (const id of touchedIds) revalidatePath(`/shop/${id}`);
+        } catch { /* ISR backstop */ }
+      }
+      return NextResponse.json({ ok: true, processed: topic, decremented });
     }
 
     if (topic !== 'fulfillments/create' && topic !== 'fulfillments/update') {
