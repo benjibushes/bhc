@@ -28,7 +28,12 @@ export interface IntegrationConfig {
 
 export interface PushLineItem { sku: string; quantity: number; title: string }
 export interface PushOrderInput {
-  orderRef: string;          // BHC Rancher Orders 'Order Ref' — becomes external note
+  orderRef: string;          // BHC Rancher Orders 'Order Ref' — human-readable, becomes external note (NOT unique)
+  // Globally-unique per-order dedup identity (the Rancher Orders record id).
+  // 'Order Ref' is NOT unique — a repeat buyer of the same product produces an
+  // identical ref — so the pre-create dedup + idempotency key MUST key on this,
+  // never on orderRef, or the 2nd order would be short-circuited and never ship.
+  dedupToken: string;
   buyerName: string;
   buyerEmail: string;
   shipToAddress: string;     // free-text from checkout; provider does best-effort split
