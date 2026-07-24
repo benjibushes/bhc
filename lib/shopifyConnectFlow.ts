@@ -80,6 +80,11 @@ export async function connectShopifyStore(input: ConnectStoreInput): Promise<{ o
     'FULFILLMENTS_CREATE',
     'FULFILLMENTS_UPDATE',
     'APP_UNINSTALLED',
+    // ORDERS_CREATE (B3): a DIRECT sale on the rancher's own store decrements
+    // BHC 'Orders Left' in real time, closing the up-to-6h oversell window
+    // before the catalog cron / products/update would catch up. Always on — the
+    // handler no-ops safely when a SKU has no BHC row or unlimited stock.
+    'ORDERS_CREATE',
     ...(input.mode === 'sync' ? ['PRODUCTS_UPDATE', 'PRODUCTS_DELETE'] : []),
   ];
   const webhookFailures: string[] = [];
@@ -113,20 +118,28 @@ export async function connectShopifyStore(input: ConnectStoreInput): Promise<{ o
       webhookFailures.push(`${topic}: ${msg}`);
     }
   }
-  // Review 2026-07-21: a saved config with DEAD fulfillment webhooks means
-  // orders push fine but tracking never flows back and the SLA cron nags a
-  // rancher whose store already shipped. Save anyway (token is good, push
-  // works) but ring Ben — re-running /connectstore or /storelink re-registers.
-  if (webhookFailures.some((f) => f.startsWith('FULFILLMENTS'))) {
+  // Review 2026-07-21 + B2(a)/B3: a saved config with DEAD webhooks means orders
+  // push fine but the loop rots invisibly — tracking never flows back (FULFILLMENTS)
+  // and/or direct sales never decrement BHC stock (ORDERS_CREATE → oversell). Save
+  // anyway (token is good, push works) but ring Ben LOUD + actionable — re-running
+  // /connectstore or /storelink re-registers.
+  const fulfillmentDead = webhookFailures.some((f) => f.startsWith('FULFILLMENTS'));
+  const ordersCreateDead = webhookFailures.some((f) => f.startsWith('ORDERS_CREATE'));
+  if (fulfillmentDead || ordersCreateDead) {
+    const consequences = [
+      fulfillmentDead ? 'tracking will NOT flow back — orders stay New forever and the SLA loop can\'t see them' : '',
+      ordersCreateDead ? 'direct sales on their store will NOT decrement BHC stock in real time — oversell risk until the 6h catalog cron' : '',
+    ].filter(Boolean).join('\n');
     try {
       const { sendOperatorSignal } = await import('./operatorSignal');
       await sendOperatorSignal({
         urgency: 'loud',
         kind: 'system-error',
-        summary: `Store connected but fulfillment webhooks FAILED — ${cfg.shop}`,
+        summary: `Store connected but webhooks FAILED — ${cfg.shop}`,
         detail:
-          `${webhookFailures.join('\n')}\n` +
-          `Order push works; tracking will NOT flow back until webhooks register. Re-run the connect for this rancher.`,
+          `${webhookFailures.join('\n')}\n\n` +
+          `${consequences}\n\n` +
+          `Order push still works. Re-run the connect for this rancher to re-register the webhooks.`,
         dedupeKey: `shopify-webhook-reg-fail-${cfg.shop}`,
         dedupeWindowMs: 60 * 60 * 1000,
       });

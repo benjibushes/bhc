@@ -9,6 +9,7 @@
 
 import { getAllRecords, getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { slaDecisions, NUDGE_DAYS, ESCALATE_DAYS, SLOW_NUDGE_DAYS, SLOW_ESCALATE_DAYS } from '@/lib/productFulfillmentSla';
+import { selectStalePushedOrders, PUSHED_STALE_HOURS } from '@/lib/fulfillmentWebhookHealth';
 import { sendEmail } from '@/lib/email';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { withCronRun } from '@/lib/cronRun';
@@ -24,6 +25,67 @@ interface SlaResult {
   notes: string;
 }
 
+// B2(b): "pushed but never fulfilled" webhook-health check. A pushed order that
+// never got its fulfillments/* tracking webhook back sits at Status='New' with
+// External Push Status='pushed' FOREVER — and the SLA loop below deliberately
+// skips pushed orders, so it's invisible. This is a BHC-side webhook problem
+// (registration failed, or the store's webhook is dead), NOT a rancher who
+// forgot to ship, so we ring the OPERATOR, never nag the rancher. Fires ONCE
+// per order (marker: 'SLA Nudged At', which the SLA loop never touches on
+// pushed orders). Fully isolated: its own try/catch, so a failure here can
+// never break the rancher-facing SLA chase that is this cron's real job.
+async function alertStalePushedOrders(newOrders: any[]): Promise<{ alerted: number; note: string }> {
+  try {
+    const pushed = newOrders.filter((o) => String(o['External Push Status'] || '') === 'pushed');
+    const stuck = selectStalePushedOrders(
+      pushed.map((o) => ({
+        id: o.id,
+        status: String(o['Status'] || ''),
+        externalPushStatus: String(o['External Push Status'] || ''),
+        externalPushedAt: String(o['External Pushed At'] || ''),
+        slaNudgedAt: String(o['SLA Nudged At'] || ''),
+      })),
+      new Date().toISOString(),
+    );
+    if (stuck.length === 0) return { alerted: 0, note: '' };
+
+    const byId = new Map(newOrders.map((o) => [o.id, o]));
+    let alerted = 0;
+    for (const s of stuck) {
+      const order: any = byId.get(s.id);
+      if (!order) continue;
+      const product = String(order['Product Name'] || 'a product');
+      const rancherName = String(order['Rancher Name'] || 'the ranch');
+      const ageDays = Math.floor(s.ageHours / 24);
+      try {
+        await sendOperatorSignal({
+          urgency: 'loud',
+          kind: 'system-error',
+          summary: `PUSHED but NO TRACKING ${ageDays}d: ${product} (${rancherName})`,
+          detail:
+            `This order pushed into ${rancherName}'s Shopify ${s.ageHours}h ago (External Push Status='pushed') ` +
+            `but the fulfillments/* tracking webhook never came back — it's still 'New' with no tracking. ` +
+            `The store's webhook is likely dead (registration failed at connect, or app reinstalled). ` +
+            `Re-run the connect for this rancher to re-register webhooks, or check the order shipped in their store and mark it Shipped by hand. ` +
+            `(BHC-side webhook health — the rancher is NOT at fault; do not nudge them.)`,
+          dedupeKey: `fulfillment-webhook-stuck:${s.id}`,
+          dedupeWindowMs: 7 * 24 * 60 * 60 * 1000,
+        });
+        // Stamp the "alerted once" marker (reused 'SLA Nudged At' — safe on
+        // pushed orders, see fulfillmentWebhookHealth.ts).
+        await updateRecord(TABLES.RANCHER_ORDERS, s.id, { 'SLA Nudged At': new Date().toISOString() });
+        alerted += 1;
+      } catch (e: any) {
+        console.error('[product-fulfillment-sla] webhook-health alert failed:', e?.message);
+      }
+    }
+    return { alerted, note: `; ${alerted} pushed-but-stuck alerted (>${PUSHED_STALE_HOURS}h no tracking)` };
+  } catch (e: any) {
+    console.error('[product-fulfillment-sla] webhook-health check skipped (non-fatal):', e?.message);
+    return { alerted: 0, note: '' };
+  }
+}
+
 async function realHandler(_request: Request): Promise<SlaResult> {
   const newOrders = await getAllRecords(TABLES.RANCHER_ORDERS, `{Status} = 'New'`);
   // Connector-pushed orders are Shopify's to fulfill (GTM audit 2026-07-21):
@@ -33,6 +95,11 @@ async function realHandler(_request: Request): Promise<SlaResult> {
   const unpushed = (newOrders as any[]).filter(
     (o) => String(o['External Push Status'] || '') !== 'pushed',
   );
+
+  // B2(b): run the pushed-but-stuck webhook-health check on the SAME fetched set
+  // (no extra query). Isolated + non-fatal — must run regardless of whether the
+  // rancher-facing SLA chase has any work below (hence before the early return).
+  const health = await alertStalePushedOrders(newOrders as any[]);
   const decisions = slaDecisions(
     unpushed.map((o) => ({
       id: o.id,
@@ -47,7 +114,7 @@ async function realHandler(_request: Request): Promise<SlaResult> {
   );
 
   if (decisions.length === 0) {
-    return { status: 'success', recordsTouched: 0, notes: `0 stale of ${newOrders.length} New` };
+    return { status: 'success', recordsTouched: health.alerted, notes: `0 stale of ${newOrders.length} New${health.note}` };
   }
 
   const byId = new Map((newOrders as any[]).map((o) => [o.id, o]));
@@ -153,6 +220,7 @@ async function realHandler(_request: Request): Promise<SlaResult> {
 
   const notes =
     `${newOrders.length} New, ${decisions.length} stale → ${nudged} nudged, ${escalated} escalated` +
+    health.note +
     (errors.length ? `; ${errors.length} errors: ${errors.slice(0, 3).join(' | ')}` : '');
   return {
     status: errors.length > 0 ? 'partial' : 'success',
