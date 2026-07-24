@@ -25,6 +25,7 @@ import Button from '../../components/Button';
 import PriceTag from '../../components/PriceTag';
 import ProductCard from '../../components/ProductCard';
 import { loadProductsForRancher } from '@/lib/marketplaceProducts';
+import { rancherCanTakeProductCharge } from '@/lib/storefrontGates';
 
 export const revalidate = 300;
 
@@ -61,6 +62,12 @@ interface Prod {
   shippingCost: number;
   // Pickup-at-the-ranch product (Ships Nationwide explicitly false).
   localOnly: boolean;
+  // Can the owning ranch actually take a BHC charge right now (Stripe Connect
+  // active + account id present, mirroring the buy gate)? false → the PDP hides
+  // Buy and shows "temporarily unavailable" instead of dead-ending at checkout.
+  // Fail-OPEN: a transient Ranchers read miss defaults true (the charge route is
+  // the real backstop) — matches the marketplaceProducts join precedent.
+  connectActive: boolean;
 }
 
 const sel = (v: any) => (v && typeof v === 'object' ? v.name : v) || '';
@@ -98,8 +105,14 @@ async function loadProduct(id: string): Promise<Prod | null> {
 
   // Best-effort: resolve the rancher's public page slug + state for the verified
   // trust link. Only link when the ranch has a LIVE page (never a dead link).
+  // Same read also decides connectActive (L12) — one Ranchers fetch, both uses.
   let rancherSlug = '';
   let rancherState = '';
+  // Fail-OPEN default: an unlinked product or a transient read miss leaves this
+  // true and lets the charge route 409 as the backstop (mirrors the
+  // marketplaceProducts join, which defaults rancherConnectActive=true when the
+  // join didn't run). Only a SUCCESSFULLY-read, not-active rancher flips it off.
+  let connectActive = true;
   const rancherRecId = String(r['Rancher Record ID'] || '').trim();
   if (rancherRecId) {
     try {
@@ -107,8 +120,10 @@ async function loadProduct(id: string): Promise<Prod | null> {
       if (rr) {
         rancherState = String(rr['State'] || '');
         if (rr['Page Live'] && !rr['Public Map Hidden']) rancherSlug = String(rr['Slug'] || '');
+        // Mirror the buy gate exactly so the PDP and the charge route agree.
+        connectActive = rancherCanTakeProductCharge(rr);
       }
-    } catch { /* non-fatal — fall back to plain text */ }
+    } catch { /* non-fatal — fall back to plain text + fail-open connectActive */ }
   }
 
   return {
@@ -135,6 +150,7 @@ async function loadProduct(id: string): Promise<Prod | null> {
     feeds: String(r['Feeds'] || ''),
     shippingCost: Math.max(0, Number(r['Shipping Cost'] || 0)),
     localOnly: r['Ships Nationwide'] === false,
+    connectActive,
   };
 }
 
@@ -192,6 +208,11 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
     ? reviews.reduce((s, r) => s + r.rating, 0) / reviews.length
     : 0;
 
+  // Buyable ⇔ in stock AND the ranch can take a charge (Connect active). A
+  // not-connected ranch reads as OutOfStock to Google and shows a "temporarily
+  // unavailable" state below — never a Buy button that dead-ends at checkout.
+  const outOfStock = p.soldOut || !p.connectActive;
+
   // Cross-sell: the same ranch's other live products (audit fix — the PDP had
   // no onward path to them, including on the sold-out state ads land on).
   let moreFromRanch: Awaited<ReturnType<typeof loadProductsForRancher>> = [];
@@ -222,7 +243,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
           lowPrice: Number(rangeMatch[1]).toFixed(2),
           highPrice: Number(rangeMatch[2]).toFixed(2),
           priceCurrency: 'USD',
-          availability: p.soldOut ? 'https://schema.org/OutOfStock' : 'https://schema.org/InStock',
+          availability: outOfStock ? 'https://schema.org/OutOfStock' : 'https://schema.org/InStock',
           url: `${SITE_URL}/shop/${p.id}`,
         }
       : null
@@ -230,7 +251,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
         '@type': 'Offer',
         price: p.price.toFixed(2),
         priceCurrency: 'USD',
-        availability: p.soldOut ? 'https://schema.org/OutOfStock' : 'https://schema.org/InStock',
+        availability: outOfStock ? 'https://schema.org/OutOfStock' : 'https://schema.org/InStock',
         url: `${SITE_URL}/shop/${p.id}`,
         // LOCAL PICKUP products assert NO shipping details — telling Google a
         // pickup product ships would be exactly the mismatch we're killing.
@@ -400,8 +421,9 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
                           : 'ships frozen, direct from the ranch · shipping included, nationwide'}
               </div>
 
-              {/* Real scarcity only — shown because it's literally true. */}
-              {!p.soldOut && p.ordersLeft !== null && p.ordersLeft <= 10 && (
+              {/* Real scarcity only — shown because it's literally true, and only
+                  when the product can actually be bought right now. */}
+              {!p.soldOut && p.connectActive && p.ordersLeft !== null && p.ordersLeft <= 10 && (
                 <div className="text-[12px] text-saddle">
                   {p.ordersLeft} {p.ordersLeft === 1 ? 'order' : 'orders'} left from this batch
                 </div>
@@ -413,6 +435,21 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
                     <div className="font-serif text-lg mb-1">sold out</div>
                     <p className="text-[13px] text-saddle mb-3">
                       this batch is spoken for — the ranch restocks as the next animals come through.
+                    </p>
+                    <Button href="/shop" variant="secondary" size="sm">
+                      see what&rsquo;s available now &rarr;
+                    </Button>
+                  </div>
+                ) : !p.connectActive ? (
+                  // L12: the owning ranch can't take a charge right now (Stripe
+                  // Connect not active). Show an honest, ad-click-preserving
+                  // "temporarily unavailable" state — NEVER a Buy button that
+                  // dead-ends at a checkout the buy gate then 409s.
+                  <div className="border border-dust bg-bone-warm p-4 text-center">
+                    <div className="font-serif text-lg mb-1">temporarily unavailable</div>
+                    <p className="text-[13px] text-saddle mb-3">
+                      {p.rancher || 'this ranch'} is finishing setup, so this one can&rsquo;t be ordered
+                      just yet — check back soon, or browse what&rsquo;s ready to ship now.
                     </p>
                     <Button href="/shop" variant="secondary" size="sm">
                       see what&rsquo;s available now &rarr;
