@@ -8,6 +8,8 @@ import ImageUploader from '../../components/ImageUploader';
 import LivePreview from './LivePreview';
 import StripeConnectStep from './steps/StripeConnectStep';
 import OnboardingRoadmap from '../OnboardingRoadmap';
+import ShopifyConnectCard from '../ShopifyConnectCard';
+import { remapSavedStep, shouldAutoSelectFreeTier } from '@/lib/onboardingFlow';
 import {
   deriveLadder,
   deriveDeposit,
@@ -183,6 +185,17 @@ const MAX_GALLERY_PHOTOS = 8;
 // the #1 conversion lever). parseGallery is tolerant of BOTH a JSON array and
 // a legacy newline-separated string so older data still renders; serializeGallery
 // always writes the consumer-correct JSON array.
+// True when the rancher has chosen at least one fulfillment type — i.e. Step 8
+// is complete. Used to keep an OLD-FLOW rancher (Connect came before
+// fulfillment) from skipping Step 8 on a Stripe return / resume. 'Fulfillment
+// Types' arrives as a multipleSelects array (of strings or {name}) or a
+// comma string; empty/absent ⇒ not done.
+function fulfillmentDone(r: any): boolean {
+  const v = r?.['Fulfillment Types'];
+  if (Array.isArray(v)) return v.length > 0;
+  return String(v ?? '').trim().length > 0;
+}
+
 function parseGallery(raw: any): string[] {
   if (Array.isArray(raw)) {
     return raw.map((s) => String(s).trim()).filter(Boolean);
@@ -235,28 +248,26 @@ export default function RancherSetupWizard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [rancher, setRancher] = useState<Rancher | null>(null);
-  // CLOSE-FIRST onboarding flow (reordered 2026-06-22):
-  //   Step 0 = intro (business model + video)
-  //   Step 4 = Book onboarding call with Ben (Cal.com embed). REQUIRED GATE,
-  //            now at the FRONT — setup stays locked until the call is done.
-  //            The only way past for a not-yet-called rancher is to book; the
-  //            gate opens (canSkipBooking → true) once Onboarding Status hits
-  //            'Call Complete' (Ben backfilled it for an existing rancher OR
-  //            finished the call and tapped the Telegram callback).
-  //   Step 1-3 = page setup (contact / brand / pricing)
-  //   Step 7 = Pick Your Plan (tier subscription) [Stage-3 Task 11A]
-  //   Step 9 = Stripe Connect onboarding (tier_v2 only) [Stage-3 Task D2]
-  //   Step 8 = Fulfillment + Refund Policy [Stage-3 Task 11B]
-  //   Step 5 = inline agreement signing
-  //   Step 6 = done (logged in, dashboard auto-link)
+  // ONE-ROAD onboarding flow (rebuilt 2026-07-24 — see lib/onboardingFlow,
+  // the single source of truth for the order):
   //
-  // Order is 0→4→1→2→3→7→9→8→5→6 (CALL is the front gate; 7/9/8 sit before Sign).
-  //   tier_v2: 0 → 4 → 1 → 2 → 3 → 7 → 9 → 8 → 5
-  //   legacy:  0 → 4 → 1 → 2 → 3 → 8 → 5   (skip 7+9)
-  // Step 9 auto-advances for legacy ranchers (no Connect needed).
-  // Numbering is awkward (step NUMBERS aren't in flow order) to preserve
-  // existing setStep call sites; do NOT re-sequence without auditing every
-  // setStep(...) in this file AND the close-first progress bar (PROGRESS_ORDER).
+  //   0 intro → 1 contact → 2 brand → 3 what-you-sell → 8 fulfillment
+  //     → 9 connect bank → 5 sign (& go live) → 6 done
+  //
+  //   Step 4 = OPTIONAL onboarding call (side path off the intro, rejoins at
+  //            Contact). Self-serve is the primary path (2026-07-21).
+  //   Step 7 = Pick Your Plan — OFF the road. New ranchers get the FREE plan
+  //            auto-selected on the way out of Step 3 (guarded — see
+  //            shouldAutoSelectFreeTier; live/signed legacy ranchers are never
+  //            silently converted). Reachable only via ?tier= upgrade deep
+  //            links and the already-signed legacy re-entry branch.
+  //
+  // Same road for every model: legacy ranchers auto-advance through 9
+  // (StripeConnectStep mount effect) and go live on their own payment links;
+  // everyone else connects Stripe. Step NUMBERS are historical and persisted
+  // in localStorage for resume — they can NEVER be renumbered (remapSavedStep
+  // handles values from older flows); only the ORDER changes, and it lives in
+  // lib/onboardingFlow.STEP_FLOW.
   const [step, setStep] = useState<0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9>(0);
   const [saving, setSaving] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
@@ -432,14 +443,33 @@ export default function RancherSetupWizard() {
       try {
         await fetch('/api/rancher/connect/status', { method: 'POST', credentials: 'include' });
       } catch { /* best-effort — advance regardless */ }
+      let fresh: any = rancher;
       try {
         const res = await fetch(`/api/rancher/setup?token=${encodeURIComponent(token)}`);
         if (res.ok) {
           const data = await res.json();
-          if (alive && data?.rancher) setRancher(data.rancher);
+          if (data?.rancher) {
+            fresh = data.rancher;
+            if (alive) setRancher(data.rancher);
+          }
         }
       } catch { /* keep existing rancher data */ }
-      if (alive) setStep(8);
+      if (!alive) return;
+      // ONE-ROAD (2026-07-24): fulfillment now comes BEFORE Connect, so a
+      // Stripe return normally lands on SIGN (or Done for a rancher redoing
+      // Connect from the Done nudge). BUT an OLD-FLOW rancher who left for
+      // Stripe under the old order (9 before 8) hasn't done fulfillment — send
+      // them to Step 8 first so buyers never see an empty Fulfillment/Refund
+      // section. fulfillmentDone reads the refetched record.
+      if (!fulfillmentDone(fresh)) {
+        setStep(8);
+      } else if (fresh?.agreementSigned) {
+        setDashboardLink('/rancher');
+        setStep(6);
+      } else {
+        primeSigningToken();
+        setStep(5);
+      }
     })();
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -457,6 +487,22 @@ export default function RancherSetupWizard() {
     if (!rancher) return;
     setStep(9);
   }, [tierComplete, rancher]);
+
+  // ?tier= upgrade deep link (2026-07-24). Step 7 (Pick Your Plan) left the
+  // main road — new ranchers get the free plan automatically — but upgrade
+  // emails deep-link ?tier=pasture|ranch|operator expecting the plan screen.
+  // Honor them: jump to Step 7 once, after rancher data loads. The saved-step
+  // restore effect below yields to this (it skips when ?tier= is present),
+  // and both Stripe-return params still win (guarded out here).
+  const tierParam = (searchParams.get('tier') || '').trim();
+  const didTierDeepLink = useRef(false);
+  useEffect(() => {
+    if (!tierParam || tierComplete || connectComplete) return;
+    if (!rancher || didTierDeepLink.current) return;
+    didTierDeepLink.current = true;
+    setStep(7);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tierParam, rancher?.id, tierComplete, connectComplete]);
 
   // P1-2 — localStorage step persistence. Rancher returning next day would
   // always land at Step 0 even if they'd previously made it to Step 7. We save
@@ -501,6 +547,7 @@ export default function RancherSetupWizard() {
     if (!rancher) return;
     if (connectComplete) return; // Stripe Connect-return handler wins
     if (tierComplete) return; // paid-tier-return handler wins (jumps to Step 9)
+    if (tierParam) return; // ?tier= upgrade deep link wins (jumps to Step 7)
     if (didRestoreStep.current) return;
     if (!stepStorageKey) return;
     didRestoreStep.current = true;
@@ -539,8 +586,14 @@ export default function RancherSetupWizard() {
       // un-called rancher's restore back to the call gate (step 4). Self-serve
       // is now the default path — the call is optional — so we restore the
       // rancher to exactly the step they left off on, no clamping.
-      if (n > 0 && n <= 9) {
-        setStep(n as 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9);
+      //
+      // ONE-ROAD (2026-07-24): saved values from the OLD flow are remapped —
+      // a rancher parked at the removed plan step (7) resumes at pricing (3),
+      // where the free plan now auto-selects on continue. lib/onboardingFlow
+      // owns the mapping.
+      const target = remapSavedStep(n);
+      if (target > 0) {
+        setStep(target as 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9);
       }
     } catch {
       /* localStorage disabled — non-fatal, fall back to Step 0. */
@@ -1113,40 +1166,33 @@ export default function RancherSetupWizard() {
 
   if (!rancher) return null;
 
-  const stepLabel = (n: 1 | 2 | 3 | 4 | 5) => {
-    const labels = { 1: 'Contact', 2: 'Brand', 3: 'Pricing', 4: 'Call', 5: 'Sign' };
+  const stepLabel = (n: 1 | 2 | 3 | 5 | 8 | 9) => {
+    const labels = { 1: 'Contact', 2: 'Brand', 3: 'Pricing', 8: 'Fulfillment', 9: 'Get paid', 5: 'Sign' };
     return labels[n];
   };
 
-  // CLOSE-FIRST progress bar. The displayed step numbers are out of numeric
-  // order (Call=4 now comes FIRST), so "done" can no longer be a numeric
-  // step > n test — that would mark Call as un-done while on Contact (1 > 4 is
-  // false) even though the call happened first. Instead we order the *visible*
-  // bars by flow position and compare flow indices.
+  // ONE-ROAD progress bar (2026-07-24). Visible bars follow lib/onboardingFlow
+  // STEP_FLOW minus the intro/done bookends. The displayed step numbers are
+  // still out of numeric order, so "done" is a flow-index comparison, never a
+  // numeric step > n test.
   //
-  // Visible order: Call(4) · Contact(1) · Brand(2) · Pricing(3) · Sign(5).
-  const PROGRESS_ORDER = [4, 1, 2, 3, 5] as const;
+  // Visible order: Contact(1) · Brand(2) · Pricing(3) · Fulfillment(8) ·
+  // Get paid(9) · Sign(5). The optional call (4) shows no bar — it's a side
+  // path off the intro.
+  const PROGRESS_ORDER = [1, 2, 3, 8, 9, 5] as const;
   // Map ANY actual step value to its position on this flow track so the
-  // "current" indicator never sits behind the real progress. Steps 7/9/8
-  // (Plan/Connect/Fulfillment) live between Pricing and Sign, so they read as
-  // "past Pricing, not yet at Sign" — index 3.5 keeps Pricing marked done and
-  // Sign still pending while the rancher is in those mid-steps. Intro (0) is
-  // before everything (-1). Done (6) is after everything.
+  // "current" indicator never sits behind the real progress. Step 7 (plan
+  // deep-link) sits between Pricing and Fulfillment — 2.5 keeps Pricing
+  // marked done and Fulfillment pending. Intro (0) and the optional call (4)
+  // are before everything (-1). Done (6) is after everything.
   const flowIndexForStep = (s: number): number => {
-    if (s === 0) return -1; // intro — nothing done yet
+    if (s === 0 || s === 4) return -1; // intro / optional call — nothing done yet
     if (s === 6) return PROGRESS_ORDER.length; // done — everything past
-    if (s === 7 || s === 8 || s === 9) return 3.5; // between Pricing and Sign
+    if (s === 7) return 2.5; // plan deep-link — between Pricing and Fulfillment
     const i = (PROGRESS_ORDER as readonly number[]).indexOf(s);
     return i === -1 ? -1 : i;
   };
   const currentFlowIndex = flowIndexForStep(step);
-
-  // Replace YouTube ID below with the real onboarding video ID once filmed.
-  // Until then, the placeholder embed is a 60-sec founder intro from the
-  // public BHC channel; if missing, the wizard hides the video and falls
-  // through to the "skip + start setup" CTA.
-  const ONBOARDING_VIDEO_ID =
-    process.env.NEXT_PUBLIC_RANCHER_ONBOARDING_VIDEO_ID || '';
 
   // Already signed?
   //
@@ -1172,7 +1218,14 @@ export default function RancherSetupWizard() {
   // out of the Done step's readiness checklist (and out of its nudge CTAs)
   // into the "already onboarded" screen. This branch is for RE-ENTRY on a
   // fresh load only.
-  if (rancher.agreementSigned && !signedThisSession) {
+  // ?tier= UPGRADE OVERRIDE (2026-07-24): a signed LEGACY rancher who clicks a
+  // v2-upgrade invite (app/api/admin/ranchers/[id]/send-v2-upgrade deep-links
+  // &tier=<slug>; that route 409s tier_v2, so every recipient is legacy and
+  // already-signed) must reach the plan picker. Without this they hit the
+  // "all set" early-return below and the pre-selected upgrade silently dead-
+  // ends — the exact bug the review caught. The tier deep-link effect has
+  // already fired setStep(7); fall through to the wizard render so it shows.
+  if (rancher.agreementSigned && !signedThisSession && !tierParam) {
     const pm = String(rancher['Pricing Model'] || '').toLowerCase();
     const isLegacy = pm !== 'tier_v2';
     // 2026-06-09 P0 fix: tier_v2 ranchers MID-FLOW (just picked Legacy
@@ -1452,26 +1505,6 @@ export default function RancherSetupWizard() {
                 not a leash.
               </p>
             </div>
-
-            {ONBOARDING_VIDEO_ID && (
-              <div className="space-y-3">
-                <p className="text-xs uppercase tracking-widest text-saddle">
-                  Or watch the 90-second walkthrough
-                </p>
-                <div
-                  className="relative w-full overflow-hidden border border-dust"
-                  style={{ paddingBottom: '56.25%' }}
-                >
-                  <iframe
-                    src={`https://www.youtube.com/embed/${ONBOARDING_VIDEO_ID}`}
-                    title="BuyHalfCow rancher onboarding overview"
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                    allowFullScreen
-                    className="absolute inset-0 w-full h-full"
-                  />
-                </div>
-              </div>
-            )}
 
             {/* ── What we actually run for you ─────────────────────────────
                 Surfaces the marketing + ops infrastructure ranchers are
@@ -2232,13 +2265,19 @@ export default function RancherSetupWizard() {
                         placeholder="~150 lbs"
                       />
                       {/* COMPANION GUARD (2026-07-21 legacy-default flip): a
-                          legacy rancher has no Stripe Connect step — their own
-                          payment link IS the money path, so it's labeled
-                          required and Continue blocks below when every sold
-                          share's link is empty. tier_v2 keeps it optional. */}
+                          STAYING-legacy rancher has no Stripe Connect step —
+                          their own payment link IS the money path, so it's
+                          labeled required and Continue blocks below when every
+                          sold share's link is empty. tier_v2 keeps it optional
+                          — and so does a fresh applicant about to auto-select
+                          the free plan (shouldAutoSelectFreeTier): they'll be
+                          tier_v2 before they ever go live, so demanding a
+                          payment link here would be asking for a money path
+                          they'll never use. */}
                       <Field
                         label={
-                          String((rancher as any)['Pricing Model'] || 'legacy') === 'legacy'
+                          String((rancher as any)['Pricing Model'] || 'legacy') === 'legacy' &&
+                          !shouldAutoSelectFreeTier(rancher as any)
                             ? 'Payment link — required to go live'
                             : 'Stripe / payment link (optional)'
                         }
@@ -2247,7 +2286,8 @@ export default function RancherSetupWizard() {
                         type="url"
                         placeholder="https://buy.stripe.com/..."
                         helper={
-                          String((rancher as any)['Pricing Model'] || 'legacy') === 'legacy'
+                          String((rancher as any)['Pricing Model'] || 'legacy') === 'legacy' &&
+                          !shouldAutoSelectFreeTier(rancher as any)
                             ? 'Buyers pay you directly through this link. At least one share you sell needs one.'
                             : undefined
                         }
@@ -2390,29 +2430,14 @@ export default function RancherSetupWizard() {
                     return;
                   }
                 }
-                // COMPANION GUARD (2026-07-21, legacy-default flip): a legacy
-                // rancher goes live on e-sign + slug + price + their OWN
-                // payment link — there's no Stripe Connect step collecting
-                // money for them. Without at least one link, flipping the
-                // signup default to legacy would just swap the SSN wall for an
-                // invisible "page can never take money" wall. Block Continue
-                // until at least one sold share has a payment link. tier_v2
-                // keeps links optional (Connect handles payment).
-                const isLegacy =
-                  String((rancher as any)['Pricing Model'] || 'legacy') === 'legacy';
-                if (isLegacy) {
-                  const hasAnyLink = sells.some(
-                    (tier) => String(form[`${tier} Payment Link`] || '').trim().length > 0
-                  );
-                  if (!hasAnyLink) {
-                    setError(
-                      sells.length === 0
-                        ? 'Pick at least one share you sell above and add its payment link — buyers pay you directly through it, and your page can’t go live without one.'
-                        : 'Add a payment link (Stripe, Square, etc.) to at least one share you sell — buyers pay you directly through it, and your page can’t go live without one.'
-                    );
-                    return;
-                  }
-                }
+                // The MONEY-PATH guard now runs AFTER the save + auto-select,
+                // on the ACTUAL resulting Pricing Model — never a prediction.
+                // (Review 2026-07-24: waiving the payment-link requirement on
+                // a predicted tier flip stranded a rancher signed-but-DARK
+                // when the flip failed — legacy with no link AND no Connect.)
+                const willAutoSelect = shouldAutoSelectFreeTier(rancher as any);
+                const hasAnyLink = () =>
+                  sells.some((tier) => String(form[`${tier} Payment Link`] || '').trim().length > 0);
                 // Filter out empty testimonials before saving (rancher may add
                 // then leave blank).
                 const validTestimonials = testimonials.filter(
@@ -2440,24 +2465,84 @@ export default function RancherSetupWizard() {
                     ? JSON.stringify(validTestimonials)
                     : '',
                 });
-                if (ok) {
-                  // CLOSE-FIRST flow: the onboarding call already happened at
-                  // the FRONT (Step 0 → Step 4 → Contact), so after pricing we
-                  // go STRAIGHT to the next setup gate — no call routing here.
-                  //
-                  // Step ordering depends on Pricing Model:
-                  //   tier_v2: …3 → 7 (Pick Plan) → 9 (Stripe) → 8 (Fulfill) → 5 (Sign)
-                  //   legacy:  …3 → 8 (Fulfill) → 5 (Sign)  — skip 7+9
-                  // Legacy ranchers pay BHC monthly commission on closed deals
-                  // (no tier subscription), so forcing them through Pick Plan
-                  // (step 7) or Stripe Connect (step 9) is wrong and blocks
-                  // onboarding. (P2-B fix.) `isLegacy` computed above for the
-                  // payment-link guard.
-                  const nextAfterPricing = isLegacy ? 8 : 7;
-                  setStep(nextAfterPricing);
+                if (!ok) return;
+
+                // ONE ROAD (2026-07-24): pricing → fulfillment for EVERYONE;
+                // Connect comes after all data entry. A fresh applicant
+                // (legacy only because the signup door defaults there) gets
+                // the FREE plan selected here — the same POST the old Step-7
+                // free card fired, which flips 'Pricing Model' to tier_v2
+                // server-side so Step 9 renders Connect. shouldAutoSelectFreeTier
+                // fails CLOSED for live/signed legacy ranchers (the
+                // silent-conversion landmine).
+                //
+                // effectiveModel is read from the REFETCHED record after the
+                // attempt — the advance/guard decision is made on what the
+                // server actually did, so a failed or partial flip can never
+                // leave a rancher on a path with no money rail.
+                let effectiveModel = String((rancher as any)['Pricing Model'] || 'legacy').toLowerCase();
+                if (willAutoSelect) {
+                  try {
+                    const sel = await fetch('/api/rancher/tier/select', {
+                      method: 'POST',
+                      credentials: 'include',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ tier: 'legacy_connect', from: 'wizard', wizardToken: token }),
+                    });
+                    // Refetch regardless of sel.ok — a partial write can flip
+                    // Pricing Model to tier_v2 even on a 500 (Stripe account
+                    // created, later persist failed), and we must SEE that so
+                    // Step 9 shows Connect rather than the stale-legacy
+                    // auto-advance dumping them past their own bank step.
+                    const fresh = await fetch(`/api/rancher/setup?token=${encodeURIComponent(token)}`);
+                    if (fresh.ok) {
+                      const d = await fresh.json();
+                      if (d?.rancher) {
+                        setRancher(d.rancher);
+                        effectiveModel = String(d.rancher['Pricing Model'] || 'legacy').toLowerCase();
+                      }
+                    }
+                  } catch { /* effectiveModel stays the pre-attempt value */ }
                 }
+
+                // MONEY-PATH GUARD on the REAL model. tier_v2 → Connect is the
+                // rail (collected at Step 9), no link needed. Still legacy
+                // (flip failed, or a staying-legacy rancher who never
+                // auto-selects) → their own payment link IS the only money
+                // path; block until one exists so nobody ever signs into a
+                // dark, unpayable page.
+                if (effectiveModel !== 'tier_v2' && !hasAnyLink()) {
+                  setError(
+                    willAutoSelect
+                      ? 'We couldn’t finish setting up your free plan just now. Tap Continue to try again — or add a payment link (Stripe, Square…) to any share you sell and go live on that instead. Your page can’t take money without one of the two.'
+                      : sells.length === 0
+                        ? 'Pick at least one share you sell above and add its payment link — buyers pay you directly through it, and your page can’t go live without one.'
+                        : 'Add a payment link (Stripe, Square, etc.) to at least one share you sell — buyers pay you directly through it, and your page can’t go live without one.'
+                  );
+                  return;
+                }
+                setStep(8);
               }}
             />
+
+            {/* ── SECOND WAY TO SELL (2026-07-24): sync an existing store ──
+                Same money model, said out loud: we list their products at
+                their price plus our margin; their store receives a normal
+                paid order. The card's endpoints ride the rancher-session
+                cookie the wizard GET minted on load, so this works inside
+                the token-authed wizard with no auth changes. Share prices
+                above remain the go-live spine — the routing engine sells
+                shares; synced products land on /shop. */}
+            <div className="border-t border-dust pt-6">
+              <p className="text-xs uppercase tracking-widest text-saddle mb-3">
+                Also selling online already?
+              </p>
+              <ShopifyConnectCard
+                payoutsReady={
+                  String((rancher as any)['Stripe Connect Status'] || '').toLowerCase() === 'active'
+                }
+              />
+            </div>
           </section>
         )}
 
@@ -2481,7 +2566,11 @@ export default function RancherSetupWizard() {
           />
         )}
 
-        {/* STEP 7 — Pick Your Plan (Stage-3 Task 11A) */}
+        {/* STEP 7 — Pick Your Plan. OFF the main road (2026-07-24): new
+            ranchers auto-select the free plan on the way out of Step 3.
+            Reachable only via ?tier= upgrade deep links — including for
+            already-signed legacy ranchers, whose all-set early-return yields
+            to ?tier= (see the tierParam guard above). */}
         {step === 7 && (
           <TierPickStep
             token={token}
@@ -2491,65 +2580,70 @@ export default function RancherSetupWizard() {
             onBack={() => setStep(3)}
             onContinue={(updated) => {
               // updated holds the latest Rancher snapshot from polling — merge
-              // it into our local rancher state so the fulfillment + sign
-              // screens see the new Tier / Subscription Status without a
-              // page refresh.
+              // it into our local rancher state so the connect + sign screens
+              // see the new Tier / Subscription Status without a page refresh.
               if (updated) setRancher(updated);
-              // Step 9 (Stripe Connect) sits between Pick-Plan and Fulfillment.
-              // Legacy ranchers auto-advance through 9 to 8 in StripeConnectStep.
+              // Onward to Connect (Step 9) — an upgrading rancher continues
+              // the road from the bank step; legacy auto-advances through.
               setStep(9);
             }}
           />
         )}
 
-        {/* STEP 9 — Stripe Connect onboarding (Stage-3 Task D2). tier_v2 only;
-            legacy ranchers auto-advance via the StripeConnectStep effect. */}
+        {/* STEP 9 — Stripe Connect (ONE-ROAD position: after fulfillment,
+            before sign). Legacy ranchers auto-advance via the
+            StripeConnectStep mount effect — their onComplete goes straight to
+            the sign branch. tier_v2 ranchers leave for Stripe and re-enter
+            through the ?connectComplete=1 handler (which mirrors this same
+            sign-or-done branch). */}
         {step === 9 && rancher && (
           <StripeConnectStep
             rancherId={rancher.id}
             pricingModel={String((rancher as any)['Pricing Model'] || 'legacy')}
             wizardToken={token}
-            onComplete={() => setStep(8)}
-            onBack={() => setStep(7)}
+            onComplete={() => {
+              // Old-flow safety (a legacy rancher who somehow reached Connect
+              // before fulfillment): don't skip Step 8. Then the signed-state
+              // branch — already-signed ranchers must never be routed into
+              // SignStep's 400 "already signed" dead-end.
+              if (!fulfillmentDone(rancher)) {
+                setStep(8);
+              } else if (rancher.agreementSigned) {
+                setDashboardLink('/rancher');
+                setStep(6);
+              } else {
+                primeSigningToken();
+                setStep(5);
+              }
+            }}
+            onBack={() => setStep(8)}
           />
         )}
 
-        {/* STEP 8 — Fulfillment + Refund Policy (Stage-3 Task 11B).
-            Back-button target depends on Pricing Model: tier_v2 ranchers came
-            from step 9 (Stripe), legacy ranchers came from step 3 (Pricing) —
-            the call now happens at the FRONT (close-first), so it's no longer
-            between Pricing and Fulfillment. Sending legacy ranchers back to
-            step 9 would trap them — StripeConnectStep auto-advances legacy
-            back to step 8. (P2-B fix.) */}
-        {step === 8 && (() => {
-          const isLegacy =
-            String((rancher as any)['Pricing Model'] || 'legacy') === 'legacy';
-          const backTarget = isLegacy ? 3 : 9;
-          return (
-            <FulfillmentStep
-              token={token}
-              form={form}
-              setField={setField}
-              setFieldAndAutoSave={setFieldAndAutoSave}
-              autoSaveStatus={autoSaveStatus}
-              saving={saving}
-              saveStep={saveStep}
-              onBack={() => setStep(backTarget)}
-              onContinue={() => {
-                // After fulfillment is saved, branch on whether agreement is
-                // already signed. Critical for v2-migration test ranchers
-                // like Jesse Zimmerman where Agreement Signed=true was set
-                // BEFORE the wizard ran (legacy ranchers migrating to v2).
-                //
-                // Previously this unconditionally fired primeSigningToken
-                // + setStep(5), which trapped already-signed ranchers at the
-                // SignStep — sign-agreement returns 400 "already signed"
-                // and there's no escape hatch in the UI. The wizard would
-                // dead-end immediately after Stripe Connect + fulfillment.
-                //
-                // 2026-06-09 fix: detect signed state, mint /rancher as
-                // dashboardLink (rancher-session cookie set on wizard load
-                // authenticates them), jump straight to Step 6 (Done).
+        {/* STEP 8 — Fulfillment (ONE-ROAD position: straight after pricing,
+            for BOTH models — the isLegacy back-fork died with the old order).
+            Continue goes to Step 9 (Connect); a tier_v2 rancher whose Connect
+            is ALREADY active (redo/resume walk) skips 9 straight to the sign
+            branch — StripeConnectStep has no already-active state and would
+            show them a "connect your bank" CTA for a bank they connected. */}
+        {step === 8 && (
+          <FulfillmentStep
+            token={token}
+            form={form}
+            setField={setField}
+            setFieldAndAutoSave={setFieldAndAutoSave}
+            autoSaveStatus={autoSaveStatus}
+            saving={saving}
+            saveStep={saveStep}
+            onBack={() => setStep(3)}
+            onContinue={() => {
+              const connectActive =
+                String((rancher as any)['Pricing Model'] || 'legacy') === 'tier_v2' &&
+                String((rancher as any)['Stripe Connect Status'] || '').toLowerCase() === 'active';
+              if (connectActive) {
+                // Signed-state branch (2026-06-09 fix, preserved): an
+                // already-signed rancher (v2-migration, e.g. Jesse Zimmerman)
+                // must go to Done, not into SignStep's 400 dead-end.
                 if (rancher.agreementSigned) {
                   setDashboardLink('/rancher');
                   setStep(6);
@@ -2557,10 +2651,12 @@ export default function RancherSetupWizard() {
                   primeSigningToken();
                   setStep(5);
                 }
-              }}
-            />
-          );
-        })()}
+              } else {
+                setStep(9);
+              }
+            }}
+          />
+        )}
 
         {/* STEP 5 — Inline sign agreement */}
         {step === 5 && (
@@ -3442,7 +3538,7 @@ function CallStep({
   return (
     <section className="space-y-6 bg-bone border border-dust p-7 md:p-8">
       <header>
-        <p className="text-xs uppercase tracking-widest text-saddle mb-2">First step · Onboarding call</p>
+        <p className="text-xs uppercase tracking-widest text-saddle mb-2">Optional · Onboarding call</p>
         <h2 className="font-serif text-2xl md:text-3xl text-charcoal">
           {alreadyBooked ? 'You’re booked for your call.' : 'Book your 30-min onboarding call.'}
         </h2>

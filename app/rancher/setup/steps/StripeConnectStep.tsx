@@ -84,7 +84,7 @@ export default function StripeConnectStep({ rancherId, pricingModel, wizardToken
     <section className="space-y-6 bg-bone border border-dust p-7 md:p-8">
       <header>
         <p className="text-xs uppercase tracking-widest text-saddle mb-2">
-          Step 7 · Connect Your Bank
+          Get paid · Connect your bank
         </p>
         <h2 className="font-serif text-2xl md:text-3xl text-charcoal">
           Connect your bank account.

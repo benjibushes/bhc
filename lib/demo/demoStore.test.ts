@@ -15,8 +15,13 @@ import {
 
 test('flagship demo rancher exists and is fully demo-ready', () => {
   const ranchers = demoTableRecords(TABLES.RANCHERS);
-  assert.equal(ranchers.length, 1);
-  const r = ranchers[0];
+  // Pinned by ID, not by count: the fixture set also carries a FRESH
+  // applicant (recDEMOrancher02x) so the setup wizard's nothing-to-live road
+  // can be walked in demo mode. The flagship must stay first (public page /
+  // dashboard demos read [0]) and stay fully onboarded.
+  assert.equal(ranchers[0].id, DEMO_RANCHER_ID);
+  const r = ranchers.find((x: any) => x.id === DEMO_RANCHER_ID);
+  assert.ok(r, 'flagship demo rancher missing');
   assert.equal(r.id, DEMO_RANCHER_ID);
   assert.equal(r.id.length, 17); // rec + 14 chars
   assert.equal(r['Slug'], DEMO_RANCHER_SLUG);

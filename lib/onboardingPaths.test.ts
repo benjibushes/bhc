@@ -171,6 +171,44 @@ test('isLive only when Active Status=Active and Onboarding Status=Live', () => {
 
 // ── money model copy ────────────────────────────────────────────────────────
 
+// ── camelCase shape (the wizard's GET /api/rancher/setup payload) ───────────
+// evaluateOnboarding is the single source of truth across surfaces, so it must
+// read BOTH raw Airtable rows AND the wizard's camelCased subset. Reading only
+// raw names showed contact/agreement as unfinished forever on the wizard.
+
+test('camelCase contact fields mark contact done (wizard payload shape)', () => {
+  const st = evaluateOnboarding({
+    ranchName: 'Bar T Beef',
+    operatorName: 'Tom Bar',
+    email: 'tom@bart.example',
+    phone: '555-0100',
+    'Half Price': 2000,
+  } as any);
+  assert.equal(st.requirements.find((r) => r.key === 'contact')?.done, true);
+});
+
+test('camelCase agreementSigned marks the agreement step done', () => {
+  const st = evaluateOnboarding({
+    ranchName: 'B', operatorName: 'T', email: 'a@b.co', phone: '5',
+    'Half Price': 2000, stripeConnectStatus: 'active', agreementSigned: true,
+  } as any);
+  assert.equal(st.requirements.find((r) => r.key === 'agreement')?.done, true);
+  assert.equal(st.readyToGoLive, true);
+});
+
+test('camelCase stripeConnectStatus satisfies payout', () => {
+  const st = evaluateOnboarding({ stripeConnectStatus: 'active' } as any);
+  assert.equal(st.requirements.find((r) => r.key === 'payout')?.done, true);
+});
+
+test('store path detected from camelCase fulfillmentIntegration key', () => {
+  const cfg = JSON.stringify({ provider: 'shopify', mode: 'sync', markupPercent: 15 });
+  assert.equal(detectSellPath({ fulfillmentIntegration: cfg } as any), 'store');
+  const st = evaluateOnboarding({ fulfillmentIntegration: cfg } as any);
+  assert.equal(st.path, 'store');
+  assert.deepEqual(st.requirements.map((r) => r.key), ['contact', 'store', 'markup', 'payout', 'agreement']);
+});
+
 test('MONEY_MODEL states fee-on-top for both paths and never promises no fees', () => {
   const all = Object.values(MONEY_MODEL).join(' ').toLowerCase();
   assert.match(all, /on top/);

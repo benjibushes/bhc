@@ -81,6 +81,27 @@ function nonEmpty(v: unknown): boolean {
 }
 
 /**
+ * Read a field that arrives under DIFFERENT casings on different surfaces.
+ *
+ * This helper is the single source of truth for onboarding state, so it must
+ * be right for every caller. Two shapes reach it:
+ *   • RAW Airtable rows (dashboard, admin, crons): 'Ranch Name',
+ *     'Agreement Signed', 'Fulfillment Integration', …
+ *   • The wizard's GET /api/rancher/setup payload: a whitelisted subset where
+ *     several keys are camelCased (ranchName, operatorName, agreementSigned,
+ *     pageLive, onboardingStatus) and the raw names are absent entirely.
+ * Reading only the raw name made the step-0 roadmap wrong on the exact surface
+ * it was added to (contact showed unfinished forever). `pick` tries each key
+ * and returns the first defined value.
+ */
+function pick(r: Record<string, unknown>, ...keys: string[]): unknown {
+  for (const k of keys) {
+    if (r[k] !== undefined && r[k] !== null && r[k] !== '') return r[k];
+  }
+  return undefined;
+}
+
+/**
  * Parse the `Fulfillment Integration` JSON blob written by lib/shopifyConnectFlow.
  *
  * Deliberately minimal — it reads only the three fields onboarding cares about
@@ -112,7 +133,8 @@ export function readStoreConfig(raw: unknown): StoreConfig | null {
  * rancher with no e-commerce presence (most of them) gets.
  */
 export function detectSellPath(rancher: Record<string, unknown>): SellPath {
-  return readStoreConfig(rancher?.['Fulfillment Integration']) ? 'store' : 'shares';
+  const r = rancher || {};
+  return readStoreConfig(pick(r, 'Fulfillment Integration', 'fulfillmentIntegration')) ? 'store' : 'shares';
 }
 
 function hasAnyPrice(r: Record<string, unknown>): boolean {
@@ -140,20 +162,21 @@ export const MONEY_MODEL = {
 export function evaluateOnboarding(rancher: Record<string, unknown>): OnboardingState {
   const r = rancher || {};
   const path = detectSellPath(r);
-  const store = readStoreConfig(r['Fulfillment Integration']);
+  const store = readStoreConfig(pick(r, 'Fulfillment Integration', 'fulfillmentIntegration'));
 
   const requirements: Requirement[] = [];
 
-  // 1. Contact — pure data entry, an admin can do all of it.
+  // 1. Contact — pure data entry, an admin can do all of it. Reads both the
+  //    raw and camelCase shapes (the wizard payload camelCases the names).
   requirements.push({
     key: 'contact',
     label: 'Ranch + contact details',
     why: 'So buyers know who they are buying from and we can reach you about a sale.',
     done:
-      nonEmpty(r['Ranch Name']) &&
-      nonEmpty(r['Operator Name']) &&
-      nonEmpty(r['Email']) &&
-      nonEmpty(r['Phone']),
+      nonEmpty(pick(r, 'Ranch Name', 'ranchName')) &&
+      nonEmpty(pick(r, 'Operator Name', 'operatorName')) &&
+      nonEmpty(pick(r, 'Email', 'email')) &&
+      nonEmpty(pick(r, 'Phone', 'phone')),
     actor: 'either',
   });
 
@@ -191,7 +214,7 @@ export function evaluateOnboarding(rancher: Record<string, unknown>): Onboarding
     key: 'payout',
     label: 'Connect your bank (Stripe)',
     why: MONEY_MODEL.connect,
-    done: String(r['Stripe Connect Status'] || '').toLowerCase() === 'active',
+    done: String(pick(r, 'Stripe Connect Status', 'stripeConnectStatus') || '').toLowerCase() === 'active',
     actor: 'rancher',
   });
 
@@ -200,17 +223,17 @@ export function evaluateOnboarding(rancher: Record<string, unknown>): Onboarding
     key: 'agreement',
     label: 'Sign the agreement',
     why: 'One e-signature covering our commission and how we work together.',
-    done: !!r['Agreement Signed'],
+    done: !!pick(r, 'Agreement Signed', 'agreementSigned'),
     actor: 'rancher',
   });
 
   const nextAction = requirements.find((x) => !x.done) || null;
-  const onboardingStatus = enumStr(r['Onboarding Status']);
+  const onboardingStatus = enumStr(pick(r, 'Onboarding Status', 'onboardingStatus'));
   return {
     path,
     requirements,
     nextAction,
     readyToGoLive: nextAction === null,
-    isLive: enumStr(r['Active Status']) === 'Active' && onboardingStatus === 'Live',
+    isLive: enumStr(pick(r, 'Active Status', 'activeStatus')) === 'Active' && onboardingStatus === 'Live',
   };
 }
