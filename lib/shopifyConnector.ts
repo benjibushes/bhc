@@ -27,52 +27,59 @@ async function gql(cfg: IntegrationConfig, query: string, variables: any, extraH
   return { status: res.status, body };
 }
 
-// H1(a): a STABLE per-order idempotency key. orderCreate is not naturally
-// idempotent — a lost 504 response makes the net cron re-push and ships a
-// SECOND live order. A deterministic key derived from the BHC 'Order Ref'
-// (identical on every retry of the same row) lets Shopify dedupe a repeated
-// create. orderRef is the only stable identity the connector receives
-// (PushOrderInput carries no row id / PI), and it's deterministic per row.
-export function orderIdempotencyKey(orderRef: string): string {
-  return 'bhc-' + createHash('sha256').update(String(orderRef || '')).digest('hex').slice(0, 40);
+// The UNIQUE per-order tag stamped on every pushed order so a retry can find its
+// own prior create. Keyed on PushOrderInput.dedupToken (the Rancher Orders record
+// id) — NEVER on 'Order Ref', which collides across a repeat buyer's same-product
+// orders and would make the 2nd order short-circuit onto the 1st (under-ship).
+export function bhcOrderTag(dedupToken: string): string {
+  return `BHC-oid:${String(dedupToken || '').trim()}`;
 }
 
-// H1(b): pre-create dedup decision (pure). Given the store's recent BHC-tagged
-// orders, return the id of the one that already carries THIS orderRef in its
-// note (connector writes `BuyHalfCow order <orderRef> …` at push time), else
-// null. A blank orderRef never matches — we must never false-short-circuit a
-// real order onto an unrelated one.
+// H1(a): a STABLE, UNIQUE per-order idempotency key. orderCreate is not naturally
+// idempotent — a lost 504 response makes the net cron re-push and ships a SECOND
+// live order. Derived from the unique dedupToken (row id): identical on every
+// retry of the SAME order (Shopify dedupes the repeat create) but DISTINCT across
+// two orders that happen to share an Order Ref (they must both ship).
+export function orderIdempotencyKey(dedupToken: string): string {
+  return 'bhc-' + createHash('sha256').update(String(dedupToken || '')).digest('hex').slice(0, 40);
+}
+
+// H1(b): pre-create dedup decision (pure). Return the id of the store order that
+// already carries THIS order's unique `BHC-oid:<dedupToken>` tag (case-
+// insensitive — Shopify treats tags case-insensitively), else null. A blank
+// dedupToken never matches — we must never false-short-circuit a real order onto
+// an unrelated one, nor collide two blank-token orders.
 export function matchExistingBhcOrder(
-  nodes: Array<{ id?: unknown; note?: unknown; tags?: unknown }>,
-  orderRef: string,
+  nodes: Array<{ id?: unknown; tags?: unknown }>,
+  dedupToken: string,
 ): string | null {
-  const ref = String(orderRef || '').trim();
-  if (!ref) return null;
+  const token = String(dedupToken || '').trim();
+  if (!token) return null;
+  const want = bhcOrderTag(token).toLowerCase();
   for (const n of Array.isArray(nodes) ? nodes : []) {
-    const note = String(n?.note || '');
-    const tags = Array.isArray(n?.tags) ? n.tags.map(String) : (typeof n?.tags === 'string' ? [n.tags] : []);
-    if (tags.includes('BHC') && note.includes(ref)) return String(n?.id || '') || null;
+    const tags = Array.isArray(n?.tags) ? n.tags.map((t) => String(t)) : (typeof n?.tags === 'string' ? [n.tags] : []);
+    if (tags.some((t) => t.trim().toLowerCase() === want)) return String(n?.id || '') || null;
   }
   return null;
 }
 
 const ORDER_SEARCH = `query($q: String!) {
-  orders(first: 100, query: $q, sortKey: CREATED_AT, reverse: true) {
-    nodes { id note tags }
+  orders(first: 10, query: $q, sortKey: CREATED_AT, reverse: true) {
+    nodes { id tags }
   }
 }`;
 
-// H1(b): find a still-live order a prior attempt already created in the store.
-// Narrow by the buyer email when present (a buyer has ~never got two BHC orders
-// in one store), else fall back to the BHC tag. Best-effort — the caller treats
-// any throw/miss as "not found" and falls through to create (the idempotency
-// header is the backstop).
-async function findExistingBhcOrder(cfg: IntegrationConfig, orderRef: string, buyerEmail: string): Promise<string | null> {
-  const q = buyerEmail ? `tag:BHC email:${JSON.stringify(buyerEmail)}` : `tag:BHC`;
-  const { status, body } = await gql(cfg, ORDER_SEARCH, { q });
+// H1(b): find a still-live order a prior attempt already created in the store,
+// by this order's UNIQUE dedup tag. Best-effort — the caller treats any throw/
+// miss as "not found" and falls through to create (the idempotency header is the
+// backstop). A blank dedupToken skips the search (never dedup on an empty key).
+async function findExistingBhcOrder(cfg: IntegrationConfig, dedupToken: string): Promise<string | null> {
+  const token = String(dedupToken || '').trim();
+  if (!token) return null;
+  const { status, body } = await gql(cfg, ORDER_SEARCH, { q: `tag:${JSON.stringify(bhcOrderTag(token))}` });
   if (status !== 200) return null;
   const nodes = body?.data?.orders?.nodes;
-  return matchExistingBhcOrder(Array.isArray(nodes) ? nodes : [], orderRef);
+  return matchExistingBhcOrder(Array.isArray(nodes) ? nodes : [], token);
 }
 
 export function classifyGqlErrors(payload: any, httpStatus: number): { permanent: boolean; error: string } {
@@ -133,12 +140,14 @@ export const shopifyConnector: FulfillmentConnector = {
   async pushOrder(cfg, order): Promise<PushResult> {
     // H1(b) PRE-CREATE DEDUP: a prior attempt may have created this order in the
     // store but lost the response (504) — so the row stayed blank and the net
-    // cron is re-pushing. Find that order (BHC tag + this orderRef in the note)
-    // and short-circuit, so a retry never creates a SECOND live order (double
-    // physical ship + double inventory decrement). Best-effort — any search
-    // failure falls through to create; the Idempotency-Key header is the backstop.
+    // cron is re-pushing. Find that order by its UNIQUE `BHC-oid:<dedupToken>`
+    // tag and short-circuit, so a retry never creates a SECOND live order (double
+    // physical ship + double inventory decrement). Keyed on the unique token, so
+    // a repeat buyer's identical-Order-Ref order is NOT falsely matched (it must
+    // ship). Best-effort — any search failure falls through to create; the
+    // Idempotency-Key header is the backstop.
     try {
-      const existing = await findExistingBhcOrder(cfg, order.orderRef, order.buyerEmail);
+      const existing = await findExistingBhcOrder(cfg, order.dedupToken);
       if (existing) return { ok: true, externalOrderId: existing };
     } catch { /* search failed — fall through to create (idempotency header guards) */ }
 
@@ -151,14 +160,20 @@ export const shopifyConnector: FulfillmentConnector = {
     }
     const ship = splitShipTo(order.shipToAddress);
     const [firstName, ...rest] = order.buyerName.trim().split(/\s+/);
-    // H1(a): stable idempotency key so a retried create (lost response) is
-    // deduped by Shopify rather than shipping twice.
+    // Tags: keep the plain 'BHC' tag (#468's isBhcOriginOrder / B3 matches it so
+    // the orders/create webhook skips BHC-origin orders) AND stamp the UNIQUE
+    // `BHC-oid:<dedupToken>` tag the pre-create dedup queries on. Blank token →
+    // omit the oid tag (never stamp a colliding blank tag on multiple orders).
+    const tags = order.dedupToken ? ['BHC', bhcOrderTag(order.dedupToken)] : ['BHC'];
+    // H1(a): stable+unique idempotency key so a retried create (lost response) is
+    // deduped by Shopify rather than shipping twice — while two orders sharing an
+    // Order Ref stay distinct.
     const { status, body } = await gql(cfg, ORDER_CREATE, {
       order: {
         lineItems,
         financialStatus: 'PAID',
         sourceName: 'BuyHalfCow',
-        tags: ['BHC'],
+        tags,
         note: `BuyHalfCow order ${order.orderRef} — paid via BHC, fulfill as normal.`,
         email: order.buyerEmail,
         shippingAddress: {
@@ -172,7 +187,7 @@ export const shopifyConnector: FulfillmentConnector = {
         sendReceipt: false,           // BHC already sent product_receipt
         sendFulfillmentReceipt: true, // Shopify owns the tracking email (Ben decision)
       },
-    }, { 'Idempotency-Key': orderIdempotencyKey(order.orderRef) });
+    }, { 'Idempotency-Key': orderIdempotencyKey(order.dedupToken) });
     const payload = body?.data?.orderCreate;
     const oid = payload?.order?.id;
     if (status === 200 && oid && !(payload?.userErrors?.length)) return { ok: true, externalOrderId: String(oid) };

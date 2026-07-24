@@ -29,6 +29,10 @@ export function selectPushableOrder(input: {
 export function buildPushInput(order: any, product: any): PushOrderInput {
   return {
     orderRef: String(order['Order Ref'] || order.id),
+    // Unique dedup identity = the Rancher Orders record id (always present,
+    // globally unique per order). NEVER derive this from Order Ref, which
+    // collides across a repeat buyer's same-product orders.
+    dedupToken: String(order.id || ''),
     buyerName: String(order['Buyer Name'] || 'Customer'),
     buyerEmail: String(order['Buyer Email'] || ''),
     shipToAddress: String(order['Ship To Address'] || ''),

@@ -46,6 +46,18 @@ test('buildPushInput maps fields + quantity', () => {
   assert.deepEqual(input.lineItems, [{ sku: 'BEEF-BOX-10', quantity: 2, title: 'Beef Box' }]);
 });
 
+// BLOCKER FIX: dedupToken is the UNIQUE Rancher Orders row id — the pre-create
+// dedup + idempotency key rely on it, and it must NOT collapse to the non-unique
+// Order Ref (two repeat-buyer orders share an Order Ref but never a row id).
+test('buildPushInput sets dedupToken from the unique row id, distinct from orderRef', () => {
+  const a = buildPushInput({ ...baseOrder, id: 'recORDER1' }, product);
+  const b = buildPushInput({ ...baseOrder, id: 'recORDER2' }, product); // same Order Ref, different order
+  assert.equal(a.dedupToken, 'recORDER1');
+  assert.equal(b.dedupToken, 'recORDER2');
+  assert.equal(a.orderRef, b.orderRef, 'the two orders DO share an Order Ref (repeat buyer)…');
+  assert.notEqual(a.dedupToken, b.dedupToken, '…but their dedup tokens are distinct (both will ship)');
+});
+
 test('buildPushInput defaults quantity 1 and trims SKU', () => {
   const input = buildPushInput({ ...baseOrder, Quantity: undefined }, { ...product, 'External SKU': ' BEEF-BOX-10 ' });
   assert.equal(input.lineItems[0].quantity, 1);
