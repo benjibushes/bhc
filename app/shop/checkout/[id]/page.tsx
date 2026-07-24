@@ -12,6 +12,7 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import type { Metadata } from 'next';
 import { loadMarketplaceProductAnyStock } from '@/lib/marketplaceProducts';
+import { chargedShippingDollars } from '@/lib/storefrontGates';
 import { getRecordById, TABLES } from '@/lib/airtable';
 import ProductImage from '../../ProductImage';
 import CheckoutMount from './CheckoutMount';
@@ -46,6 +47,16 @@ export default async function ProductCheckoutPage({
     ? 1
     : Math.min(5, Math.max(1, Number.isInteger(qtyRaw) ? qtyRaw : 1));
 
+  // L13: the ONLY shipping the summary may display — forced to 0 for deposit-
+  // style AND local-pickup products, exactly like the buy gate / Payment
+  // Element. Sourcing both the summary total and the Payment Element amount
+  // below from this one value keeps "what you see" == "what you're charged".
+  const chargedShipping = chargedShippingDollars({
+    depositStyle: p.depositStyle,
+    localOnly: p.localOnly,
+    shippingCost: p.shippingCost,
+  });
+
   // BRAND-OWNED CHECKOUT (Payment Element migration, spec R10 rollback flag):
   // when the flag is on, resolve the Connect account SERVER-SIDE so the
   // on-domain PaymentForm can scope Stripe.js with zero extra client round
@@ -63,10 +74,9 @@ export default async function ProductCheckoutPage({
       if (rr && String(rr['Stripe Connect Status'] || '') === 'active' && acct) {
         paymentElement = {
           connectAccountId: acct,
-          // Local pickup: never a shipping charge (mirrors the mint gates).
-          totalCents:
-            Math.round(p.price * 100) * quantity +
-            (p.depositStyle || p.localOnly ? 0 : Math.round(p.shippingCost * 100)),
+          // Local pickup / deposit: never a shipping charge — same chargedShipping
+          // the summary shows, so the displayed total == the charged amount.
+          totalCents: Math.round(p.price * 100) * quantity + Math.round(chargedShipping * 100),
           depositStyle: p.depositStyle,
           localOnly: p.localOnly,
         };
@@ -123,14 +133,14 @@ export default async function ProductCheckoutPage({
             </div>
           </div>
           <div className="text-right">
-            <PriceTag amount={p.price * quantity + (p.depositStyle ? 0 : p.shippingCost)} size="sm" className="whitespace-nowrap" />
+            <PriceTag amount={p.price * quantity + chargedShipping} size="sm" className="whitespace-nowrap" />
             {p.depositStyle ? (
               <div className="text-[10px] uppercase tracking-wider text-saddle">deposit</div>
-            ) : quantity > 1 || p.shippingCost > 0 ? (
+            ) : quantity > 1 || chargedShipping > 0 ? (
               <div className="text-[10px] uppercase tracking-wider text-saddle whitespace-nowrap">
                 {quantity > 1 ? `${quantity} × $${p.price.toFixed(2)}` : ''}
-                {quantity > 1 && p.shippingCost > 0 ? ' + ' : ''}
-                {p.shippingCost > 0 ? `$${p.shippingCost.toFixed(2)} shipping` : ''}
+                {quantity > 1 && chargedShipping > 0 ? ' + ' : ''}
+                {chargedShipping > 0 ? `$${chargedShipping.toFixed(2)} shipping` : ''}
               </div>
             ) : null}
           </div>
