@@ -1583,6 +1583,12 @@ export async function sendBuyerIntroNotification(data: {
   // call for the rancher; the buyer's Cal CTA points at Ben's sales link
   // instead of the rancher's. Pasture/Ranch/Legacy Connect → rancher's slug.
   rancherTier?: string;
+  // Rancher brand fields (2026-07-23). When present, a "meet your rancher"
+  // story block renders the tagline + about text so the buyer meets the ranch,
+  // not just a name. Both optional — a caller without them (or a rancher with
+  // blank brand fields) simply omits the block.
+  rancherTagline?: string;
+  rancherAbout?: string;
 }) {
   // Build pricing block when any tier is configured.
   const pricingRows: string[] = [];
@@ -1798,6 +1804,23 @@ export async function sendBuyerIntroNotification(data: {
     ? ` — likely from <strong>${esc(data.rancherPhone)}</strong>, a number you won't recognize`
     : '';
   const expectBlock = `<p style="background:#EEF3EE;border-left:3px solid #3F5B44;padding:14px 18px;font-size:15px;color:#0E0E0E;margin:16px 0;"><strong>${esc(data.rancherName)} is reaching out to you directly.</strong> Expect a text, call, or email in the next 24&ndash;48 hours${fromNumber}. That&rsquo;s ${rancherFirst} &mdash; not spam &mdash; so please pick up or reply when it lands.</p>`;
+  // BRAND STORY block (2026-07-23): the rancher's own tagline + about text, so
+  // the intro reads as "meet THIS ranch" not "meet a name". Renders only when
+  // at least one field is present — the whole block drops for ranchers who
+  // haven't written a story yet (no empty header, no orphan quote marks).
+  const taglineHtml = data.rancherTagline
+    ? `<p style="margin:0 0 8px 0;font-style:italic;font-size:16px;color:#0E0E0E;">&ldquo;${esc(data.rancherTagline)}&rdquo;</p>`
+    : '';
+  const aboutHtml = data.rancherAbout
+    ? `<p style="margin:0;font-size:14px;color:#6B4F3F;line-height:1.7;">${esc(data.rancherAbout)}</p>`
+    : '';
+  const brandBlock = data.rancherTagline || data.rancherAbout
+    ? `<div style="background:#F4F1EC;border:1px solid #A7A29A;padding:18px 22px;margin:18px 0;">
+    <p style="margin:0 0 10px 0;font-size:12px;letter-spacing:1px;text-transform:uppercase;color:#6B4F3F;">About ${esc(data.rancherName)}</p>
+    ${taglineHtml}
+    ${aboutHtml}
+  </div>`
+    : '';
   const introSubject = `${readyPrefix}Meet your rancher — ${esc(data.rancherName)}`;
   return guardedSend({
     templateName: 'sendBuyerIntroNotification',
@@ -1832,6 +1855,7 @@ export async function sendBuyerIntroNotification(data: {
   <p>Hi ${esc(data.firstName)},</p>
   ${readyBlock}
   <p>I've personally vetted and matched you with <strong>${esc(data.rancherName)}</strong>. They've got your details and they're reaching out — here's what to expect.</p>
+  ${brandBlock}
   ${expectBlock}
   <p style="font-size:13px;color:#6B4F3F;margin-bottom:4px;">Prefer to reach ${rancherFirst} first? Here's their info:</p>
   ${contactBlock}

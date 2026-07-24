@@ -15,6 +15,7 @@ import { getAllRecords, getRecordById, createReferral, updateRecord, TABLES, esc
 import { requireAdmin } from '@/lib/adminAuth';
 import { mintDepositGrantToken } from '@/lib/campaignReserve';
 import { sendBuyerDepositInvoice } from '@/lib/emailMinimal';
+import { buyerZipServedBy, hasServiceZipGate } from '@/lib/exclusiveZip';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
 import { depositCommissionRate, type TierSlug } from '@/lib/tiers';
@@ -51,6 +52,25 @@ export async function POST(req: Request) {
 
   const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
   if (!rancher) return NextResponse.json({ error: 'rancher not found' }, { status: 404 });
+
+  // ── EXCLUSIVE-ZIP CLOSE-QUEUE GATE (2026-07-23) ───────────────────────────
+  // A buyer must NEVER reach the money step for a ZIP-gated exclusive rancher
+  // (Thomas Cattle = Houston "77") unless their ZIP is confirmed in-prefix.
+  // This is the last line of defense behind the matching gate: even if a
+  // mismatched referral existed, Ben cannot fire its deposit invoice. Fails
+  // closed — no/out-of-prefix buyer ZIP is refused, never sent. Non-exclusive
+  // ranchers (no prefixes) fall through untouched.
+  if (hasServiceZipGate(rancher) && !buyerZipServedBy(buyer['Zip'], rancher)) {
+    return NextResponse.json(
+      {
+        error:
+          `${String(rancher['Ranch Name'] || rancher['Operator Name'] || 'This rancher')} exclusively serves ZIPs ` +
+          `${String(rancher['Service ZIP Prefixes'])}xxx — buyer ZIP "${String(buyer['Zip'] || '')}" is outside that area. ` +
+          `Confirm the buyer's delivery ZIP before sending a deposit invoice.`,
+      },
+      { status: 422 },
+    );
+  }
 
   // Validate rancher is tier_v2 + Connect active. Refuse for legacy ranchers
   // — Ben should not send deposit invoice for those; they handle off-platform.
@@ -194,6 +214,10 @@ export async function POST(req: Request) {
       fullSaleCents,
       chargedCents: depositCents + Math.round(fullSaleCents * feeRate),
       checkoutUrl,
+      rancherPhone: String(rancher['Phone'] || '').trim() || undefined,
+      // Brand story so the deposit ask carries the ranch's identity.
+      rancherTagline: String(rancher['Tagline'] || '').trim() || undefined,
+      rancherAbout: String(rancher['About Text'] || '').trim() || undefined,
     });
     inviteEmailSent = true;
   } catch (e: any) {

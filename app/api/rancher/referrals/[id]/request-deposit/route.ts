@@ -259,6 +259,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // LEAK 1 (2026-07-05): give the buyer a human to text — the rancher's
       // phone from the already-fetched rancher record. Optional downstream.
       rancherPhone: String(rancher?.['Phone'] || '').trim() || undefined,
+      // Brand story (2026-07-23) — same fields the intro email now carries.
+      rancherTagline: String(rancher?.['Tagline'] || '').trim() || undefined,
+      rancherAbout: String(rancher?.['About Text'] || '').trim() || undefined,
     });
     emailOutcome = depositEmailOutcome(sendResult);
   } catch (e: any) {
