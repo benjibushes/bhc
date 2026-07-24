@@ -230,7 +230,7 @@ If they ask about MERCH / patches / hat / shirt:
 
 If they're INFO-SEEKING / journalist / curious about mission:
   • Brief, real answer. One sentence on the why. Offer to chat if they want depth.
-  • Example: "short version — direct beef from rancher to family, no middleman markups, ranchers keep 90%. happy to go deeper if you want."
+  • Example: "short version — direct beef from rancher to family, no grocery-chain middleman. the rancher keeps 100% of their price; families pay a small service fee on top. happy to go deeper if you want."
 
 If they're a SUPPORTER / mission-aligned / "love what you're doing" / "how can I help" / "want to be part of this" / "is there a way to back this" / "I'm in":
 

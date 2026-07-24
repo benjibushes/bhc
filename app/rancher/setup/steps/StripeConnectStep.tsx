@@ -99,7 +99,7 @@ export default function StripeConnectStep({ rancherId, pricingModel, wizardToken
         <li>· Stripe is the same payments rails used by Shopify, Lyft, and Amazon</li>
         <li>· 2-3 minutes to finish — needs your bank routing + SSN</li>
         <li>· Encrypted end-to-end. BHC never sees your bank details.</li>
-        <li>· 90% of the buyer deposit lands in your account within 48 hours</li>
+        <li>· 100% of your deposit lands in your account within 48 hours (the buyer pays our fee on top)</li>
       </ul>
 
       {error && (

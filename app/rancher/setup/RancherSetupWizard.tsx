@@ -117,7 +117,7 @@ const TIER_CARDS: Array<{
     promise: 'Pay nothing up front. BHC earns 10% only when you actually sell — same buyer routing as the paid tiers.',
     perks: [
       'No monthly fee — $0 to join',
-      '10% commission only on closed sales (deducted at deposit)',
+      'You keep 100% of your price — the buyer pays our 10% on top',
       'Stripe Connect direct-to-bank payouts',
       'Same buyer routing as paid tiers',
     ],

@@ -374,7 +374,7 @@ export default async function StartPage({
             href="/map/add-a-rancher"
             label="ranchers"
             meta="5-minute setup"
-            headline="sell direct · keep 90%"
+            headline="sell direct · keep 100%"
             proofLine1={`${stats.ranchersActive} ranchers in the network`}
             proofLine2="buyers routed to you in your state, weekly"
             body="set your prices, your cuts, your processing dates. we handle the matching, the email, the closing nudge. you raise the cattle + talk to your buyer."

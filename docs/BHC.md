@@ -8,6 +8,8 @@ copy, CTAs. Used by the marketing skill. Update when business model evolves.
 **Companion docs:** `VISION.md` (locked plan + give-back) · `BUSINESS-MODEL.md` (engines, costs, metrics) · `MONEY-FUNNELS.md` (paths to money + funnels) · `BHC-PLATFORM-MAP.md` (code-level truth)
 **Last revised:** 2026-05-03 · **tier_v2 note added 2026-06-15**
 
+> **⭐ 2026-07-24 — MONEY MODEL LOCKED (buyer pays on top).** Canonical source: `BUSINESS-MODEL.md` → "⭐ GROUND TRUTH". The rancher keeps **100%** of their listed price; BHC's 10% is added **on top**, paid by the **buyer** (marketplace service fee), collected via Connect `application_fee` at deposit. NEVER write rancher copy that says "we deduct 10%" / "you keep 90%" / "minus commission" — that's the old deducted framing and it's wrong. Rancher: "keep 100% of your price." Buyer: the service fee is part of what the card is charged.
+>
 > **⚠️ 2026-06-15 — money model changed (tier_v2 is LIVE).** The "10% commission only on closed deals / you close the deal, we take 10%" lines below describe the **legacy** model. For ranchers migrated to **tier_v2**, BHC collects its commission **upfront** on the buyer's deposit via Stripe Connect, and the rate is tier-based (Legacy Connect 10% · Pasture 7% · Ranch 3% · Operator 0%, `lib/tiers.ts`). On tier_v2, **Ben runs the sales call** and the deposit closes the buyer — it is no longer "the rancher closes, we invoice 10% after." Onboarding is the self-serve `/rancher/setup` wizard (tier pick → Connect bank → prices → sign → go live) **or** a booked "Rancher Onboarding" call. Treat the verbatim "10%" pitch lines as **legacy-only**; for current rancher/buyer money copy, anchor to `MONEY-FUNNELS.md`.
 
 ---
