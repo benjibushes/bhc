@@ -45,6 +45,23 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
       readReferrals(),
     ]);
 
+    // Supply-stall backstop (batch F, audit #9): synced Shopify products import
+    // OFF /shop and only display after an operator runs /approvestore. If the
+    // connect-time ping is ever missed, a catalog stalls invisibly. Surface the
+    // standing count of sync-managed products still awaiting approval every
+    // morning. Cheap: the filter returns ONLY the unapproved rows, not the
+    // whole catalog. Best-effort — a read hiccup must not sink the digest.
+    let pendingSyncApproval: number | null = null;
+    try {
+      const pendingRows = await getAllRecords(
+        TABLES.RANCHER_PRODUCTS,
+        'AND({Sync Managed} = TRUE(), NOT({Marketplace Approved} = TRUE()))',
+      );
+      pendingSyncApproval = pendingRows.length;
+    } catch (e: any) {
+      console.warn('[daily-digest] pending sync-approval count failed:', e?.message);
+    }
+
     const recentSignups = consumers.filter((c: any) => {
       const created = new Date(c['Created'] || c.createdTime || c._createdTime || 0);
       return created >= yesterday;
@@ -96,7 +113,7 @@ ${now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numer
 💰 Commission: $${monthCommission.toLocaleString()}
 
 <b>Supply</b>
-🤠 Total ranchers: ${ranchers.length}${capacityWarnings > 0 ? `\n⚠️ ${capacityWarnings} rancher(s) near capacity` : '\n✅ All ranchers have capacity'}
+🤠 Total ranchers: ${ranchers.length}${capacityWarnings > 0 ? `\n⚠️ ${capacityWarnings} rancher(s) near capacity` : '\n✅ All ranchers have capacity'}${pendingSyncApproval && pendingSyncApproval > 0 ? `\n🕓 Synced products pending /approvestore: ${pendingSyncApproval}` : ''}
 
 👥 Total members: ${consumers.length}
 
@@ -112,6 +129,7 @@ ${now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numer
 - Referrals pending approval: ${pendingReferrals}
 - Stalled referrals (5+ days no update): ${stalledReferrals}
 - Near-capacity ranchers: ${capacityWarnings}
+- Synced products pending /approvestore (off /shop until approved): ${pendingSyncApproval ?? 'unknown'}
 - Deals closed this month: ${monthWins.length}, commission: $${monthCommission.toLocaleString()}
 - Total members: ${consumers.length}, total ranchers: ${ranchers.length}
 
@@ -160,7 +178,7 @@ SUGGESTED ACTIONS:
   return {
     status: 'success',
     recordsTouched: recentSignups.length + recentIntros + monthWins.length,
-    notes: `signups=${recentSignups.length} intros=${recentIntros} pending=${pendingConsumers} stalled=${stalledReferrals} closed=${monthWins.length}`,
+    notes: `signups=${recentSignups.length} intros=${recentIntros} pending=${pendingConsumers} stalled=${stalledReferrals} closed=${monthWins.length} syncPendingApproval=${pendingSyncApproval ?? 'n/a'}`,
   };
 }
 
