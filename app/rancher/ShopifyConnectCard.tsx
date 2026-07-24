@@ -26,7 +26,27 @@ export default function ShopifyConnectCard({ payoutsReady = true }: { payoutsRea
   const [token, setToken] = useState('');
   const [apiSecret, setApiSecret] = useState('');
   const [mode, setMode] = useState<'sync' | 'manual'>('sync');
+  // Marketplace margin (2026-07-24). The API has always accepted markupPercent
+  // (clamped 0–300 server-side) but the card never sent it — so every synced
+  // catalog listed at the rancher's own price and BHC earned NOTHING on those
+  // orders (computeDisplayPrice with a null markup falls back to base). The
+  // input closes that leak at the source; lib/onboardingPaths refuses to call
+  // the store path go-live-ready until this is a positive number.
+  const [markup, setMarkup] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  // Digits + at most ONE dot — '1.2.3' / '15.' would Number()→NaN, which
+  // JSON.stringify sends as null and both routes read as "no margin".
+  function onMarkupChange(v: string) {
+    const cleaned = v.replace(/[^0-9.]/g, '');
+    const dot = cleaned.indexOf('.');
+    setMarkup(dot === -1 ? cleaned : cleaned.slice(0, dot + 1) + cleaned.slice(dot + 1).replace(/\./g, ''));
+  }
+  // The numeric markup to send + persist, or null when blank/invalid.
+  function markupValue(): number | null {
+    if (markup.trim() === '') return null;
+    const n = Number(markup);
+    return Number.isFinite(n) ? n : null;
+  }
   const [report, setReport] = useState<string[] | null>(null);
   const [error, setError] = useState('');
 
@@ -46,7 +66,11 @@ export default function ShopifyConnectCard({ payoutsReady = true }: { payoutsRea
       const res = await fetch('/api/rancher/integrations/shopify/install', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ shop, mode }),
+        body: JSON.stringify({
+          shop,
+          mode,
+          markupPercent: markupValue() ?? undefined,
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data?.authorizeUrl) {
@@ -74,14 +98,28 @@ export default function ShopifyConnectCard({ payoutsReady = true }: { payoutsRea
       const res = await fetch('/api/rancher/integrations/shopify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ shop, token, apiSecret, mode }),
+        body: JSON.stringify({
+          shop,
+          token,
+          apiSecret,
+          mode,
+          markupPercent: markupValue() ?? undefined,
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok && !data?.report) {
         setError(String(data?.error || 'Connection failed — check the details and try again.'));
       } else if (data?.ok) {
         setReport(data.report || ['Connected.']);
-        setStatus({ connected: true, shop: shop.toLowerCase().trim(), mode });
+        // Carry the just-saved margin into status so the connected card
+        // doesn't flash "No marketplace margin is set yet" right after a
+        // rancher connected WITH one (prefer the server's echo when present).
+        setStatus({
+          connected: true,
+          shop: shop.toLowerCase().trim(),
+          mode,
+          markupPercent: typeof data.markupPercent === 'number' ? data.markupPercent : markupValue(),
+        });
         setToken('');
         setApiSecret('');
         setOpen(false);
@@ -101,7 +139,19 @@ export default function ShopifyConnectCard({ payoutsReady = true }: { payoutsRea
     return (
       <div className="border border-sage/40 bg-bone-warm px-4 py-3 text-sm">
         <span className="text-sage font-medium">🔌 Shopify connected</span>
-        <span className="text-saddle"> — {status.shop} · {status.mode === 'sync' ? 'catalog sync' : 'manual SKUs'}. Paid orders land in your store automatically; ship them like any other order.</span>
+        <span className="text-saddle">
+          {' '}— {status.shop} · {status.mode === 'sync' ? 'catalog sync' : 'manual SKUs'}
+          {typeof status.markupPercent === 'number' && status.markupPercent > 0
+            ? ` · ${status.markupPercent}% marketplace margin`
+            : ''}
+          . Paid orders land in your store automatically; ship them like any other order.
+        </span>
+        {!(typeof status.markupPercent === 'number' && status.markupPercent > 0) && (
+          <p className="mt-2 text-xs text-weathered">
+            No marketplace margin is set yet — synced products list at your own price until one is.
+            Text Ben the margin you agreed and he&rsquo;ll set it.
+          </p>
+        )}
         {report && (
           <ul className="mt-2 text-xs text-saddle list-disc pl-5">
             {report.map((l, i) => (<li key={i}>{l}</li>))}
@@ -170,6 +220,21 @@ export default function ShopifyConnectCard({ payoutsReady = true }: { payoutsRea
                 <span className="block text-xs text-saddle">you list products by hand and we match them by SKU</span>
               </span>
             </label>
+          </div>
+          <div>
+            <span className="block text-xs uppercase tracking-wider text-saddle mb-1.5">
+              Marketplace margin (%)
+            </span>
+            <input
+              value={markup}
+              onChange={(e) => setMarkup(e.target.value.replace(/[^0-9.]/g, ''))}
+              inputMode="decimal"
+              placeholder="15"
+              className="w-32 border border-dust bg-bone px-3 py-2 text-sm"
+            />
+            <span className="block text-xs text-saddle mt-1">
+              We list your products at your price plus this margin. The margin is our cut — your payout stays your full price.
+            </span>
           </div>
           {error && <p className="text-sm text-weathered border border-weathered/40 px-3 py-2">{error}</p>}
           <div className="flex gap-3 items-center">
@@ -245,6 +310,21 @@ export default function ShopifyConnectCard({ payoutsReady = true }: { payoutsRea
                 <span className="block text-xs text-saddle">you list products by hand and we match them by SKU</span>
               </span>
             </label>
+          </div>
+          <div>
+            <span className="block text-xs uppercase tracking-wider text-saddle mb-1.5">
+              Marketplace margin (%)
+            </span>
+            <input
+              value={markup}
+              onChange={(e) => setMarkup(e.target.value.replace(/[^0-9.]/g, ''))}
+              inputMode="decimal"
+              placeholder="15"
+              className="w-32 border border-dust bg-bone px-3 py-2 text-sm"
+            />
+            <span className="block text-xs text-saddle mt-1">
+              We list your products at your price plus this margin. The margin is our cut — your payout stays your full price.
+            </span>
           </div>
           {error && <p className="text-sm text-weathered border border-weathered/40 px-3 py-2">{error}</p>}
           <div className="flex gap-3">

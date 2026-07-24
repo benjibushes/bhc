@@ -147,6 +147,11 @@ export async function GET(req: Request) {
     // the wizard can gate the "you're live" messaging + the Sign step warning.
     'Stripe Connect Status': rancher['Stripe Connect Status'] || '',
     'Stripe Connect Account Id': rancher['Stripe Connect Account Id'] || '',
+    // Read-only (2026-07-24): the step-0 roadmap detects the store path from
+    // this. Exposed like Stripe Connect Status — NOT added to ALLOWED_FIELDS,
+    // so the wizard can read it but never PATCH it (store connect is its own
+    // authenticated rail).
+    'Fulfillment Integration': rancher['Fulfillment Integration'] || '',
   };
   for (const f of ALLOWED_FIELDS) {
     if (rancher[f] !== undefined) out[f] = rancher[f];

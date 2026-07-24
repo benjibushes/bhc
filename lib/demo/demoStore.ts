@@ -31,6 +31,10 @@ function hoursAgo(n: number): string {
 // obvious in logs/URLs that a record is fake.
 export const DEMO_RANCHER_ID = 'recDEMOrancher01x'; // rec + 14 chars
 export const DEMO_RANCHER_SLUG = 'demo-creek-cattle';
+/** Fresh applicant — nothing filled in. Lets the setup wizard's full
+ *  nothing-to-live road be walked (and demoed) end to end; Demo Creek is
+ *  fully onboarded so it short-circuits to the "already onboarded" screen. */
+export const DEMO_FRESH_RANCHER_ID = 'recDEMOrancher02x';
 
 // ── Flagship demo rancher ────────────────────────────────────────────────
 // tier_v2 + Stripe Connect 'active' + Page Live so the public landing page
@@ -661,8 +665,25 @@ const DEMO_THREAD_MESSAGES: Ref[] = [
 // buyer's reserve (checkout bundle) would never reach the rancher dashboard
 // (rancher bundle). Pinning the mutable store on globalThis makes every route
 // in the single dev process see the same interactive data. Reseeds on restart.
+// Fresh applicant fixture — mirrors what /api/apply creates: contact partly
+// blank, legacy Pricing Model default, nothing signed/live. The wizard walks
+// its whole road against this row (all writes stay in the in-memory store).
+const DEMO_FRESH_RANCHER: Record<string, any> = {
+  id: DEMO_FRESH_RANCHER_ID,
+  'Operator Name': 'Riley Fresh',
+  'Ranch Name': 'Fresh Start Ranch',
+  State: 'TX',
+  Email: 'riley@freshstartranch.example',
+  Phone: '',
+  'Pricing Model': 'legacy',
+  'Agreement Signed': false,
+  'Page Live': false,
+  'Active Status': '',
+  'Onboarding Status': '',
+};
+
 const _seed = (): Record<string, Ref[]> => ({
-  [TABLES.RANCHERS]: [DEMO_RANCHER],
+  [TABLES.RANCHERS]: [DEMO_RANCHER, DEMO_FRESH_RANCHER],
   [TABLES.REFERRALS]: DEMO_REFERRALS,
   [TABLES.CONSUMERS]: DEMO_CONSUMERS,
   [TABLES.PAYMENTS]: DEMO_PAYMENTS,
