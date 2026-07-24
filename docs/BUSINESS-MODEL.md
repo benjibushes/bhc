@@ -104,10 +104,14 @@ capital/revenue engines but are not the per-transaction money model.)*
   splits automatically, my cut hits my account the moment they pay, then it's
   fulfilled through their own Shopify."
 - **Operator must, per rancher:** (1) confirm `INTEGRATION_TOKEN_KEY` set in
-  prod, (2) set a markup %, (3) approve products. Silent-failure gaps (token-key
-  loss → infinite silent retry; webhook-register failure saved connection but
-  tracking never returns; no `orders/create` real-time inventory → oversell)
-  are being hardened.
+  prod, (2) set a markup %, (3) approve products.
+- **Hardened 2026-07-24** (#468 + audit batches A–H, 9 PRs): an 8-lens
+  adversarial audit found 25 verified defects — all 3 goods-loss blockers
+  (duplicate Shopify order on push retry; refunded order still ships;
+  whole-beef shares leaking into the one-click rail) plus the silent-failure /
+  oversell / supply-stall gaps are fixed. The loop cannot strand a paid order
+  or ship twice without an operator alert. Full map: the audit in this session;
+  every fix is TDD'd (1701 tests).
 
 ### The rules that follow (enforce these in code + copy)
 - **Rancher-facing copy:** "You keep 100% of your price. The buyer covers our
