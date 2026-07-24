@@ -334,6 +334,53 @@ export async function claimOnce(key: string, ttlSec = 60): Promise<boolean> {
   }
 }
 
+/**
+ * Sync-lock variant of claimOnce. Same atomic SET NX EX, but it degrades
+ * CLOSED (returns false) when Redis is configured yet ERRORS — because this
+ * guards against DUPLICATE (rancher, SKU) row creation, where a *skipped* sync
+ * is strictly safer than a *double import* (the next scheduled run reconciles).
+ * That is the opposite trade-off from claimOnce, which degrades OPEN because it
+ * guards a money charge that must never be blocked — so do NOT fold the two
+ * together.
+ *
+ * When Redis is entirely absent (no env — local dev, a single instance, no
+ * cron/webhook race to guard) it degrades OPEN so the feature still works.
+ *
+ * Pair with `releaseClaim` in a `finally` so the lock frees the moment the
+ * guarded work finishes instead of pinning for the full TTL.
+ */
+export async function claimSyncLock(key: string, ttlSec: number): Promise<boolean> {
+  const redis = getRedis();
+  if (!redis) return true; // no Redis env → single instance, no race to guard
+  try {
+    const res = await redis.set(key, '1', { nx: true, ex: ttlSec });
+    return res === 'OK';
+  } catch (e: any) {
+    // Redis configured but erroring: degrade CLOSED. A skipped sync is safer
+    // than duplicate rows; the next scheduled run catches up.
+    console.error('[claimSyncLock] Redis SET NX failed (skipping to avoid duplicate rows):', e?.message);
+    return false;
+  }
+}
+
+/**
+ * Release a lock previously taken with `claimOnce` / `claimSyncLock`.
+ * Best-effort DEL: a no-op when Redis is absent (nothing was claimed) and
+ * swallows errors (the TTL expires the key anyway). Lets a lock be freed the
+ * instant the guarded work finishes so a legitimate follow-up (e.g. a
+ * products/update webhook right after a scheduled sync) is not dropped for the
+ * full TTL window.
+ */
+export async function releaseClaim(key: string): Promise<void> {
+  const redis = getRedis();
+  if (!redis) return;
+  try {
+    await redis.del(key);
+  } catch (e: any) {
+    console.error('[releaseClaim] Redis DEL failed (TTL will expire it):', e?.message);
+  }
+}
+
 async function legacyIncrement(rancherId: string): Promise<number> {
   try {
     const live = await currentAirtableCount(rancherId);
