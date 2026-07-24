@@ -46,16 +46,41 @@ export function decidePushDisposition(order: Record<string, unknown>): PushDispo
   return { action: 'push' };
 }
 
-// H2: post-push TOCTOU guard (pure). runFulfillmentPush reads the order once and
-// gates Status==='New', but the push network window is wide enough for a refund
-// to flip Status meanwhile. After a SUCCESSFUL create we re-read Status; if it's
-// now terminal we must cancel the live external order instead of stamping it
-// 'pushed' — otherwise the rancher ships a refunded box.
-export type PostPushAction = { action: 'keep' } | { action: 'cancel'; reason: string };
+// H2 + refund-verify (pure). runFulfillmentPush reads the order once and gates
+// Status==='New', but the push network window is wide enough for a refund to
+// reconcile meanwhile. After a SUCCESSFUL create we re-read and decide from
+// THREE signals — and the decision FAILS CLOSED:
+//   • readOk=false → 'verify-failed'. A failed/uncertain re-read must NEVER map
+//     to 'keep' (which stamps 'pushed'): if a charge.refunded reconcile flipped
+//     the row during the push and our confirming read blips, a silent 'pushed'
+//     ships a refunded box and the loud cancel-fail alert never fires. So an
+//     unreadable row alerts loud and lands cron-resolvable, never 'pushed'.
+//   • Status terminal (Refunded/Cancelled) → 'cancel' the live external order.
+//   • External Push Status belt-stamped 'cancelled' → 'cancel'. A charge.refunded
+//     reconcile that raced the push can belt-stamp 'cancelled' on a blank-
+//     External-Order-Id snapshot WITHOUT calling Shopify cancel (the order
+//     didn't exist yet). The push just created that live order — cancel it,
+//     never overwrite the belt's 'cancelled' with 'pushed'.
+//   • clean New/undefined but readOk → 'keep' (normal success → stamp 'pushed').
+// NOTE the runner pre-stamps 'pushing' BEFORE the push, so a clean success
+// re-reads External Push Status='pushing' — that is NOT the belt signal and
+// maps to 'keep'; only an explicit 'cancelled' triggers the belt-cancel.
+export type PostPushAction =
+  | { action: 'keep' }
+  | { action: 'cancel'; reason: string }
+  | { action: 'verify-failed' };
 
-export function decidePostPushAction(statusAfter: unknown): PostPushAction {
+export function decidePostPushAction(
+  statusAfter: unknown,
+  externalPushStatusAfter: unknown,
+  readOk: boolean,
+): PostPushAction {
+  // Fail CLOSED: an unread/uncertain row is never treated as a clean success.
+  if (!readOk) return { action: 'verify-failed' };
   const s = String(statusAfter || '').trim();
   if (s === 'Refunded' || s === 'Cancelled') return { action: 'cancel', reason: s };
+  const push = String(externalPushStatusAfter || '').trim().toLowerCase();
+  if (push === 'cancelled') return { action: 'cancel', reason: 'belt-cancelled' };
   return { action: 'keep' };
 }
 
@@ -142,11 +167,51 @@ export async function runFulfillmentPush(orderRowId: string): Promise<void> {
     }
     if (result.ok) {
       const externalOrderId = result.externalOrderId;
-      // H2 POST-PUSH TOCTOU GUARD: a refund/cancel may have flipped Status during
-      // the push window. Re-read; if now terminal, cancel the live external order
-      // instead of stamping 'pushed' (else a refunded box ships uncancelled).
-      const fresh = await getRecordById(TABLES.RANCHER_ORDERS, orderRowId).catch(() => null);
-      const post = decidePostPushAction(fresh?.['Status']);
+      // H2 + refund-verify POST-PUSH GUARD: a refund/cancel may have flipped
+      // Status — or belt-stamped External Push Status='cancelled' on a blank-id
+      // snapshot WITHOUT calling Shopify cancel — DURING the push window. Re-read
+      // and FAIL CLOSED. The re-read must be RELIABLE: a transient Airtable error
+      // that maps to null would (pre-fix) fall through to 'keep' and stamp
+      // 'pushed', silently overwriting a belt 'cancelled' → a live, uncancelled
+      // Shopify order ships a refunded box. So retry the read up to 3 times and
+      // pass readOk; an unconfirmed row goes to 'verify-failed', never 'pushed'.
+      let fresh: Record<string, unknown> | null = null;
+      let readOk = false;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        fresh = await getRecordById(TABLES.RANCHER_ORDERS, orderRowId).catch(() => null);
+        if (fresh) { readOk = true; break; }
+      }
+      const post = decidePostPushAction(fresh?.['Status'], fresh?.['External Push Status'], readOk);
+      if (post.action === 'verify-failed') {
+        // Fail CLOSED: a live Shopify order exists but we could NOT re-confirm the
+        // BHC row wasn't refunded/belt-cancelled mid-push. NEVER stamp 'pushed'
+        // (a silent success could ship a refunded box and suppress the H2 alert).
+        // Stamp the external id and keep the row 'pushing' — a traceable,
+        // cron-resolvable state: the net cron's stale-'pushing' recovery nominates
+        // it, but runFulfillmentPush then skips it via decidePushDisposition
+        // (External Order Id present → 'already-pushed'), so it never double-ships.
+        // Then ring the operator LOUD to reconcile by hand.
+        await updateRecord(TABLES.RANCHER_ORDERS, orderRowId, {
+          'External Order Id': externalOrderId,
+          'External Push Status': 'pushing',
+          'External Pushed At': new Date().toISOString(),
+        }).catch(() => {});
+        const { sendOperatorSignal } = await import('./operatorSignal');
+        await sendOperatorSignal({
+          urgency: 'loud',
+          kind: 'system-error',
+          summary: `post-push refund-verify FAILED — Shopify order may be live — ${String(order['Order Ref'] || orderRowId).slice(0, 50)}`,
+          detail:
+            `A live Shopify order (${externalOrderId}) was created, but re-reading the BHC order row to confirm ` +
+            `it was NOT refunded during the push FAILED. The Shopify order may be live for a possibly-refunded ` +
+            `order. Open the order in the rancher's store and CANCEL it there if the BHC order is refunded. ` +
+            `The row is left 'pushing' with the external id stamped so the net cron / operator can reconcile ` +
+            `(it will NOT double-ship — the external id blocks a re-push).`,
+          dedupeKey: `shopify-postpush-verify-fail-${orderRowId}`,
+          dedupeWindowMs: 24 * 60 * 60 * 1000,
+        }).catch(() => {});
+        return;
+      }
       if (post.action === 'cancel') {
         let cancelOk = false;
         let cancelErr = '';

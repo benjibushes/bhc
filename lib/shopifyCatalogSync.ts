@@ -33,10 +33,12 @@ export function mapVariantToProductFields(input: {
    */
   approved: boolean;
   /**
-   * M4 OVERSELL GUARD: units already sold through BHC whose push to the store
-   * FAILED (or hasn't run) — Shopify's inventory count still includes them
-   * because Shopify was never told. Subtracted from the Shopify count so the
-   * 6h sync can't re-shelve a settlement-decremented unit. Only meaningful for
+   * M4 OVERSELL GUARD: units already sold through BHC whose decrement Shopify
+   * does NOT yet reflect — pushing (order not created yet), skipped:* (never
+   * pushes to Shopify), blank, or failed:* (see isUnpushedObligation). Shopify's
+   * inventory count still includes them because Shopify was never told (or not
+   * yet). Subtracted from the Shopify count so the 6h sync / products-update
+   * webhook can't re-shelve a settlement-decremented unit. Only meaningful for
    * an EXISTING row (a first import has no prior settlement) and never applied
    * to unlimited (untracked/continue) stock. Defaults to 0.
    */
@@ -137,16 +139,25 @@ export function isCatalogTruncated(cursor: string | null, pages: number, cap: nu
 const TERMINAL_ORDER_STATUSES = new Set(['Refunded', 'Cancelled', 'Canceled']);
 
 // M4: is this BHC order a unit Shopify's current count still (wrongly) includes?
-// TRUE only when the order is live (non-terminal) AND its push to the store
-// never succeeded — External Push Status blank ('' — net cron will retry) or
-// 'failed:*'. A 'pushed' order already decremented Shopify's count, so counting
-// it would double-subtract; 'skipped:*'/'cancelled' never touch Shopify either
-// but are deliberately OUT of scope here (spec: blank|failed only).
+// An outstanding obligation is ANY live (non-terminal) BHC-sold unit whose
+// decrement Shopify does NOT yet reflect — i.e. everything EXCEPT a confirmed
+// Shopify decrement ('pushed') or a restock ('cancelled'):
+//   • 'pushing'   — the settle→push window: the Shopify order isn't created yet,
+//                   so Shopify has NOT decremented. A catalog sync (6h cron OR a
+//                   products/update webhook) in this window would otherwise
+//                   compute obligation 0 and re-shelve the already-sold unit —
+//                   an oversell that does NOT self-heal. MUST count.
+//   • 'skipped:*' — pickup/deposit orders never push to Shopify at all, so
+//                   Shopify's count NEVER reflects the sold unit. Excluding them
+//                   re-inflates on EVERY sync. MUST count.
+//   • ''/'failed:*' — never decremented (blank = net cron will retry). MUST count.
+// Only 'pushed' (Shopify already decremented — counting double-subtracts) and
+// 'cancelled' (restocked everywhere) are NOT obligations.
 export function isUnpushedObligation(order: any): boolean {
   const status = String(order?.['Status'] || '').trim();
   if (TERMINAL_ORDER_STATUSES.has(status)) return false;
   const push = String(order?.['External Push Status'] || '').trim().toLowerCase();
-  return push === '' || push.startsWith('failed');
+  return push !== 'pushed' && push !== 'cancelled';
 }
 
 // M4: total UNITS (summing Quantity, not just row count) of outstanding
