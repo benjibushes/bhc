@@ -26,7 +26,7 @@ import {
 } from '@/lib/shopifyOauth';
 import { parseIntegration } from '@/lib/fulfillmentConnector';
 import { decryptSecret } from '@/lib/integrationCrypto';
-import { rateLimit, getRequestIp } from '@/lib/rateLimit';
+import { rateLimit, getTrustedClientIp } from '@/lib/rateLimit';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -85,7 +85,7 @@ async function fail(reason: string, context?: string): Promise<NextResponse> {
 }
 
 export async function GET(req: Request) {
-  const rl = await rateLimit(`shopify-oauth-cb:${getRequestIp(req)}`, { requests: 10, window: '15m' });
+  const rl = await rateLimit(`shopify-oauth-cb:${getTrustedClientIp(req)}`, { requests: 10, window: '15m' });
   if (!rl.ok) return fail('too-many-attempts');
 
   let url: URL;
@@ -151,6 +151,7 @@ export async function GET(req: Request) {
         mode: state.payload.mode || 'sync',
         markupPercent: state.payload.markupPercent ?? null,
         category: state.payload.category ?? null,
+        source: 'oauth', // OAuth sends its own "Store INSTALLED" ping below — opt out of the #469 clean-connect ping to avoid a double notification
       });
       if (!result.ok) return fail('store-validation', `Shop: ${shop} — ${result.report.join('; ').slice(0, 300)}`);
       try {
@@ -237,6 +238,7 @@ export async function GET(req: Request) {
       mode: pending.mode,
       markupPercent: pending.markupPercent,
       category: pending.category,
+      source: 'oauth', // OAuth sends its own "Store INSTALLED" ping below — opt out of the #469 clean-connect ping to avoid a double notification
     });
     if (!result.ok) {
       console.error('[shopify-oauth] connect flow failed:', result.report.join('; '));

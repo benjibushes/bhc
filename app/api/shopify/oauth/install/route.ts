@@ -21,7 +21,7 @@ import {
   OAUTH_NONCE_COOKIE,
 } from '@/lib/shopifyOauth';
 import { parseIntegration } from '@/lib/fulfillmentConnector';
-import { rateLimit, getRequestIp } from '@/lib/rateLimit';
+import { rateLimit, getTrustedClientIp } from '@/lib/rateLimit';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 15;
@@ -35,7 +35,7 @@ function fail(base: string, reason: string): NextResponse {
 export async function GET(req: Request) {
   const base = SITE_URL;
 
-  const rl = await rateLimit(`shopify-oauth-install:${getRequestIp(req)}`, { requests: 10, window: '15m' });
+  const rl = await rateLimit(`shopify-oauth-install:${getTrustedClientIp(req)}`, { requests: 10, window: '15m' });
   if (!rl.ok) return fail(base, 'too-many-attempts');
 
   let linkToken = '';
