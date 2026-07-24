@@ -67,6 +67,14 @@ function toClientProduct(r: any) {
     // Deposit-style rows are ops-managed (price-range products) — the tab
     // labels them and the API fences their content edits (audit fix C-2e).
     depositStyle: r['Deposit Style'] === true,
+    // Sync-managed rows are owned by the 6h Shopify catalog cron (it recomputes
+    // Active/name/price/stock and resurrects deletes by SKU). The tab shows a
+    // "managed from your Shopify" affordance and the API fences mutations
+    // (M6 / DUP-G). 'Marketplace Approved' is the human curation gate — until
+    // BHC checks it, a synced row is "pending review", never a rancher-toggled
+    // 'hidden'. Active is COMPUTED (approved && store-active && in-stock).
+    syncManaged: r['Sync Managed'] === true,
+    marketplaceApproved: r['Marketplace Approved'] === true,
     priceRange: String(r['Price Range'] || ''),
     ordersLeft:
       r['Orders Left'] === undefined || r['Orders Left'] === null || r['Orders Left'] === ''
@@ -238,6 +246,22 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: 'This product does not belong to you.' }, { status: 403 });
   }
 
+  // M6 SYNC-MANAGED FENCE (mirror of the deposit fence below): rows owned by
+  // the Shopify catalog cron are recomputed every 6h — Active is DERIVED from
+  // 'Marketplace Approved' + store status + stock, and name/price/Orders Left
+  // are overwritten from the store. So ANY self-serve mutation here (edit,
+  // stock, hide/show) is silently reverted within hours — and a 'show'
+  // (Active=true) on an unapproved row would flash it onto /shop, bypassing the
+  // Marketplace-Approved curation gate. Fence the whole PATCH and point the
+  // rancher to Shopify (the UI hides these controls; this backs it server-side
+  // so a direct API call can't bypass the gate either).
+  if (product['Sync Managed'] === true) {
+    return NextResponse.json(
+      { error: 'this product syncs from your Shopify store — change its price, stock, or availability there and it flows to buyhalfcow automatically. buyhalfcow reviews it before it lists on the marketplace.' },
+      { status: 409 },
+    );
+  }
+
   const patch: Record<string, any> = {};
 
   // GTM-hardening F3: 'ordersLeft' is NOT a content edit — stock must stay
@@ -394,6 +418,15 @@ export async function DELETE(request: Request) {
   if (product['Deposit Style'] === true) {
     return NextResponse.json(
       { error: 'this is a deposit-style product managed with ben — text him to remove it. you can hide it any time.' },
+      { status: 409 },
+    );
+  }
+  // M6: a synced row can't be deleted from here — the catalog cron resurrects
+  // it by SKU on the next run. Removing it in Shopify (delete / set to draft)
+  // drops it off buyhalfcow automatically.
+  if (product['Sync Managed'] === true) {
+    return NextResponse.json(
+      { error: 'this product syncs from your Shopify store — remove it there (delete it or set it to draft) and it drops off buyhalfcow automatically.' },
       { status: 409 },
     );
   }

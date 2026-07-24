@@ -23,6 +23,7 @@ import {
   MIN_PRODUCT_PRICE_CENTS,
 } from '@/lib/rancherProductInput';
 import { absorptionPreview } from '@/lib/feeMath';
+import { decideSyncManagedRow } from '@/lib/syncManagedProductFence';
 
 interface RancherOrder {
   id: string;
@@ -62,6 +63,13 @@ interface RancherProduct {
   // DEPOSIT, Base is hand-set, and content edits go through Ben (the API
   // fences them). Hide/show still works.
   depositStyle?: boolean;
+  // Sync-managed (Shopify catalog) rows are owned by the 6h catalog cron —
+  // it recomputes Active/name/price/stock and resurrects deletes by SKU, so
+  // the tab fences edit/duplicate/delete/show and shows a "managed from your
+  // Shopify" affordance. 'Marketplace Approved' is BHC's curation gate: until
+  // it's checked, a synced row is "pending review", not a rancher-hidden row.
+  syncManaged?: boolean;
+  marketplaceApproved?: boolean;
   priceRange?: string;
   ordersLeft?: number | null;
   whatsIncluded?: string;
@@ -968,7 +976,16 @@ export default function ProductsTab({
 
       {connectActive && products.length > 0 && (
         <div className="space-y-2">
-          {products.map((p) => (
+          {products.map((p) => {
+            // Sync-managed (Shopify) rows: the 6h catalog cron owns their
+            // Active/name/price/stock and re-derives listing from BHC's
+            // 'Marketplace Approved' gate — so the tab fences mutations and
+            // shows a distinct "pending review" state instead of a fake hidden.
+            const sync = decideSyncManagedRow({
+              syncManaged: p.syncManaged,
+              marketplaceApproved: p.marketplaceApproved,
+            });
+            return (
             <div
               key={p.id}
               className="border border-dust bg-bone p-3 flex items-center gap-3 flex-wrap"
@@ -991,22 +1008,34 @@ export default function ProductsTab({
                   )}
                 </div>
               </div>
-              <span
-                className={`text-[11px] uppercase tracking-wider px-2 py-1 ${
-                  p.live
-                    ? 'bg-sage text-bone'
-                    : 'border border-dust text-saddle'
-                }`}
-              >
-                {p.live
-                  ? p.localOnly
-                    ? 'live — local pickup, your page only'
-                    : 'live on the marketplace'
-                  : p.active
-                    ? 'not listed'
-                    : 'hidden'}
-              </span>
-              <div className="flex gap-2">
+              {sync.badge === 'pending-review' ? (
+                // Synced-but-unapproved: NOT a rancher-hidden row — it's waiting
+                // on BHC's curation gate. Distinct wheat-gold badge, never the
+                // generic 'hidden'/'show' pair (a 'show' here can't publish it).
+                <span
+                  className="text-[11px] uppercase tracking-wider px-2 py-1 bg-tallow text-charcoal"
+                  title="synced from your Shopify — buyhalfcow reviews it before it lists on the marketplace"
+                >
+                  pending buyhalfcow review
+                </span>
+              ) : (
+                <span
+                  className={`text-[11px] uppercase tracking-wider px-2 py-1 ${
+                    p.live
+                      ? 'bg-sage text-bone'
+                      : 'border border-dust text-saddle'
+                  }`}
+                >
+                  {p.live
+                    ? p.localOnly
+                      ? 'live — local pickup, your page only'
+                      : 'live on the marketplace'
+                    : p.active
+                      ? 'not listed'
+                      : 'hidden'}
+                </span>
+              )}
+              <div className="flex gap-2 items-center flex-wrap">
                 {p.live && (
                   <a
                     href={`/shop/${p.id}`}
@@ -1016,6 +1045,22 @@ export default function ProductsTab({
                     view
                   </a>
                 )}
+                {sync.managed ? (
+                  // Shopify-synced row: the 6h catalog cron owns every field,
+                  // so edit/duplicate/delete/hide-show would be silently
+                  // reverted (and a fake 'show' would flash an unapproved row
+                  // onto /shop). Replace them all with an honest "manage it in
+                  // Shopify" note — mirrors the deposit-style ops fence.
+                  // canShow / canEdit / canDelete are all false here (see
+                  // decideSyncManagedRow); the server 409s these too.
+                  <span
+                    className="text-[11px] text-saddle italic px-1 py-2 max-w-[240px] leading-snug"
+                    title="this product syncs from your Shopify store — edit its price, stock, photos or availability there and the change flows to buyhalfcow automatically"
+                  >
+                    managed from your Shopify — edit it there, changes sync automatically
+                  </span>
+                ) : (
+                  <>
                 {/* Stock quick-set on EVERY row (audit fix) — inventory is the
                     highest-frequency edit; it was buried in the full edit form
                     for regular products (only deposit-style had the box). */}
@@ -1072,9 +1117,12 @@ export default function ProductsTab({
                     delete
                   </button>
                 )}
+                  </>
+                )}
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
