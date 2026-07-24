@@ -65,6 +65,50 @@ Rancher keeps every dollar of their $2,999. Buyer paid a $299.90 service fee.
 *(Founding Herd + marketing-services, described below, are additional
 capital/revenue engines but are not the per-transaction money model.)*
 
+### Product / Shopify rail — sync + fulfillment (rail #3, end-to-end)
+*Same buyer-pays-on-top model as deposits, applied to physical products. Built
+2026-07-21, per-rancher opt-in, code-complete on the token-paste path.*
+
+- **Connect.** Rancher connects Shopify once — pastes an Admin API token today
+  (one-click OAuth built but DARK behind `SHOPIFY_PUBLIC_APP_LIVE`). Token +
+  secret AES-256-GCM encrypted (`INTEGRATION_TOKEN_KEY`), stored as JSON in
+  `Ranchers.'Fulfillment Integration'`. Scopes `write_orders,read_orders,read_products`.
+- **Sync (Shopify → BHC).** Every variant WITH a SKU → a `Rancher Products`
+  row: `Rancher Base` = their Shopify price (what they net),
+  `Display Price = ceil(base × (1+markup%)) − .01`. Re-syncs every 6h + on
+  `products/update` webhooks. Imports hidden; operator checks `Marketplace
+  Approved` to list on `/shop`. **markupPercent lives only in the connection
+  JSON — null markup = display defaults to base = ZERO BHC margin.**
+- **Money (per sale).** Identical rail to hand-entered products. Buyer pays
+  `display × qty + shipping`; **direct charge on the rancher's connected Stripe
+  account**; BHC margin `(display − base) × qty` taken as Stripe
+  `application_fee`, split ATOMICALLY at charge time (net-your-number shrinks
+  the fee by the est. Stripe cost so the rancher nets exactly base + shipping).
+  **BHC never holds the money — there is no payout step.** Shipping is 100%
+  passthrough, never in BHC's margin.
+- **Fulfillment handoff (BHC → their Shopify).** On payment success,
+  settlement writes a `Rancher Orders` row and **auto-pushes the paid order
+  into the rancher's Shopify** (`orderCreate` financialStatus PAID, tags
+  `['BHC']`, inventory `DECREMENT_OBEYING_POLICY`). Their normal Shopify
+  fulfillment ships it; **Shopify emails the buyer the tracking** (BHC
+  suppresses its own to avoid double-send). When they mark fulfilled, Shopify's
+  `fulfillments/create` webhook stamps `Tracking Number` + `Status='Shipped'`
+  back. Ranchers with NO Shopify use the manual "mark shipped" path (BHC sends
+  the tracking email). Deposit/pickup orders are never pushed.
+- **Order state:** `New` → `External Push Status='pushed'` (+ `External Order
+  Id`) → Shopify fulfills → `Shipped` + tracking. Permanent push fail →
+  `failed:<err>` + operator alert; transient → blank, retried by
+  `fulfillment-push-net` (2h). Refund → `orderCancel` restock → `cancelled`.
+- **"I collect" is not literal.** The money splits on the rancher's account at
+  charge; BHC's cut lands instantly, no hold, no payout. Say: "sale made, money
+  splits automatically, my cut hits my account the moment they pay, then it's
+  fulfilled through their own Shopify."
+- **Operator must, per rancher:** (1) confirm `INTEGRATION_TOKEN_KEY` set in
+  prod, (2) set a markup %, (3) approve products. Silent-failure gaps (token-key
+  loss → infinite silent retry; webhook-register failure saved connection but
+  tracking never returns; no `orders/create` real-time inventory → oversell)
+  are being hardened.
+
 ### The rules that follow (enforce these in code + copy)
 - **Rancher-facing copy:** "You keep 100% of your price. The buyer covers our
   10% on top." NEVER "we deduct 10%" / "minus commission" / "you keep more of
