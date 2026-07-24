@@ -16,7 +16,7 @@ import { NextResponse } from 'next/server';
 import { getAllRecords, getFirstRecord, createRecord, updateRecord, TABLES, escapeAirtableValue } from '@/lib/airtable';
 import { parseIntegration } from '@/lib/fulfillmentConnector';
 import { verifyShopifyHmac } from '@/lib/shopifyWebhookVerify';
-import { publicAppCreds } from '@/lib/shopifyOauth';
+import { publicAppCreds, isValidShopDomain } from '@/lib/shopifyOauth';
 import { decryptSecret } from '@/lib/integrationCrypto';
 import {
   isBhcOriginOrder,
@@ -24,6 +24,13 @@ import {
   orderDecrementPatch,
   shopifyOrderEventId,
 } from '@/lib/shopifyOrderIngest';
+import {
+  buildScopedFulfillmentOrderFilter,
+  shopifyWebhookRateLimitKey,
+  catalogSyncReportIndicatesFailure,
+  resolveFulfillmentStampPatch,
+} from '@/lib/shopifyWebhookGuards';
+import { rateLimitStrict, getTrustedClientIp } from '@/lib/rateLimit';
 import { claimOnce } from '@/lib/rancherCapacity';
 
 export const dynamic = 'force-dynamic';
@@ -90,6 +97,27 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true, processed: topic });
     }
 
+    // ── L6: bound the UNAUTHENTICATED pre-HMAC Airtable full-scan below ───────
+    // Everything past this point resolves the rancher by scanning the Ranchers
+    // table with an attacker-supplied shop header BEFORE any HMAC check. Two
+    // cheap gates cap that cost (compliance topics already HMAC-gate above, so
+    // this deliberately sits AFTER them and never touches that path):
+    //   (a) format-reject anything that isn't a real *.myshopify.com host, and
+    //   (b) a per-source burst cap. Bucketed by TRUSTED client IP (not the
+    //       spoofable shop header) via rateLimitStrict, which NEVER fails open
+    //       to unbounded — a security control must degrade closed. Shopify
+    //       retries non-2xx for ~48h, so a throttled legit event is delayed,
+    //       not lost.
+    if (!isValidShopDomain(shop)) {
+      return NextResponse.json({ ok: false, error: 'invalid shop domain' }, { status: 400 });
+    }
+    const clientIp = getTrustedClientIp(request);
+    const rl = await rateLimitStrict(shopifyWebhookRateLimitKey(clientIp), { requests: 120 });
+    if (!rl.ok) {
+      console.warn(`[shopify-webhook] rate limited ip=${clientIp} shop=${shop} topic=${topic}`);
+      return NextResponse.json({ ok: false, error: 'rate limited' }, { status: 429 });
+    }
+
     const ranchers = (await getAllRecords(
       TABLES.RANCHERS,
       `FIND("${escapeAirtableValue(shop)}", {Fulfillment Integration})`,
@@ -148,8 +176,46 @@ export async function POST(request: Request) {
       try {
         const { syncShopifyCatalog } = await import('@/lib/shopifyCatalogSync');
         const res = await syncShopifyCatalog(String(rancher.id));
+        // L7: a re-sync that FAILS or PARTIALLY fails still returns a report and
+        // used to 200 silently — so a store's /shop price/stock froze until the
+        // 6h catalog cron caught up, with nobody the wiser. Alert on it. (The
+        // TRUNCATED page-cap case fires its own loud signal inside the sync, so
+        // catalogSyncReportIndicatesFailure deliberately skips it — no dupe.)
+        if (catalogSyncReportIndicatesFailure(res.report)) {
+          try {
+            const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+            await sendOperatorSignal({
+              urgency: 'normal',
+              kind: 'system-error',
+              summary: `Shopify catalog re-sync partial/failed — ${shop}`,
+              detail:
+                `A ${topic} webhook triggered a catalog re-sync that did not fully succeed for ` +
+                `${String(rancher['Ranch Name'] || rancher['Operator Name'] || shop)}. /shop price/stock may be stale until the 6h catalog cron reconciles.\n\n` +
+                res.report.join('; '),
+              dedupeKey: `shopify-catalog-sync-fail-${shop}`,
+              dedupeWindowMs: 60 * 60 * 1000,
+            }).catch(() => {});
+          } catch { /* alerting is best-effort */ }
+        }
         return NextResponse.json({ ok: true, processed: topic, sync: res.report.join('; ') });
       } catch (e: any) {
+        // A hard throw is the loudest swallow of all — the old code 200'd with a
+        // `sync: failed:` blob nobody reads. Ring the same deduped beacon.
+        console.error('[shopify-webhook] products sync threw:', e?.message);
+        try {
+          const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+          await sendOperatorSignal({
+            urgency: 'normal',
+            kind: 'system-error',
+            summary: `Shopify catalog re-sync FAILED — ${shop}`,
+            detail:
+              `A ${topic} webhook triggered a catalog re-sync that threw for ` +
+              `${String(rancher['Ranch Name'] || rancher['Operator Name'] || shop)}. /shop price/stock may be stale until the 6h catalog cron reconciles.\n\n` +
+              `Error: ${String(e?.message || 'unknown').slice(0, 200)}`,
+            dedupeKey: `shopify-catalog-sync-fail-${shop}`,
+            dedupeWindowMs: 60 * 60 * 1000,
+          }).catch(() => {});
+        } catch { /* alerting is best-effort */ }
         return NextResponse.json({ ok: true, processed: topic, sync: `failed: ${String(e?.message || '').slice(0, 100)}` });
       }
     }
@@ -266,22 +332,60 @@ export async function POST(request: Request) {
     const tracking = String(payload?.tracking_numbers?.[0] || payload?.tracking_number || '').slice(0, 120);
     if (!externalOrderId) return NextResponse.json({ ok: true, skipped: 'no order_id' });
 
+    // L5: scope the lookup to THIS HMAC-verified rancher. Finding the order by
+    // External Order Id ALONE meant a rancher whose HMAC verified could stamp
+    // ANOTHER rancher's order row that happened to share the same order id
+    // (order ids are per-store, so a collision across two connected stores is
+    // possible). AND-combine with the rancher we already resolved + verified.
     const orders = (await getAllRecords(
       TABLES.RANCHER_ORDERS,
-      `{External Order Id} = "${escapeAirtableValue(externalOrderId)}"`,
+      buildScopedFulfillmentOrderFilter(externalOrderId, String(rancher.id)),
     ).catch(() => [])) as any[];
     let touched = 0;
+    let stampFailed = false;
+    const nowIso = new Date().toISOString();
     for (const order of orders) {
-      const updates: Record<string, any> = {};
-      if (tracking && !String(order['Tracking Number'] || '').trim()) updates['Tracking Number'] = tracking;
-      if (String(order['Status'] || '') === 'New') {
-        updates['Status'] = 'Shipped';
-        updates['Shipped At'] = new Date().toISOString();
-      }
+      // L8: on fulfillments/update, a corrected tracking number OVERWRITES the
+      // stored one (a rancher who fixes a typo in Shopify must propagate);
+      // fulfillments/create still only fills an empty value.
+      const updates = resolveFulfillmentStampPatch({
+        topic,
+        incomingTracking: tracking,
+        currentTracking: order['Tracking Number'],
+        currentStatus: order['Status'],
+        nowIso,
+      });
       if (Object.keys(updates).length) {
-        await updateRecord(TABLES.RANCHER_ORDERS, order.id, updates).catch(() => {});
-        touched++;
+        // L9: the stamp write was fire-and-forget (.catch(()=>{})), so a failed
+        // stamp was invisible — #468's B2 health check would only notice 48h
+        // later, and blame the wrong thing. Make a failure log + ring a deduped
+        // beacon so a persistently failing tracking-back is caught fast. Still
+        // 200 to Shopify (don't trigger a retry storm on a transient Airtable
+        // blip — the beacon carries the signal instead).
+        try {
+          await updateRecord(TABLES.RANCHER_ORDERS, order.id, updates);
+          touched++;
+        } catch (e: any) {
+          stampFailed = true;
+          console.error(`[shopify-webhook] tracking stamp write FAILED for order=${order.id} shop=${shop}:`, e?.message);
+        }
       }
+    }
+    if (stampFailed) {
+      try {
+        const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+        await sendOperatorSignal({
+          urgency: 'normal',
+          kind: 'system-error',
+          summary: `Shopify tracking stamp FAILED to write — ${shop}`,
+          detail:
+            `A ${topic} webhook matched a Rancher Orders row but the Tracking Number / Status='Shipped' stamp write to Airtable failed for ` +
+            `${String(rancher['Ranch Name'] || rancher['Operator Name'] || shop)} (order ${externalOrderId}). ` +
+            `The buyer's SLA chase won't stop and B2's tracking-back health check will trip in 48h — check Airtable write health now.`,
+          dedupeKey: `shopify-tracking-stamp-fail-${shop}`,
+          dedupeWindowMs: 60 * 60 * 1000,
+        }).catch(() => {});
+      } catch { /* alerting is best-effort */ }
     }
     return NextResponse.json({ ok: true, processed: topic, matched: orders.length, touched });
   } catch (error: any) {
