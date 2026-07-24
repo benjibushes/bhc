@@ -19,7 +19,7 @@ import {
   buildAuthorizeUrl,
   OAUTH_NONCE_COOKIE,
 } from '@/lib/shopifyOauth';
-import { rateLimit, getRequestIp } from '@/lib/rateLimit';
+import { rateLimit, getTrustedClientIp } from '@/lib/rateLimit';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 15;
@@ -31,7 +31,7 @@ export async function POST(request: Request) {
   if (r instanceof NextResponse) return r;
   const { session } = r;
 
-  const rl = await rateLimit(`shopify-pub-install:${getRequestIp(request)}`, { requests: 5, window: '15m' });
+  const rl = await rateLimit(`shopify-pub-install:${getTrustedClientIp(request)}`, { requests: 5, window: '15m' });
   if (!rl.ok) return NextResponse.json({ error: 'Too many attempts — wait a few minutes.' }, { status: 429 });
 
   // Gate on publicAppLive, not creds-presence (audit 2026-07-21): during

@@ -16,7 +16,7 @@ import { requireRancher } from '@/lib/rancherAuth';
 import { getRecordById, TABLES } from '@/lib/airtable';
 import { parseIntegration } from '@/lib/fulfillmentConnector';
 import { publicAppLive } from '@/lib/shopifyOauth';
-import { rateLimit, getRequestIp } from '@/lib/rateLimit';
+import { rateLimit, getTrustedClientIp } from '@/lib/rateLimit';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -49,7 +49,7 @@ export async function POST(request: Request) {
 
   // Validation + webhook registration hit the rancher's store — keep a tight
   // per-IP lid so a stuck retry loop can't hammer Shopify with bad tokens.
-  const rl = await rateLimit(`shopify-connect:${getRequestIp(request)}`, { requests: 5, window: '15m' });
+  const rl = await rateLimit(`shopify-connect:${getTrustedClientIp(request)}`, { requests: 5, window: '15m' });
   if (!rl.ok) {
     return NextResponse.json({ error: 'Too many attempts — wait a few minutes and try again.' }, { status: 429 });
   }
