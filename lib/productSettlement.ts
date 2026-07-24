@@ -49,6 +49,37 @@ function formatShipping(pi: any): string {
 
 const dollars = (c: number) => (c / 100).toFixed(2);
 
+// Pure money resolver (extracted for L1 + testability). All cent amounts a
+// settled product order records/reports, derived from PI metadata.
+//
+// L1 (reporting): metadata.marginCents (set at productCheckout buildProductMetadata
+// = charge.applicationFeeCents) is the WHOLE-ORDER application fee — already
+// quantity-scaled AND net of any absorbed Stripe fee. It must NEVER be
+// multiplied by quantity again (that inflated multi-unit 'BHC Margin' ~qty×).
+// Only the LEGACY fallback (PI without metadata.marginCents) is per-unit, so it
+// keeps its ×quantity. Buyer Paid − Rancher Payout === totalMarginCents when no
+// Stripe fee is absorbed — the invariant the admin P&L reads.
+export function computeSettlementMoney(pi: any): {
+  displayCents: number;
+  baseCents: number;
+  shippingCents: number;
+  quantity: number;
+  paidCents: number;
+  rancherPayoutCents: number;
+  totalMarginCents: number;
+} {
+  const displayCents = Number(pi?.metadata?.displayCents || 0);
+  const baseCents = Number(pi?.metadata?.baseCents || 0);
+  const shippingCents = Math.max(0, Number(pi?.metadata?.shippingCents || 0));
+  const quantity = Math.max(1, Math.round(Number(pi?.metadata?.quantity || 1)) || 1);
+  const paidCents = displayCents * quantity + shippingCents;
+  const rancherPayoutCents = baseCents * quantity + shippingCents;
+  const totalMarginCents = pi?.metadata?.marginCents
+    ? Number(pi.metadata.marginCents)
+    : Math.max(0, displayCents - baseCents) * quantity;
+  return { displayCents, baseCents, shippingCents, quantity, paidCents, rancherPayoutCents, totalMarginCents };
+}
+
 export async function settleProductPurchase(pi: any, connectedAccountId?: string): Promise<void> {
   const productName = String(pi?.metadata?.productName || 'a product');
   const rancherId = String(pi?.metadata?.rancherId || '');
@@ -66,17 +97,11 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
     String(pi?.metadata?.buyerName || '').trim() ||
     String(pi?.shipping?.name || charge0?.shipping?.name || charge0?.billing_details?.name || '').trim()
   );
-  const displayCents = Number(pi?.metadata?.displayCents || 0);
-  const baseCents = Number(pi?.metadata?.baseCents || 0);
-  const marginCents = Number(pi?.metadata?.marginCents || Math.max(0, displayCents - baseCents));
-  // Shipping passthrough (2026-07-07): rides metadata from createProductCheckout.
-  // Part of what the buyer paid + what the rancher nets; NEVER part of the
-  // margin. Absent/legacy PIs → 0 (shipping-included pricing).
-  const shippingCents = Math.max(0, Number(pi?.metadata?.shippingCents || 0));
-  // Units (2026-07-07): displayCents is the UNIT price; qty scales product +
-  // margin, shipping stays flat. Absent/legacy PIs → 1.
-  const quantity = Math.max(1, Math.round(Number(pi?.metadata?.quantity || 1)) || 1);
-  const paidCents = displayCents * quantity + shippingCents;
+  // Money (L1): one pure resolver. displayCents is the UNIT price; qty scales
+  // product + margin, shipping stays flat. totalMarginCents is the WHOLE-ORDER
+  // fee — never re-multiplied by quantity (see computeSettlementMoney).
+  const { displayCents, baseCents, shippingCents, quantity, paidCents, rancherPayoutCents, totalMarginCents } =
+    computeSettlementMoney(pi);
   const qtyLabel = quantity > 1 ? `${quantity}× ` : '';
   // DEPOSIT-STYLE (audit fix C-1.5): a price-range product where this charge is
   // a DEPOSIT, not the full price. Every notification below MUST say so — the
@@ -160,8 +185,8 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
     'Buyer Name': buyerName,
     'Ship To Address': shipTo,
     'Buyer Paid': paidCents / 100,
-    'Rancher Payout': (baseCents * quantity + shippingCents) / 100,
-    'BHC Margin': (marginCents * quantity) / 100,
+    'Rancher Payout': rancherPayoutCents / 100,
+    'BHC Margin': totalMarginCents / 100,
     'Quantity': quantity,
     'Stripe Payment Intent': pi.id,
     'Status': 'New',
@@ -200,14 +225,14 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
     detail: depositStyle
       ? `${buyerName || buyerEmail} put $${dollars(displayCents)} down on ${productName} from ${rancherName}.\n` +
         `DEPOSIT-STYLE: ${rancherName} confirms size + the balance with the buyer BEFORE shipping.\n` +
-        `You keep $${dollars(marginCents)} of the deposit · rancher nets $${dollars(baseCents)}.\n` +
+        `You keep $${dollars(totalMarginCents)} of the deposit · rancher nets $${dollars(baseCents)}.\n` +
         `Ship to (once confirmed):\n${shipTo || '(address on the order)'}`
       : isPickup
         ? `${buyerName || buyerEmail} bought ${qtyLabel}${productName} from ${rancherName} — LOCAL PICKUP.\n` +
-          `You keep $${dollars(marginCents * quantity)} · rancher nets $${dollars(baseCents * quantity)}.\n` +
+          `You keep $${dollars(totalMarginCents)} · rancher nets $${dollars(baseCents * quantity)}.\n` +
           `${rancherName} coordinates pickup with the buyer${buyerEmail ? ` (${buyerEmail})` : ''}.`
         : `${buyerName || buyerEmail} bought ${qtyLabel}${productName} from ${rancherName}.\n` +
-          `You keep $${dollars(marginCents * quantity)} · rancher nets $${dollars(baseCents * quantity + shippingCents)}${shippingCents > 0 ? ` (incl. $${dollars(shippingCents)} shipping)` : ''}.\n` +
+          `You keep $${dollars(totalMarginCents)} · rancher nets $${dollars(baseCents * quantity + shippingCents)}${shippingCents > 0 ? ` (incl. $${dollars(shippingCents)} shipping)` : ''}.\n` +
           `Tell ${rancherName} to ship to:\n${shipTo || '(address on the order)'}` +
           (!shipTo ? `\n⚠️ NO SHIP-TO CAPTURED — pull the address from the Stripe payment (${pi.id}) and get it to ${rancherName}.` : ''),
     dedupeKey: `product-sold:${pi.id}`,
@@ -496,6 +521,23 @@ export async function reconcileProductOrderRefund(
     return true;
   }
 
+  // L3: serialize concurrent full refunds/disputes on the same PI. Stripe fans
+  // charge.refunded to the platform AND the Connect endpoint with DIFFERENT
+  // event ids, so the Stripe-Events dedupe gives no cross-endpoint protection —
+  // two reconciles can both pass the Status!=='Refunded' check above and then
+  // double-restore stock / double-cancel the external order. PI-keyed claim: the
+  // loser returns (this IS a product order — the winner reconciles it). Fails
+  // OPEN when Redis is absent, so the durable 'Stock Restored At' marker below
+  // is the second layer for the side effects.
+  if (!(await claimOnce(`reconcile-refund:${piId}`, 120))) return true;
+
+  // Durable idempotency marker for the restore/cancel side effects (survives a
+  // Redis-down concurrent run + a webhook redelivery after Status was flipped
+  // but before this row was re-read). NOTE: 'Stock Restored At' is a NEW Rancher
+  // Orders field — until Ben adds it the stamp write below no-ops via .catch and
+  // L3 degrades to claimOnce-only (still correct; the marker just can't persist).
+  const stockAlreadyRestored = Boolean(order['Stock Restored At']);
+
   // GTM-hardening F2 (secondary): flip EVERY row for this PI — the Redis-down
   // race guard can leave a rare duplicate row, and a 'New' twin would sit on
   // the rancher's ship list after the refund.
@@ -513,7 +555,7 @@ export async function reconcileProductOrderRefund(
   // mirrors the decrement (blank = unlimited = nothing to restore).
   try {
     const productId = String(order['Product Record ID'] || '').trim();
-    if (productId) {
+    if (!stockAlreadyRestored && productId) {
       const prod: any = await getRecordById(TABLES.RANCHER_PRODUCTS, productId).catch(() => null);
       const left = prod?.['Orders Left'];
       if (prod && left !== undefined && left !== null && left !== '') {
@@ -543,9 +585,21 @@ export async function reconcileProductOrderRefund(
     const { parseIntegration, getConnector } = await import('./fulfillmentConnector');
     let integration: any = null;
     let integrationLoaded = false;
-    for (const row of rows) {
+    if (!stockAlreadyRestored) for (const row of rows) {
+      if (String(row['External Push Status'] || '') === 'cancelled') continue; // already cancelled
       const externalOrderId = String(row['External Order Id'] || '').trim();
-      if (!externalOrderId || String(row['External Push Status'] || '') === 'cancelled') continue;
+      if (!externalOrderId) {
+        // H2 BELT: no external order recorded yet — a push may be mid-flight in
+        // its network window. Stamp 'cancelled' so (a) the net cron's blank-
+        // status filter won't re-push this now-refunded order and (b) the
+        // runner's decidePushDisposition short-circuits a stray push. The
+        // runner's own post-push Status re-read cancels the LIVE order if the
+        // push completes after this belt.
+        await updateRecord(TABLES.RANCHER_ORDERS, row.id, {
+          'External Push Status': 'cancelled',
+        }).catch(() => {});
+        continue;
+      }
       if (!integrationLoaded) {
         const rancherRow = await getRecordById(TABLES.RANCHERS, String(row['Rancher Record ID'] || '')).catch(() => null);
         integration = parseIntegration(rancherRow?.['Fulfillment Integration']);
@@ -572,6 +626,16 @@ export async function reconcileProductOrderRefund(
     }
   } catch (e: any) {
     console.warn('[productSettlement] external cancel skipped (non-fatal):', e?.message);
+  }
+
+  // L3: stamp the durable marker once the restore/cancel pass is done, so a
+  // Redis-down concurrent run or a later redelivery won't restore stock or
+  // cancel a second time. Isolated + best-effort: a not-yet-created field can
+  // NEVER break the Status flip / restore above (they already ran).
+  if (!stockAlreadyRestored) {
+    await updateRecord(TABLES.RANCHER_ORDERS, order.id, {
+      'Stock Restored At': new Date().toISOString(),
+    }).catch(() => {});
   }
 
   const product = String(order['Product Name'] || 'a product');
