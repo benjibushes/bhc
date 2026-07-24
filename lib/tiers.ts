@@ -110,7 +110,7 @@ export const TIERS: Record<TierSlug, TierConfig> = {
     promise: 'Stripe Connect deposits, 10% per sale, no monthly fee',
     perks: [
       'Stripe Connect direct deposits land in your bank same-day',
-      '10% commission deducted automatically at deposit (application_fee_amount)',
+      'You keep 100% of your price — the buyer pays our 10% on top, collected automatically at deposit (application_fee_amount)',
       'No monthly subscription, no minimum',
       'BHC still handles every buyer qualification call + intro',
       'Same buyer routing + dashboard as paid tiers',

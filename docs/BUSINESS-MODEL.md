@@ -1,8 +1,83 @@
 # BuyHalfCow — Business Model
 
-**Status:** v1, post-launch ready
-**Last revised:** 2026-05-02
+**Status:** v2 — money model LOCKED
+**Last revised:** 2026-07-24
 **Audience:** founder reference / backer transparency / investor briefing
+
+---
+
+## ⭐ GROUND TRUTH — the money model (decided 2026-07-24, LOCKED)
+
+*This section is canonical and supersedes everything below it. Where older
+sections describe the commission as "deducted from the rancher," billed
+monthly, or a "90/10 split," THIS section wins — those are the pre-2026-07
+legacy framing. Code, copy, and every new feature conform to this. If a
+surface disagrees with this section, the surface is the bug.*
+
+### One line
+**A marketplace service fee.** The rancher sets their price and keeps **100%**
+of it. BHC's commission is added **on top**, paid by the **buyer** — like a
+delivery/marketplace service fee. That fee is BHC's core revenue, collected
+automatically at deposit time via Stripe Connect.
+
+### The core mechanic (beef deals — the primary rail)
+- Rancher lists a price. **That is what they net, in full.** Nothing deducted.
+- BHC fee = **10%** of the full sale price (default; lower on paid tiers).
+- At **deposit**, the buyer's card is charged **deposit + BHC fee**. Stripe
+  Connect **direct charge on the rancher's connected account** with
+  `application_fee_amount` = the fee → the fee routes to BHC atomically, the
+  deposit routes to the rancher, in one charge. (`lib/stripeConnect.ts`,
+  `createDepositCheckout`.)
+- Fee is computed on the **FULL sale**, not the deposit, and captured
+  **entirely at deposit** — the **final invoice takes 0 fee**
+  (`send-final-invoice`, application_fee=0). BHC never has to chase a cut.
+- **Net-your-number:** BHC absorbs the Stripe processing fee out of its own
+  side (`absorbStripeFee`) so the rancher's payout lands on the **exact**
+  deposit amount. The rancher never eats the Stripe fee either.
+- Rancher collects the **balance** (full − deposit) directly at
+  pickup/delivery, their own way (cash/check/Venmo/Zelle). BHC doesn't touch it.
+
+**Worked example — $2,999 half, $300 deposit, 10%:**
+
+| | Buyer pays | Rancher nets | BHC keeps |
+|---|---|---|---|
+| Deposit | $300 + $299.90 = **$599.90** | **$300** | **$299.90** |
+| Balance (final invoice) | $2,699 | $2,699 | $0 |
+| **Total** | **$3,298.90** | **$2,999** (full price) | **$299.90** (the 10%) |
+
+Rancher keeps every dollar of their $2,999. Buyer paid a $299.90 service fee.
+
+### The five revenue rails
+1. **Commission — THE core.** 10% buyer-paid service fee on closed beef deals,
+   Connect `application_fee` at deposit. Rancher's **locked** rate honored
+   (`Commission Rate` field; `normalizeCommissionRate`: "4"→0.04, 0→0 valid).
+2. **Tier subscriptions — trade commission for MRR** as ranchers scale:
+   Legacy Connect $0/10% · Pasture $150/mo/7% · Ranch $350/mo/3% · Operator
+   $500/mo/0%. Lower buyer fee = more competitive for the rancher; BHC income
+   shifts from per-deal fee → predictable MRR. (Detailed in Engine 2 below.)
+3. **Product / low-ticket rail** — Shopify-synced boxes + à-la-carte sold at a
+   **markup** (`Display Price = ceil(base × (1+markup%)) − .01`,
+   `lib/shopifyCatalogSync.ts`); BHC margin = the markup, taken at charge.
+4. **Merch** — BHC-owned branded goods (hats, `merch.buyhalfcow.com`) — direct
+   product margin.
+5. **Gear** — Amazon affiliate (`/gear`) — passive affiliate commission.
+
+*(Founding Herd + marketing-services, described below, are additional
+capital/revenue engines but are not the per-transaction money model.)*
+
+### The rules that follow (enforce these in code + copy)
+- **Rancher-facing copy:** "You keep 100% of your price. The buyer covers our
+  10% on top." NEVER "we deduct 10%" / "minus commission" / "you keep more of
+  your check." Those imply the deducted model — WRONG.
+- **Buyer-facing copy:** the BHC service fee is shown as part of what the card
+  is charged (deposit + fee), like any marketplace fee. The checkout page
+  already does this (`app/checkout/[refId]/deposit/page.tsx`).
+- **Fee is on the FULL sale, collected at deposit, 0 at final invoice.**
+- **Net-your-number is sacred** — rancher payout = listed price, exactly. BHC
+  eats the Stripe fee, never the rancher.
+- **Connect is mandatory for automatic commission.** Legacy/own-link deposits
+  do NOT auto-collect the fee (BHC would have to invoice + chase) — avoid for
+  new/untrusted partners. This is why the deposit rail is Connect-first.
 
 ---
 
@@ -29,8 +104,8 @@ who joins makes the network more useful for the next one.
 
 ### Engine 1 — Marketplace Commission (legacy ranchers, pre-Stage 3)
 - **What:** match buyer to verified rancher, take 10% of closed deal
-- **Who pays:** rancher (deducted from sale price post-close, billed monthly)
-- **Status:** legacy model (pre-Stage-3). New ranchers who onboard with tier_v2 operate on Engine 2 instead. See `lib/stripe-commission.ts` for invoice logic.
+- **Who pays:** the **buyer**, on top of the rancher's price (see ⭐ GROUND TRUTH). *(Historical note: the pre-2026-07 legacy path billed the rancher monthly by invoice — DEPRECATED. The live model collects the buyer-paid fee automatically at deposit via Connect.)*
+- **Status:** legacy manual-invoice logic in `lib/stripe-commission.ts` is superseded by the Connect `application_fee` rail in `lib/stripeConnect.ts`. New ranchers operate on the Connect rail.
 - **Volume:** ramps with rancher count + marketing spend
 - **Margin:** ~95% gross (Stripe fees ~2.9% on commission charge)
 - **Unit economics:** ~$1,200 avg order × 10% = $120 commission per close
@@ -83,8 +158,8 @@ who joins makes the network more useful for the next one.
 ## Phase 1 Engine (next 60 days)
 
 ### Engine 5 — Payments Platform (Stripe Connect)
-- **What:** every D2C beef purchase routes through BHC's Stripe → auto-split → rancher gets 90%, BHC keeps 10%
-- **Replaces:** Engine 1 monthly invoice cycle. Same 10% rate, automated.
+- **What:** every D2C beef purchase routes through Stripe Connect → the buyer is charged the rancher's price **plus** BHC's 10% (`application_fee`) → rancher receives 100% of their price, BHC keeps the added 10%. (See ⭐ GROUND TRUTH for exact math — NOT a 90/10 split of the rancher's price.)
+- **Replaces:** Engine 1 monthly invoice cycle. Buyer-paid fee, automated, collected at deposit. **This is LIVE, not a future phase.**
 - **Plus:** Stripe interchange revenue share on processing fees (~0.5% additional)
 - **Plus:** payout speed monetization — rancher can pay $X for instant payout vs 2-day standard
 - **Margin:** ~90% net on platform fee, ~95% on payout-acceleration tips

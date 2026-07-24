@@ -175,8 +175,9 @@ const sections: Section[] = [
           <>
             <p className="mb-3">
               Stripe Connect handles deposit payouts automatically when a buyer reserves. The
-              deposit hits your bank within a day or two, minus the BHC commission and standard
-              Stripe processing fees.
+              full deposit hits your bank within a day or two &mdash; the buyer covers the BHC
+              service fee (and the Stripe processing) on top, so you keep 100% of your listed
+              price.
             </p>
             <p>
               Balance due at pickup/delivery is yours to collect direct &mdash; whatever method you
