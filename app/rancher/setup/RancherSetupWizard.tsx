@@ -619,6 +619,16 @@ export default function RancherSetupWizard() {
     }
   }, [step, stepStorageKey]);
 
+  // Clear any error when the step actually CHANGES (UX pass 2026-07-24): an
+  // error set on one step (e.g. the pricing degradation notice) was rendered
+  // by the top-of-page {error && …} banner on EVERY subsequent step until
+  // something reset it — so a rancher who resolved it and moved on still saw a
+  // red alert haunting the next screen. Validation errors that block a
+  // transition don't change `step`, so they correctly persist.
+  useEffect(() => {
+    setError('');
+  }, [step]);
+
   const setField = (key: string, value: any) => setForm((f) => ({ ...f, [key]: value }));
 
   // ── Pricing derivation (Step 3) ──────────────────────────────────────────
@@ -1386,6 +1396,13 @@ export default function RancherSetupWizard() {
           </nav>
           <SaveIndicator saving={saving} lastSavedAt={lastSavedAt} />
         </div>
+        {/* Mobile: the numbered dots have no room for labels, so a bare "4"
+            told the rancher nothing. Name the current step. */}
+        {currentFlowIndex >= 0 && (
+          <p className="sm:hidden -mt-1 text-xs uppercase tracking-widest text-charcoal font-bold">
+            Step {currentFlowIndex + 1} of {PROGRESS_ORDER.length} · {stepLabel(PROGRESS_ORDER[currentFlowIndex])}
+          </p>
+        )}
 
         {error && rancher && (
           <div role="alert" className="text-sm text-weathered border border-weathered/40 bg-weathered/5 p-3">
@@ -1439,33 +1456,6 @@ export default function RancherSetupWizard() {
                 the dashboard and admin can never tell different stories. */}
             <OnboardingRoadmap rancher={rancher as unknown as Record<string, unknown>} />
 
-            {/* Stat grid — concrete promises up front, before the prose. The
-                "boom-boom-bam" anchor so ranchers see the deal at a glance.
-                Commission truth from lib/tiers.ts: the FREE plan is 10% per
-                closed sale (legacy_connect); the optional paid tiers cut that
-                to 7/3/0%. No step numbers — the flow is dynamic (legacy skips
-                the plan step entirely). */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
-              {[
-                { stat: '$0', label: 'To start · free plan, no monthly fee' },
-                { stat: '10%', label: 'Only when you sell · paid plans cut it to 0–7%' },
-                { stat: '5 min', label: 'From here to your live page' },
-                { stat: 'Anytime', label: 'Pause routing · leave clean' },
-              ].map((s) => (
-                <div
-                  key={s.label}
-                  className="border-l-2 border-charcoal pl-3 py-1"
-                >
-                  <p className="font-serif text-2xl md:text-3xl text-charcoal leading-tight">
-                    {s.stat}
-                  </p>
-                  <p className="text-[11px] uppercase tracking-widest text-saddle mt-1 leading-snug">
-                    {s.label}
-                  </p>
-                </div>
-              ))}
-            </div>
-
             {/* Live buyer counter — pulled from /api/stats/buyers-by-state.
                 Only renders if rancher state is known + count > 0. Real-time
                 proof that ready-to-buy families are waiting in their state. */}
@@ -1480,137 +1470,23 @@ export default function RancherSetupWizard() {
               </div>
             )}
 
-            {/* 60-second business model — the "what is this" pitch. Plain text
-                so it loads instant + readable for ranchers on rural broadband. */}
-            <div className="space-y-3 text-charcoal/85 leading-relaxed text-[15px]">
-              <p>
-                BuyHalfCow is the private network that connects American
-                families with verified direct-to-consumer ranchers. We&rsquo;re
-                building the public hit list of every D2C rancher in America
-                so families can find you instead of buying mystery beef from
-                a grocery chain.
-              </p>
-              <p>
-                <strong>How it works for you:</strong> we send you pre-screened
-                buyers in your state who are ready to commit to a quarter,
-                half, or whole. You close the deal. On the free plan we take
-                10% commission on what closes &mdash; nothing on no-shows,
-                nothing on tire-kickers &mdash; and the optional paid plans
-                drop that to 0&ndash;7%. You set your own prices, your own
-                capacity, your own pace.
-              </p>
-              <p>
-                <strong>Non-exclusive.</strong> Sell direct, sell at farmers
-                markets, sell off your own site. We&rsquo;re an extra channel,
-                not a leash.
-              </p>
-            </div>
-
-            {/* ── What we actually run for you ─────────────────────────────
-                Surfaces the marketing + ops infrastructure ranchers are
-                signing up to. Previously this lived only in tier_v2 plan
-                copy (which legacy ranchers never saw), so the "what BHC
-                does for me" question went unanswered for 100% of current
-                ranchers. 5 buckets, scannable. */}
-            <div className="space-y-4 border-t border-dust pt-7">
-              <div>
-                <p className="text-xs uppercase tracking-widest text-saddle mb-2">
-                  What we run for you in the background
-                </p>
-                <h3 className="font-serif text-xl md:text-2xl text-charcoal leading-tight">
-                  You raise cattle. We run the marketing engine.
-                </h3>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Traffic & reach */}
-                <div className="border border-dust bg-bone-warm p-5 space-y-2.5">
-                  <p className="text-[11px] uppercase tracking-widest text-saddle font-semibold">
-                    Traffic &amp; reach
-                  </p>
-                  <ul className="text-sm text-charcoal/90 space-y-1.5 leading-snug">
-                    <li>· Paid Meta + Google ads targeting buyers in your state</li>
-                    <li>· Programmatic SEO landing pages per state</li>
-                    <li>· Public map listing — every D2C rancher in America</li>
-                    <li>· Founders campaign exposure (every backer email)</li>
-                    <li>· Brand-partner cross-promo on every partner page</li>
-                  </ul>
-                </div>
-
-                {/* Conversion engine */}
-                <div className="border border-dust bg-bone-warm p-5 space-y-2.5">
-                  <p className="text-[11px] uppercase tracking-widest text-saddle font-semibold">
-                    Conversion engine
-                  </p>
-                  <ul className="text-sm text-charcoal/90 space-y-1.5 leading-snug">
-                    <li>· Auto-routing of state-matched buyers when you go live</li>
-                    <li>· Launch warmup — every waitlisted buyer pinged on go-live</li>
-                    <li>· Ready-to-buy email sequence + YES-button engagement</li>
-                    <li>· Hot-lead bypass when buyers click ready-to-buy</li>
-                    <li>· Multi-state routing if you ship beyond your home state</li>
-                  </ul>
-                </div>
-
-                {/* Lead management */}
-                <div className="border border-dust bg-bone-warm p-5 space-y-2.5">
-                  <p className="text-[11px] uppercase tracking-widest text-saddle font-semibold">
-                    Lead management
-                  </p>
-                  <ul className="text-sm text-charcoal/90 space-y-1.5 leading-snug">
-                    <li>· Real-time Telegram alerts for every new lead</li>
-                    <li>· One-click email buttons — Won / Lost / Pass</li>
-                    <li>· AI reply triage — classifies inbound buyer responses</li>
-                    <li>· Auto-responses for ghosting + scheduling questions</li>
-                    <li>· Capacity guard — never over-route beyond your max</li>
-                  </ul>
-                </div>
-
-                {/* Revenue infrastructure */}
-                <div className="border border-dust bg-bone-warm p-5 space-y-2.5">
-                  <p className="text-[11px] uppercase tracking-widest text-saddle font-semibold">
-                    Revenue infrastructure
-                  </p>
-                  <ul className="text-sm text-charcoal/90 space-y-1.5 leading-snug">
-                    <li>· Stripe-hosted commission invoicing — auto on Closed Won</li>
-                    <li>· Optional Stripe Connect — buyers pay you direct</li>
-                    <li>· Sale tracking + monthly earnings dashboard</li>
-                    <li>· Affiliate auto-enrollment for past customers</li>
-                    <li>· Wholesale lead routing (B2B funnel built separate)</li>
-                  </ul>
-                </div>
-              </div>
-
-              {/* Compliance + ops — full width strip */}
-              <div className="border border-dust bg-bone-warm p-5 space-y-2.5">
-                <p className="text-[11px] uppercase tracking-widest text-saddle font-semibold">
-                  Compliance &amp; operations (handled for you)
-                </p>
-                <ul className="text-sm text-charcoal/90 grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1.5 leading-snug">
-                  <li>· TCPA-compliant SMS opt-in gating</li>
-                  <li>· Suppression list — bounces &amp; complaints auto-honored</li>
-                  <li>· Cron observability + operator escalation on failures</li>
-                  <li>· Webhook signing, JWT rotation, Redis fail-open</li>
-                  <li>· Audit logs on every approve / reject / close action</li>
-                  <li>· Capacity drift recovery + atomic counter sync</li>
-                </ul>
-              </div>
-
-              <p className="text-xs text-saddle italic leading-relaxed">
-                You set prices, capacity, and pace. We send the buyers, run the funnel, and stay out of your way.
-              </p>
-            </div>
+            {/* One reassuring line — NOT the ops brochure. (UX pass 2026-07-24:
+                step 0 was ~6 phone-screens, incl. 31 bullets of internal ops
+                jargon — "JWT rotation, Redis fail-open" — on a RANCHER screen,
+                which read as complicated and scary. The full "what we run for
+                you" pitch lives on /sell for prospects; a rancher who already
+                has a setup link has seen it.) */}
+            <p className="text-[15px] text-charcoal/85 leading-relaxed border-t border-dust pt-6">
+              You raise the cattle and close the deal. We run the ads, match you
+              with families in your state, and handle the payment plumbing &mdash;
+              you keep your prices, your pace, and your customers.
+            </p>
 
             {/* SELF-SERVE-FIRST (2026-07-21 inversion): setup is the primary
                 path — a rancher goes live on e-sign + slug + price + their own
                 payment link, no call required. Booking a call stays available
                 as the secondary, optional path (step 4). */}
-            <div className="border-t border-dust pt-5 space-y-3">
-              <p className="text-sm text-charcoal/85 leading-relaxed">
-                <strong>Set up your page in about 10 minutes.</strong> Confirm
-                your contact, add your story and prices, sign, and you&rsquo;re
-                live. Prefer to walk through it together? You can book a call
-                instead.
-              </p>
+            <div className="space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-center gap-3">
                 <button
                   type="button"
@@ -2031,9 +1907,10 @@ export default function RancherSetupWizard() {
               <p className="text-xs uppercase tracking-widest text-saddle mb-2">Pricing</p>
               <h2 className="font-serif text-2xl text-charcoal">Set your share prices</h2>
               <p className="text-sm text-saddle mt-1">
-                {String((rancher as any)['Pricing Model'] || 'legacy') === 'legacy'
-                  ? 'Fill in the shares you sell. Buyers pay you directly through your own payment link, so at least one share needs a payment link before your page can go live.'
-                  : 'Optional — but pages with prices convert ~3× better. Fill in only the shares you sell. Buyers see "Contact for pricing" if you skip.'}
+                {String((rancher as any)['Pricing Model'] || 'legacy') === 'legacy' &&
+                !shouldAutoSelectFreeTier(rancher as any)
+                  ? 'Fill in the shares you sell, and add your own payment link to at least one — buyers pay you directly through it, so your page needs one to go live.'
+                  : 'Fill in the shares you sell. We run checkout and add our fee on top of your price — your deposit lands in your own Stripe account (you’ll connect it in the next step).'}
               </p>
             </header>
 

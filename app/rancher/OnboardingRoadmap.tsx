@@ -123,10 +123,9 @@ export default function OnboardingRoadmap({
                     </span>
                     {req.actor === 'rancher' && !req.done && (
                       <span className="ml-2 text-[10px] uppercase tracking-wider text-saddle/70">
-                        only you can do this
+                        only you
                       </span>
                     )}
-                    {!req.done && <span className="block text-saddle text-xs mt-0.5">{req.why}</span>}
                   </span>
                 </li>
               ))}
