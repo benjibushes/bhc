@@ -72,6 +72,57 @@ export interface CreateConnectAccountInput {
   email: string;
   displayName: string;  // Shown in Stripe dashboard + on payout statements
   rancherId: string;    // For metadata lookup
+  /**
+   * Everything BHC already knows about this rancher, so Stripe doesn't ask
+   * them for it again. Built by buildConnectPrefill(). Optional and
+   * best-effort: omitting it reproduces the exact pre-prefill account shape.
+   */
+  prefill?: ConnectPrefill;
+}
+
+// ---------------------------------------------------------------------------
+// Prefill → Stripe V2 param mapping
+// ---------------------------------------------------------------------------
+//
+// V2 does NOT have a `business_profile` block. The V1 requirement names that
+// Stripe reports as past_due map onto V2 create/update params like this
+// (verified against the pinned stripe@20.4.1 types, V2/Core/AccountsResource):
+//
+//   business_profile.url                 → defaults.profile.business_url
+//   business_profile.product_description → defaults.profile.product_description
+//   business_profile.support_phone       → configuration.merchant.support.phone
+//   tos_acceptance.date / .ip            → NOT PREFILLED. The rancher accepts
+//                                          Stripe's terms themselves; doing it
+//                                          on their behalf isn't ours to do.
+//
+// Deliberately NOT set: `identity.business_details.registered_name`. That is
+// the LEGAL entity name, which Stripe verifies against government records — a
+// ranch's marketing name is frequently not it, and a mismatch makes KYC worse,
+// not better. `doing_business_as` (the trading name) is the safe equivalent.
+//
+// No MCC is set: the codebase has never set one and inventing a merchant
+// category code is a risk/underwriting decision, not a code decision.
+
+import type { ConnectPrefill } from './connectPrefill';
+
+/** defaults.profile — only the keys we actually have. */
+function profileParams(prefill?: ConnectPrefill): Record<string, any> | null {
+  if (!prefill) return null;
+  const profile: Record<string, any> = {};
+  if (prefill.businessUrl) profile.business_url = prefill.businessUrl;
+  if (prefill.productDescription) profile.product_description = prefill.productDescription;
+  if (prefill.doingBusinessAs) profile.doing_business_as = prefill.doingBusinessAs;
+  return Object.keys(profile).length ? profile : null;
+}
+
+/** configuration.merchant.support — the publicly-visible contact block. */
+function supportParams(prefill?: ConnectPrefill): Record<string, any> | null {
+  if (!prefill) return null;
+  const support: Record<string, any> = {};
+  if (prefill.supportPhone) support.phone = prefill.supportPhone;
+  if (prefill.supportEmail) support.email = prefill.supportEmail;
+  if (prefill.supportUrl) support.url = prefill.supportUrl;
+  return Object.keys(support).length ? support : null;
 }
 
 export async function createConnectAccount(input: CreateConnectAccountInput): Promise<{ accountId: string }> {
@@ -105,9 +156,11 @@ export async function createConnectAccount(input: CreateConnectAccountInput): Pr
     identity: {
       country: 'us',
       business_details: {
-        // Placeholder — rancher will set real phone during KYC. Required
-        // by V2 even though we don't have it yet.
-        phone: '0000000000',
+        // Real phone when we hold a valid one (we require it at signup), else
+        // the historical placeholder. Never send a half-parsed number: a
+        // plausible-but-wrong support phone is worse than none, and a
+        // malformed value would fail the whole account create.
+        phone: input.prefill?.businessPhone || '0000000000',
       },
     },
     dashboard: 'full',
@@ -119,13 +172,60 @@ export async function createConnectAccount(input: CreateConnectAccountInput): Pr
     },
     metadata: { rancherId: input.rancherId },
   };
+
+  // ── PREFILL (best-effort, never blocks account creation) ────────────────
+  // Each block is attached only when we actually hold the data. A rancher
+  // record we know nothing about produces exactly the pre-prefill params.
+  const profile = profileParams(input.prefill);
+  if (profile) params.defaults.profile = profile;
+  const support = supportParams(input.prefill);
+  if (support) params.configuration.merchant.support = support;
   // simulate_accept_tos_obo is documented in the Stripe Workbench blueprint
   // but rejected by the live V2 API as Unknown field (verified 2026-06-09).
   // Real rancher always goes through Stripe-hosted TOS — no bypass needed.
+  // v2 suffix (2026-07-24): Stripe pins an idempotency key to the EXACT params
+  // of its first use for ~24h. The prefill blocks above change the create-param
+  // shape, so reusing the old key would 400 any rancher who had an attempt
+  // under the previous shape — the same trap documented on the deposit and
+  // final-invoice keys below. BUMP THIS SUFFIX whenever create params change.
   const account = await (stripe.v2.core.accounts as any).create(params, {
-    idempotencyKey: `connect-acct-${input.rancherId}`,
+    idempotencyKey: `connect-acct-${input.rancherId}-v2`,
   });
   return { accountId: account.id };
+}
+
+/**
+ * Push the prefill onto an EXISTING Connect account.
+ *
+ * This is the half that matters for the five ranchers already stalled on
+ * Stripe screen one: their accounts were created before prefill existed, so
+ * only an update can clear `business_profile.url` / `product_description` /
+ * `support_phone` from their past_due list before they walk back in.
+ *
+ * Throws on API failure — the caller decides. Every caller in this repo treats
+ * it as best-effort and continues to mint the onboarding link regardless: a
+ * rancher must never be blocked from resuming because a nicety failed.
+ */
+export async function applyConnectPrefill(input: {
+  accountId: string;
+  prefill: ConnectPrefill;
+}): Promise<{ applied: boolean }> {
+  const profile = profileParams(input.prefill);
+  const support = supportParams(input.prefill);
+  const businessPhone = input.prefill.businessPhone;
+  if (!profile && !support && !businessPhone) return { applied: false };
+
+  const params: any = {};
+  if (profile) params.defaults = { profile };
+  if (support) params.configuration = { merchant: { support } };
+  if (businessPhone) params.identity = { business_details: { phone: businessPhone } };
+
+  const stripe = getStripeClient();
+  // No idempotency key: this is a naturally idempotent overwrite of the same
+  // derived values, and a pinned key would make a later Airtable edit (a fixed
+  // phone, a new slug) silently un-pushable for 24h.
+  await (stripe.v2.core.accounts as any).update(input.accountId, params);
+  return { applied: true };
 }
 
 export interface OnboardingLinkInput {
@@ -170,6 +270,12 @@ import {
 export { classifyConnectStatus, canResumeConnectOnboarding };
 export type { ConnectAccountStatus, ConnectStatusSignals };
 
+// Same rationale for the V2 requirements parser + the handoff-state collapse:
+// zero-import pure modules, re-exported so callers keep one import site.
+import { dueRequirementsFromEntries, connectHandoff } from './connectResumeState';
+export { dueRequirementsFromEntries, connectHandoff };
+export type { ConnectHandoff, ConnectHandoffState } from './connectResumeState';
+
 export interface ConnectStatusReadResult {
   cardPaymentsActive: boolean;
   onboardingComplete: boolean;
@@ -180,6 +286,12 @@ export interface ConnectStatusReadResult {
    *  rancher EXACTLY how much is left ("Stripe still needs 2 things") instead of
    *  a vague "incomplete". */
   currentlyDueCount: number;
+  /**
+   * The machine-readable requirement descriptions Stripe is blocking on
+   * (e.g. `identity.business_details.url`), so the UI and the operator can say
+   * EXACTLY what is left instead of a vague "incomplete". Empty when active.
+   */
+  currentlyDue: string[];
   /**
    * True when this account is NOT active because Stripe still has outstanding
    * KYC requirements (currently_due / past_due) — i.e. the kind of block a
@@ -212,9 +324,14 @@ export async function getConnectAccountStatus(accountId: string): Promise<Connec
   const summary = (account as any)?.requirements?.summary ?? {};
   const reqStatus = summary?.minimum_deadline?.status ?? null;
   const disabledReason = summary?.disabled_reason ?? null;
-  // currently_due can come back as an array of entries; count its length.
-  const currentlyDueRaw = summary?.currently_due;
-  const currentlyDueCount = Array.isArray(currentlyDueRaw) ? currentlyDueRaw.length : 0;
+  // WAS A SILENT ZERO: this used to read `summary.currently_due`, a key the V2
+  // Accounts API does not define (V2's `summary` carries only
+  // `minimum_deadline` — see stripe@20.4.1 V2/Core/Accounts.d.ts). So the count
+  // was 0 for every account, forever, and every "Stripe still needs N things"
+  // downstream was reading a hardcoded zero. On V2 the real list lives in
+  // `requirements.entries[]`. Parsed by a pure, unit-tested helper.
+  const currentlyDue = dueRequirementsFromEntries((account as any)?.requirements?.entries);
+  const currentlyDueCount = currentlyDue.length;
 
   const { status, onboardingComplete } = classifyConnectStatus({
     cardPaymentsActive,
@@ -237,6 +354,7 @@ export async function getConnectAccountStatus(accountId: string): Promise<Connec
     requirementsStatus: reqStatus,
     status,
     currentlyDueCount,
+    currentlyDue,
     canResumeOnboarding,
   };
 }
