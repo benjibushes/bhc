@@ -52,9 +52,8 @@ test('prevStep walks backward and never leaves the flow', () => {
 
 // ── remapSavedStep — resume safety for mid-flight ranchers ──────────────────
 
-test('remapSavedStep keeps in-flow steps as-is (except 9 — old-flow safety)', () => {
+test('remapSavedStep keeps EVERY in-flow step as-is, 9 included', () => {
   for (const s of STEP_FLOW) {
-    if (s === 9) continue; // 9 intentionally → 8 so old-flow ranchers don't skip fulfillment
     assert.equal(remapSavedStep(s), s);
   }
 });
@@ -67,13 +66,36 @@ test('remapSavedStep: the optional call step survives (still reachable)', () => 
   assert.equal(remapSavedStep(4), 4);
 });
 
-test('remapSavedStep: old-flow rancher parked at Connect (9) resumes at fulfillment (8)', () => {
-  // Old order was …3 → 7 → 9 → 8 → 5, so a saved step 9 means the rancher had
-  // NOT done fulfillment yet. New order puts 9 after 8; resuming AT 9 would
-  // skip fulfillment (buyers would see an empty Fulfillment/Refund section).
-  // Send them to 8 — fulfillment is idempotent and pre-filled, and its
-  // continue walks forward to 9 (or past it if Connect is already active).
-  assert.equal(remapSavedStep(9), 8);
+// ── step 9 resume — the Connect-abandonment trap ────────────────────────────
+//
+// Stripe Connect (9) is the likeliest place in the whole flow for a rancher to
+// stop and come back. Under the CURRENT road (…3 → 8 → 9 → 5) a saved 9 means
+// fulfillment is already behind them, so the old blanket 9→8 remap demoted
+// every returning rancher a step. These pin both directions.
+
+test('CURRENT-flow rancher who abandoned at Connect resumes AT Connect, never backward', () => {
+  assert.equal(remapSavedStep(9), 9);
+  assert.equal(remapSavedStep(9, {}), 9);
+  assert.equal(remapSavedStep(9, { fulfillmentDone: true }), 9);
+});
+
+test('LEGACY-flow rancher (saved 9, fulfillment never done) is routed through 8 first', () => {
+  // Old order was …3 → 7 → 9 → 8 → 5, so a saved 9 there meant the rancher had
+  // NOT done fulfillment. Resuming at 9 would skip it and buyers would see an
+  // empty Fulfillment section. Only a POSITIVE "fulfillment is missing" signal
+  // triggers this — step 8 refuses to continue without a fulfillment type, so a
+  // current-road rancher at 9 can never look like this.
+  assert.equal(remapSavedStep(9, { fulfillmentDone: false }), 8);
+});
+
+test('legacy saved values still migrate: 7 → 3, 4 → 4, and 8 stays 8', () => {
+  assert.equal(remapSavedStep(7), 3);
+  assert.equal(remapSavedStep(4), 4);
+  assert.equal(remapSavedStep(8), 8);
+  // The fulfillment hint is scoped to step 9 — it must not perturb anything else.
+  assert.equal(remapSavedStep(7, { fulfillmentDone: false }), 3);
+  assert.equal(remapSavedStep(8, { fulfillmentDone: false }), 8);
+  assert.equal(remapSavedStep(5, { fulfillmentDone: false }), 5);
 });
 
 test('remapSavedStep: garbage restores to the start', () => {

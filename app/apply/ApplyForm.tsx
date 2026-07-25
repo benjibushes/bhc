@@ -9,6 +9,7 @@
 // straight to the wizard.
 
 import { useState, useEffect } from 'react';
+import { formatPhoneInput, isValidUsPhone } from '@/lib/phoneFormat';
 
 const STATES = [
   'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA',
@@ -78,13 +79,11 @@ export default function ApplyForm() {
         : [...prev.channels, c],
     }));
 
-  const formatPhone = (v: string) => {
-    const d = v.replace(/\D/g, '').slice(0, 10);
-    if (d.length < 4) return d;
-    if (d.length < 7) return `(${d.slice(0, 3)}) ${d.slice(3)}`;
-    return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
-  };
-
+  // Phone formatting/validation lives in lib/phoneFormat (ONE copy, shared
+  // with the wizard and both server guards). The old local copy sliced the
+  // digit string to 10 BEFORE looking for a country code, so `1 (406)
+  // 555-1234` silently became `(140) 655-5123` — still ten digits, so every
+  // guard passed and Airtable got a wrong-but-plausible number.
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -101,8 +100,10 @@ export default function ApplyForm() {
     // phone. She was approved, sent a setup link that could never arrive, and
     // became permanently unreachable with nobody alerted. Email as the ONLY
     // channel means one typo = a silently lost rancher. Require a second way in.
-    // 10 digits = US number after formatPhone() strips punctuation.
-    if (form.phone.replace(/\D/g, '').length < 10) {
+    // isValidUsPhone strips a leading country code first, so `1 (406) 555-1234`
+    // validates as the ten-digit number it actually is (and an over-long entry
+    // is REJECTED here rather than silently truncated into a different number).
+    if (!isValidUsPhone(form.phone)) {
       setError('A phone number is required — it is how we reach you if email fails.');
       return;
     }
@@ -228,16 +229,23 @@ export default function ApplyForm() {
             welcome to the network.
           </h2>
           <p className="text-saddle text-sm sm:text-base leading-relaxed mb-5">
-            your ranch page is reserved. build it now — takes about 5 minutes,
-            and you can save and come back anytime. buyers in your state see
-            it the moment you go live.
+            {/* HONEST TIME (2026-07-24): this promised 5 minutes for a flow
+                whose Stripe Connect step alone is longer than that. The form
+                they just finished really is ~90 seconds; the page build is
+                ~15 minutes end-to-end when Stripe goes smoothly. Never quote a
+                total the flow can't hit — a blown promise at the Connect wall
+                is where ranchers quit. Keep this in step with the wizard
+                header and /sell. */}
+            your ranch page is reserved. build it now — about 15 minutes
+            end to end, and you can save and come back anytime. buyers in
+            your state see it the moment you go live.
           </p>
           {success.wizardUrl && (
             <a
               href={success.wizardUrl}
               className="inline-flex items-center gap-2 px-8 py-4 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-saddle"
             >
-              build my page — 5 minutes →
+              build my page — about 15 minutes →
             </a>
           )}
         </div>
@@ -372,7 +380,7 @@ export default function ApplyForm() {
               type="tel"
               required
               value={form.phone}
-              onChange={(e) => setField('phone', formatPhone(e.target.value))}
+              onChange={(e) => setField('phone', formatPhoneInput(e.target.value))}
               placeholder="(555) 555-5555"
               className="w-full px-3 py-2.5 border border-dust bg-bone-warm text-charcoal focus:outline-none focus:border-charcoal"
             />

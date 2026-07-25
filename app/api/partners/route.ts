@@ -4,7 +4,9 @@ import { createRecord, getAllRecords, escapeAirtableValue, findOrCreateRancherBy
 import { TABLES } from '@/lib/airtable';
 import { sendPartnerConfirmation, sendAdminAlert, sendRancherApplyAutoApproved } from '@/lib/email';
 import { JWT_SECRET } from '@/lib/secrets';
-import { sendTelegramPartnerAlert } from '@/lib/telegram';
+import { sendTelegramPartnerAlert, sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { sendOperatorSignal } from '@/lib/operatorSignal';
+import { formatPhoneInput } from '@/lib/phoneFormat';
 import { validateAffiliateRefForSignup } from '@/lib/affiliates';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 import { normalizeState } from '@/lib/states';
@@ -25,6 +27,11 @@ function isValidEmail(email: string): boolean {
 }
 
 export async function POST(request: Request) {
+  // Hoisted so the outer catch can fire a rescue signal carrying the actual
+  // submission (the /api/apply pattern). Without it a throw anywhere in the
+  // rancher path left nothing but a console.error nobody watches — the exact
+  // trace desert that made "Justin" invisible.
+  let rescueBody: any = {};
   try {
     // Stricter than buyer signup — fires onboarding emails. #10.
     const ip = getRequestIp(request);
@@ -49,6 +56,7 @@ export async function POST(request: Request) {
     } catch {
       return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
     }
+    rescueBody = body;
     const { partnerType, ref } = body;
     // Pull whichever email + phone the body carries (rancher/brand/land each
     // carry `email`/`phone` as the primary contact). validateAffiliateRefForSignup
@@ -74,7 +82,13 @@ export async function POST(request: Request) {
     let rancherWizardUrl: string | undefined;
 
     if (partnerType === 'rancher') {
-      const { ranchName, operatorName, email, phone, state, acreage, beefTypes, monthlyCapacity, certifications, operationDetails, callScheduled, ranchTourInterested, ranchTourAvailability } = body;
+      const { ranchName, operatorName, email, state, acreage, beefTypes, monthlyCapacity, certifications, operationDetails, callScheduled, ranchTourInterested, ranchTourAvailability } = body;
+      // Canonical `(406) 555-1234`, country code stripped rather than
+      // truncated (lib/phoneFormat). Also makes the phone leg of the dedupe
+      // below actually fire — findOrCreateRancherByEmail compares raw digits,
+      // so `1 (406) 555-1234` used to miss a record stored as `4065551234`
+      // and fork a duplicate rancher.
+      const phone = formatPhoneInput(body?.phone);
 
       if (!ranchName || !operatorName || !email || !state || !beefTypes) {
         return NextResponse.json({ error: 'Missing required fields for rancher' }, { status: 400 });
@@ -110,14 +124,68 @@ export async function POST(request: Request) {
           },
         );
         if (match) {
+          // DUPLICATE RESCUE (2026-07-24) — this used to be a hard 409 with no
+          // wizard URL and no next step, thrown AFTER ten required fields
+          // (acreage, monthly head count, a prose textarea, a legal checkbox).
+          // A returning rancher who never finished setup filled the whole form
+          // and hit a wall telling them to email us. Both other doors already
+          // rescue duplicates into the wizard (/api/apply's `!created` branch,
+          // the map self-submit's dedupeResponse); this one now does too.
+          //
+          // The Verified/Removed gate is lifted straight from self-submit's
+          // dedupeResponse: NEVER hand a setup link for a verified (live)
+          // ranch's record to whoever typed its name and state. Those get a
+          // login pointer instead — the magic link goes to the email already
+          // on file, so only the real owner can act on it.
+          const verificationStatus = String(match['Verification Status'] || '');
+          const rescuable =
+            verificationStatus !== 'Verified' && verificationStatus !== 'Removed';
+
+          let rescueWizardUrl = '';
+          if (rescuable) {
+            try {
+              const rescueToken = jwt.sign(
+                { type: 'rancher-setup', rancherId: match.id },
+                JWT_SECRET,
+                { expiresIn: '60d' },
+              );
+              rescueWizardUrl = `${SITE_URL}/rancher/setup?token=${rescueToken}`;
+            } catch (e: any) {
+              console.error('[partners] duplicate-rescue token mint failed:', e?.message);
+            }
+          }
+
+          try {
+            await sendTelegramMessage(
+              TELEGRAM_ADMIN_CHAT_ID,
+              `↩️ <b>EXISTING rancher re-applied</b> · /partner\n\n` +
+                `<b>${operatorName}</b> · ${ranchName} (${state})\n` +
+                `${email}${phone ? ` · ${phone}` : ''}\n` +
+                `Matched by: ${matchedBy || '?'} · Verification: ${verificationStatus || '(blank)'}\n\n` +
+                (rescueWizardUrl
+                  ? `<i>Sent straight into the setup wizard for the existing record.</i>`
+                  : rescuable
+                    ? `⚠️ <i>Setup link mint FAILED — send them one manually.</i>`
+                    : `<i>Verified/removed record — pointed at rancher login, no setup link issued.</i>`) +
+                `\n\nRancher ${match.id}`,
+            );
+          } catch (e: any) {
+            console.warn('[partners] duplicate Telegram alert failed (non-fatal):', e?.message);
+          }
+
           return NextResponse.json(
             {
-              error:
-                'This ranch is already in our system. Check your inbox for your confirmation OR email ben@buyhalfcow.com if you need access.',
-              existingId: match.id,
+              success: true,
+              existing: true,
               matchedBy: matchedBy || 'unknown',
+              ...(rescueWizardUrl
+                ? { wizardUrl: rescueWizardUrl }
+                : { loginUrl: `${SITE_URL}/rancher/login` }),
+              message: rescueWizardUrl
+                ? 'You are already in our system — pick up where you left off.'
+                : 'This ranch is already set up with us. Log in to your dashboard, or email ben@buyhalfcow.com if you need a hand.',
             },
-            { status: 409 },
+            { status: 200 },
           );
         }
       } catch (e) {
@@ -480,6 +548,32 @@ export async function POST(request: Request) {
     );
   } catch (error: any) {
     console.error('API error creating partner:', error);
+    // LOUD RESCUE on the rancher door (2026-07-24) — parity with /api/apply's
+    // pre-write failure signal. Supply is the constraint: a rancher who filled
+    // this long form and hit a throw must leave a trail Ben can act on in ~60s,
+    // not just a line in a Vercel log. Deduped per email so a bad ship can't
+    // flood him. Never throws into the response.
+    if (rescueBody?.partnerType === 'rancher') {
+      try {
+        await sendOperatorSignal({
+          urgency: 'loud',
+          kind: 'system-error',
+          summary: `Signup create FAILED · /partner · ${rescueBody?.ranchName || '(no ranch)'} (${rescueBody?.state || '?'})`,
+          detail:
+            `A rancher's /partner application threw — nothing was saved. ` +
+            `Hand-create the Ranchers row + send the wizard link.\n\n` +
+            `Operator: ${rescueBody?.operatorName || '(none)'}\n` +
+            `Ranch: ${rescueBody?.ranchName || '(none)'}\n` +
+            `Email: ${rescueBody?.email || '(none)'}\n` +
+            `Phone: ${rescueBody?.phone || '(none)'}\n` +
+            `State: ${rescueBody?.state || '(none)'}\n` +
+            `Error: ${error?.message || 'unknown'}`,
+          dedupeKey: `signup-create-fail:partner:${String(rescueBody?.email || 'unknown').toLowerCase()}`,
+        });
+      } catch (sigErr: any) {
+        console.error('[partners] rescue operator signal failed:', sigErr?.message);
+      }
+    }
     return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
   }
 }

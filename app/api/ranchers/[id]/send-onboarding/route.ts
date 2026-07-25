@@ -131,7 +131,7 @@ export async function POST(
 
           <h3 style="margin: 20px 0 10px;">1. Review & Sign Commission Agreement</h3>
           <ul style="color: #6B4F3F; line-height: 1.8;">
-            <li>10% commission on all verified referred sales</li>
+            <li>You keep 100% of your price — our 10% is added on top and paid by the buyer</li>
             <li>Buyers pay you directly — you control pricing</li>
             <li>24-month commission term from first referral</li>
             <li>No upfront fees</li>

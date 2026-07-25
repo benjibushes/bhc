@@ -12,6 +12,7 @@ import { sendRancherApplyAutoApproved } from '@/lib/email';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { JWT_SECRET } from '@/lib/secrets';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
+import { formatPhoneInput, isValidUsPhone, normalizePhoneDigits } from '@/lib/phoneFormat';
 
 // POST /api/apply — public endpoint.
 //
@@ -214,7 +215,14 @@ export async function POST(req: Request) {
   // found") and no phone: approved, sent a setup link that could never arrive,
   // permanently unreachable, nobody alerted. Email as the ONLY channel means one
   // typo silently loses a rancher. A second channel is non-negotiable.
-  if (String(body.phone || '').replace(/\D/g, '').length < 10) {
+  //
+  // isValidUsPhone (2026-07-24) replaces the old `digits.length < 10` check.
+  // The old guard passed a country-code number that the client formatter had
+  // already CORRUPTED (`1 (406) 555-1234` → `(140) 655-5123`, ten digits, all
+  // guards green) — a backstop that looks healthy and rings a stranger is
+  // worse than a blank one. Shared helper strips the leading `1` first and
+  // rejects anything that isn't exactly ten digits.
+  if (!isValidUsPhone(body.phone)) {
     return NextResponse.json(
       { error: 'A phone number is required — it is how we reach you if email fails.' },
       { status: 400 },
@@ -267,7 +275,12 @@ export async function POST(req: Request) {
   // mutable `body` inside it. These are already validated non-empty above.
   const operatorName = body.operatorName.trim();
   const ranchNameTrimmed = body.ranchName.trim();
-  const phoneTrimmed = body.phone?.trim() || '';
+  // Canonical `(406) 555-1234` — country code already stripped. Persisting the
+  // normalized form ALSO fixes dedupe: findOrCreateRancherByEmail matches on a
+  // raw digits-only compare, so a re-apply typed as `1 (406) 555-1234` used to
+  // miss the existing row (digits `14065551234` ≠ `4065551234`) and fork a
+  // duplicate rancher.
+  const phoneTrimmed = formatPhoneInput(body.phone);
 
   let rancherId: string;
   try {
@@ -342,11 +355,12 @@ export async function POST(req: Request) {
         ) {
           resubmitFields['Email'] = email;
         }
-        const submittedPhone = body.phone?.trim() || '';
+        // Compare NORMALIZED digits on both sides so a country-code re-entry
+        // ("+1 406…") isn't mistaken for a changed number.
+        const submittedPhone = phoneTrimmed;
         if (
           submittedPhone &&
-          submittedPhone.replace(/\D/g, '') !==
-            String(record['Phone'] || '').replace(/\D/g, '')
+          normalizePhoneDigits(submittedPhone) !== normalizePhoneDigits(record['Phone'])
         ) {
           resubmitFields['Phone'] = submittedPhone;
         }

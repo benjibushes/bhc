@@ -1902,7 +1902,7 @@ export async function sendRancherApproval(data: {
     ? `
             <p><strong>What Happens Next:</strong></p>
             <ol style="color: #6B4F3F; line-height: 2;">
-              <li><strong>Finish your setup</strong> — About 10 minutes: prices, payment link, and one e-signature (the Commission Agreement is signed right inside the wizard)</li>
+              <li><strong>Finish your setup</strong> — About 15 minutes: prices, fulfillment, bank, and one e-signature (the partner agreement is signed right inside the wizard)</li>
               <li><strong>Verification</strong> — Add customer testimonials, operation photos, and/or social proof (Google Reviews, social media, certifications)</li>
               <li><strong>Profile goes live</strong> — Once verified, we activate your profile and start sending you qualified buyers</li>
             </ol>
@@ -3258,7 +3258,7 @@ export async function sendInquiryToRancher(data: {
             <div class="footer">
               <p>This inquiry was facilitated by BuyHalfCow.<br>
               Inquiry Reference: #${data.inquiryId.slice(0, 8)}<br>
-              Remember: 10% commission applies to sales made through the platform.</p>
+              Remember: you keep 100% of your price — our 10% is added on top and paid by the buyer.</p>
             </div>
           </div>
         </body>
@@ -3902,8 +3902,8 @@ export async function sendPipelineUpdateEmail(data: {
       <p>Hi ${esc(firstName)},</p>
       <p>We spoke about getting <strong>${esc(ranchName)}</strong> listed on BuyHalfCow — a private network connecting independent ranchers directly with qualified beef buyers.</p>
       <p>We have buyers actively looking for ranch-direct beef in your area. Here's what's needed to get you live:</p>
-      <div class="step"><strong>1. Sign the Commission Agreement</strong> — 10% on referred sales, no upfront fees, buyers pay you directly</div>
-      <div class="step"><strong>2. Set up your ranch page</strong> — Logo, pricing, about text (takes 5 minutes)</div>
+      <div class="step"><strong>1. Sign the partner agreement</strong> — you keep 100% of the price you set, our 10% is added on top and paid by the buyer, no upfront fees</div>
+      <div class="step"><strong>2. Set up your ranch page</strong> — Logo, pricing, about text (about 15 minutes end to end)</div>
       <div class="step"><strong>3. Verification</strong> — Customer testimonials, operation photos, and social proof</div>
       <div class="step"><strong>4. Go live</strong> — Start receiving buyer leads</div>
       <p>The first step is reviewing and signing the agreement. Everything else flows from there.</p>
@@ -3919,7 +3919,7 @@ export async function sendPipelineUpdateEmail(data: {
       <p>Just checking in — your BuyHalfCow Commission Agreement for <strong>${esc(ranchName)}</strong> is still waiting for your signature.</p>
       <p><strong>Quick recap:</strong></p>
       <ul style="color: #6B4F3F; line-height: 2;">
-        <li>10% commission on referred sales only — no upfront fees</li>
+        <li>You keep 100% of the price you set — our 10% is added on top and paid by the buyer, only on a closed sale</li>
         <li>Buyers pay you directly — you control your pricing</li>
         <li>24-month term from first referral</li>
         <li>We handle marketing, you handle the beef</li>
@@ -4059,7 +4059,7 @@ export async function sendTrackedContactEmail(data: {
   <p><strong>Reply directly to this email</strong> to respond to ${esc(data.buyerName)}.</p>
   <div class="footer">
     <p>This message was facilitated by BuyHalfCow.<br>
-    Remember: 10% commission applies to sales made through the platform.</p>
+    Remember: you keep 100% of your price — our 10% is added on top and paid by the buyer.</p>
     <p>— Ben<br>BuyHalfCow</p>
   </div>
 </div></body></html>`,
