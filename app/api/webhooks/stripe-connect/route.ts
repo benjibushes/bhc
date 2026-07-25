@@ -37,6 +37,7 @@ import { logAuditEntry } from '@/lib/auditLog';
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
 import { GO_LIVE_FIELDS } from '@/lib/goLiveGates';
+import { unpauseCallbackData } from '@/lib/connectResync';
 
 // Mirror the platform webhook's Stripe Events table for idempotency.
 const STRIPE_EVENTS_TABLE = 'Stripe Events';
@@ -677,8 +678,12 @@ async function syncRancherConnectStatus(accountId: string): Promise<void> {
       summary: `UPGRADE COMPLETE — UNPAUSE ${pausedLabel}`,
       detail:
         `Rancher was auto-paused by the migration deadline (paused_overdue) and just finished Stripe Connect (active).\n` +
-        `Active Status is still 'Paused' — flip it to 'Active' from /admin/ranchers/${rancher.id} so buyers route again.`,
+        `Active Status is still 'Paused' — tap below to unpause, or flip it from /admin/ranchers/${rancher.id} so buyers route again.`,
       refs: [{ type: 'rancher', id: rancher.id, label: pausedLabel }],
+      // One tap = unpaused + routable. Handled in app/api/webhooks/telegram.
+      // Same button the nightly stripe-reconcile cron attaches — these three
+      // emitters share a dedupe key, so whichever fires first must carry it.
+      actions: [{ label: `▶️ Unpause ${pausedLabel}`.slice(0, 60), callbackData: unpauseCallbackData(rancher.id) }],
       dedupeKey: `paused-overdue-upgrade:${rancher.id}`,
       dedupeWindowMs: 24 * 3600 * 1000,
     });

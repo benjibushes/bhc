@@ -16,6 +16,7 @@ import { sendEmail, sendConsumerApproval, sendBroadcastEmail, sendBuyerIntroNoti
 import { callClaude } from '@/lib/ai';
 import { bulkRouteStateToRancher } from '@/lib/bulkRoute';
 import { goLiveRancher } from '@/lib/goLiveRancher';
+import { UNPAUSE_CALLBACK_PREFIX } from '@/lib/connectResync';
 import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
 import { normalizeState, normalizeStates } from '@/lib/states';
 import { buildCronStatusCard, pauseCron, resumeCron } from '@/lib/cronIntrospection';
@@ -747,6 +748,7 @@ async function processUpdate(update: any) {
         'firstweek_',
         'bcsend_',
         'bsend_', // buyer sales arm: one-tap send of a staged buyer reply
+        UNPAUSE_CALLBACK_PREFIX, // 'cxunpause_' — flips Active Status → routable
       ];
       const isHighRiskCallback =
         HIGH_RISK_ACTIONS.has(action) ||
@@ -3179,6 +3181,107 @@ Output ONLY the email body. First line should be the subject line prefixed with 
           } catch (e: any) {
             await answerCallbackQuery(queryId, `⚠️ ${e?.message || 'Block failed'}`);
             console.error('[selfblock callback]', e);
+          }
+        }
+      }
+
+      // ─── cxunpause_<rancherId> ─ one-tap unpause after a Connect self-heal ──
+      // Fired from the LOUD "UPGRADE COMPLETE — UNPAUSE …" operator signal that
+      // the stripe-reconcile cron / stripe-connect webhook / rancher Connect
+      // status poll raise when computeConnectResync flags wasPausedOverdue:
+      // migration-deadline auto-paused this rancher, they have SINCE finished
+      // Stripe Connect, and NOTHING auto-unpauses Active Status='Paused'. Left
+      // alone they receive zero buyers forever.
+      //
+      // Deliberately a BUTTON, not an auto-flip: Active Status is Ben's
+      // per-rancher call (a Paused row can also be a deliberate manual pause).
+      // One tap = the same capacity-aware write as
+      // /api/admin/ranchers/[id]/resume, so the rancher is routable again.
+      // Registered in HIGH_RISK_PREFIXES above → double-tap is claim-guarded.
+      else if (callbackData?.startsWith(UNPAUSE_CALLBACK_PREFIX)) {
+        if (!chatId || !messageId) {
+          await answerCallbackQuery(queryId, 'Message context lost — re-run the action');
+          return NextResponse.json({ ok: true });
+        }
+        const rancherId = callbackData.slice(UNPAUSE_CALLBACK_PREFIX.length);
+        if (!rancherId) {
+          await answerCallbackQuery(queryId, 'Missing rancher ID');
+        } else {
+          try {
+            const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
+            if (!rancher) {
+              await answerCallbackQuery(queryId, 'Rancher not found');
+              return NextResponse.json({ ok: true });
+            }
+            const name = String(rancher['Ranch Name'] || rancher['Operator Name'] || rancherId);
+            const currentActive = String(
+              (rancher['Active Status'] as any)?.name ?? rancher['Active Status'] ?? '',
+            );
+
+            // Idempotence — a second tap (or a stale card from last night's
+            // alert) must not re-write a rancher Ben has since re-paused.
+            if (currentActive !== 'Paused') {
+              await answerCallbackQuery(queryId, `Not paused (${currentActive || 'empty'})`);
+              await editTelegramMessage(
+                chatId,
+                messageId,
+                `⚠️ <b>${escHtml(name)}</b> is not paused (Active Status = "${escHtml(currentActive || 'empty')}"). No change made.`,
+              );
+              return NextResponse.json({ ok: true });
+            }
+
+            // Premise check — this button exists because Connect went active.
+            // If the cache says otherwise, the alert is stale: refuse rather
+            // than make a non-payable rancher routable.
+            const connectStatus = String(
+              (rancher['Stripe Connect Status'] as any)?.name ?? rancher['Stripe Connect Status'] ?? '',
+            );
+            if (connectStatus !== 'active') {
+              await answerCallbackQuery(queryId, `Connect is '${connectStatus || 'empty'}' — refusing`);
+              await editTelegramMessage(
+                chatId,
+                messageId,
+                `⚠️ <b>${escHtml(name)}</b> — Stripe Connect Status is "${escHtml(connectStatus || 'empty')}", not active.\n\nRefusing to unpause: they could not take money. Re-check /admin/ranchers/${rancherId}.`,
+              );
+              return NextResponse.json({ ok: true });
+            }
+
+            // Capacity-aware, same as /api/admin/ranchers/[id]/resume — a
+            // rancher already at their cap goes back to 'At Capacity', not
+            // 'Active', so routing doesn't over-fill them on the first tap.
+            const cap = getMaxActiveReferrals(rancher);
+            const held = Number(rancher['Current Active Referrals']) || 0;
+            const newStatus = held >= cap ? 'At Capacity' : 'Active';
+
+            const { logAuditEntry, buildAirtableUpdateReverse } = await import('@/lib/auditLog');
+            await updateRecord(TABLES.RANCHERS, rancherId, { 'Active Status': newStatus });
+            await logAuditEntry({
+              actor: 'manual',
+              tool: 'telegram-unpause-after-connect-heal',
+              targetType: 'Rancher',
+              targetId: rancherId,
+              args: { callbackData },
+              result: { previousActiveStatus: currentActive, newStatus, capacity: `${held}/${cap}` },
+              reverseAction: buildAirtableUpdateReverse(TABLES.RANCHERS, rancherId, {
+                'Active Status': currentActive || null,
+              }),
+            }).catch((e: any) => console.error('[cxunpause] audit log failed (non-fatal):', e?.message));
+
+            await answerCallbackQuery(queryId, `▶️ Unpaused → ${newStatus}`);
+            await editTelegramMessage(
+              chatId,
+              messageId,
+              `▶️ <b>UNPAUSED</b> — ${escHtml(name)}\n\n` +
+                `Active Status: Paused → <b>${newStatus}</b>\n` +
+                `Stripe Connect: active (can take money)\n` +
+                `Capacity: ${held}/${cap}\n\n` +
+                (newStatus === 'Active'
+                  ? 'Buyers in their state route again from the next matching pass.'
+                  : 'At their cap — they route again as soon as a deal closes.'),
+            );
+          } catch (e: any) {
+            await answerCallbackQuery(queryId, `⚠️ ${e?.message || 'Unpause failed'}`);
+            console.error('[cxunpause callback]', e);
           }
         }
       }
