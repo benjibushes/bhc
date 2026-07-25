@@ -4,6 +4,13 @@ import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import AdminAuthGuard from '../../components/AdminAuthGuard';
 import { rankCloseQueue, DEFAULT_QUEUE_LIMIT, type CloseQueueRow } from '@/lib/closeQueue';
+import {
+  rankStuckRancherQueue,
+  DEFAULT_STUCK_QUEUE_LIMIT,
+  BUCKET_LABEL,
+  type StuckBucket,
+  type StuckRancherRow,
+} from '@/lib/stuckRancherQueue';
 
 // Shape of a referral as returned by GET /api/referrals (subset we use here).
 interface Referral {
@@ -177,6 +184,18 @@ function toQueueRow(r: Referral): CloseQueueRow {
   };
 }
 
+// Stuck-rancher bucket → pill colour. Closer to money = greener; never started
+// = rust. Mirrors BUCKET_META's palette so the two queues read as one page.
+const STUCK_PILL: Record<StuckBucket, string> = {
+  'live-no-deposits': 'border-sage-dark text-sage-dark',
+  'connect-stuck': 'border-blue-600 text-blue-700',
+  'signed-no-page': 'border-blue-600 text-blue-700',
+  'call-complete': 'border-amber-600 text-amber-700',
+  'docs-sent': 'border-amber-600 text-amber-700',
+  'new-applicant': 'border-rust text-rust',
+  resolved: 'border-dust text-dust',
+};
+
 // Attention chips: which bucket each one filters to.
 const CHIPS: { key: Bucket; label: string }[] = [
   { key: 'unmatched', label: 'Unmatched' },
@@ -193,6 +212,9 @@ export default function SalesDeskQueuePage() {
   const [err, setErr] = useState('');
   const [filter, setFilter] = useState<Bucket | null>(null);
   const [query, setQuery] = useState('');
+  const [stuckRows, setStuckRows] = useState<StuckRancherRow[]>([]);
+  const [stuckErr, setStuckErr] = useState('');
+  const [showAllStuck, setShowAllStuck] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -209,6 +231,25 @@ export default function SalesDeskQueuePage() {
         setErr('Could not load the desk.');
       }
       setLoading(false);
+    })();
+  }, []);
+
+  // Stuck ranchers load on their OWN effect, deliberately: this is a second,
+  // slower read and the buyer desk must never be held hostage to it. If it
+  // fails, the deal queue above still renders.
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch('/api/admin/stuck-ranchers');
+        if (!res.ok) {
+          setStuckErr(`Could not load stuck ranchers (${res.status})`);
+          return;
+        }
+        const data = await res.json();
+        setStuckRows(Array.isArray(data?.rows) ? data.rows : []);
+      } catch {
+        setStuckErr('Could not load stuck ranchers.');
+      }
     })();
   }, []);
 
@@ -245,6 +286,20 @@ export default function SalesDeskQueuePage() {
   const callQueue = useMemo(
     () => rankCloseQueue(referrals.map(toQueueRow), { now: loadedAt, limit: DEFAULT_QUEUE_LIMIT }),
     [referrals, loadedAt]
+  );
+
+  // THE STUCK-RANCHER QUEUE — supply is the company's one constraint, and
+  // `Stuck Escalated At` had no reader anywhere in the codebase until this
+  // section. All the maths lives in the pure, unit-tested lib/stuckRancherQueue.
+  // Same `Date.now()`-once-per-load discipline as the call queue above.
+  const stuckLoadedAt = useMemo(() => Date.now(), [stuckRows]);
+  const stuckQueue = useMemo(
+    () =>
+      rankStuckRancherQueue(stuckRows, {
+        now: stuckLoadedAt,
+        limit: showAllStuck ? Infinity : DEFAULT_STUCK_QUEUE_LIMIT,
+      }),
+    [stuckRows, stuckLoadedAt, showAllStuck]
   );
 
   // Apply chip filter + text search, then sort by bucket priority, intent desc.
@@ -399,6 +454,163 @@ export default function SalesDeskQueuePage() {
                   </li>
                 ))}
               </ol>
+            </div>
+          )}
+
+          {/* ── STUCK RANCHERS ──────────────────────────────────────────
+              The other half of the desk. The call queue above works BUYERS;
+              this works SUPPLY, which is the company's only real constraint.
+              Ranked by lib/stuckRancherQueue: waiting buyers in the states
+              they'd serve, then how close they are to taking money, with
+              days-since-escalation breaking ties. Read-only — every action
+              here is a phone, an email client, or a link. */}
+          {stuckErr && (
+            <p className="mt-6 text-xs text-rust">{stuckErr}</p>
+          )}
+          {!stuckErr && stuckQueue.totalStuck > 0 && (
+            <div className="mt-8">
+              <div className="flex items-baseline justify-between gap-3">
+                <h2 className="font-[family-name:var(--font-serif)] text-xl">
+                  Stuck ranchers
+                </h2>
+                <span className="text-xs text-saddle">
+                  {stuckQueue.rows.length} of {stuckQueue.totalStuck}
+                </span>
+              </div>
+              <p className="text-xs text-saddle mt-1">
+                Escalated by the onboarding crons, then never called. Ranked by
+                buyers waiting in their state and how close they are to taking
+                money.
+                {stuckQueue.parkedCount > 0 || stuckQueue.resolvedCount > 0 ? (
+                  <>
+                    {' '}
+                    Hidden: {stuckQueue.parkedCount} paused,{' '}
+                    {stuckQueue.resolvedCount} since progressed.
+                  </>
+                ) : null}
+              </p>
+
+              <ol className="mt-3 space-y-2">
+                {stuckQueue.rows.map((s, i) => (
+                  <li
+                    key={s.id}
+                    className="border border-dust border-l-4 border-l-rust bg-white p-3"
+                  >
+                    {/* Rank + identity + score */}
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex gap-2.5">
+                        <span className="shrink-0 text-sm font-medium text-dust tabular-nums">
+                          {i + 1}
+                        </span>
+                        <div className="min-w-0">
+                          <div className="font-medium truncate">
+                            {s.ranchName || s.operatorName || 'Unnamed ranch'}
+                            {s.state && (
+                              <span className="text-saddle font-normal">
+                                {' '}
+                                · {s.state}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs text-saddle mt-0.5 truncate">
+                            {s.operatorName && s.ranchName
+                              ? `${s.operatorName} · `
+                              : ''}
+                            stuck {s.daysStuck}d
+                            {s.neverWorked ? ' · never replied' : ''}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="shrink-0 flex items-center gap-2">
+                        <span
+                          className={`text-[11px] px-2 py-0.5 border bg-white ${STUCK_PILL[s.bucket]}`}
+                        >
+                          {BUCKET_LABEL[s.bucket]}
+                        </span>
+                        <span
+                          className="text-sm font-medium tabular-nums"
+                          title="Stuck-queue score (0–100)"
+                        >
+                          {Math.round(s.score)}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Demand */}
+                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                      <span>
+                        <span className="text-saddle">Buyers waiting </span>
+                        <span className="font-medium">
+                          {s.buyersWaiting}
+                        </span>
+                        {s.servedStates.length > 0 && (
+                          <span className="text-saddle">
+                            {' '}
+                            in {s.servedStates.join('/')}
+                          </span>
+                        )}
+                      </span>
+                      {s.bucketDrifted && (
+                        <span className="text-saddle">
+                          escalated as {s.stuckEscalatedBucket}
+                        </span>
+                      )}
+                      {s.emailOptOut && (
+                        <span className="text-rust">email opt-out — call only</span>
+                      )}
+                    </div>
+
+                    {/* What's actually missing */}
+                    <div className="mt-2 text-xs text-charcoal">
+                      <span className="text-saddle">Missing: </span>
+                      {s.missing.join(' · ')}
+                    </div>
+
+                    {/* Why this one */}
+                    <div className="mt-1 text-xs text-charcoal">
+                      <span className="text-saddle">Why: </span>
+                      {s.why}
+                    </div>
+
+                    {/* One-click actions — all read-only */}
+                    <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                      {s.phone && (
+                        <a
+                          href={`tel:${s.phone}`}
+                          className="text-xs px-2.5 py-1 border border-charcoal rounded-sm hover:bg-charcoal hover:text-bone transition-colors"
+                        >
+                          Call
+                        </a>
+                      )}
+                      {s.email && !s.emailOptOut && (
+                        <a
+                          href={`mailto:${s.email}`}
+                          className="text-xs px-2.5 py-1 border border-dust rounded-sm hover:border-charcoal transition-colors"
+                        >
+                          Email
+                        </a>
+                      )}
+                      <Link
+                        href={`/admin/ranchers/${s.id}`}
+                        className="text-xs px-2.5 py-1 border border-dust rounded-sm hover:border-charcoal transition-colors"
+                      >
+                        Open rancher →
+                      </Link>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+
+              {stuckQueue.totalStuck > DEFAULT_STUCK_QUEUE_LIMIT && (
+                <button
+                  onClick={() => setShowAllStuck((v) => !v)}
+                  className="mt-3 text-xs text-saddle underline hover:text-charcoal"
+                >
+                  {showAllStuck
+                    ? `Show top ${DEFAULT_STUCK_QUEUE_LIMIT}`
+                    : `Show all ${stuckQueue.totalStuck}`}
+                </button>
+              )}
             </div>
           )}
 
