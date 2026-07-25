@@ -92,6 +92,9 @@ export const EXPECTED_CRONS_24H = [
   'stripe-reconcile',
   'synthetic-e2e',
   'testimonial-collection',
+  // closed-lost recovery rails (Loss Reason → re-engage/downsell/nurture) —
+  // dry-run by default (LOSS_RECOVERY_ENABLED), writes a Cron Runs row daily.
+  'loss-recovery',
 ] as const;
 
 /**

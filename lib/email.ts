@@ -5731,3 +5731,78 @@ export async function sendNurtureLongHaul(data: { firstName: string; email: stri
     }),
   });
 }
+
+// ─── LOSS-RECOVERY RAILS (loss-recovery cron, lib/lossRecovery.ts) ───────────
+// Two buyer-facing emails fired off a rancher's structured 'Loss Reason' on a
+// Closed Lost referral. Same house rules as the nurture drip above: lowercase
+// subjects, one CTA, reply-friendly, signed — Ben (nurtureShell footer), and
+// both ride guardedSend (suppression list + 3/7d frequency cap + Email Sends
+// audit truth). Copy honesty: quarter economics are the REAL numbers
+// (~85 lbs, $1,500–2,000) — never undersell to win the reply.
+
+/** "Couldn't reach buyer" → re-engage: the deal died on voicemail, not intent. */
+export async function sendLossRecoveryReengage(data: {
+  firstName: string;
+  email: string;
+  /** 'quarter' | 'half' | 'whole' | 'beef share' (lib/lossRecovery.cutLabelFromOrderType). */
+  cut: string;
+}) {
+  const subject = `we missed you — still want that ${data.cut}?`;
+  return guardedSend({
+    templateName: 'sendLossRecoveryReengage',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: nurtureShell({
+        title: "We couldn't get through — no big deal",
+        inner: `
+  <p>Hi ${esc(data.firstName)},</p>
+  <p>Your rancher tried to reach you a few times and couldn't get through — happens all the time (wrong voicemail, busy week, life).</p>
+  <div class="highlight">Still want your ${esc(data.cut)}? Reply to this email or tap below and we'll set the call up properly this time.</div>`,
+        ctaHref: `${SITE_URL}/member`,
+        ctaLabel: 'pick up where we left off',
+      }),
+    }),
+  });
+}
+
+/** 'Price too high' → downsell: quarter share or a shop box, real numbers. */
+export async function sendLossRecoveryDownsell(data: {
+  firstName: string;
+  email: string;
+  /** The cut they walked away from — shapes the pitch. */
+  cut: string;
+}) {
+  const subject = 'a smaller freezer-full';
+  // If they balked at a quarter already, the honest next step is the shop —
+  // don't re-pitch the same commitment with different words.
+  const pitch =
+    data.cut === 'quarter'
+      ? `<p>A quarter wasn't the right fit this time — that's honest, and useful to know.</p>
+  <div class="highlight">The shop ships boxes from the same verified ranches starting at $13 — jerky, samplers, ground beef bundles. Real beef, no freezer commitment, and you'll know exactly whose ranch you're buying from.</div>`
+      : `<p>A ${esc(data.cut)} is a big first bite — most folks don't start there.</p>
+  <div class="highlight">Most families start with a quarter (~85 lbs, $1,500–2,000) or a monthly box from the shop starting at $13. Real beef from the same ranches, smaller commitment.</div>`;
+  return guardedSend({
+    templateName: 'sendLossRecoveryDownsell',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: nurtureShell({
+        title: 'Start smaller',
+        inner: `
+  <p>Hi ${esc(data.firstName)},</p>
+  ${pitch}`,
+        ctaHref: `${SITE_URL}/shop`,
+        ctaLabel: 'see the smaller options',
+      }),
+    }),
+  });
+}
