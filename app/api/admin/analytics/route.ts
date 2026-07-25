@@ -5,6 +5,7 @@ import { requireRole } from '@/lib/adminAuth';
 import { getSpendInRange } from '@/lib/adSpend';
 import { sourceQualityRates } from '@/lib/sourceQuality';
 import { deriveSalesMetrics, isLegacyInquirySale } from '@/lib/salesMetrics';
+import { computeLegacyCommissionEarned, computeConnectFeeCaptured } from '@/lib/commissionStats';
 
 export const maxDuration = 60;
 
@@ -40,11 +41,23 @@ export async function GET(request: Request) {
       // Referrals table may not exist yet
     }
 
+    // Payments carry the CONNECT-rail fee (`Platform Fee Cents`) — the half of
+    // BHC's revenue that Referrals knows nothing about. Needed for a truthful
+    // ROAS numerator (see bhcRevenueAllRails below). Degrades to [] so the
+    // page still renders if the table read fails.
+    let payments: any[] = [];
+    try {
+      payments = await getAllRecords(TABLES.PAYMENTS);
+    } catch {
+      // Payments table may not exist in every environment
+    }
+
     // Apply date filter — fall back to including the row if it has no Created
     // when sinceDays is 'all' (legacy rows pre-Created field).
     const consumersInRange = consumers.filter((c: any) => withinRange(c['Created'] || c._createdTime));
     const inquiriesInRange = inquiries.filter((i: any) => withinRange(i['Created'] || i._createdTime));
     const referralsInRange = referrals.filter((r: any) => withinRange(r['Created At'] || r['Created'] || r._createdTime));
+    const paymentsInRange = payments.filter((p: any) => withinRange(p['Created At'] || p._createdTime));
 
     // Legacy Inquiries "Sale Completed" path (pre-tier_v2 / manual closes) —
     // still used below for campaign attribution + the activity feed.
@@ -116,14 +129,30 @@ export async function GET(request: Request) {
       depositsPaid: number;   // slice 4: Deposit Paid At — real tier_v2 money
       closes: number;
       commissionDue: number;
+      /** Connect-rail fee captured at deposit, attributed to this source. */
+      connectFee: number;
       saleRevenue: number;
     }>();
     const bucket = (key: string) => {
       if (!sourceMap.has(key)) {
-        sourceMap.set(key, { source: key, signups: 0, qualified: 0, matches: 0, depositsPaid: 0, closes: 0, commissionDue: 0, saleRevenue: 0 });
+        sourceMap.set(key, { source: key, signups: 0, qualified: 0, matches: 0, depositsPaid: 0, closes: 0, commissionDue: 0, connectFee: 0, saleRevenue: 0 });
       }
       return sourceMap.get(key)!;
     };
+
+    // Index succeeded Connect fees by the referral that earned them, so each
+    // source's ROAS can count the money BHC actually banked at deposit — not
+    // just the legacy `Commission Due` receivable. `Referral` is the link
+    // field; `Referral Id Text` is the denormalised fallback.
+    const paymentsByReferralId = new Map<string, any[]>();
+    for (const p of paymentsInRange) {
+      const link = p['Referral'];
+      const rid = (Array.isArray(link) ? link[0] : link) || p['Referral Id Text'] || '';
+      if (!rid) continue;
+      const list = paymentsByReferralId.get(rid);
+      if (list) list.push(p);
+      else paymentsByReferralId.set(rid, [p]);
+    }
 
     // Index Consumers by id to map referrals back to their Source.
     // ROAS fix: the source map must cover ALL consumers (all-time), not just
@@ -166,23 +195,55 @@ export async function GET(request: Request) {
       // funnel writes money to Referrals, not Closed Won). Counted once per
       // referral that has a Deposit Paid At stamp.
       if (r['Deposit Paid At']) bucket(source).depositsPaid++;
+
+      // Connect-rail fee earned by this referral, attributed to its source.
+      // Uses the shared helper so 'succeeded'-only + cents→dollars stays in
+      // one place. Independent of Closed Won: the fee is taken at deposit.
+      const refPayments = paymentsByReferralId.get(r.id);
+      if (refPayments) bucket(source).connectFee += computeConnectFeeCaptured(refPayments);
     });
 
-    // Join paid-ad spend (same date range) to each source → ROAS.
-    //   roas    = BHC commission / spend  (platform return)
+    // Join paid-ad spend (same date range) to each source → ROAS + CAC.
+    //   roas    = BHC revenue / spend     (platform return, BOTH rails)
     //   gmvRoas = sale $ / spend          (standard marketing ROAS)
+    //   cac     = spend / paying customers
     const spend = await getSpendInRange(cutoff);
+
+    // ── BHC REVENUE, BOTH RAILS (money-model truth, mirrors #485) ───────────
+    // The old blended ROAS divided `sales.totalCommission` by spend. That sum
+    // is rail-blind: `Commission Due` only means anything on the deprecated
+    // invoice-after-close rail, so as Connect scales the numerator drifts
+    // further below what BHC actually earned and ROAS reads worse every month.
+    // Compose the numerator from the two rails' own sources of truth instead —
+    // reusing lib/commissionStats so the rail logic is never re-implemented:
+    //   legacy  — Closed Won, legacy-rail only, `Commission Due`
+    //   connect — succeeded Payments' `Platform Fee Cents` (taken at deposit)
+    //   legacy inquiries — the pre-tier_v2 Inquiries ledger, kept visible
+    // No double count: referralRail() sends a row to exactly one of the first
+    // two (a `Deposit Paid At` stamp means Connect took the fee already).
+    const legacyCommission = computeLegacyCommissionEarned(referralsInRange);
+    const connectFeeCaptured = computeConnectFeeCaptured(paymentsInRange);
+    const bhcRevenueAllRails =
+      Math.round((legacyCommission + connectFeeCaptured + sales.legacyInquiryCommission) * 100) / 100;
+
     const breakdownRows = Array.from(sourceMap.values()).map((s) => {
       const sp = spend.bySource.get(s.source.trim().toLowerCase()) || 0;
       // slice 4: funnel-quality rates — which source sends ready-to-buy leads
       // that actually PAY. qualifiedRate = top-funnel targeting; payRate =
       // signup→money; qualifiedToPaidRate = of quiz-passers, who paid.
       const quality = sourceQualityRates(s);
+      // BHC's real take from this source: legacy receivable + Connect fee.
+      const bhcRevenue = Math.round((s.commissionDue + s.connectFee) * 100) / 100;
       return {
         ...s,
+        bhcRevenue,
         spend: sp,
-        roas: sp > 0 ? s.commissionDue / sp : null,
+        // null (not 0) when this source has no logged spend — an unspent
+        // source has no return, it does not have a zero return.
+        roas: sp > 0 ? bhcRevenue / sp : null,
         gmvRoas: sp > 0 ? s.saleRevenue / sp : null,
+        // Cost per paying customer for this source. null when either side is 0.
+        cac: sp > 0 && s.depositsPaid > 0 ? sp / s.depositsPaid : null,
         ...quality,
       };
     });
@@ -191,9 +252,13 @@ export async function GET(request: Request) {
     const seenSources = new Set(Array.from(sourceMap.keys()).map((k) => k.trim().toLowerCase()));
     spend.bySource.forEach((sp, src) => {
       if (!seenSources.has(src)) {
+        // Spend with nothing to show for it. roas/gmvRoas are a TRUE 0 here
+        // (money went out, none came back) — not the "no data" case, which is
+        // null. cac stays null: zero customers, so cost-per-customer is
+        // undefined rather than infinite.
         breakdownRows.push({
           source: src, signups: 0, qualified: 0, matches: 0, depositsPaid: 0, closes: 0, commissionDue: 0,
-          saleRevenue: 0, spend: sp, roas: 0, gmvRoas: 0,
+          connectFee: 0, bhcRevenue: 0, saleRevenue: 0, spend: sp, roas: 0, gmvRoas: 0, cac: null,
           qualifiedRate: null, payRate: null, qualifiedToPaidRate: null,
         });
       }
@@ -299,9 +364,16 @@ export async function GET(request: Request) {
         totalCommission: sales.totalCommission,
         conversionRate: sales.conversionRate,
         totalSpend: spend.total,
-        // Blended return across all paid channels. null when nothing logged.
-        blendedRoas: spend.total > 0 ? sales.totalCommission / spend.total : null,
+        // BHC's OWN revenue across every rail — the honest ROAS numerator.
+        bhcRevenueAllRails,
+        // Blended return across all paid channels. null (never 0 / ∞ / a fake
+        // ratio) when no spend has been logged for the period.
+        blendedRoas: spend.total > 0 ? bhcRevenueAllRails / spend.total : null,
         blendedGmvRoas: spend.total > 0 ? sales.totalRevenue / spend.total : null,
+        // CAC = ad spend ÷ paying customers (deposit landed). null when there
+        // is no spend OR no customers — dividing by zero would print ∞.
+        cac: spend.total > 0 && sales.depositsPaid > 0 ? spend.total / sales.depositsPaid : null,
+        payingCustomers: sales.depositsPaid,
       },
       referralStats: {
         total: referralsInRange.length,
