@@ -423,6 +423,21 @@ export async function POST(request: Request) {
                 // closes ("our team will call you today"); everyone else =
                 // the rancher calls or texts within 24-48h.
                 suggestedRancher.rancherTier = String(rancher?.['Tier'] || '');
+                // TEXT-YOUR-RANCHER-NOW (close-the-loop 2026-07-15): surface
+                // the rancher's phone so the reveal can offer an "or text
+                // them right now" sms: affordance. Operator tier NEVER — the
+                // BHC team runs those closes and the buyer is told "our team
+                // calls you today"; texting the rancher would cross wires.
+                {
+                  const tierRaw: any = rancher?.['Tier'];
+                  const tierName = String(
+                    tierRaw && typeof tierRaw === 'object' && 'name' in tierRaw
+                      ? tierRaw.name
+                      : tierRaw || '',
+                  ).trim().toLowerCase();
+                  suggestedRancher.phone =
+                    tierName === 'operator' ? '' : String(rancher?.['Phone'] || '');
+                }
                 suggestedRancher.logoUrl = rancher?.['Logo URL'] || '';
                 suggestedRancher.tagline = rancher?.['Tagline'] || '';
                 suggestedRancher.aboutText = rancher?.['About Text'] || '';
@@ -669,6 +684,9 @@ export async function POST(request: Request) {
           slug: suggestedRancher.slug || '',
           calComSlug: suggestedRancher.calComSlug || '',
           rancherTier: suggestedRancher.rancherTier || '',
+          // '' for Operator tier / no phone on record — the reveal renders
+          // the text-now affordance ONLY when this is present + normalizable.
+          phone: suggestedRancher.phone || '',
           city: suggestedRancher.city || '',
           logoUrl: suggestedRancher.logoUrl || '',
           tagline: suggestedRancher.tagline || '',

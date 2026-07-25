@@ -15,6 +15,7 @@ import { transitionBuyerStage } from '@/lib/contracts';
 import { funnelRecord } from '@/lib/funnelMetrics';
 import { computeFunnelIntentScore, classifyFunnelIntent } from '@/lib/funnelIntentScore';
 import { guardFunnelUpsertFields } from '@/lib/funnelUpsert';
+import { normalizePhoneE164 } from '@/lib/phoneHygiene';
 import { BUDGET_OPTIONS } from '@/lib/funnelConfig';
 import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
 import { metaEventId } from '@/lib/analytics';
@@ -224,7 +225,13 @@ export async function POST(request: Request) {
       const funnelFields: Record<string, unknown> = {
         'Full Name': fullNameQ,
         'Email': emailLowerQ,
-        'Phone': phoneQ,
+        // PHONE HYGIENE (close-the-loop 2026-07-15): store the strict E.164
+        // form when the number normalizes so every downstream sms:/tel: link
+        // + Twilio send reads one canonical shape. NEVER reject on hygiene
+        // mismatch — isValidPhone already passed above; an unnormalizable
+        // number stores as typed (fail-open, the lead is worth more than
+        // the format).
+        'Phone': normalizePhoneE164(phoneQ) || phoneQ,
         'State': normalizeState(stateQ) || stateQ.toUpperCase(),
         ...(zipQ ? { 'Zip': zipQ } : {}),
         'Order Type': tierQ,

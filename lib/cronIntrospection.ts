@@ -59,6 +59,10 @@ export const EXPECTED_CRONS_24H = [
   'product-fulfillment-sla',
   'email-sequences',
   'final-invoice-dunning',
+  // 48h first-touch SLA nudge + 96h escalation (close-the-loop 2026-07-15) —
+  // always-on daily; the SMS leg is ENABLE_SMS-gated inside the handler so a
+  // Cron Runs row is written either way.
+  'first-touch-sla',
   'fulfillment-chase',
   'healthcheck',
   'migration-deadline',

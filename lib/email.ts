@@ -9,6 +9,10 @@ import {
 } from './calBooking';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from './telegram';
 import { cacheIncrWithTtl } from './sharedCache';
+// TEXT-YOUR-RANCHER-NOW (close-the-loop 2026-07-15): pure phone helpers —
+// the buyer intro email's "text them now" CTA shares its sms: link + body
+// with the funnel reveal so the two surfaces can never drift.
+import { smsHref, formatPhonePretty, buyerIntroSmsBody } from './phoneHygiene';
 // DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
 // lib/demo/demoMode.ts. Pure import, no side effect when the flag is off.
 import { isDemoMode } from './demo/demoMode';
@@ -1799,7 +1803,11 @@ export async function sendBuyerIntroNotification(data: {
   // (the "will reach out" promise was previously gated behind readyToBuy) and
   // primes the buyer to expect + answer the rancher, naming the channel + that
   // the number is unfamiliar.
-  const rancherFirst = esc(String(data.rancherName || '').trim().split(/\s+/)[0] || data.rancherName || 'your rancher');
+  // Raw first name feeds the SMS body (URL-encoded by smsHref, never HTML);
+  // esc() is strictly for HTML interpolation. Passing the escaped form into
+  // buyerIntroSmsBody would prefill "hi D&#039;Arcy, …" for D'Arcy / J&L.
+  const rancherFirstRaw = String(data.rancherName || '').trim().split(/\s+/)[0] || 'your rancher';
+  const rancherFirst = esc(rancherFirstRaw);
   const fromNumber = data.rancherPhone
     ? ` — likely from <strong>${esc(data.rancherPhone)}</strong>, a number you won't recognize`
     : '';
@@ -1819,6 +1827,24 @@ export async function sendBuyerIntroNotification(data: {
     <p style="margin:0 0 10px 0;font-size:12px;letter-spacing:1px;text-transform:uppercase;color:#6B4F3F;">About ${esc(data.rancherName)}</p>
     ${taglineHtml}
     ${aboutHtml}
+  </div>`
+    : '';
+  // TEXT-YOUR-RANCHER-NOW (close-the-loop 2026-07-15): additive CTA under the
+  // 24–48h expectation — the ready buyer opens the channel instead of waiting
+  // out a call that 62% of intros historically never got. Renders ONLY when
+  // the rancher has a normalizable phone AND isn't Operator tier (BHC's team
+  // runs Operator closes — a buyer text to the rancher would cross wires).
+  // smsHref returns null on junk phones, so a broken sms: link can never
+  // ship; the plain pretty number covers desktop mail clients where sms:
+  // goes nowhere. Body shared with the funnel reveal via buyerIntroSmsBody.
+  const introSmsHref = !isOperatorTier
+    ? smsHref(String(data.rancherPhone || ''), buyerIntroSmsBody(rancherFirstRaw, data.firstName))
+    : null;
+  const textNowBlock = introSmsHref
+    ? `<div style="border:2px solid #0E0E0E;background:#FAF8F4;padding:14px 18px;margin:16px 0;">
+    <p style="margin:0;font-size:14px;color:#0E0E0E;"><strong>don't wait for the call &mdash; text ${rancherFirst} now.</strong> one tap, message pre-filled.</p>
+    <p style="margin:12px 0 4px 0;text-align:center;"><a href="${introSmsHref}" style="display:inline-block;padding:12px 24px;background:#0E0E0E;color:#FFFFFF!important;text-decoration:none;font-weight:600;font-size:14px;">text ${rancherFirst} &rarr;</a></p>
+    <p style="margin:8px 0 0 0;font-size:12px;color:#6B4F3F;text-align:center;">reading on a computer? their number is ${esc(formatPhonePretty(data.rancherPhone))} &mdash; text from your phone.</p>
   </div>`
     : '';
   const introSubject = `${readyPrefix}Meet your rancher — ${esc(data.rancherName)}`;
@@ -1857,6 +1883,7 @@ export async function sendBuyerIntroNotification(data: {
   <p>I've personally vetted and matched you with <strong>${esc(data.rancherName)}</strong>. They've got your details and they're reaching out — here's what to expect.</p>
   ${brandBlock}
   ${expectBlock}
+  ${textNowBlock}
   <p style="font-size:13px;color:#6B4F3F;margin-bottom:4px;">Prefer to reach ${rancherFirst} first? Here's their info:</p>
   ${contactBlock}
   ${pricingBlock}

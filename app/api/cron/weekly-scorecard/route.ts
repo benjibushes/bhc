@@ -19,11 +19,12 @@
 // expectation would false-alarm six days a week by design).
 
 import { NextResponse } from 'next/server';
-import { getAllRecords, TABLES } from '@/lib/airtable';
+import { getAllRecords, getRecordsByIds, TABLES } from '@/lib/airtable';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { isRealRancherTouch, needsFirstCall } from '@/lib/untouchedIntros';
+import { lossReasonLines } from '@/lib/lossScorecard';
 
 export const maxDuration = 120;
 
@@ -141,6 +142,42 @@ async function realHandler(_request: Request): Promise<CronResult> {
       });
   } catch (e: any) { errors.push(`touch: ${e?.message?.slice(0, 50)}`); }
 
+  // Loss-source breakdown (close-the-loop 2026-07-15) — last 28d of rancher-
+  // initiated Closed Lost (the ONLY writers of 'Loss Reason' are the rancher
+  // close surfaces, so a present Loss Reason IS the rancher-initiated
+  // filter), grouped Loss Reason × top-3 buyer Sources. Shows WHICH channel
+  // feeds each failure mode. Reads are scale-safe: 28d + Loss Reason
+  // server-side filter, 3 fields, buyer Sources via chunked RECORD_ID()
+  // lookups on just those rows' buyers (rancher-marked losses are dozens,
+  // not thousands; hard-capped at 200 rows as a belt).
+  let lossLines: string[] = [];
+  try {
+    const lost = ((await getAllRecords(
+      TABLES.REFERRALS,
+      `AND({Status} = "Closed Lost", {Loss Reason} != "", IS_AFTER({Closed At}, DATEADD(NOW(), -28, 'days')))`,
+      { fields: ['Loss Reason', 'Buyer', 'Closed At'] },
+    )) as any[]).slice(0, 200);
+    const buyerIds = [
+      ...new Set(
+        lost.flatMap((r) => (Array.isArray(r['Buyer']) ? r['Buyer'] : [])).filter(Boolean),
+      ),
+    ];
+    const sourceByBuyerId = new Map<string, string>();
+    if (buyerIds.length > 0) {
+      const buyers = (await getRecordsByIds(TABLES.CONSUMERS, buyerIds)) as any[];
+      for (const b of buyers) sourceByBuyerId.set(b.id, String(b['Source'] || '').trim());
+    }
+    lossLines = lossReasonLines(
+      lost.map((r) => {
+        const buyerId = Array.isArray(r['Buyer']) ? r['Buyer'][0] : undefined;
+        return {
+          lossReason: r['Loss Reason'],
+          source: (buyerId && sourceByBuyerId.get(buyerId)) || '',
+        };
+      }),
+    );
+  } catch (e: any) { errors.push(`loss: ${e?.message?.slice(0, 50)}`); }
+
   const lines = [
     `📊 <b>MONDAY SCOREBOARD</b> — week of ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`,
     '',
@@ -151,6 +188,9 @@ async function realHandler(_request: Request): Promise<CronResult> {
     waiting >= 0 ? `🧑‍🌾 buyers WAITING for supply: <b>${waiting.toLocaleString()}</b>` : '',
     ...(touchLines.length
       ? ['', `📞 rancher touch rate — intros last 28d (same-day auto-stamp ≠ touch):`, ...touchLines]
+      : []),
+    ...(lossLines.length
+      ? ['', `💔 why deals died — rancher-marked losses last 28d (reason × top sources):`, ...lossLines]
       : []),
     '',
     `the week is won on: deposits placed + orders shipped + ranchers activated.`,
