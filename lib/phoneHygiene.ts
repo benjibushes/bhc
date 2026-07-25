@@ -14,10 +14,23 @@
 // we'd put a CTA behind?" — NANP shape rules + junk rejection. Unknown area
 // code → null state, never a guess.
 //
-// Pure + dependency-light (only lib/states' normalizeState) so client
-// components (BuyerFunnel) can import it without dragging server modules.
+// COUNTRY-CODE RULE IS NOT OURS (rebase reconciliation 2026-07-24): stripping
+// a leading US `1` is owned by lib/phoneFormat.normalizePhoneDigits, which
+// exists specifically to kill the `digits.slice(0, 10)` truncation bug that
+// turned `1 (406) 555-1234` into a plausible-looking, permanently WRONG
+// `(140) 655-5123` on every signup door. This module originally re-derived
+// that same rule inline — a second dialect of the exact logic main had just
+// centralized, which would silently keep the old behavior if the shared rule
+// ever changed. It now CALLS the shared helper and layers only its own
+// strictness (NANP shape + junk rejection) on top. One leading-1 rule,
+// repo-wide.
+//
+// Pure + dependency-light (lib/states' normalizeState + lib/phoneFormat,
+// which has zero imports) so client components (BuyerFunnel) can import it
+// without dragging server modules.
 
 import { normalizeState } from './states';
+import { normalizePhoneDigits } from './phoneFormat';
 
 /**
  * Normalize a US phone to strict E.164 (+1XXXXXXXXXX).
@@ -30,9 +43,11 @@ import { normalizeState } from './states';
  */
 export function normalizePhoneE164(raw: unknown): string | null {
   if (raw == null) return null;
-  const digitsAll = String(raw).replace(/\D/g, '');
-  const digits =
-    digitsAll.length === 11 && digitsAll.startsWith('1') ? digitsAll.slice(1) : digitsAll;
+  // Shared leading-`1` strip (lib/phoneFormat) — see header. Never truncates,
+  // so an over-long paste stays over-long and is REJECTED by the length gate
+  // below rather than silently becoming a different, wrong, valid-looking
+  // number.
+  const digits = normalizePhoneDigits(String(raw));
   if (digits.length !== 10) return null;
   // NANP: area code (NXX) and exchange (NXX) must start 2-9.
   if (digits[0] < '2' || digits[3] < '2') return null;
