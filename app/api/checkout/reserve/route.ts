@@ -39,6 +39,9 @@ import {
   type Cut,
 } from '@/lib/reserveDeposit';
 import { normalizeState } from '@/lib/states';
+import { normalizeZip } from '@/lib/zipFormat';
+import { buyerZipPatch, ZIP_OUT_OF_AREA_MESSAGE } from '@/lib/buyerZip';
+import { buyerZipServedBy } from '@/lib/exclusiveZip';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -87,6 +90,10 @@ export async function POST(req: Request) {
   // context; normalized to a 2-letter code (may be blank if unrecognized).
   const phoneInput = normalizeReservePhone(body.phone);
   const stateInput = normalizeState(body.state);
+  // ZIP: null unless the client sent a real 5-digit US ZIP. Optional on the
+  // wire by design — see the ZIP CAPTURE decision below. Never a 400 on its
+  // own; a garbage value is simply dropped and never persisted.
+  const zipInput = normalizeZip(body.zip);
 
   if (!slug) return NextResponse.json({ error: 'Rancher slug required' }, { status: 400 });
   if (!CUT_LABELS[cut]) return NextResponse.json({ error: 'cut must be quarter|half|whole' }, { status: 400 });
@@ -116,6 +123,42 @@ export async function POST(req: Request) {
   const gate = assertReserveEligible(rancher, cut);
   if (!gate.ok) {
     return NextResponse.json({ error: gate.error, fallback: gate.fallback === true }, { status: gate.status });
+  }
+
+  // ── EXCLUSIVE-ZIP GATE + THE ZIP-CAPTURE DECISION (2026-07-25) ────────────
+  //
+  // This is the fastest checkout in the product and it's about to receive paid
+  // traffic, so WHEN we ask for a ZIP is a conversion decision, not a taste
+  // one. Two different answers, split on whether the ZIP is contractually
+  // load-bearing for THIS rancher:
+  //
+  //   • Rancher HAS `Service ZIP Prefixes` (hasServiceZipGate) — Ben signed an
+  //     exclusivity contract for that territory. The ZIP must be known BEFORE
+  //     the money moves, because a payment from outside it is a breach we'd
+  //     then have to refund. The rancher page renders a required ZIP field
+  //     (DepositReserveForm `requireZip`), and this gate is the fail-closed
+  //     backstop for any client that doesn't.
+  //
+  //   • Rancher has NO prefixes — every live rancher today. Adding a required
+  //     field here costs conversion for zero eligibility benefit, so the fast
+  //     path stays untouched: buyerZipServedBy returns true for a no-prefix
+  //     rancher regardless of ZIP (documented contract in lib/exclusiveZip), so
+  //     the line below is a literal no-op for them. We still get the ZIP — just
+  //     AFTER payment, harvested from the Stripe address at settlement
+  //     (lib/stripeSettlement → buyerZipPatch). Same data, no form friction.
+  //
+  // Fail CLOSED for the gated case: missing, malformed, and out-of-prefix ZIPs
+  // are all ineligible. The response mirrors the route's existing 409+fallback
+  // shape so the client routes the buyer to the quiz instead of dead-ending,
+  // and the copy never reveals the other ranch's area.
+  if (!buyerZipServedBy(zipInput, rancher)) {
+    // `outOfArea` tells the client NOT to re-pin this ranch on the way to the
+    // quiz (the usual `fallback` target is /access?rancher=<slug>, which would
+    // loop the buyer straight back to the ranch that just declined them).
+    return NextResponse.json(
+      { error: ZIP_OUT_OF_AREA_MESSAGE, fallback: true, outOfArea: true },
+      { status: 409 },
+    );
   }
 
   // T2.2 (2026-07-02): affiliate attribution on the reserve rail. The success
@@ -166,6 +209,9 @@ export async function POST(req: Request) {
         const patch: Record<string, any> = {};
         if (buyerPhone && !String(existing[0]['Phone'] || '').trim()) patch['Phone'] = buyerPhone;
         if (buyerState && !String(existing[0]['State'] || '').trim()) patch['State'] = buyerState;
+        // Same never-overwrite rule for ZIP (buyerZipPatch enforces it): fill a
+        // blank/garbage Zip, leave a real one alone.
+        Object.assign(patch, buyerZipPatch(zipInput, existing[0]['Zip']));
         // A reserving buyer must ALWAYS be able to log in: promote a blank/
         // Pending Status to Approved so the magic link we're about to email
         // passes the member LOGIN_ALLOWED gate instead of 302ing to /access.
@@ -215,6 +261,7 @@ export async function POST(req: Request) {
             buyerEmail,
             buyerPhone,
             buyerState,
+            buyerZip: zipInput || undefined,
             smsOptIn: smsOptInReserve,
             referredBy,
           }),
@@ -225,17 +272,28 @@ export async function POST(req: Request) {
       console.error('[checkout/reserve] consumer upsert failed:', e?.message);
       return NextResponse.json({ error: 'Could not start your reservation — try again.' }, { status: 500 });
     }
-  } else if (smsOptInReserve) {
+  } else if (smsOptInReserve || zipInput) {
     // Already-logged-in buyer: the upsert above is skipped, so persist their
-    // ticked consent here. Same guards (true only with phone, opt-IN only).
-    // NON-FATAL: consent persistence must never block the reserve money path.
+    // ticked consent (and a supplied ZIP) here. Same guards (consent true only
+    // with phone, opt-IN only; ZIP never stomps a stored one).
+    // NON-FATAL: neither write may block the reserve money path.
     try {
-      await updateRecord(TABLES.CONSUMERS, consumerId, {
-        'SMS Opt-In': true,
-        'SMS Opt-In At': new Date().toISOString(),
-      });
+      const patch: Record<string, any> = {};
+      if (smsOptInReserve) {
+        patch['SMS Opt-In'] = true;
+        patch['SMS Opt-In At'] = new Date().toISOString();
+      }
+      if (zipInput) {
+        // Only reached when the client actually sent a ZIP — i.e. the gated
+        // rancher case — so the fast path pays for no extra Airtable read.
+        const current: any = await getRecordById(TABLES.CONSUMERS, consumerId).catch(() => null);
+        Object.assign(patch, buyerZipPatch(zipInput, current?.['Zip']));
+      }
+      if (Object.keys(patch).length > 0) {
+        await updateRecord(TABLES.CONSUMERS, consumerId, patch);
+      }
     } catch (e: any) {
-      console.warn('[checkout/reserve] SMS opt-in persist skipped (non-fatal):', e?.message);
+      console.warn('[checkout/reserve] consumer patch skipped (non-fatal):', e?.message);
     }
   }
 

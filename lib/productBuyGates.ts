@@ -10,7 +10,8 @@
 //   product id shape → product exists + Active → Ships Nationwide not
 //   explicitly false → in stock → price/base sane (0 < base <= display) →
 //   quantity clamped 1-5 (deposit-style forced 1) + qty <= Orders Left →
-//   rancher exists + Connect status 'active' + account id present.
+//   rancher exists + Connect status 'active' + account id present → buyer ZIP
+//   inside the rancher's exclusive service area (if any).
 //
 // Returns a discriminated union — routes map {status,error} straight into
 // NextResponse.json. Buyer-facing error strings live HERE so both routes
@@ -18,6 +19,8 @@
 
 import { getRecordById, TABLES } from '@/lib/airtable';
 import { hasStock } from '@/lib/marketplaceProducts';
+import { buyerZipServedBy } from '@/lib/exclusiveZip';
+import { ZIP_OUT_OF_AREA_MESSAGE } from '@/lib/buyerZip';
 
 export interface ResolvedProductPurchase {
   ok: true;
@@ -42,11 +45,24 @@ export interface RejectedProductPurchase {
   ok: false;
   status: number;
   error: string;
+  /**
+   * True when the buyer should be handed to the quiz/waitlist instead of being
+   * shown an inline error — i.e. nothing they can fix on this page. Routes
+   * forward it as `fallback: true` (the shape /api/checkout/reserve already
+   * uses) so clients have ONE convention for "send them somewhere else".
+   */
+  fallback?: boolean;
 }
 
 export async function resolveProductPurchase(input: {
   productId: string;
   quantity?: number;
+  /**
+   * Buyer's ZIP, raw off the wire — normalized/validated inside the gate.
+   * Only load-bearing for a rancher with `Service ZIP Prefixes`; for everyone
+   * else it is ignored entirely (see the gate at the bottom of this function).
+   */
+  buyerZip?: unknown;
 }): Promise<ResolvedProductPurchase | RejectedProductPurchase> {
   const productId = String(input.productId || '').trim();
   if (!/^rec[A-Za-z0-9]{14}$/.test(productId)) {
@@ -101,6 +117,27 @@ export async function resolveProductPurchase(input: {
   const connectAccountId = String(rancher['Stripe Connect Account Id'] || '').trim();
   if (!connectAccountId) {
     return { ok: false, status: 409, error: "That ranch can't take orders right now." };
+  }
+
+  // ── EXCLUSIVE-ZIP GATE (2026-07-25) ──────────────────────────────────────
+  // Self-serve buy path, so a contracted service area is enforced before the
+  // charge is minted — not after, when the only remedy is a refund.
+  //
+  // NO-OP TODAY: buyerZipServedBy returns true unconditionally for a rancher
+  // with no `Service ZIP Prefixes` (documented contract in lib/exclusiveZip),
+  // which is every live rancher — so this changes nothing for the storefront
+  // as it stands, and costs no extra reads. Fail CLOSED for a gated rancher:
+  // missing, malformed and out-of-prefix ZIPs are all ineligible.
+  //
+  // NOTE (deliberate, KEEP IT SIMPLE): the shop checkout has no ZIP input yet —
+  // it auto-starts on mount and lets Stripe collect the address. So if a ranch
+  // ever DOES get prefixes, its shop products stop being self-serve buyable
+  // until a ZIP field is threaded through /shop/checkout. Blocking is the
+  // correct failure here (a breach of an exclusivity contract is not
+  // refundable in the way a charge is), and `fallback` sends the buyer to the
+  // quiz rather than a dead end.
+  if (!buyerZipServedBy(input.buyerZip, rancher)) {
+    return { ok: false, status: 409, error: ZIP_OUT_OF_AREA_MESSAGE, fallback: true };
   }
 
   return {

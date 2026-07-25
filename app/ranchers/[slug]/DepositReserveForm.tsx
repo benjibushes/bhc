@@ -27,6 +27,18 @@ interface Props {
   quarter?: CutData;
   half?: CutData;
   whole?: CutData;
+  /**
+   * ZIP-CAPTURE DECISION (2026-07-25). True only when this rancher has
+   * `Service ZIP Prefixes` — an exclusivity contract where the buyer's ZIP
+   * decides eligibility and therefore must be known BEFORE the charge.
+   *
+   * For every other rancher (all of them today) this stays false and the form
+   * is byte-identical to before: adding a required field to the fastest
+   * checkout in the product would cost conversion on the exact endpoint the
+   * ads point at, for zero eligibility benefit. Their ZIP is captured after
+   * payment instead, from the address Stripe already collects.
+   */
+  requireZip?: boolean;
 }
 
 const CUT_LABEL: Record<Cut, string> = { quarter: 'Quarter', half: 'Half', whole: 'Whole' };
@@ -39,7 +51,7 @@ const US_STATES = [
 ];
 
 export default function DepositReserveForm({
-  slug, ranchName, operatorFirst, bookingUrl, quarter, half, whole,
+  slug, ranchName, operatorFirst, bookingUrl, quarter, half, whole, requireZip = false,
 }: Props) {
   const data: Record<Cut, CutData | undefined> = { quarter, half, whole };
   // Default = half (default effect; brand namesake). Fall back to first available.
@@ -50,6 +62,8 @@ export default function DepositReserveForm({
   // TCPA SMS consent — UNCHECKED by default, never gates the reserve.
   const [smsOptIn, setSmsOptIn] = useState(false);
   const [stateCode, setStateCode] = useState('');
+  // Only rendered (and only sent) when `requireZip` — see the prop docs.
+  const [zip, setZip] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState('');
@@ -100,6 +114,12 @@ export default function DepositReserveForm({
 
   async function reserve(e: React.FormEvent) {
     e.preventDefault();
+    // A half-typed ZIP is a typo, not a choice — catch it before the round
+    // trip, which would come back as a generic "can't serve your area".
+    if (requireZip && !/^\d{5}$/.test(zip.trim())) {
+      setError('Please enter your 5-digit ZIP code.');
+      return;
+    }
     setLoading(true);
     setError('');
     try {
@@ -110,11 +130,19 @@ export default function DepositReserveForm({
         // smsOptIn rides along using the funnel's exact payload convention
         // (→ Airtable `SMS Opt-In`). ref = affiliate attribution captured from
         // the URL above; server-validated before any stamp.
-        body: JSON.stringify({ slug, cut, email, phone, state: stateCode, smsOptIn, ...(refCode ? { ref: refCode } : {}) }),
+        body: JSON.stringify({
+          slug, cut, email, phone, state: stateCode, smsOptIn,
+          ...(requireZip ? { zip: zip.trim() } : {}),
+          ...(refCode ? { ref: refCode } : {}),
+        }),
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) {
-        // Ineligible (legacy / paused / unpriced) → fall back to the standard flow.
+        // Ineligible (legacy / paused / unpriced) → fall back to the standard
+        // flow, re-pinning this ranch so the buyer lands back here qualified.
+        // EXCEPT out-of-area: this ranch can never serve them, so re-pinning it
+        // would loop them right back — send them to the open quiz instead.
+        if (j?.outOfArea) { window.location.href = '/access'; return; }
         if (j?.fallback) { window.location.href = `/access?rancher=${slug}`; return; }
         // Server error (Airtable/Stripe transient, unexpected 5xx): never
         // dead-end the buyer on the fast path. Route them to the quiz, which
@@ -214,6 +242,23 @@ export default function DepositReserveForm({
             ))}
           </select>
         </div>
+        {/* REQUIRED, and only for a ZIP-gated ranch — the fast path stays 4
+            fields for everyone else and gets its ZIP from Stripe at payment. */}
+        {requireZip && (
+          <input
+            type="text"
+            required
+            placeholder="Delivery ZIP"
+            aria-label="Delivery ZIP code"
+            autoComplete="postal-code"
+            inputMode="numeric"
+            pattern="\d{5}"
+            maxLength={5}
+            value={zip}
+            onChange={(e) => setZip(e.target.value.replace(/\D/g, '').slice(0, 5))}
+            className="w-full px-4 py-3 border border-dust bg-white text-sm"
+          />
+        )}
         <SmsConsentCheckbox checked={smsOptIn} onChange={setSmsOptIn} />
         {error && <p className="text-sm text-weathered">{error}</p>}
         <button

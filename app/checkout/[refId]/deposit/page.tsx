@@ -161,7 +161,13 @@ function DepositPageContent() {
       });
       const j = await res.json();
       if (!res.ok) {
-        if (j?.error === 'legacy_rancher' && j?.redirectUrl) {
+        // `out_of_area` = this ranch is contracted to a service area that
+        // doesn't cover the buyer. Same treatment as legacy_rancher: send them
+        // somewhere real (the quiz re-matches them to a ranch that CAN serve
+        // them) rather than stranding them on an error. Deliberately NOT
+        // ?rancher=<slug> — re-pinning the ranch that just declined them would
+        // loop them straight back here.
+        if ((j?.error === 'legacy_rancher' || j?.error === 'out_of_area') && j?.redirectUrl) {
           window.location.href = j.redirectUrl;
           return;
         }

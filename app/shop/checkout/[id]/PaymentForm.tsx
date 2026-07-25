@@ -93,6 +93,13 @@ function InnerForm({
           window.location.href = data.demoUrl;
           return;
         }
+        // `fallback` = not fixable on this page (today: the ranch is contracted
+        // to a service area that doesn't cover this buyer). Send them to the
+        // quiz to be re-matched rather than dead-ending them on an error.
+        if (!res.ok && data?.fallback) {
+          window.location.href = '/access';
+          return;
+        }
         if (!res.ok) {
           setErr(data?.message || data?.error || 'could not start checkout — try again.');
           return;

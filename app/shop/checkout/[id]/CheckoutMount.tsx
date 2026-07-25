@@ -79,6 +79,13 @@ function LegacyEmbeddedMount({ productId, quantity }: { productId: string; quant
           body: JSON.stringify({ productId, quantity, mode: embedded ? 'embedded' : 'hosted', consent: true }),
         });
         const data = await res.json().catch(() => ({}));
+        // `fallback` = nothing the buyer can fix here (today: the ranch is
+        // contracted to a service area that doesn't cover them). Hand them to
+        // the quiz, which re-matches them — never strand them on this page.
+        if (!res.ok && data?.fallback) {
+          window.location.href = '/access';
+          return;
+        }
         if (!res.ok) throw new Error(data?.error || 'could not start checkout');
 
         if (!embedded) {

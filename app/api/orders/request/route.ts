@@ -13,6 +13,9 @@ import { incrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity
 import { resolveBuyerSession } from '@/lib/buyerAuth';
 import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
+import { normalizeZip } from '@/lib/zipFormat';
+import { buyerZipPatch, ZIP_OUT_OF_AREA_MESSAGE } from '@/lib/buyerZip';
+import { buyerZipServedBy } from '@/lib/exclusiveZip';
 
 // Order request endpoint — buyer fills inline form on rancher landing page.
 // No external redirect to rancher's website. We capture the request, link
@@ -119,7 +122,12 @@ export async function POST(req: Request) {
   const emailInput = String(body.email || '').trim().toLowerCase();
   const phone = String(body.phone || '').trim();
   const state = String(body.state || '').trim().toUpperCase().slice(0, 2);
-  const zip = String(body.zip || '').trim().slice(0, 5);
+  // ZIP (2026-07-25): was `String(body.zip||'').trim().slice(0,5)` — that
+  // happily persisted "abc12" / "787" into Consumers.`Zip`, which then failed
+  // every downstream centroid + prefix lookup silently. normalizeZip is the one
+  // validator (5-digit US, ZIP+4 tolerated) and '' means "we don't know", so a
+  // malformed value is dropped instead of stored.
+  const zip = normalizeZip(body.zip) || '';
   const message = String(body.message || '').trim().slice(0, 1000);
   // TCPA SMS consent checkbox (guest form only; unchecked by default). Only
   // meaningful with a non-empty phone — same guard as /api/consumers.
@@ -175,6 +183,19 @@ export async function POST(req: Request) {
       { status: 409 }
     );
   }
+  // EXCLUSIVE-ZIP GATE (2026-07-25). Self-serve buy path, so the contracted
+  // service area is enforced here exactly as it is in matching/suggest. No-op
+  // for a rancher without `Service ZIP Prefixes` (buyerZipServedBy returns true
+  // unconditionally) — i.e. every rancher today. Fail CLOSED otherwise: no ZIP,
+  // malformed ZIP and out-of-prefix ZIP are all ineligible. Reuses this route's
+  // existing `fallbackToMatch` 409 shape so the form routes the buyer to the
+  // quiz rather than dead-ending them, and the copy never names the territory.
+  if (!buyerZipServedBy(zip, rancher)) {
+    return NextResponse.json(
+      { error: ZIP_OUT_OF_AREA_MESSAGE, fallbackToMatch: true },
+      { status: 409 },
+    );
+  }
   const rancherName =
     (rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher').toString();
   const ranchName = (rancher['Ranch Name'] || rancherName).toString();
@@ -194,11 +215,17 @@ export async function POST(req: Request) {
         // funnel writes and sendSMSToConsumer gates on). Only ever flips
         // false→true; an unchecked box is not a revocation. Failure hits the
         // surrounding non-fatal catch.
+        const patch: Record<string, any> = {};
         if (wantsSms && (existing[0] as any)['SMS Opt-In'] !== true) {
-          await updateRecord(TABLES.CONSUMERS, consumerId, {
-            'SMS Opt-In': true,
-            'SMS Opt-In At': new Date().toISOString(),
-          });
+          patch['SMS Opt-In'] = true;
+          patch['SMS Opt-In At'] = new Date().toISOString();
+        }
+        // ZIP BACKFILL (2026-07-25): a returning buyer typed their ZIP into
+        // this form but we only ever wrote it on CREATE, so it was thrown away
+        // every time. Fill a blank/garbage `Zip`; never stomp a real one.
+        Object.assign(patch, buyerZipPatch(zip, (existing[0] as any)['Zip']));
+        if (Object.keys(patch).length > 0) {
+          await updateRecord(TABLES.CONSUMERS, consumerId, patch);
         }
       } else {
         const created: any = await createRecord(TABLES.CONSUMERS, {

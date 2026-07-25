@@ -26,6 +26,7 @@ import { PermanentSettlementError } from '@/lib/stripeSettlement';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { sendEmail } from '@/lib/email';
 import { fireCapi, buildUserData, productPurchaseEnabled } from '@/lib/metaCapi';
+import { zipFromStripePayment, buyerZipPatch } from '@/lib/buyerZip';
 
 function escapeHtml(s: string): string {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -449,6 +450,13 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
         'Last Product Bought At': nowIso,
         'Product Buyer Rancher': rancherName,
       };
+      // ZIP CAPTURE (2026-07-25): the storefront checkout deliberately asks for
+      // NO ZIP up front (two taps is the whole point), so we harvest it from
+      // the address Stripe already collected at payment. This is the "capture
+      // after payment" half of the fast-path decision documented in
+      // /api/checkout/product/buy. buyerZipPatch drops anything that isn't a
+      // real US ZIP and never stomps a ZIP the buyer told us themselves.
+      const stripeZip = zipFromStripePayment(pi);
       const existingConsumers = (await getAllRecords(
         TABLES.CONSUMERS,
         `LOWER({Email}) = "${escapeAirtableValue(buyerEmail)}"`,
@@ -456,10 +464,12 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
       if (Array.isArray(existingConsumers) && existingConsumers.length > 0) {
         const c = existingConsumers[0];
         const stage = String(c['Buyer Stage'] || '').trim();
-        const fields =
-          !stage || stage === 'PRODUCT_BUYER'
+        const fields = {
+          ...(!stage || stage === 'PRODUCT_BUYER'
             ? { ...productFields, 'Buyer Stage': 'PRODUCT_BUYER' }
-            : productFields; // already in the share funnel — keep their stage
+            : productFields), // already in the share funnel — keep their stage
+          ...buyerZipPatch(stripeZip, c['Zip']),
+        };
         await updateRecord(TABLES.CONSUMERS, c.id, fields);
       } else {
         await createRecord(TABLES.CONSUMERS, {
@@ -467,6 +477,7 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
           'Email': buyerEmail,
           'Buyer Stage': 'PRODUCT_BUYER',
           ...productFields,
+          ...buyerZipPatch(stripeZip, null),
         });
       }
     } catch { /* schema not ready or transient — non-fatal, never blocks the sale */ }

@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { createRecord, updateRecord, getAllRecords, escapeAirtableValue, TABLES } from '@/lib/airtable';
 import { normalizeState } from '@/lib/states';
 import { getSuppressionList } from '@/lib/email';
+import { normalizeZip } from '@/lib/zipFormat';
+import { buyerZipPatch } from '@/lib/buyerZip';
 
 export const maxDuration = 15;
 
@@ -56,6 +58,13 @@ export async function POST(request: Request) {
     // to the wrong state. normalizeState handles full names ("Montana" → "MT")
     // and 2-letter codes alike, returning '' for invalid input.
     const state = normalizeState(body?.state);
+    // ZIP (2026-07-25): the uncovered-state map capture has ALWAYS asked for a
+    // ZIP, but it could only smuggle it into `notes` as "zip=78701 (…)" — the
+    // waitlist route had no ZIP handling, so the real `Zip` field stayed empty
+    // and neither the nearest-rancher sort nor the exclusive-ZIP gate could
+    // ever place these buyers. Same contract as every other door: normalized
+    // or nothing.
+    const zip = normalizeZip(body?.zip);
     const interest = (body?.interest || '').toString().trim().slice(0, 50); // e.g. "beef", "land", "rancher"
     const notes = (body?.notes || '').toString().trim().slice(0, 500);
     const referrer = (body?.referrer || '').toString().trim().slice(0, 200);
@@ -76,7 +85,11 @@ export async function POST(request: Request) {
         const rec = existing[0];
         const newNotes = `${rec['Notes'] || ''}\n${noteEntry}`.trim();
         try {
-          await updateRecord(TABLES.CONSUMERS, rec.id, { 'Notes': newNotes });
+          await updateRecord(TABLES.CONSUMERS, rec.id, {
+            'Notes': newNotes,
+            // Backfill a blank/garbage Zip; never stomp one they already gave us.
+            ...buyerZipPatch(zip, rec['Zip']),
+          });
         } catch (e) {
           // Non-fatal — the original record is safe either way.
           console.error('Waitlist: failed to update existing record notes:', e);
@@ -96,6 +109,7 @@ export async function POST(request: Request) {
         'Full Name': fullName || '(waitlist signup)',
         'Email': rawEmail,
         'State': state,
+        ...(zip ? { 'Zip': zip } : {}),
         'Source': 'relaunch_waitlist',
         'Notes': noteEntry,
       });

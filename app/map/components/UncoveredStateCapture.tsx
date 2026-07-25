@@ -36,8 +36,11 @@ export default function UncoveredStateCapture({ state }: { state: string }) {
           email: trimmed,
           state,
           interest: 'beef',
-          // Zip rides along in notes — the waitlist endpoint doesn't have a
-          // dedicated zip field, but the operator wants it for tighter scouting.
+          // Real field now (2026-07-25) — /api/waitlist validates this with
+          // normalizeZip and writes Consumers.`Zip`, so these buyers can
+          // actually be placed by distance + service-area routing. The notes
+          // copy stays for the operator's scouting history.
+          zip: zip.trim(),
           notes: zip.trim() ? `zip=${zip.trim()} (uncovered-state map capture)` : 'uncovered-state map capture',
           referrer: typeof window !== 'undefined' ? window.location.href : '',
         }),

@@ -81,6 +81,7 @@ import {
 } from '@/lib/metaCapi';
 import { metaEventId } from '@/lib/analytics';
 import { logAuditEntry } from '@/lib/auditLog';
+import { zipFromStripePayment, buyerZipPatch } from '@/lib/buyerZip';
 
 // ---------------------------------------------------------------------------
 // settleBuyerDeposit
@@ -246,6 +247,29 @@ export async function settleBuyerDeposit(pi: any): Promise<void> {
     const buyer: any = buyerIdForEmail
       ? await getRecordById(TABLES.CONSUMERS, buyerIdForEmail).catch(() => null)
       : null;
+
+    // ── ZIP CAPTURE (2026-07-25) ─────────────────────────────────────────────
+    // The reserve rail (/api/checkout/reserve) is the fastest checkout in the
+    // product and deliberately does NOT ask for a ZIP unless the rancher has a
+    // contracted service area — a required field there costs conversion on the
+    // exact endpoint the ads point at. Stripe collects an address at payment
+    // anyway, so this is where we gather it: harvest the ZIP off the settled
+    // PaymentIntent and write it to the Consumer. buyerZipPatch refuses
+    // anything that isn't a real US ZIP and never overwrites a ZIP the buyer
+    // typed themselves. Reuses the `buyer` read above — no extra Airtable call.
+    // Own try/catch so a ZIP write can NEVER interrupt the post-purchase
+    // welcome email or the CAPI Purchase fire below.
+    if (buyer?.id) {
+      try {
+        const zipPatch = buyerZipPatch(zipFromStripePayment(pi), buyer['Zip']);
+        if (Object.keys(zipPatch).length > 0) {
+          await updateRecord(TABLES.CONSUMERS, buyer.id, zipPatch);
+        }
+      } catch (zipErr: any) {
+        console.warn('[settleBuyerDeposit] buyer ZIP capture skipped (non-fatal):', zipErr?.message);
+      }
+    }
+
     if (buyer?.['Email']) {
       const fullName = String(buyer['Full Name'] || '').trim();
       const nameParts = fullName.split(/\s+/);
