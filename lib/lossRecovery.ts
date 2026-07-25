@@ -15,11 +15,17 @@
 //
 // SEQUENCING NOTE: PR #396 (the rancher-UI 'Loss Reason' writers) is MERGED —
 // this rail selects real candidates from day one, in DRY-RUN until Ben flips
-// LOSS_RECOVERY_ENABLED. The 7 choice strings below are pinned byte-for-byte
-// to the PROD schema (em-dash U+2014 in 'Timing — buying later', straight
-// apostrophe U+0027 in "Couldn't reach buyer") — deliberately a LOCAL copy so
-// this branch carries its own vocabulary and merges cleanly regardless of
-// what lib/lossReasons on main evolves into.
+// LOSS_RECOVERY_ENABLED.
+//
+// VOCABULARY: this module used to pin its OWN byte-for-byte copy of the 7
+// choice strings, because it was branched before #396 landed lib/lossReasons.
+// That reason expired the moment #396 merged: two copies of a typecast:true
+// singleSelect vocabulary is exactly how schema drift gets minted silently.
+// lib/lossReasons is now the single source of truth (writers AND this reader
+// share it) and `actionForLossReason`'s switch is exhaustiveness-checked
+// against it — add a choice there and this file fails to COMPILE until it
+// says what the new reason should do. Re-exported here so existing importers
+// (and the tests) keep working.
 //
 // THE ~60-DAY NURTURE DEFERRAL (no new scheduler): the codebase's existing
 // deferred-follow-up rail is re-warm-cohort — it reanimates any Approved,
@@ -45,22 +51,16 @@
 // network. The cron does the reads, the claim-before-send stamp, the sends.
 
 import { isActiveDealReferral } from './capacityCount';
+import { LOSS_REASON_CHOICES, isLossReasonChoice, type LossReason } from './lossReasons';
 
 // ── Airtable field names ─────────────────────────────────────────────────────
 export const LOSS_REASON_FIELD = 'Loss Reason'; // fldV4hf0ptyhMaaAA (singleSelect)
 export const RECOVERY_SENT_AT_FIELD = 'Recovery Sent At'; // fldytetWcVovzLqWZ (dateTime)
 
-// Prod singleSelect choices, byte-for-byte (verified against schema 2026-07-15).
-export const LOSS_REASON_CHOICES = [
-  'Price too high',
-  'Timing — buying later',
-  "Couldn't reach buyer",
-  'Bought elsewhere',
-  'Out of service area',
-  'Wrong intent (not a buyer)',
-  'Other',
-] as const;
-export type LossReason = (typeof LOSS_REASON_CHOICES)[number];
+// Canonical vocabulary lives in lib/lossReasons (see header). Re-exported so
+// this module stays the one import the recovery rail needs.
+export { LOSS_REASON_CHOICES };
+export type { LossReason };
 
 export type RecoveryAction = 'reengage' | 'downsell' | 'nurture' | 'none';
 
@@ -84,7 +84,10 @@ function readEnumOrString(v: unknown): string {
  */
 export function actionForLossReason(raw: unknown): RecoveryAction | null {
   const reason = readEnumOrString(raw).trim();
-  if (!reason) return null;
+  // Blank, or a value outside the canonical vocabulary (schema drift, a
+  // hand-typed option, a case/dash variant): skip loudly in the counts and
+  // NEVER guess an action from a string we don't recognize.
+  if (!isLossReasonChoice(reason)) return null;
   switch (reason) {
     case "Couldn't reach buyer":
       return 'reengage';
@@ -97,8 +100,14 @@ export function actionForLossReason(raw: unknown): RecoveryAction | null {
     case 'Wrong intent (not a buyer)':
     case 'Other':
       return 'none';
-    default:
-      return null; // unknown choice — schema drifted; skip loudly in counts
+    default: {
+      // Compile-time exhaustiveness against lib/lossReasons: adding a choice
+      // there without deciding what this rail does with it fails the BUILD,
+      // instead of silently dropping those losses on the floor at runtime.
+      const unhandled: never = reason;
+      void unhandled;
+      return null;
+    }
   }
 }
 
