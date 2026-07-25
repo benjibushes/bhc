@@ -24,6 +24,7 @@ import {
   getRancherCommissionRate,
   calcCommissionForRancher,
   partitionUnpaidByRail,
+  shouldWriteLegacyCommissionDue,
 } from './commission';
 
 test('referralRail: deposit paid → tier_v2 rail (net = full, nothing to invoice)', () => {
@@ -251,4 +252,50 @@ test('partitionUnpaidByRail: empty input → both partitions empty', () => {
   const { depositRail, invoiceEligible } = partitionUnpaidByRail([]);
   assert.deepEqual(depositRail, []);
   assert.deepEqual(invoiceEligible, []);
+});
+
+// ── shouldWriteLegacyCommissionDue (money-model truth, 2026-07-24) ───────────
+//
+// THE BUG: app/api/referrals/[id] PATCH wrote `Commission Due` on ANY close
+// carrying a Sale Amount, never checking the rail. Close a Connect deal from
+// /admin and the founder sees a receivable Stripe already collected at deposit,
+// while the rancher dashboard (which DOES filter on rail) shows it settled.
+
+test('shouldWriteLegacyCommissionDue: legacy close (no deposit) → write the receivable', () => {
+  assert.equal(shouldWriteLegacyCommissionDue({ Status: 'Closed Won' }), true);
+  assert.equal(shouldWriteLegacyCommissionDue({ 'Deposit Paid At': '' }), true);
+  assert.equal(shouldWriteLegacyCommissionDue({ 'Deposit Paid At': null }), true);
+  assert.equal(shouldWriteLegacyCommissionDue({ 'Deposit Paid At': '   ' }), true);
+});
+
+test('shouldWriteLegacyCommissionDue: Connect close (deposit paid) → never write', () => {
+  assert.equal(shouldWriteLegacyCommissionDue({ 'Deposit Paid At': '2026-07-19T03:31:00.631Z' }), false);
+  assert.equal(shouldWriteLegacyCommissionDue({ deposit_paid_at: '2026-07-19' }), false);
+  assert.equal(shouldWriteLegacyCommissionDue({ depositPaidAt: '2026-07-19' }), false);
+});
+
+test('shouldWriteLegacyCommissionDue: unknown referral (read failed) FAILS OPEN', () => {
+  // null ≠ "on Connect". Skipping the write here would silently destroy a real
+  // legacy receivable; writing it can only over-state a tile, because the
+  // monthly invoice cron re-checks the rail via partitionUnpaidByRail.
+  assert.equal(shouldWriteLegacyCommissionDue(null), true);
+  assert.equal(shouldWriteLegacyCommissionDue(undefined), true);
+});
+
+test('shouldWriteLegacyCommissionDue agrees with partitionUnpaidByRail row-for-row', () => {
+  const rows = [
+    { id: 'a' },
+    { id: 'b', 'Deposit Paid At': '2026-07-19T00:00:00Z' },
+    { id: 'c', 'Deposit Paid At': '' },
+    { id: 'd', deposit_paid_at: '2026-07-01' },
+  ];
+  const { depositRail, invoiceEligible } = partitionUnpaidByRail(rows);
+  assert.deepEqual(
+    invoiceEligible.map((r) => r.id),
+    rows.filter(shouldWriteLegacyCommissionDue).map((r) => r.id),
+  );
+  assert.deepEqual(
+    depositRail.map((r) => r.id),
+    rows.filter((r) => !shouldWriteLegacyCommissionDue(r)).map((r) => r.id),
+  );
 });

@@ -16,8 +16,14 @@ interface ReferralStats {
   pendingApproval: number;
   stalledLeads: number;
   closedDealsThisMonth: { count: number; totalCommission: number };
-  // All-time unpaid commission across every Closed Won referral.
+  // All-time unpaid LEGACY commission — the deprecated "rancher owes BHC 10%,
+  // invoiced after close" rail ONLY. Connect closes owe nothing (their fee was
+  // added to the buyer and taken at deposit), so they are NOT in this number.
   commissionUnpaid?: number;
+  // Connect-rail marketplace fee already captured at deposit, in dollars.
+  // null/undefined ⇒ the Payments read failed — render "—", never $0.
+  connectFeeCaptured?: number | null;
+  connectFeeCount?: number | null;
 }
 
 interface Consumer {
@@ -584,7 +590,7 @@ export default function AdminPage() {
               {/* What Needs Your Attention */}
               <div className="p-6 border-2 border-amber/60 bg-amber/10 space-y-4">
                 <h2 className="text-lg font-bold">What Needs Your Attention</h2>
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
                   <a href="/admin/referrals" className="p-3 border border-amber/60 bg-white text-center hover:bg-amber/20 transition-colors block">
                     <div className="font-[family-name:var(--font-serif)] text-2xl font-bold">{refStats?.pendingApproval || 0}</div>
                     <div className="text-xs text-saddle mt-1">Pending Referrals</div>
@@ -606,10 +612,26 @@ export default function AdminPage() {
                     <div className="text-xs text-saddle mt-1">Unsigned Agreements</div>
                     <span className="text-xs text-dust mt-0.5 inline-block">&gt;7 days old</span>
                   </button>
+                  {/* TWO RAILS, TWO TILES (2026-07-24). This tile was labeled
+                      a bare "Unpaid Commission" while summing a column that
+                      only exists on the deprecated invoice-after-close rail —
+                      so a Connect close would have shown up here as money owed
+                      that Stripe already collected at deposit. Legacy
+                      receivable and Connect fee are now named for what they
+                      are, side by side. */}
                   <a href="/admin/commissions" className="p-3 border border-amber/60 bg-white text-center hover:bg-amber/20 transition-colors block">
                     <div className="font-[family-name:var(--font-serif)] text-2xl font-bold">${(refStats?.commissionUnpaid ?? 0).toLocaleString()}</div>
-                    <div className="text-xs text-saddle mt-1">Unpaid Commission</div>
-                    <span className="text-xs text-dust mt-0.5 inline-block">all-time</span>
+                    <div className="text-xs text-saddle mt-1">Legacy Commission Receivable</div>
+                    <span className="text-xs text-dust mt-0.5 inline-block">pre-Connect · all-time</span>
+                  </a>
+                  <a href="/admin/payments" className="p-3 border border-amber/60 bg-white text-center hover:bg-amber/20 transition-colors block">
+                    <div className="font-[family-name:var(--font-serif)] text-2xl font-bold">
+                      {refStats?.connectFeeCaptured == null ? '—' : `$${refStats.connectFeeCaptured.toLocaleString()}`}
+                    </div>
+                    <div className="text-xs text-saddle mt-1">Connect Fees Captured</div>
+                    <span className="text-xs text-dust mt-0.5 inline-block">
+                      {refStats?.connectFeeCaptured == null ? 'payments unavailable' : `at deposit · ${refStats.connectFeeCount ?? 0} deals`}
+                    </span>
                   </a>
                   <div className="p-3 border border-amber/60 bg-white text-center">
                     <div className="font-[family-name:var(--font-serif)] text-2xl font-bold">{stalledLeadsCount}</div>

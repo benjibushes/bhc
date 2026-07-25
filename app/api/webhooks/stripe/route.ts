@@ -1477,11 +1477,20 @@ async function handleCommissionInvoicePaid(invoice: any) {
   let airtableWriteOk = true;
   let airtableWriteError = '';
   try {
-    await updateRecord(TABLES.REFERRALS, referralId, {
+    const commissionPaidFields: Record<string, any> = {
       'Commission Paid': true,
       'Commission Paid At': new Date().toISOString(),
-      'Stripe Invoice URL': invoice.hosted_invoice_url || '',
-    });
+    };
+    // NEVER blank a good URL. This wrote `hosted_invoice_url || ''`, so any
+    // invoice.paid event where Stripe omitted the field (it is null on some
+    // invoice states, and absent on replayed/expanded payloads) ERASED the
+    // durable link we'd already stored — the operator's only handle on that
+    // invoice. Write it only when Stripe actually sent one; otherwise leave
+    // whatever is on the record untouched.
+    if (invoice.hosted_invoice_url) {
+      commissionPaidFields['Stripe Invoice URL'] = invoice.hosted_invoice_url;
+    }
+    await updateRecord(TABLES.REFERRALS, referralId, commissionPaidFields);
   } catch (e: any) {
     airtableWriteOk = false;
     airtableWriteError = e?.message || 'unknown';

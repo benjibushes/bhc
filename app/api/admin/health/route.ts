@@ -2,6 +2,11 @@ import { NextResponse } from 'next/server';
 import { getAllRecords, TABLES } from '@/lib/airtable';
 import { requireAdmin } from '@/lib/adminAuth';
 import { countHeldReferrals } from '@/lib/capacityCount';
+import {
+  computeLegacyCommissionEarned,
+  computeConnectFeeCaptured,
+  countConnectFeePayments,
+} from '@/lib/commissionStats';
 
 // GET /api/admin/health
 //
@@ -24,11 +29,15 @@ export async function GET(request: Request) {
   const __authResp = await requireAdmin(request);
   if (__authResp) return __authResp;
 
-  const [ranchers, refs, consumers, cronRuns] = await Promise.all([
+  const [ranchers, refs, consumers, cronRuns, payments] = await Promise.all([
     getAllRecords(TABLES.RANCHERS) as Promise<any[]>,
     getAllRecords(TABLES.REFERRALS) as Promise<any[]>,
     getAllRecords(TABLES.CONSUMERS) as Promise<any[]>,
     (getAllRecords(TABLES.CRON_RUNS) as Promise<any[]>).catch(() => [] as any[]),
+    // Connect-rail fee revenue lives here, not in Referrals. Small table, and
+    // this endpoint is admin-only + infrequent (already scans 4 tables).
+    // Failure is non-fatal: null figure renders "—", never a wrong number.
+    (getAllRecords(TABLES.PAYMENTS) as Promise<any[]>).catch(() => null),
   ]);
 
   // Cron Runs — collapse to most-recent-per-name view.
@@ -128,7 +137,15 @@ export async function GET(request: Request) {
   // Revenue
   const won = refs.filter((r) => r['Status'] === 'Closed Won');
   const totalRev = won.reduce((acc, r) => acc + Number(r['Sale Amount'] || 0), 0);
-  const totalComm = won.reduce((acc, r) => acc + Number(r['Commission Due'] || 0), 0);
+  // RAIL-AWARE (2026-07-24). `Commission Due` describes the deprecated
+  // "rancher owes BHC 10%, invoiced monthly after close" rail only. On the live
+  // model the 10% is ADDED to the buyer and captured at deposit as the Connect
+  // application_fee — that money is in Payments['Platform Fee Cents'], never in
+  // Referrals. Summing both columns into one "Commission" number would double-
+  // count nothing but MEAN two different things at once. Report them apart.
+  const totalComm = computeLegacyCommissionEarned(refs as any[]);
+  const connectFeeCaptured = payments ? computeConnectFeeCaptured(payments) : null;
+  const connectFeeCount = payments ? countConnectFeePayments(payments) : null;
   const D = 86400000;
   const cutoff7 = Date.now() - 7 * D;
   // Was (c as any).createdTime — undefined after getAllRecords flatten, so the
@@ -231,7 +248,11 @@ export async function GET(request: Request) {
     revenue: {
       won_total: won.length,
       gross_sales: totalRev,
+      // LEGACY rail only — pre-Connect invoice-after-close receivable.
       commission_earned: totalComm,
+      // CONNECT rail — fee captured at deposit. null ⇒ Payments read failed.
+      connect_fee_captured: connectFeeCaptured,
+      connect_fee_count: connectFeeCount,
       won_last_7d: recentWon,
       new_signups_7d: recentSignups,
     },

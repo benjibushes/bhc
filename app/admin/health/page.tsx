@@ -78,10 +78,19 @@ function HealthDashboard() {
         {/* Revenue */}
         <section>
           <h2 className="font-serif text-xl mb-3">Revenue</h2>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
             <Card title="Closed Won" value={data.revenue.won_total} sub={`${data.revenue.won_last_7d} in last 7d`} tone={data.revenue.won_last_7d > 0 ? 'good' : 'warn'} />
             <Card title="Gross Sales" value={`$${data.revenue.gross_sales.toLocaleString()}`} />
-            <Card title="Commission" value={`$${data.revenue.commission_earned.toLocaleString()}`} />
+            {/* Two rails, two cards (2026-07-24). A bare "Commission" card
+                summing Referrals['Commission Due'] only ever described the
+                deprecated invoice-after-close rail; Connect fee revenue lives
+                in Payments['Platform Fee Cents'] and was invisible here. */}
+            <Card title="Legacy Commission" value={`$${data.revenue.commission_earned.toLocaleString()}`} sub="pre-Connect, invoiced" />
+            <Card
+              title="Connect Fees"
+              value={data.revenue.connect_fee_captured == null ? '—' : `$${data.revenue.connect_fee_captured.toLocaleString()}`}
+              sub={data.revenue.connect_fee_captured == null ? 'payments unavailable' : `at deposit · ${data.revenue.connect_fee_count ?? 0} deals`}
+            />
             <Card title="New Signups (7d)" value={data.revenue.new_signups_7d} />
             <Card title="Active Pipeline" value={data.referrals.active} sub="Intro Sent + Contacted + Negotiation" />
           </div>

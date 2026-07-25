@@ -22,8 +22,14 @@ interface MoneySection {
   depositsOutstandingCount: number | null;
   closedThisMonthRevenue: number;
   closedThisMonthCount: number;
+  // LEGACY rail only (pre-Connect "rancher owes BHC 10%, invoiced after close").
+  // Connect deals owe nothing — their fee rides connectFeeCaptured below.
   commissionEarned: number;
   commissionUnpaid: number;
+  // CONNECT rail — marketplace fee captured at deposit. null = Payments read failed.
+  connectFeeCaptured: number | null;
+  connectFeeCount: number | null;
+  bhcRevenueAllRails: number;
   blendedRoas: number | null;
   adSpend: number | null;
   // Product rail (Rancher Orders — the low-ticket shop). null = table read failed.
@@ -237,19 +243,34 @@ export default function CommandCenter() {
                 sub={`${money.closedThisMonthCount} deals`}
                 tone="good"
               />
+              {/* TWO RAILS, NAMED (2026-07-24). This was one "Commission
+                  earned" tile summing a column that only means anything on the
+                  deprecated invoice-after-close rail — a Connect close would
+                  have surfaced here as a receivable Stripe already banked at
+                  deposit. Legacy receivable and Connect fee now stand apart. */}
               <Metric
-                label="Commission earned"
+                label="Legacy commission (pre-Connect)"
                 value={usd(money.commissionEarned)}
-                sub={money.commissionUnpaid > 0 ? `${usd(money.commissionUnpaid)} unpaid` : 'all paid'}
+                sub={money.commissionUnpaid > 0 ? `${usd(money.commissionUnpaid)} still owed` : 'all invoiced + paid'}
                 tone={money.commissionUnpaid > 0 ? 'warn' : 'good'}
               />
+              {money.connectFeeCaptured == null ? (
+                <PendingMetric label="Connect fees captured" hint="payments read unavailable" />
+              ) : (
+                <Metric
+                  label="Connect fees captured"
+                  value={usd(money.connectFeeCaptured)}
+                  sub={`taken at deposit · ${money.connectFeeCount ?? 0} deals`}
+                  tone="good"
+                />
+              )}
               {money.blendedRoas == null ? (
                 <PendingMetric label="Blended ROAS" hint="log ad spend to compute" />
               ) : (
                 <Metric
                   label="Blended ROAS"
                   value={`${money.blendedRoas}x`}
-                  sub={money.adSpend != null ? `on ${usd(money.adSpend)} spend` : undefined}
+                  sub={money.adSpend != null ? `both rails on ${usd(money.adSpend)} spend` : undefined}
                   tone={money.blendedRoas >= 1 ? 'good' : 'warn'}
                 />
               )}

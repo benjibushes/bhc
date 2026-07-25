@@ -34,6 +34,11 @@ import {
 } from '@/lib/rancherEligibility';
 import { getSpendInRange } from '@/lib/adSpend';
 import { normalizeState } from '@/lib/states';
+import {
+  legacyClosedWon,
+  computeConnectFeeCaptured,
+  countConnectFeePayments,
+} from '@/lib/commissionStats';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -99,8 +104,15 @@ export async function GET(request: Request) {
       });
       const closedThisMonthRevenue = closedThisMonth.reduce((s: number, r: any) => s + num(r['Sale Amount']), 0);
 
-      // Commission earned vs unpaid (all Closed Won, not just this month).
-      const closedWonAll = referrals.filter((r: any) => str(r['Status']) === 'Closed Won');
+      // LEGACY commission earned vs unpaid (all Closed Won, not just this
+      // month) — RAIL-AWARE since 2026-07-24. `Commission Due`/`Commission
+      // Paid` exist only on the deprecated "rancher owes BHC 10%, invoiced
+      // monthly after close" rail. A Connect close had its fee ADDED to the
+      // buyer and captured at deposit via application_fee, so it owes nothing;
+      // summing it here showed the founder a receivable Stripe already banked
+      // while the rancher dashboard (same rail filter) called it settled.
+      // Connect-rail revenue is its own figure below — never folded in here.
+      const closedWonAll = legacyClosedWon(referrals as any[]);
       const commissionEarned = closedWonAll.reduce((s: number, r: any) => s + num(r['Commission Due']), 0);
       const commissionUnpaid = closedWonAll
         .filter((r: any) => !r['Commission Paid'])
@@ -128,14 +140,27 @@ export async function GET(request: Request) {
         depositsOutstandingCount = pending.length;
       }
 
-      // Blended ROAS — BHC commission / ad spend (same as analytics route).
+      // CONNECT-RAIL FEE REVENUE — the half of BHC's income that does not
+      // exist in Referrals. It's the marketplace fee added on top of the
+      // buyer's price and taken atomically at deposit, persisted as
+      // Payments['Platform Fee Cents']. Reuses the Payments read already
+      // performed above for deposits — no extra table scan.
+      const connectFeeCaptured = payments ? computeConnectFeeCaptured(payments as any[]) : null;
+      const connectFeeCount = payments ? countConnectFeePayments(payments as any[]) : null;
+
+      // Blended ROAS — BHC revenue / ad spend. The numerator must span BOTH
+      // rails: legacy invoiced commission PLUS Connect fees captured at
+      // deposit. Pre-2026-07-24 it used the (unfiltered) Commission Due sum
+      // alone, which is now legacy-only — leaving it there would understate
+      // ROAS by every dollar Connect earns, and worsen as Connect scales.
       // null when no spend logged (don't fabricate a ratio).
       let blendedRoas: number | null = null;
       let adSpend: number | null = null;
+      const bhcRevenueAllRails = round2(commissionEarned + (connectFeeCaptured ?? 0));
       try {
         const spend = await getSpendInRange(0); // all-time
         adSpend = round2(spend.total);
-        blendedRoas = spend.total > 0 ? round2(commissionEarned / spend.total) : null;
+        blendedRoas = spend.total > 0 ? round2(bhcRevenueAllRails / spend.total) : null;
       } catch (e: any) {
         console.warn('[command-center] ad spend read failed:', e?.message);
       }
@@ -169,8 +194,15 @@ export async function GET(request: Request) {
         depositsOutstandingCount,
         closedThisMonthRevenue: round2(closedThisMonthRevenue),
         closedThisMonthCount: closedThisMonth.length,
+        // LEGACY rail only — the pre-Connect invoice-after-close receivable.
         commissionEarned: round2(commissionEarned),
         commissionUnpaid: round2(commissionUnpaid),
+        // CONNECT rail — marketplace fee captured at deposit (Payments).
+        // null ⇒ Payments read failed; render "—", never $0.
+        connectFeeCaptured,
+        connectFeeCount,
+        // Both rails combined — what ROAS is measured against.
+        bhcRevenueAllRails,
         blendedRoas,
         adSpend,
         productOrders,
