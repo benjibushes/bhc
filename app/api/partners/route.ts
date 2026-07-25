@@ -13,6 +13,16 @@ import { normalizeState } from '@/lib/states';
 import { funnelRecord } from '@/lib/funnelMetrics';
 import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
 import { metaEventId } from '@/lib/analytics';
+import {
+  decideSetupLinkDelivery,
+  SETUP_LINK_EMAILED_MESSAGE,
+} from '@/lib/rancherSetupLinkDelivery';
+import {
+  emailSetupLinkToOwner,
+  describeSetupLinkSend,
+  mintRancherSetupUrl,
+  type SetupLinkSendResult,
+} from '@/lib/rancherSetupLinkSend';
 
 export const maxDuration = 60;
 
@@ -141,18 +151,34 @@ export async function POST(request: Request) {
           const rescuable =
             verificationStatus !== 'Verified' && verificationStatus !== 'Removed';
 
+          // …and the SAME reasoning applies below the Verified line (security
+          // fix 2026-07-24). The dedupe also matches on (ranch name + state),
+          // which is PUBLIC — every ranch is on /map with a page at
+          // /ranchers/<slug> — so this rescue would hand a 60-day setup token
+          // for an unverified ranch's record (its prices, fulfillment settings
+          // and Stripe Connect entry point) to anyone who typed a name and a
+          // state. Only an exact match on the record's own primary Email
+          // proves control. Every other tier still gets rescued — the link is
+          // just MAILED to the address on file instead of returned here, and
+          // the response points at the login, whose magic link also goes to
+          // that address. Decision is pure + unit-tested in
+          // lib/rancherSetupLinkDelivery.
+          const delivery = decideSetupLinkDelivery({
+            matchedBy,
+            submittedEmail: email,
+            recordEmail: match['Email'],
+          });
+
           let rescueWizardUrl = '';
-          if (rescuable) {
+          let sendResult: SetupLinkSendResult | null = null;
+          if (rescuable && delivery === 'return-token') {
             try {
-              const rescueToken = jwt.sign(
-                { type: 'rancher-setup', rancherId: match.id },
-                JWT_SECRET,
-                { expiresIn: '60d' },
-              );
-              rescueWizardUrl = `${SITE_URL}/rancher/setup?token=${rescueToken}`;
+              rescueWizardUrl = mintRancherSetupUrl(match.id);
             } catch (e: any) {
               console.error('[partners] duplicate-rescue token mint failed:', e?.message);
             }
+          } else if (rescuable) {
+            sendResult = await emailSetupLinkToOwner(match);
           }
 
           try {
@@ -162,28 +188,35 @@ export async function POST(request: Request) {
                 `<b>${operatorName}</b> · ${ranchName} (${state})\n` +
                 `${email}${phone ? ` · ${phone}` : ''}\n` +
                 `Matched by: ${matchedBy || '?'} · Verification: ${verificationStatus || '(blank)'}\n\n` +
-                (rescueWizardUrl
-                  ? `<i>Sent straight into the setup wizard for the existing record.</i>`
-                  : rescuable
-                    ? `⚠️ <i>Setup link mint FAILED — send them one manually.</i>`
-                    : `<i>Verified/removed record — pointed at rancher login, no setup link issued.</i>`) +
+                (sendResult
+                  ? describeSetupLinkSend(sendResult)
+                  : rescueWizardUrl
+                    ? `<i>Verified by email — sent straight into the setup wizard for the existing record.</i>`
+                    : rescuable
+                      ? `⚠️ <i>Setup link mint FAILED — send them one manually.</i>`
+                      : `<i>Verified/removed record — pointed at rancher login, no setup link issued.</i>`) +
                 `\n\nRancher ${match.id}`,
             );
           } catch (e: any) {
             console.warn('[partners] duplicate Telegram alert failed (non-fatal):', e?.message);
           }
 
+          // `matchedBy` is deliberately NOT echoed back: telling an anonymous
+          // caller which field hit turns this into an enumeration oracle
+          // ("is this phone / this ranch name in your system?"). It stays in
+          // the operator alert above.
           return NextResponse.json(
             {
               success: true,
               existing: true,
-              matchedBy: matchedBy || 'unknown',
               ...(rescueWizardUrl
                 ? { wizardUrl: rescueWizardUrl }
                 : { loginUrl: `${SITE_URL}/rancher/login` }),
               message: rescueWizardUrl
                 ? 'You are already in our system — pick up where you left off.'
-                : 'This ranch is already set up with us. Log in to your dashboard, or email ben@buyhalfcow.com if you need a hand.',
+                : sendResult
+                  ? SETUP_LINK_EMAILED_MESSAGE
+                  : 'This ranch is already set up with us. Log in to your dashboard, or email ben@buyhalfcow.com if you need a hand.',
             },
             { status: 200 },
           );
