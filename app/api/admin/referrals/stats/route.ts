@@ -66,17 +66,25 @@ export async function GET(request: Request) {
     // would show the founder a receivable Stripe collected — and disagree with
     // the rancher dashboard, which filters on this same rail. Connect-rail
     // revenue is surfaced separately below from Payments.
-    const closedWonAll = legacyClosedWon(referrals as any[]);
-    const closedThisMonth = closedWonAll.filter((r: any) => {
+    //
+    // The rail filter applies to the COMMISSION sums only. `closedThisMonth`
+    // stays all-rails: it is a DEAL COUNT, and a Connect close is every bit a
+    // deal closed this month — narrowing it would under-report the month.
+    const isClosedThisMonth = (r: any) => {
       const closedAt = r['Closed At'];
-      return closedAt && closedAt >= startOfMonth;
-    });
-
-    // This-month legacy commission still owed (kept for any caller that wants
-    // the monthly slice). The receivable TILE uses commissionUnpaid below.
-    const totalCommission = closedThisMonth.reduce(
-      (sum: number, r: any) => sum + (r['Commission Paid'] === true ? 0 : (r['Commission Due'] || 0)), 0
+      return Boolean(closedAt && closedAt >= startOfMonth);
+    };
+    const closedThisMonth = referrals.filter(
+      (r: any) => r['Status'] === 'Closed Won' && isClosedThisMonth(r),
     );
+
+    // This-month LEGACY commission still owed (kept for any caller that wants
+    // the monthly slice). The receivable TILE uses commissionUnpaid below.
+    const totalCommission = legacyClosedWon(referrals as any[])
+      .filter(isClosedThisMonth)
+      .reduce(
+        (sum: number, r: any) => sum + (r['Commission Paid'] === true ? 0 : (r['Commission Due'] || 0)), 0
+      );
 
     // All-time unpaid LEGACY commission receivable (pre-Connect economics).
     const commissionUnpaid = computeUnpaidCommission(referrals);
