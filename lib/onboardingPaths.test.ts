@@ -6,6 +6,8 @@ import {
   readStoreConfig,
   evaluateOnboarding,
   MONEY_MODEL,
+  commissionCopyFor,
+  TIER_FEE_PERCENT,
 } from './onboardingPaths';
 
 // A rancher who has done nothing yet.
@@ -215,4 +217,115 @@ test('MONEY_MODEL states fee-on-top for both paths and never promises no fees', 
   assert.ok(MONEY_MODEL.sharePath.length > 0 && MONEY_MODEL.storePath.length > 0);
   // Guard against re-introducing an unverified pricing promise.
   assert.doesNotMatch(all, /no monthly|free forever|no subscription/);
+});
+
+// ── commissionCopyFor — the LOCKED money model, one source ───────────────────
+//
+// docs/BUSINESS-MODEL.md ⭐ GROUND TRUTH: the rancher keeps 100% of the price
+// they set and BHC's percentage is ADDED to the buyer (Connect
+// application_fee at deposit). The wizard's SIGNATURE screen used to say "10%
+// commission on closed deals only" — the deducted framing, on the one screen
+// where a rancher legally signs. These tests are the fence.
+
+// The lookbehinds matter: "never taken out of your price" and "you never owe
+// us anything" are the CORRECT model stated as a negation. Only the
+// affirmative deducted framing is banned.
+const BANNED = [
+  /we deduct/i,
+  /(?<!never )deducted from/i,
+  /keep 90/i,
+  /minus commission/i,
+  /commission on your sales/i,
+  /(?<!never )you owe/i,
+  /(?<!never )owe us/i,
+  /we take \d/i,
+  /(?<!never )taken out of/i,
+];
+
+function assertModelSafe(line: string) {
+  for (const re of BANNED) {
+    assert.doesNotMatch(line, re, `banned deducted-framing phrase ${re} in: ${line}`);
+  }
+  assert.match(line, /100%/, `must state the rancher keeps 100%: ${line}`);
+}
+
+test('commissionCopyFor: every tier rate states buyer-pays-on-top, never a deduction', () => {
+  for (const [pct, label] of [
+    [10, 'free plan'],
+    [7, 'Pasture tier'],
+    [3, 'Ranch tier'],
+  ] as [number, string][]) {
+    const c = commissionCopyFor(pct, label);
+    assertModelSafe(c.line);
+    assert.match(c.fee, new RegExp(`${pct}%`), 'the rate must be stated');
+    assert.match(c.fee, /buyer pays/i);
+    assert.match(c.fee, /on top/i);
+    assert.match(c.fee, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
+});
+
+test('commissionCopyFor: Operator tier (0%) says no buyer fee at all, not "0% commission"', () => {
+  const c = commissionCopyFor(0, 'Operator tier');
+  assertModelSafe(c.line);
+  assert.match(c.fee, /no service fee/i);
+  assert.match(c.fee, /Operator tier/);
+  // A 0% rancher must not be told a percentage is added to their buyer.
+  assert.doesNotMatch(c.fee, /0% on top/);
+});
+
+test('commissionCopyFor: no tier locked yet states the RANGE, still on-top', () => {
+  const c = commissionCopyFor(null);
+  assertModelSafe(c.line);
+  assert.match(c.fee, /10%/);
+  assert.match(c.fee, /7%/);
+  assert.match(c.fee, /3%/);
+  assert.match(c.fee, /0%/);
+  assert.match(c.line, /never taken out of your price/i);
+  // undefined / NaN behave the same — never crash, never invent a rate.
+  assert.equal(commissionCopyFor(undefined).line, c.line);
+  assert.equal(commissionCopyFor(NaN).line, c.line);
+});
+
+test('commissionCopyFor: line is keep + fee + detail, and keep is the shared constant', () => {
+  const c = commissionCopyFor(10, 'free plan');
+  assert.equal(c.keep, MONEY_MODEL.keep);
+  assert.equal(c.line, `${c.keep} ${c.fee} ${c.detail}`);
+});
+
+test('TIER_FEE_PERCENT mirrors the tier ladder (free 10 / Pasture 7 / Ranch 3 / Operator 0)', () => {
+  assert.equal(TIER_FEE_PERCENT.legacy_connect, 10);
+  assert.equal(TIER_FEE_PERCENT.pasture, 7);
+  assert.equal(TIER_FEE_PERCENT.ranch, 3);
+  assert.equal(TIER_FEE_PERCENT.operator, 0);
+});
+
+test('MONEY_MODEL.emailLine is safe for plain-text rancher emails', () => {
+  assertModelSafe(MONEY_MODEL.emailLine);
+  assert.match(MONEY_MODEL.emailLine, /paid by the buyer/i);
+});
+
+// ── contact requirement must be SATISFIABLE from inside the wizard ───────────
+
+test('contact requirement completes on exactly what the wizard can write', () => {
+  // Ranch Name is set by every signup door at creation; Operator Name, Email
+  // and Phone are all now in the wizard's PATCH allowlist AND required at
+  // step 1. Before that fix Operator Name was unwritable and Phone optional,
+  // so this checkbox could never be ticked and the rancher had no way to fix
+  // it — a permanently unchecked box on the very first screen.
+  const st = evaluateOnboarding({
+    'Ranch Name': 'Bar T Beef',
+    'Operator Name': 'Tom Bar',
+    Email: 'tom@bart.example',
+    Phone: '(406) 555-1234',
+  } as any);
+  assert.equal(st.requirements.find((r) => r.key === 'contact')?.done, true);
+});
+
+test('contact requirement stays incomplete when the phone backstop is missing', () => {
+  const st = evaluateOnboarding({
+    'Ranch Name': 'Bar T Beef',
+    'Operator Name': 'Tom Bar',
+    Email: 'tom@bart.example',
+  } as any);
+  assert.equal(st.requirements.find((r) => r.key === 'contact')?.done, false);
 });

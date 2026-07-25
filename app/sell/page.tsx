@@ -3,8 +3,9 @@
 // Supply is the constraint: we're recruiting 100 ranchers and there was no
 // public landing page or nav link pointing them at the signup. This page is
 // the top-of-funnel surface for ranchers — it leads with the FREE-to-start
-// model ($0 up front, pay only when you sell on Legacy Connect, or pick a
-// plan with commission as low as 0% — tier-based, lib/tiers.ts) and drives to the
+// model ($0 up front; the rancher keeps 100% of their price and BHC's fee is
+// ADDED to the buyer — docs/BUSINESS-MODEL.md ⭐ GROUND TRUTH — or pick a plan
+// that drops that buyer-side fee as low as 0%, lib/tiers.ts) and drives to the
 // rancher partner application at /apply (rancher-initiated, intent-rich,
 // mints a setup-wizard token). Secondary path is /map/add-a-rancher for
 // ranchers who'd rather just get on the map first.
@@ -22,11 +23,11 @@ import Button from '../components/Button';
 export const metadata: Metadata = {
   title: 'Sell your beef on BuyHalfCow — free to join',
   description:
-    'Ranchers: sell quarter, half, and whole cows direct to buyers in your state. Free to start, $0 up front — pay only when you sell, or pick a plan with commission as low as 0%. You set your prices, get paid direct.',
+    'Ranchers: sell quarter, half, and whole cows direct to buyers in your state. Free to start, $0 up front — you keep 100% of your price and the buyer pays our 10% on top, or pick a plan that drops it as low as 0%. You set your prices, get paid direct.',
   openGraph: {
     title: 'Sell your beef on BuyHalfCow — free to join',
     description:
-      'Sell quarter, half, and whole cows direct to buyers in your state. Free to start, $0 up front — pay only when you sell, or pick a plan with commission as low as 0%.',
+      'Sell quarter, half, and whole cows direct to buyers in your state. Free to start, $0 up front — you keep 100% of your price, the buyer pays our fee on top.',
     type: 'website',
     url: 'https://www.buyhalfcow.com/sell',
   },
@@ -44,7 +45,7 @@ const STEPS = [
   {
     n: '1',
     t: 'Sign up free',
-    d: 'A few fields about your ranch and your state. Takes a couple minutes. No fee to join.',
+    d: 'A few fields about your ranch and your state. About 90 seconds. No fee to join.',
   },
   {
     n: '2',
@@ -66,7 +67,12 @@ const STEPS = [
 const TRUST = [
   {
     t: 'Free to start',
-    d: 'No sign-up fee, no catch. On the free plan you only owe us when a deal closes — or pick a monthly plan for a lower commission rate, as low as 0%. Your call.',
+    // MONEY MODEL (docs/BUSINESS-MODEL.md ⭐ GROUND TRUTH, LOCKED): the
+    // rancher never owes BHC anything. Our fee is ADDED to the buyer as a
+    // marketplace service fee and split off at deposit via Stripe Connect —
+    // "you only owe us when a deal closes" described a bill that does not
+    // exist and made the offer sound like a deduction from their check.
+    d: 'No sign-up fee, no catch, and you never owe us a bill. You keep 100% of the price you set — our 10% is added on top and paid by the buyer. Pick a monthly plan and that buyer-side fee drops as low as 0%.',
   },
   {
     t: 'You set the prices',
@@ -105,11 +111,15 @@ export default function SellPage() {
               get paid direct.
             </p>
 
-            {/* The hook: free to start, stated plain — tier-accurate. */}
+            {/* The hook: free to start, stated plain — tier-accurate, and in
+                the LOCKED money model. "Pay only when you sell" still framed
+                the fee as something the rancher pays; they don't. It's added
+                to the buyer at deposit. */}
             <p className="text-lg md:text-xl max-w-2xl mx-auto leading-relaxed text-charcoal">
-              <strong>Free to start. $0 up front.</strong> Pay only when you
-              sell — or pick a plan with commission{' '}
-              <strong>as low as 0%</strong>. Either way, nothing before you do.
+              <strong>Free to start. $0 up front.</strong> You keep 100% of the
+              price you set — our 10% is added on top and paid by the buyer, or
+              pick a plan that drops that buyer-side fee{' '}
+              <strong>as low as 0%</strong>.
               {/* net-your-number (2026-07-08): absorption is live in the
                   checkout math — this line is literally true for every sale
                   through our checkout. */}
@@ -122,7 +132,7 @@ export default function SellPage() {
                 phone people; the call button converts the form-averse half. */}
             <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">
               <Button href={SIGNUP_HREF} variant="accent" size="lg">
-                Start free — 5 minutes
+                Start free — 90-second application
               </Button>
               <Button href="/book?purpose=rancher" variant="secondary" size="lg">
                 Book a call with Ben
@@ -229,8 +239,9 @@ export default function SellPage() {
               ready to move some beef?
             </h2>
             <p className="text-xl max-w-2xl mx-auto">
-              Sign up free in a couple minutes. We&rsquo;ll start sending you
-              buyers in your state. You only pay when you sell.
+              The application takes about 90 seconds. We&rsquo;ll start
+              sending you buyers in your state, and you keep 100% of every
+              price you set.
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center pt-4">
               <a

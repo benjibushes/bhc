@@ -58,21 +58,36 @@ export function prevStep(step: number): number {
 }
 
 /**
- * Where a localStorage-saved step resumes after this rebuild.
+ * Where a localStorage-saved step resumes.
  *
- *   • On-road steps resume in place.
+ *   • On-road steps resume IN PLACE — including 9 (see below).
  *   • 4 (call) still exists — resume there.
  *   • 7 (removed plan step) → 3: they were choosing how to sell; pricing is
  *     the road-position that replaces it, and the free plan auto-selects on
  *     the way out of 3.
  *   • Anything else (corrupt/foreign value) → start of the road.
+ *
+ * STEP 9 — the fix that matters (2026-07-24).
+ * This function's job is migrating PRE-#464 localStorage values, and its 9→8
+ * case has now outlived the flow it was written for. The OLD order ran
+ * …3 → 7 → 9 → 8 → 5, so back then a saved 9 meant "reached Connect, hasn't
+ * done fulfillment" and bouncing them to 8 was right. Under the CURRENT road
+ * (…3 → 8 → 9 → 5) a saved 9 means they already FINISHED fulfillment — so the
+ * blanket remap sent every returning rancher BACKWARD from Stripe Connect, the
+ * single likeliest abandonment point in the whole flow. Coming back to find
+ * yourself demoted a step is how a warm rancher quits.
+ *
+ * So 9 resumes at 9. The legacy protection survives as a NARROW, positive
+ * signal: pass `fulfillmentDone: false` and we know this is an old-flow
+ * rancher who genuinely never did step 8, and only then do we route them
+ * through 8 first (idempotent + pre-filled; its continue walks forward to
+ * Connect, or past it when Connect is already active). Step 8 hard-requires at
+ * least one fulfillment type to continue, so a rancher who walked the current
+ * road can NEVER be at 9 with fulfillment unset — the hint can't misfire on
+ * them. Absent the hint, resume in place.
  */
-export function remapSavedStep(saved: number): number {
-  // Old flow ran …3 → 7 → 9 → 8 → 5, so a saved 9 means the rancher reached
-  // Connect BEFORE fulfillment. New flow puts 9 after 8; resuming at 9 would
-  // skip fulfillment. Send them to 8 (idempotent, pre-filled) — its continue
-  // walks forward to Connect, or past it when Connect is already active.
-  if (saved === 9) return 8;
+export function remapSavedStep(saved: number, opts?: { fulfillmentDone?: boolean }): number {
+  if (saved === 9) return opts?.fulfillmentDone === false ? 8 : 9;
   if (STEP_FLOW.includes(saved as FlowStep)) return saved;
   if (saved === 4) return 4;
   if (saved === 7) return 3;

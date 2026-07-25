@@ -69,7 +69,7 @@ export async function POST(
     const html = `<!DOCTYPE html><html><body style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;background:#F4F1EC;color:#0E0E0E;">
 <h1 style="font-family:Georgia,serif;margin:0 0 20px 0;">Hi ${firstName} — let's get ${ranchName} live</h1>
 <p>Here's your setup link. It's a short wizard — confirms your info, signs the partner agreement, and gets your page online.</p>
-<p>Most folks finish in under 10 minutes.</p>
+<p>Most folks finish in about 15 minutes.</p>
 <div style="text-align:center;margin:32px 0;">
   <a href="${setupUrl}" style="display:inline-block;padding:16px 40px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:bold;font-size:14px;letter-spacing:1px;text-transform:uppercase;">Start Setup</a>
   <p style="font-size:12px;color:#A7A29A;margin-top:10px;">This link is yours — valid for 60 days.</p>
@@ -78,7 +78,7 @@ export async function POST(
 <ul style="color:#6B4F3F;line-height:1.8;">
   <li>Confirm contact + service area</li>
   <li>Add your tagline, about text, photos</li>
-  <li>Sign the partner agreement (10% commission, 24mo term, no upfront fees)</li>
+  <li>Sign the partner agreement (you keep 100% of your price; our 10% is added on top and paid by the buyer — 24mo term, no upfront fees)</li>
   <li>Set pricing for quarter / half / whole</li>
   <li>Page goes live after verification (usually same-day)</li>
 </ul>

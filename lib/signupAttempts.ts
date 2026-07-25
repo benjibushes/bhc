@@ -8,7 +8,12 @@ import { createRecord } from './airtable';
 // registry in lib/airtable TABLES.
 const SIGNUP_ATTEMPTS_TABLE = 'tblDDpQaVPwIIuSXz';
 
-export type SignupDoor = 'apply' | 'self-submit';
+// 'partner' joined 2026-07-24 — /partner was the one rancher door with no
+// beacon at all, so a failure there wrote nothing anywhere. NOTE: Door is an
+// Airtable singleSelect; if 'partner' isn't yet an option on the field, the
+// createRecord fallback strips just that cell (and alerts) — the attempt row,
+// email, ranch, and reason still land, so the trace is never lost.
+export type SignupDoor = 'apply' | 'self-submit' | 'partner';
 export type SignupOutcome =
   | 'created'
   | 'rejected-validation'

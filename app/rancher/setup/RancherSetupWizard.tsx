@@ -10,6 +10,8 @@ import StripeConnectStep from './steps/StripeConnectStep';
 import OnboardingRoadmap from '../OnboardingRoadmap';
 import ShopifyConnectCard from '../ShopifyConnectCard';
 import { remapSavedStep, shouldAutoSelectFreeTier } from '@/lib/onboardingFlow';
+import { commissionCopyFor, TIER_FEE_PERCENT } from '@/lib/onboardingPaths';
+import { formatPhoneInput, isValidUsPhone } from '@/lib/phoneFormat';
 import {
   deriveLadder,
   deriveDeposit,
@@ -341,6 +343,10 @@ export default function RancherSetupWizard() {
             }
           } catch {}
           setForm({
+            // Operator Name arrives BOTH ways: camelCase (always) and raw
+            // (since it joined ALLOWED_FIELDS). Prefer the raw name, fall back
+            // to camelCase for a response minted before that change.
+            'Operator Name': data.rancher['Operator Name'] || data.rancher.operatorName || '',
             Email: data.rancher.Email || '',
             Phone: data.rancher.Phone || '',
             City: data.rancher.City || '',
@@ -591,7 +597,13 @@ export default function RancherSetupWizard() {
       // a rancher parked at the removed plan step (7) resumes at pricing (3),
       // where the free plan now auto-selects on continue. lib/onboardingFlow
       // owns the mapping.
-      const target = remapSavedStep(n);
+      //
+      // The fulfillment hint is ONLY consulted for a saved step 9 (Connect —
+      // the likeliest abandonment point). A rancher who walked the current road
+      // has fulfillment on file and resumes AT Connect; an old-flow rancher
+      // (Connect came before fulfillment there) has none, and is walked through
+      // step 8 first so buyers never see an empty Fulfillment section.
+      const target = remapSavedStep(n, { fulfillmentDone: fulfillmentDone(rancher) });
       if (target > 0) {
         setStep(target as 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9);
       }
@@ -724,13 +736,13 @@ export default function RancherSetupWizard() {
 
   // Phone mask — formats raw input as (555) 555-5555 progressively. Plays
   // nice with backspace and partial input. Strips non-digits, truncates at 10.
-  const formatPhone = (raw: string) => {
-    const digits = (raw || '').replace(/\D/g, '').slice(0, 10);
-    if (digits.length === 0) return '';
-    if (digits.length < 4) return `(${digits}`;
-    if (digits.length < 7) return `(${digits.slice(0, 3)}) ${digits.slice(3)}`;
-    return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
-  };
+  // Phone formatting lives in lib/phoneFormat (ONE copy across /apply, the map
+  // self-submit, and this wizard). The local copy that used to live here sliced
+  // the digit string to 10 BEFORE checking for a country code, so a rancher who
+  // typed `1 (406) 555-1234` got `(140) 655-5123` saved to Airtable — ten
+  // digits, so every guard passed and the email-bounce backstop silently rang
+  // a stranger.
+  const formatPhone = formatPhoneInput;
 
   // Tagline starter templates. Click → fills the field, rancher edits.
   // Mix of voices so something fits any operator.
@@ -1350,8 +1362,14 @@ export default function RancherSetupWizard() {
           <p className="text-xs uppercase tracking-[0.2em] text-saddle">
             {rancher.ranchName} · onboarding
           </p>
+          {/* HONEST TIME (2026-07-24): this said 10 minutes while /apply said
+              5 and /sell said 5 — none of them survive contact with the Stripe
+              Connect step (identity + bank details), which alone eats most of
+              a ten-minute budget. Realistic end-to-end is ~20 min; 15 is the
+              honest promise for a rancher with their details to hand. Keep in
+              step with /apply's success card and /sell's CTA. */}
           <h1 className="font-serif text-3xl md:text-5xl text-charcoal leading-tight">
-            Set up your page in about 10 minutes
+            Set up your page in about 15 minutes
           </h1>
           <p className="text-saddle leading-relaxed">
             Fill in what you&rsquo;ve got — skip the rest, you can come back any
@@ -1530,14 +1548,33 @@ export default function RancherSetupWizard() {
               <h2 className="font-serif text-2xl text-charcoal">Confirm your contact</h2>
             </header>
             <div className="space-y-4">
+              {/* Operator Name + required Phone (2026-07-24). The step-0
+                  roadmap's "Ranch + contact details" item needs BOTH — it was
+                  previously unsatisfiable from inside the wizard: Operator
+                  Name wasn't writable and Phone wasn't required here, so a
+                  rancher who skipped phone stared at a checkbox that could
+                  never tick. Phone is also the email-bounce rescue channel
+                  (Vale Creek), so requiring it here is the point, not a tax. */}
+              <Field
+                label="Your name"
+                required
+                value={form['Operator Name']}
+                onChange={(v) => setField('Operator Name', v)}
+                placeholder="Jane Doe"
+              />
               <Field label="Email" required value={form.Email} onChange={(v) => setField('Email', v)} type="email" />
               <Field
                 label="Phone"
+                required
                 value={form.Phone}
                 onChange={(v) => setField('Phone', formatPhone(v))}
                 type="tel"
                 placeholder="(555) 555-5555"
               />
+              <p className="text-xs text-saddle -mt-3">
+                We only call or text about your own buyers — and it&rsquo;s how
+                we reach you if an email ever bounces.
+              </p>
               <div className="grid grid-cols-1 sm:grid-cols-6 gap-4">
                 <div className="sm:col-span-3">
                   <Field label="City" required value={form.City} onChange={(v) => setField('City', v)} />
@@ -1583,7 +1620,13 @@ export default function RancherSetupWizard() {
                   placeholder="yourname or yourname/buyhalfcow-intro"
                 />
                 <div className="bg-bone border border-dust p-4 mt-3 text-sm leading-relaxed text-charcoal">
-                  <p className="font-medium mb-2">3-step setup (about 10 minutes total):</p>
+                  {/* This is an OPTIONAL side task, not part of the 15-minute
+                      wizard promise — it used to claim "10 minutes total",
+                      the same number the whole wizard claimed. Scoped and
+                      labelled optional so the two numbers can't collide. */}
+                  <p className="font-medium mb-2">
+                    Optional — skip it and come back any time. 3-step setup, about 5 minutes:
+                  </p>
                   <ol className="list-decimal pl-5 space-y-1.5 text-saddle">
                     <li>
                       <a
@@ -1617,8 +1660,14 @@ export default function RancherSetupWizard() {
             <StepFooter
               saving={saving}
               onContinue={async () => {
-                if (!form.Email || !form.City || !form.State || !form.Zip) {
-                  setError('Email, City, State, and ZIP are required');
+                if (
+                  !String(form['Operator Name'] || '').trim() ||
+                  !form.Email ||
+                  !form.City ||
+                  !form.State ||
+                  !form.Zip
+                ) {
+                  setError('Your name, Email, City, State, and ZIP are required');
                   return;
                 }
                 // Email FORMAT gate. Email is the rancher's lifeblood: the
@@ -1635,8 +1684,18 @@ export default function RancherSetupWizard() {
                   setError('ZIP must be 5 digits');
                   return;
                 }
+                // PHONE REQUIRED (2026-07-24) — the same backstop /apply and
+                // the map self-submit already enforce. Email is one typo away
+                // from silence (Vale Creek: hard bounce, permanently
+                // unreachable, nobody alerted); a rancher must leave a second
+                // way in. isValidUsPhone tolerates a leading country code.
+                if (!isValidUsPhone(form.Phone)) {
+                  setError('A phone number is required — it is how we reach you if email ever fails.');
+                  return;
+                }
                 setError('');
                 const ok = await saveStep({
+                  'Operator Name': String(form['Operator Name']).trim(),
                   Email: String(form.Email).trim(),
                   Phone: form.Phone,
                   City: form.City,
@@ -1651,7 +1710,25 @@ export default function RancherSetupWizard() {
                   'Beef Types': form['Beef Types'],
                   'Cal.com Slug': form['Cal.com Slug'] || '',
                 });
-                if (ok) setStep(2);
+                if (ok) {
+                  // Mirror the save into the in-memory record. The step-0
+                  // roadmap + the sign screen read `rancher`, not `form` — so
+                  // without this a rancher who just filled in their name and
+                  // phone walks back to step 0 and still sees the contact item
+                  // unchecked (the exact "can never complete" symptom).
+                  setRancher((prev) =>
+                    prev
+                      ? ({
+                          ...prev,
+                          operatorName: String(form['Operator Name']).trim(),
+                          'Operator Name': String(form['Operator Name']).trim(),
+                          Email: String(form.Email).trim(),
+                          Phone: form.Phone,
+                        } as typeof prev)
+                      : prev,
+                  );
+                  setStep(2);
+                }
               }}
             />
           </section>
@@ -3066,61 +3143,39 @@ function SignStep({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Tier-aware commission copy. Source of truth lives in lib/tiers.ts;
-  // mirrored here so the gist bullet matches the tier the rancher just
-  // picked at the plan step. Hard-coding "10%" contradicted tier_v2 rates.
+  // Tier-aware commission copy, composed by lib/onboardingPaths.commissionCopyFor
+  // — the SINGLE source for this sentence (same module step 0's MONEY_MODEL
+  // block reads).
+  //
+  // MONEY-MODEL FIX (2026-07-24): every branch here used to say "N% commission
+  // on closed deals only" — the DEDUCTED framing — on the one screen where a
+  // rancher legally signs, two screens after step 0 correctly told them the
+  // buyer pays the fee on top. Per docs/BUSINESS-MODEL.md ⭐ GROUND TRUTH the
+  // rancher keeps 100% of their price and BHC's percentage is ADDED to the
+  // buyer (Connect application_fee at deposit). Nothing is deducted and the
+  // rancher never owes us anything — least of all on the contract.
+  //
+  // Rates stay per-tier and stay accurate (free 10% · Pasture 7% · Ranch 3% ·
+  // Operator 0%), sourced from TIER_FEE_PERCENT which mirrors lib/tiers.ts.
   const pricingModel = String((rancher as any)['Pricing Model'] || 'legacy');
   const tierSlug = tierSlugFromRancher(rancher);
-  let commissionCopy: ReactNode;
-  if (pricingModel === 'tier_v2' && tierSlug === 'legacy_connect') {
-    // FREE tier under tier_v2 — 10% per closed sale (lib/tiers.ts
-    // legacy_connect.commissionRate). Without this branch a free-plan rancher
-    // fell into the "haven't locked a tier yet" range copy, which was wrong —
-    // they HAVE a plan, and its rate is 10%.
-    commissionCopy = (
-      <>
-        <strong>10% commission</strong> on closed deals only (free plan).
-        Nothing on tire-kickers, nothing on no-shows.
-      </>
-    );
-  } else if (pricingModel === 'tier_v2' && tierSlug === 'pasture') {
-    commissionCopy = (
-      <>
-        <strong>7% commission</strong> on closed deals only (Pasture tier).
-        Nothing on tire-kickers, nothing on no-shows.
-      </>
-    );
-  } else if (pricingModel === 'tier_v2' && tierSlug === 'ranch') {
-    commissionCopy = (
-      <>
-        <strong>3% commission</strong> on closed deals only (Ranch tier).
-        Nothing on tire-kickers, nothing on no-shows.
-      </>
-    );
-  } else if (pricingModel === 'tier_v2' && tierSlug === 'operator') {
-    commissionCopy = (
-      <>
-        <strong>0% commission</strong> on closed deals (Operator tier · flat
-        subscription only).
-      </>
-    );
-  } else if (pricingModel === 'tier_v2') {
-    // tier_v2 rancher who hasn't locked a tier yet — show the range.
-    commissionCopy = (
-      <>
-        <strong>Commission per your chosen tier</strong> (free plan 10% ·
-        Pasture 7% · Ranch 3% · Operator 0%). Locked when you pick your plan.
-      </>
-    );
-  } else {
-    // Legacy ranchers — original 10% commission contract.
-    commissionCopy = (
-      <>
-        <strong>10% commission</strong> on closed deals only. Nothing on
-        tire-kickers, nothing on no-shows.
-      </>
-    );
-  }
+  const feeCopy = (() => {
+    if (pricingModel !== 'tier_v2') {
+      // Legacy ranchers — 10%, same locked model (buyer-paid, on top).
+      return commissionCopyFor(TIER_FEE_PERCENT.legacy_connect);
+    }
+    if (tierSlug === 'legacy_connect') return commissionCopyFor(TIER_FEE_PERCENT.legacy_connect, 'free plan');
+    if (tierSlug === 'pasture') return commissionCopyFor(TIER_FEE_PERCENT.pasture, 'Pasture tier');
+    if (tierSlug === 'ranch') return commissionCopyFor(TIER_FEE_PERCENT.ranch, 'Ranch tier');
+    if (tierSlug === 'operator') return commissionCopyFor(TIER_FEE_PERCENT.operator, 'Operator tier');
+    // tier_v2 rancher who hasn't locked a tier yet — state the range.
+    return commissionCopyFor(null);
+  })();
+  const commissionCopy: ReactNode = (
+    <>
+      <strong>{feeCopy.keep}</strong> {feeCopy.fee} {feeCopy.detail}
+    </>
+  );
 
   return (
     <section className="space-y-6 bg-bone border border-dust p-7 md:p-8">
@@ -4097,12 +4152,20 @@ function FulfillmentStep({
 
       {/* Per-rancher refund policy step removed 2026-07-02 (founder directive:
           the rancher's own refund policy is not something we promote). The
-          BuyHalfCow Promise is the deposit-terms surface buyers see. */}
+          BuyHalfCow Promise is the deposit-terms surface buyers see.
+
+          The "why we ask" note below survived that deletion for three weeks
+          still describing the DELETED refund-policy field — a rancher read
+          "buyers see the refund policy verbatim" next to pickup/delivery/
+          shipping inputs and reasonably wondered which field it meant. It now
+          describes what is actually on this screen. */}
 
       <div className="bg-bone-warm border border-dust p-4 text-sm text-saddle">
-        <strong className="text-charcoal">Why we ask:</strong> buyers see the
-        refund policy verbatim on your deposit page so they can decide before
-        paying. Less back-and-forth for you.
+        <strong className="text-charcoal">Why we ask:</strong> buyers see these
+        fulfillment options — pickup, delivery, shipping, and your next
+        processing date — right on your listing, so they know how and when they
+        get their beef before they reach out. Fewer &ldquo;how does this
+        work?&rdquo; messages for you.
       </div>
 
       {localError && (

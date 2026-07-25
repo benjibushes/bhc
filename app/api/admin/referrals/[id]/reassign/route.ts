@@ -180,7 +180,7 @@ export async function POST(
   ${buyerNotes ? `<p><strong>Notes:</strong> ${esc(buyerNotes)}</p>` : ''}
 </div>
 <p>Please reach out to them directly to discuss availability and pricing.</p>
-<p style="font-size:12px;color:#6B4F3F;margin-top:30px;">— Benjamin, BuyHalfCow · 10% commission applies to sales made through referrals.</p>
+<p style="font-size:12px;color:#6B4F3F;margin-top:30px;">— Benjamin, BuyHalfCow · You keep 100% of your price; our 10% is added on top and paid by the buyer.</p>
 </body></html>`,
         });
       } catch (e) {

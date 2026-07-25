@@ -867,7 +867,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
           bodyHtml = `<p>Hi ${firstName},</p>
             <p>Just a quick reminder — your BuyHalfCow Commission Agreement for <strong>${ranchName}</strong> is ready for your signature.</p>
             <p>Once signed, you can immediately start setting up your ranch page and we can begin sending buyers your way.</p>
-            <p><strong>Quick recap:</strong> 10% commission on referred sales only. No upfront fees. Buyers pay you directly.</p>
+            <p><strong>Quick recap:</strong> You keep 100% of the price you set — our 10% is added on top and paid by the buyer, only on a closed sale. No upfront fees.</p>
             <p>If you have any questions, just reply to this email.</p>`;
         } else if (daysSinceDocsSent >= 7 && daysSinceDocsSent < 14 && stage === 'reminder_day3') {
           shouldSend = true;
@@ -875,7 +875,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
           subject = `Need help with your agreement, ${firstName}?`;
           bodyHtml = `<p>Hi ${firstName},</p>
             <p>I noticed you haven't signed the BuyHalfCow agreement yet for <strong>${ranchName}</strong>. No pressure — just want to make sure everything makes sense.</p>
-            <p>If you have questions about the commission structure, the process, or anything else, just reply to this email and I'll get back to you personally.</p>
+            <p>If you have questions about how the fee works, the process, or anything else, just reply to this email and I'll get back to you personally.</p>
             <p>We have buyers actively looking for ranch-direct beef${rancherState ? ` in ${rancherState}` : ''}, and I'd love to get you connected with them.</p>`;
         } else if (daysSinceDocsSent >= 14 && stage === 'reminder_day7') {
           shouldSend = true;

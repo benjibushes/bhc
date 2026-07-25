@@ -151,7 +151,76 @@ export const MONEY_MODEL = {
     'Your store: we sync your catalog and list it at your price plus our margin. The buyer pays us, your store receives a normal paid order, and your existing fulfillment ships it exactly like any other sale.',
   connect:
     'Stripe Connect is how the money reaches your bank on either path. The account is yours — we never hold your funds.',
+  /** The one sentence that must be true on EVERY rancher surface. */
+  keep: 'You keep 100% of your price.',
+  /** Plain-text long form for emails and any surface without markup. */
+  emailLine:
+    'You keep 100% of your price — our 10% is added on top and paid by the buyer at deposit, never taken out of what you set. You never owe us anything.',
 } as const;
+
+/** Fee percentage by tier slug. Mirrors lib/tiers.ts commissionRate. */
+export const TIER_FEE_PERCENT: Record<string, number> = {
+  legacy_connect: 10,
+  pasture: 7,
+  ranch: 3,
+  operator: 0,
+};
+
+export interface CommissionCopy {
+  /** Constant lead — the part that is true at every rate. */
+  keep: string;
+  /** What the BUYER pays, at this rancher's rate. */
+  fee: string;
+  /** When it's charged / what it isn't. May be ''. */
+  detail: string;
+  /** All three as one plain-text sentence (emails, alt text, tests). */
+  line: string;
+}
+
+/**
+ * Rancher-facing commission copy at a given rate — the ONLY place this
+ * sentence is composed.
+ *
+ * THE RULE (docs/BUSINESS-MODEL.md ⭐ GROUND TRUTH, LOCKED 2026-07-24): the
+ * rancher keeps 100% of the price they set, and BHC's percentage is ADDED to
+ * the buyer as a marketplace service fee (Connect `application_fee` at
+ * deposit). It is NOT deducted, NOT a 90/10 split, and the rancher never owes
+ * BHC anything.
+ *
+ * This existed because the wizard's SIGNATURE screen — the one place a rancher
+ * legally signs — said "10% commission on closed deals only", the deducted
+ * framing, while step 0 two screens earlier said the opposite. One source now.
+ *
+ * @param ratePercent whole percent (10, 7, 3, 0), or null when the rancher
+ *   hasn't locked a tier yet — then the copy states the range instead.
+ * @param planLabel optional plan name to name the rate, e.g. 'free plan'.
+ */
+export function commissionCopyFor(
+  ratePercent: number | null | undefined,
+  planLabel?: string,
+): CommissionCopy {
+  const plan = planLabel ? ` (${planLabel})` : '';
+  const keep = MONEY_MODEL.keep;
+
+  let fee: string;
+  let detail: string;
+
+  if (ratePercent === null || ratePercent === undefined || !Number.isFinite(ratePercent)) {
+    // No tier locked yet — state the range, still buyer-pays-on-top.
+    fee =
+      'The buyer pays our service fee on top of it, at the rate set by the plan you pick (free plan 10% · Pasture 7% · Ranch 3% · Operator 0%).';
+    detail = 'Whatever the rate, it is added to the buyer — never taken out of your price.';
+  } else if (ratePercent <= 0) {
+    fee = `The buyer pays no service fee at all${plan}.`;
+    detail = 'Your plan covers it — a flat subscription instead of a per-sale fee.';
+  } else {
+    fee = `The buyer pays our ${ratePercent}% on top of it${plan}.`;
+    detail =
+      'Charged with their deposit, only when a deal actually closes — nothing on tire-kickers, nothing on no-shows.';
+  }
+
+  return { keep, fee, detail, line: [keep, fee, detail].filter(Boolean).join(' ') };
+}
 
 /**
  * What this rancher still has to do to go from nothing to live.
@@ -168,6 +237,17 @@ export function evaluateOnboarding(rancher: Record<string, unknown>): Onboarding
 
   // 1. Contact — pure data entry, an admin can do all of it. Reads both the
   //    raw and camelCase shapes (the wizard payload camelCases the names).
+  //
+  //    SATISFIABILITY INVARIANT (2026-07-24): every field named here must be
+  //    reachable from the wizard, or this renders a checkbox on screen 1 that
+  //    a rancher can never tick and cannot fix. It shipped broken once —
+  //    Operator Name wasn't in the wizard's PATCH allowlist and Phone wasn't
+  //    required at step 1. Both are now writable AND collected at step 1
+  //    (app/api/rancher/setup ALLOWED_FIELDS + RancherSetupWizard step 1).
+  //    Ranch Name is the exception on purpose: it seeds the Slug so the wizard
+  //    must not edit it — but all three signup doors require it at creation,
+  //    so it is never blank on a real record. Do NOT add a field here without
+  //    checking the rancher has a way to fill it.
   requirements.push({
     key: 'contact',
     label: 'Ranch + contact details',

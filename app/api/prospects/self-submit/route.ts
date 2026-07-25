@@ -16,6 +16,7 @@ import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { geocodeRancher } from '@/lib/geocode';
 import { funnelRecord } from '@/lib/funnelMetrics';
 import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
+import { formatPhoneInput, isValidUsPhone } from '@/lib/phoneFormat';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
@@ -196,7 +197,10 @@ export async function POST(req: Request) {
   const ranchName = String(body.ranchName || '').trim();
   const operatorName = String(body.operatorName || '').trim();
   const rancherEmail = String(body.rancherEmail || '').trim().toLowerCase();
-  const rancherPhone = String(body.rancherPhone || '').trim();
+  // Normalized at the door (2026-07-24) so every surface — the record, the
+  // Telegram tel: link, the CAPI hash — carries the SAME canonical number.
+  // formatPhoneInput drops a leading US country code instead of truncating.
+  const rancherPhone = formatPhoneInput(body.rancherPhone as string);
   const city = String(body.city || '').trim();
   const state = String(body.state || '').trim().toUpperCase();
   const zip = String(body.zip || '').trim().slice(0, 5);
@@ -239,7 +243,10 @@ export async function POST(req: Request) {
     // phone: approved, setup link undeliverable, permanently unreachable, no
     // alert. Only enforced for 'self' — a fan flagging a ranch they admire
     // legitimately may not have the rancher's number.
-    if (rancherPhone.replace(/\D/g, '').length < 10) {
+    // isValidUsPhone (2026-07-24) — the old digit-count check accepted an
+    // 11-digit country-code entry that the client formatters had already
+    // corrupted into a different 10-digit number. Shared guard, all doors.
+    if (!isValidUsPhone(rancherPhone)) {
       return NextResponse.json(
         { error: 'A phone number is required — it is how we reach you if email fails.' },
         { status: 400 },

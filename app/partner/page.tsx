@@ -45,6 +45,14 @@ function PartnerPageContent() {
   // auto-approve rail as /api/apply) — powers the "finish setup now" CTA in
   // the rancher success state.
   const [wizardUrl, setWizardUrl] = useState('');
+  // True when the server matched an EXISTING rancher record instead of
+  // creating one (duplicate rescue). Changes the success copy from "you're
+  // approved" to "welcome back" — the wizard link is the same either way.
+  const [isReturning, setIsReturning] = useState(false);
+  // Set only for a duplicate that is already VERIFIED/live: we deliberately do
+  // NOT mint a setup link for someone else's live record, so the next step is
+  // the login (its magic link goes to the email already on file).
+  const [loginUrl, setLoginUrl] = useState('');
 
   const searchParams = useSearchParams();
   // useSearchParams() returns a fresh object on every render — depending on
@@ -157,9 +165,38 @@ function PartnerPageContent() {
 
     setIsSubmitting(true);
 
+    // Failed-submit beacon — parity with ApplyForm + AddRancherForm (Justin
+    // incident 2026-07-23). /partner was the ONLY rancher door with no beacon,
+    // so a failure here wrote nothing anywhere: no Ranchers row, no Signup
+    // Attempts row, no alert — the rancher just saw red text and left.
+    // sendBeacon fires even as the page tears down. Best-effort; never throws
+    // into the submit UX. IP is derived server-side.
+    const fireFailureBeacon = (status: number, reason: string) => {
+      try {
+        if (partnerType !== 'rancher') return; // rancher supply is what we rescue
+        if (typeof navigator === 'undefined' || !navigator.sendBeacon) return;
+        const payload = JSON.stringify({
+          email: rancherData.email.trim(),
+          ranchName: rancherData.ranchName.trim(),
+          state: rancherData.state,
+          phone: rancherData.phone,
+          ip: '',
+          door: 'partner',
+          status,
+          reason: String(reason || '').slice(0, 500),
+        });
+        navigator.sendBeacon(
+          '/api/signup/failure-beacon',
+          new Blob([payload], { type: 'application/json' }),
+        );
+      } catch {
+        /* telemetry must never break the submit */
+      }
+    };
+
     try {
       let payload = {};
-      
+
       if (partnerType === 'rancher') {
         if (!rancherData.commissionAgreed) {
           setError('You must agree to the commission terms.');
@@ -187,6 +224,8 @@ function PartnerPageContent() {
       const data = await response.json();
 
       if (!response.ok) {
+        const reason = data.error || `Submission failed (${response.status})`;
+        fireFailureBeacon(response.status, reason);
         setError(data.error || 'Submission failed. Please try again.');
         setIsSubmitting(false);
         return;
@@ -194,6 +233,13 @@ function PartnerPageContent() {
 
       if (typeof data?.wizardUrl === 'string' && data.wizardUrl) {
         setWizardUrl(data.wizardUrl);
+      }
+      // Duplicate rescue: the server matched an existing record rather than
+      // creating one. It still returns a way forward (wizard link, or the
+      // login for an already-verified ranch) — never the old dead-end 409.
+      if (data?.existing) setIsReturning(true);
+      if (typeof data?.loginUrl === 'string' && data.loginUrl) {
+        setLoginUrl(data.loginUrl);
       }
       setIsSubmitted(true);
       // Audit 6 P0 — paid-scale tracking gap: /partner had ZERO client
@@ -205,7 +251,8 @@ function PartnerPageContent() {
           ...(data?.partner?.id ? { event_id: metaEventId(data.partner.id) } : {}),
         });
       } catch {}
-    } catch (err) {
+    } catch (err: any) {
+      fireFailureBeacon(0, err?.message || 'network error');
       setError('Network error — please check your connection and try again.');
       setIsSubmitting(false);
     }
@@ -217,27 +264,50 @@ function PartnerPageContent() {
         <Container>
           <div className="max-w-2xl mx-auto text-center space-y-8 px-1">
             <h1 className="font-serif text-3xl md:text-5xl lowercase">
-              application received
+              {isReturning ? 'welcome back' : 'application received'}
             </h1>
             <Divider />
 
             {partnerType === 'rancher' && (
               <>
                 <div className="bg-charcoal text-bone p-6 md:p-8 space-y-5 md:space-y-6 text-left">
+                  {/* Three states, and NONE of them is a dead end (2026-07-24):
+                      new applicant → wizard; returning rancher whose setup was
+                      never finished → the SAME wizard, their existing record;
+                      already-verified ranch → the login (we never mint a setup
+                      link for a live record from a name+state match). */}
                   <h2 className="font-serif text-2xl md:text-3xl">
-                    {wizardUrl ? "You're approved — two paths to live" : 'Next step: book a 30-minute call'}
+                    {wizardUrl
+                      ? isReturning
+                        ? 'You’re already in — pick up where you left off'
+                        : "You're approved — two paths to live"
+                      : loginUrl
+                        ? 'Your ranch is already set up'
+                        : 'Next step: book a 30-minute call'}
                   </h2>
                   <p className="text-base md:text-lg leading-relaxed text-bone/90">
                     {wizardUrl
-                      ? 'Your setup link is also in your inbox. Finish the 5-minute wizard now — prices, Stripe Connect, done — or book a call first and we’ll walk through it together.'
-                      : 'Your application is in. Pick a time so we can talk through your operation and get you set up to take orders.'}
+                      ? isReturning
+                        ? 'We found your ranch already in our system, so nothing was duplicated. Your setup link below opens the record you started — finish it in about 15 minutes, or book a call and we’ll walk it together.'
+                        : 'Your setup link is also in your inbox. Finish the wizard now — about 15 minutes for prices, fulfillment, and Stripe — or book a call first and we’ll walk through it together.'
+                      : loginUrl
+                        ? 'This ranch is already live with us. Log in to your dashboard — the sign-in link goes to the email we have on file. If that isn’t you, email ben@buyhalfcow.com and we’ll sort it out.'
+                        : 'Your application is in. Pick a time so we can talk through your operation and get you set up to take orders.'}
                   </p>
                   {wizardUrl && (
                     <a
                       href={wizardUrl}
                       className="inline-block w-full sm:w-auto px-8 py-4 bg-bone text-charcoal hover:bg-bone-warm transition-colors duration-300 font-medium tracking-wider uppercase text-sm"
                     >
-                      Finish setup now →
+                      {isReturning ? 'Continue my setup →' : 'Finish setup now →'}
+                    </a>
+                  )}
+                  {!wizardUrl && loginUrl && (
+                    <a
+                      href={loginUrl}
+                      className="inline-block w-full sm:w-auto px-8 py-4 bg-bone text-charcoal hover:bg-bone-warm transition-colors duration-300 font-medium tracking-wider uppercase text-sm"
+                    >
+                      Log in to my dashboard →
                     </a>
                   )}
                   <a
@@ -245,12 +315,12 @@ function PartnerPageContent() {
                     target="_blank"
                     rel="noopener noreferrer"
                     className={
-                      wizardUrl
+                      wizardUrl || loginUrl
                         ? 'inline-block w-full sm:w-auto px-8 py-4 sm:ml-3 border-2 border-bone text-bone hover:bg-bone hover:text-charcoal transition-colors duration-300 font-medium tracking-wider uppercase text-sm'
                         : 'inline-block w-full sm:w-auto px-8 py-4 bg-bone text-charcoal hover:bg-bone-warm transition-colors duration-300 font-medium tracking-wider uppercase text-sm'
                     }
                   >
-                    {wizardUrl ? 'Book a call first →' : 'Schedule your call →'}
+                    {wizardUrl || loginUrl ? 'Book a call first →' : 'Schedule your call →'}
                   </a>
                   <p className="text-sm text-bone/70">
                     Can't find a time? Email{' '}
@@ -348,7 +418,7 @@ function PartnerPageContent() {
                     <p className="text-charcoal">
                       <strong>Short on time?</strong> The{' '}
                       <Link href="/apply" className="underline hover:text-saddle">
-                        2-minute fit check
+                        90-second fit check
                       </Link>{' '}
                       gets you approved with your setup link instantly. This
                       longer form works too — same result, more detail for us
@@ -365,9 +435,14 @@ function PartnerPageContent() {
                       contradicted /sell's "free to start" pitch. */}
                   <div className="bg-bone-warm border border-dust p-4 text-sm">
                     <p className="font-serif text-base text-charcoal mb-2">How it works</p>
+                    {/* Money model (docs/BUSINESS-MODEL.md ⭐ GROUND TRUTH):
+                        the rancher keeps 100% of their price and our fee is
+                        ADDED to the buyer. "10% only when a deal closes" read
+                        as a deduction from their check. */}
                     <ul className="text-saddle space-y-1">
-                      <li>· <strong>Free to start:</strong> $0/mo — 10% only when a deal closes</li>
-                      <li>· Optional paid plans: <strong>$150–$500/mo</strong> with commission as low as <strong>0%</strong> (you pick at setup)</li>
+                      <li>· <strong>You keep 100% of your price.</strong> Our 10% is added on top and paid by the buyer — never taken out of your number</li>
+                      <li>· <strong>Free to start:</strong> $0/mo, and the fee only applies when a deal actually closes</li>
+                      <li>· Optional paid plans: <strong>$150–$500/mo</strong> drop the buyer&rsquo;s fee as low as <strong>0%</strong> (you pick at setup)</li>
                       <li>· Cancel anytime. No setup fee. No listing fee.</li>
                     </ul>
                     <p className="text-xs text-dust mt-2">

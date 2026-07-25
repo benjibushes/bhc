@@ -24,7 +24,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 10;
 
 const MAX_BODY_BYTES = 4096;
-const VALID_DOORS: SignupDoor[] = ['apply', 'self-submit'];
+const VALID_DOORS: SignupDoor[] = ['apply', 'self-submit', 'partner'];
 
 // The one response shape — a bodyless 204 whether we logged, dropped, or
 // rate-limited. sendBeacon ignores the body anyway; a fixed status keeps this

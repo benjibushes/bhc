@@ -5,6 +5,7 @@ import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { JWT_SECRET } from '@/lib/secrets';
 import { geocodeRancher } from '@/lib/geocode';
 import { MIN_TIER_PRICE } from '@/lib/pricing';
+import { formatPhoneInput } from '@/lib/phoneFormat';
 
 // Same cookie the magic-link verify flow uses (lib/rancherAuth.ts line 17).
 // We mint this when GET succeeds so the wizard URL ALSO bootstraps the
@@ -38,6 +39,17 @@ export const maxDuration = 30;
 // Status, Agreement Signed, Trust Mode, Self-Submit Drip Stage, etc.) are
 // excluded so the wizard can't bypass the formal go-live gate.
 const ALLOWED_FIELDS = new Set([
+  // Operator Name (2026-07-24) — the step-0 roadmap's "Ranch + contact
+  // details" item requires Operator Name AND Phone (lib/onboardingPaths
+  // `contact`), but Operator Name was NOT writable here and Phone wasn't
+  // required at step 1: a rancher who arrived without one saw a checkbox on
+  // screen 1 that could never be ticked, with nowhere in the wizard to fix it.
+  // It's the rancher's own display name — the same value they typed at /apply
+  // and the one shown on their public page — not a state/gate field, so making
+  // it editable grants nothing they couldn't already control. Ranch Name is
+  // deliberately still NOT here: it seeds the Slug, and a rename mid-flight
+  // would desync a live page URL.
+  'Operator Name',
   'Email',
   'Phone',
   'City',
@@ -255,6 +267,29 @@ export async function PATCH(req: Request) {
       );
     }
     updates['Email'] = email;
+  }
+
+  // Operator Name — trim + cap, and refuse to BLANK it. Clearing the name
+  // would re-break the step-0 roadmap item this field was added to satisfy and
+  // strip the record's human identity out of every Telegram alert and email.
+  if ('Operator Name' in updates) {
+    const operatorName = String(updates['Operator Name'] ?? '').trim().slice(0, 120);
+    if (!operatorName) {
+      return NextResponse.json(
+        { error: 'Your name is required — it is what buyers (and we) call you.' },
+        { status: 400 },
+      );
+    }
+    updates['Operator Name'] = operatorName;
+  }
+
+  // Phone — normalize to the one canonical shape at the write boundary, same
+  // as every signup door. formatPhoneInput strips a leading US country code
+  // instead of truncating the number (the `1 (406) 555-1234` → `(140)
+  // 655-5123` corruption). Empty stays empty — clearing is allowed here; the
+  // wizard's own step-1 gate is what requires it going forward.
+  if ('Phone' in updates) {
+    updates['Phone'] = formatPhoneInput(String(updates['Phone'] ?? ''));
   }
 
   // Stage-3 Task 11B — server-side validation for fulfillment fields. These
