@@ -2,14 +2,21 @@
 
 // ApplyForm — client component.
 //
-// Submits to /api/apply. The server ALWAYS auto-approves and returns a
-// wizardUrl (setup-wizard token, 60d) — even for <5-head applicants, who are
-// only flagged for Ben's triage in the Telegram alert. The success state
-// offers two paths: book the 15-min discovery call (recommended) or skip
+// Submits to /api/apply. The server auto-approves every NEW applicant and
+// returns a wizardUrl (setup-wizard token, 60d) — even for <5-head applicants,
+// who are only flagged for Ben's triage in the Telegram alert. The success
+// state offers two paths: book the 15-min discovery call (recommended) or skip
 // straight to the wizard.
+//
+// ONE case returns no wizardUrl (security fix 2026-07-24): the submission
+// matched an EXISTING rancher on something public — ranch name + state, or a
+// phone — rather than on that record's own email. The setup link is mailed to
+// the address already on file instead of handed to the browser, and the server
+// sends `message` explaining it. Render the message; never invent a link.
 
 import { useState, useEffect } from 'react';
 import { formatPhoneInput, isValidUsPhone } from '@/lib/phoneFormat';
+import { SETUP_LINK_EMAILED_MESSAGE } from '@/lib/rancherSetupLinkDelivery';
 
 const STATES = [
   'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA',
@@ -31,7 +38,11 @@ type Channel =
 export default function ApplyForm() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState<{ wizardUrl?: string; emailSent?: boolean } | null>(null);
+  const [success, setSuccess] = useState<{
+    wizardUrl?: string;
+    emailSent?: boolean;
+    message?: string;
+  } | null>(null);
 
   // Live discovery-call Cal link, resolved at runtime. The hardcoded slug and
   // the 142d-old NEXT_PUBLIC_CALENDLY_LINK env are both stale (those events were
@@ -169,7 +180,11 @@ export default function ApplyForm() {
       const data = await res.json();
       // emailSent is an optional field the server may add (welcome-email
       // hardening): true/false when known, undefined on older responses.
-      setSuccess({ wizardUrl: data.wizardUrl, emailSent: data.emailSent });
+      setSuccess({
+        wizardUrl: data.wizardUrl,
+        emailSent: data.emailSent,
+        message: typeof data.message === 'string' ? data.message : undefined,
+      });
       // Don't auto-redirect — user picks between book-discovery vs skip-to-wizard
       // via UI in the success state (2-call architecture).
     } catch (err: any) {
@@ -219,14 +234,16 @@ export default function ApplyForm() {
     return (
       <div className="space-y-6 max-w-2xl">
         <div className="border border-dust bg-bone-warm p-8">
-          {/* The server always returns wizardUrl on a real submission — the
-              guards below only cover the hypothetical missing-field case
-              (e.g. the honeypot's decoy response, which no human ever sees). */}
+          {/* Two shapes. With a wizardUrl: a new (or email-verified returning)
+              rancher — straight into the build. Without one: the submission
+              matched an existing ranch on public info, so the link went to the
+              inbox on file and `message` says so. Never show "your page is
+              reserved" copy in that case — nothing was reserved for them. */}
           <p className="text-xs uppercase tracking-wider text-sage font-semibold mb-3">
-            you&apos;re in 🤝
+            {success.wizardUrl ? "you're in 🤝" : 'already registered'}
           </p>
           <h2 className="font-serif text-3xl text-charcoal mb-3">
-            welcome to the network.
+            {success.wizardUrl ? 'welcome to the network.' : 'check that inbox.'}
           </h2>
           <p className="text-saddle text-sm sm:text-base leading-relaxed mb-5">
             {/* HONEST TIME (2026-07-24): this promised 5 minutes for a flow
@@ -236,9 +253,9 @@ export default function ApplyForm() {
                 total the flow can't hit — a blown promise at the Connect wall
                 is where ranchers quit. Keep this in step with the wizard
                 header and /sell. */}
-            your ranch page is reserved. build it now — about 15 minutes
-            end to end, and you can save and come back anytime. buyers in
-            your state see it the moment you go live.
+            {success.wizardUrl
+              ? 'your ranch page is reserved. build it now — about 15 minutes end to end, and you can save and come back anytime. buyers in your state see it the moment you go live.'
+              : success.message || SETUP_LINK_EMAILED_MESSAGE}
           </p>
           {success.wizardUrl && (
             <a

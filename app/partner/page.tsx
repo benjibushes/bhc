@@ -49,10 +49,17 @@ function PartnerPageContent() {
   // creating one (duplicate rescue). Changes the success copy from "you're
   // approved" to "welcome back" — the wizard link is the same either way.
   const [isReturning, setIsReturning] = useState(false);
-  // Set only for a duplicate that is already VERIFIED/live: we deliberately do
-  // NOT mint a setup link for someone else's live record, so the next step is
-  // the login (its magic link goes to the email already on file).
+  // Set for any duplicate we will NOT hand a setup link to in-browser: an
+  // already-VERIFIED/live record, or (security fix 2026-07-24) a match made on
+  // PUBLIC information — ranch name + state, a phone, a teammate's address —
+  // rather than on the record's own email. Both next-step through the login,
+  // whose magic link goes to the email already on file, so only the real owner
+  // can act on it.
   const [loginUrl, setLoginUrl] = useState('');
+  // The server's own explanation of which of those two it was. Preferred over
+  // hardcoded copy — the client must not guess (and must never name the
+  // address on file).
+  const [serverMessage, setServerMessage] = useState('');
 
   const searchParams = useSearchParams();
   // useSearchParams() returns a fresh object on every render — depending on
@@ -241,6 +248,9 @@ function PartnerPageContent() {
       if (typeof data?.loginUrl === 'string' && data.loginUrl) {
         setLoginUrl(data.loginUrl);
       }
+      if (typeof data?.message === 'string' && data.message) {
+        setServerMessage(data.message);
+      }
       setIsSubmitted(true);
       // Audit 6 P0 — paid-scale tracking gap: /partner had ZERO client
       // analytics. partner_submit_success → Meta Pixel Lead. Server CAPI
@@ -271,18 +281,21 @@ function PartnerPageContent() {
             {partnerType === 'rancher' && (
               <>
                 <div className="bg-charcoal text-bone p-6 md:p-8 space-y-5 md:space-y-6 text-left">
-                  {/* Three states, and NONE of them is a dead end (2026-07-24):
-                      new applicant → wizard; returning rancher whose setup was
-                      never finished → the SAME wizard, their existing record;
-                      already-verified ranch → the login (we never mint a setup
-                      link for a live record from a name+state match). */}
+                  {/* Four states, and NONE of them is a dead end (2026-07-24):
+                      new applicant → wizard; returning rancher who proved the
+                      record's own email → the SAME wizard, their existing
+                      record; duplicate matched on PUBLIC info (ranch + state,
+                      phone, teammate) → link mailed to the address on file,
+                      login here; already-verified ranch → the login too. The
+                      last two share the login CTA — the server's `message`
+                      says which one it was, so don't hardcode a guess. */}
                   <h2 className="font-serif text-2xl md:text-3xl">
                     {wizardUrl
                       ? isReturning
                         ? 'You’re already in — pick up where you left off'
                         : "You're approved — two paths to live"
                       : loginUrl
-                        ? 'Your ranch is already set up'
+                        ? 'This ranch is already registered'
                         : 'Next step: book a 30-minute call'}
                   </h2>
                   <p className="text-base md:text-lg leading-relaxed text-bone/90">
@@ -291,7 +304,8 @@ function PartnerPageContent() {
                         ? 'We found your ranch already in our system, so nothing was duplicated. Your setup link below opens the record you started — finish it in about 15 minutes, or book a call and we’ll walk it together.'
                         : 'Your setup link is also in your inbox. Finish the wizard now — about 15 minutes for prices, fulfillment, and Stripe — or book a call first and we’ll walk through it together.'
                       : loginUrl
-                        ? 'This ranch is already live with us. Log in to your dashboard — the sign-in link goes to the email we have on file. If that isn’t you, email ben@buyhalfcow.com and we’ll sort it out.'
+                        ? serverMessage ||
+                          'This ranch is already set up with us. Log in to your dashboard — the sign-in link goes to the email we have on file. If that isn’t you, email ben@buyhalfcow.com and we’ll sort it out.'
                         : 'Your application is in. Pick a time so we can talk through your operation and get you set up to take orders.'}
                   </p>
                   {wizardUrl && (

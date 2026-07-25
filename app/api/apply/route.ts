@@ -13,6 +13,15 @@ import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { JWT_SECRET } from '@/lib/secrets';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 import { formatPhoneInput, isValidUsPhone, normalizePhoneDigits } from '@/lib/phoneFormat';
+import {
+  decideSetupLinkDelivery,
+  SETUP_LINK_EMAILED_MESSAGE,
+} from '@/lib/rancherSetupLinkDelivery';
+import {
+  emailSetupLinkToOwner,
+  describeSetupLinkSend,
+  type SetupLinkSendResult,
+} from '@/lib/rancherSetupLinkSend';
 
 // POST /api/apply — public endpoint.
 //
@@ -33,7 +42,12 @@ import { formatPhoneInput, isValidUsPhone, normalizePhoneDigits } from '@/lib/ph
 //     it an /apply rancher can never reach a live public page self-serve:
 //     sign-agreement auto-go-live requires a Slug, the wizard PATCH
 //     allowlist excludes it, and batch-approve skips slug-less ranchers.
-//   • Mints rancher-setup JWT (60d) → returns wizard URL.
+//   • Mints rancher-setup JWT (60d) → returns wizard URL. For a NEW record
+//     only. When the submission dedupes onto an EXISTING rancher, the wizard
+//     URL comes back in the response ONLY if the submitted email is that
+//     record's own primary Email — every other match tier (team email, phone,
+//     ranch+state) gets the link emailed to the address on file instead. Ranch
+//     names and states are public; see lib/rancherSetupLinkDelivery.
 //   • Fires Telegram alert tagged w/ qualification score so Ben can
 //     prioritize the high-volume + high-intent apps.
 //
@@ -46,6 +60,9 @@ import { formatPhoneInput, isValidUsPhone, normalizePhoneDigits } from '@/lib/ph
 //   • Honeypot field 'fax' — submit-with-non-empty drops silently.
 //   • Email dedupe — existing rancher w/ same email is updated, not duped.
 //   • Rate limit per IP (basic — Vercel KV would be tighter, fine for v1).
+//   • Owner-directed setup-link sends are additionally bounded PER RECORD
+//     (2/24h, lib/rancherSetupLinkDelivery) so rotating IPs can't use the
+//     dedupe branch to mailbomb one rancher's inbox.
 
 export const dynamic = 'force-dynamic';
 // Raised 30→60 (2026-07-23 hardening) — the pre-record-write window (slug mint +
@@ -315,8 +332,29 @@ export async function POST(req: Request) {
     );
 
     if (!created) {
-      // Existing rancher — hand back their existing wizard URL, don't dupe.
+      // Existing rancher — resume them, don't dupe.
       //
+      // WHO GETS THE LINK IN THEIR BROWSER (security fix 2026-07-24). This
+      // branch used to mint a 60-day rancher-setup JWT and return it for ANY
+      // dedupe tier — including `ranch+state`. Ranch names and states are
+      // PUBLIC (every ranch is on /map with a page at /ranchers/<slug>), so
+      // an anonymous stranger who typed a known ranch's name and state got a
+      // working setup token for that record: its prices, fulfillment settings
+      // and Stripe Connect entry point. Only an exact match on the record's
+      // OWN primary Email proves control; everything else gets the link
+      // MAILED to the address already on file. Decision is pure + unit-tested
+      // in lib/rancherSetupLinkDelivery.
+      //
+      // Read the on-file address BEFORE the repair block below can rewrite
+      // it — otherwise the same request that repoints the row also decides
+      // where the link goes.
+      const onFileEmailAtMatch = String(record['Email'] || '');
+      const delivery = decideSetupLinkDelivery({
+        matchedBy,
+        submittedEmail: email,
+        recordEmail: onFileEmailAtMatch,
+      });
+
       // Slug backfill (2026-07-08): rows created before /apply minted slugs
       // have none, which blocks sign-agreement auto-go-live + batch-approve.
       // Re-mint from the record's own Ranch Name (dedupe can match by phone /
@@ -343,14 +381,26 @@ export async function POST(req: Request) {
       // record KEEPS the dead email forever while Ben never learns they
       // came back. Persist the fresh truth (non-fatal — wizard URL still
       // goes out if the write hiccups).
+      // A ranch+state match is PUBLIC INFORMATION — it must not rewrite the
+      // record's contact channels. Overwriting {Email} on that tier was a
+      // second, quieter takeover path than the token: the rancher magic-link
+      // login (app/api/auth/rancher/login) mails its sign-in token to
+      // {Email}, so repointing that field hands over the dashboard even when
+      // no wizard URL is returned here. A `phone` match is a real, unpublished
+      // shared secret, so the Vale Creek corrected-email rescue survives
+      // exactly where it was earned. On a ranch+state match the corrected
+      // contact details are still CAPTURED (appended to Operation Details and
+      // pushed to Ben below) — a human applies them with one tap.
+      const contactRepairAllowed = matchedBy !== 'ranch+state';
+      const proposedContact: string[] = [];
       try {
         const resubmitFields: Record<string, string> = {};
-        // Email: only when the match came via phone / ranch+state — i.e. the
-        // submitted email exists NOWHERE on the record (corrected-email
-        // recovery). An 'email' match is identical; a 'team' match must not
-        // clobber the primary owner's email with a team member's.
+        // Email: only when the match came via phone — i.e. the submitted email
+        // exists NOWHERE on the record (corrected-email recovery). An 'email'
+        // match is identical; a 'team' match must not clobber the primary
+        // owner's email with a team member's.
         if (
-          (matchedBy === 'phone' || matchedBy === 'ranch+state') &&
+          matchedBy === 'phone' &&
           email !== String(record['Email'] || '').trim().toLowerCase()
         ) {
           resubmitFields['Email'] = email;
@@ -358,20 +408,31 @@ export async function POST(req: Request) {
         // Compare NORMALIZED digits on both sides so a country-code re-entry
         // ("+1 406…") isn't mistaken for a changed number.
         const submittedPhone = phoneTrimmed;
-        if (
-          submittedPhone &&
-          normalizePhoneDigits(submittedPhone) !== normalizePhoneDigits(record['Phone'])
-        ) {
+        const phoneChanged =
+          !!submittedPhone &&
+          normalizePhoneDigits(submittedPhone) !== normalizePhoneDigits(record['Phone']);
+        if (phoneChanged && contactRepairAllowed) {
           resubmitFields['Phone'] = submittedPhone;
         }
         if (body.city?.trim() && !record['City']) {
           resubmitFields['City'] = body.city.trim();
+        }
+        // Unapplied corrections still get written down — the rescue is only
+        // deferred to a human, never dropped.
+        if (!contactRepairAllowed) {
+          if (email !== String(record['Email'] || '').trim().toLowerCase()) {
+            proposedContact.push(`email → ${email}`);
+          }
+          if (phoneChanged) proposedContact.push(`phone → ${submittedPhone}`);
         }
         // Always append the fresh fit-check — volume/constraint/notes are
         // qualification signal Ben triages on.
         resubmitFields['Operation Details'] = [
           String(record['Operation Details'] || ''),
           opDetails,
+          proposedContact.length
+            ? `⚠️ Re-applied via a PUBLIC ranch+state match with different contact details — NOT applied automatically. Verify the person, then set: ${proposedContact.join(' · ')}`
+            : '',
         ]
           .filter(Boolean)
           .join('\n\n');
@@ -379,6 +440,17 @@ export async function POST(req: Request) {
       } catch (e: any) {
         console.warn('[apply] existing-rancher resubmit update failed (non-fatal):', e?.message);
       }
+
+      // Unproven match → the link goes to the address on file, never to the
+      // browser that asked. Uses the record as it was AT MATCH TIME.
+      let sendResult: SetupLinkSendResult | null = null;
+      if (delivery === 'email-only') {
+        sendResult = await emailSetupLinkToOwner({
+          ...record,
+          Email: onFileEmailAtMatch,
+        });
+      }
+
       try {
         await sendTelegramMessage(
           TELEGRAM_ADMIN_CHAT_ID,
@@ -386,22 +458,43 @@ export async function POST(req: Request) {
             `<b>${body.operatorName}</b> · ${body.ranchName} (${body.state})\n` +
             `${email}${body.phone ? ` · ${body.phone}` : ''}\n` +
             `Matched by: ${matchedBy || '?'}\n\n` +
-            `<i>Fresh fit-check appended to Operation Details. Existing wizard link re-issued.</i>\n\n` +
+            (sendResult
+              ? `${describeSetupLinkSend(sendResult)}\n`
+              : `<i>Verified by email — existing wizard link re-issued in-browser.</i>\n`) +
+            (proposedContact.length
+              ? `\n⚠️ <b>Contact change NOT applied</b> (public ranch+state match): ${proposedContact.join(' · ')}\n`
+              : '') +
+            `\n<i>Fresh fit-check appended to Operation Details.</i>\n\n` +
             `Rancher ${record.id}`
         );
       } catch (e: any) {
         console.warn('[apply] resubmit Telegram alert failed (non-fatal):', e?.message);
       }
 
-      const existingToken = jwt.sign(
-        { type: 'rancher-setup', rancherId: record.id },
-        JWT_SECRET,
-        { expiresIn: '60d' }
-      );
+      if (delivery === 'return-token') {
+        const existingToken = jwt.sign(
+          { type: 'rancher-setup', rancherId: record.id },
+          JWT_SECRET,
+          { expiresIn: '60d' }
+        );
+        return NextResponse.json({
+          ok: true,
+          existing: true,
+          wizardUrl: `${SITE_URL}/rancher/setup?token=${existingToken}`,
+          manualReview: false,
+        });
+      }
+
+      // NEUTRAL, CONSTANT body. It must not vary with the match tier, with
+      // whether an address was on file, or with the send outcome — any of
+      // those turns this public endpoint into a "which ranch exists / which
+      // field did I hit" oracle. The real outcome went to Telegram above and,
+      // on a genuine send failure, is stamped on the record.
       return NextResponse.json({
         ok: true,
         existing: true,
-        wizardUrl: `${SITE_URL}/rancher/setup?token=${existingToken}`,
+        emailed: true,
+        message: SETUP_LINK_EMAILED_MESSAGE,
         manualReview: false,
       });
     }

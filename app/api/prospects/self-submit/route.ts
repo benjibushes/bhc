@@ -17,6 +17,16 @@ import { geocodeRancher } from '@/lib/geocode';
 import { funnelRecord } from '@/lib/funnelMetrics';
 import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
 import { formatPhoneInput, isValidUsPhone } from '@/lib/phoneFormat';
+import {
+  decideSetupLinkDelivery,
+  SETUP_LINK_EMAILED_MESSAGE,
+  type RancherMatchSignal,
+} from '@/lib/rancherSetupLinkDelivery';
+import {
+  emailSetupLinkToOwner,
+  describeSetupLinkSend,
+  type SetupLinkSendResult,
+} from '@/lib/rancherSetupLinkSend';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
@@ -136,22 +146,46 @@ async function mintSetupUrlFor(rancherId: string): Promise<string> {
 // + a Telegram alert so Ben knows a live rancher tried to self-serve.
 // Verified/Removed matches (and all community submits) keep the message-only
 // behavior — never hand a setup link to someone else's verified record.
+//
+// SECURITY (2026-07-24): the setupUrl is a 60-day rancher-setup JWT, and the
+// secondary dedupe tier below matches on (ranch name + state) OR website host
+// — all three PUBLIC (every ranch is on /map with a page at /ranchers/<slug>).
+// Anyone who typed a known ranch's name and state was handed a working setup
+// token for that record: its prices, fulfillment settings and Stripe Connect
+// entry point. Only an exact match on the record's own primary Email proves
+// control; every other tier now gets the link MAILED to the address on file.
+// Decision is pure + unit-tested in lib/rancherSetupLinkDelivery.
 async function dedupeResponse(args: {
   existing: any;
   submitterType: 'self' | 'community';
+  matchedBy: RancherMatchSignal;
+  submittedEmail: string;
   ranchName: string;
   city: string;
   state: string;
 }): Promise<NextResponse> {
   const status = (args.existing['Verification Status'] || '').toString();
-  const message =
+  let message =
     status === 'Verified'
       ? `${args.ranchName} is already a verified BuyHalfCow partner.`
       : `${args.ranchName} is already on the map — we'll reach out.`;
 
   let setupUrl = '';
   if (args.submitterType === 'self' && status !== 'Verified' && status !== 'Removed') {
-    setupUrl = await mintSetupUrlFor(args.existing.id);
+    const delivery = decideSetupLinkDelivery({
+      matchedBy: args.matchedBy,
+      submittedEmail: args.submittedEmail,
+      recordEmail: args.existing['Email'],
+    });
+    let sendResult: SetupLinkSendResult | null = null;
+    if (delivery === 'return-token') {
+      setupUrl = await mintSetupUrlFor(args.existing.id);
+    } else {
+      sendResult = await emailSetupLinkToOwner(args.existing);
+      // Neutral copy — names neither the address on file nor the field that
+      // matched, so this stays a non-oracle for a stranger probing ranches.
+      message = SETUP_LINK_EMAILED_MESSAGE;
+    }
     try {
       if (TELEGRAM_ADMIN_CHAT_ID) {
         await sendTelegramMessage(
@@ -161,10 +195,13 @@ async function dedupeResponse(args: {
             `Ranch: ${args.ranchName}`,
             `City/State: ${args.city}, ${args.state}`,
             `Existing status: ${status || '(blank)'}`,
+            `Matched by: ${args.matchedBy || '?'} · submitted ${args.submittedEmail || '(no email)'}`,
             `Airtable: ${args.existing.id}`,
-            setupUrl
-              ? 'They were sent straight into the setup wizard for the existing record.'
-              : '⚠️ Setup link mint FAILED — send them one manually.',
+            sendResult
+              ? describeSetupLinkSend(sendResult)
+              : setupUrl
+                ? 'Verified by email — sent straight into the setup wizard for the existing record.'
+                : '⚠️ Setup link mint FAILED — send them one manually.',
           ].join('\n'),
         );
       }
@@ -288,7 +325,15 @@ export async function POST(req: Request) {
         { createIfMissing: false },
       );
       if (emailDup && (matchedBy === 'email' || matchedBy === 'team')) {
-        return await dedupeResponse({ existing: emailDup, submitterType, ranchName, city, state });
+        return await dedupeResponse({
+          existing: emailDup,
+          submitterType,
+          matchedBy,
+          submittedEmail: rancherEmail,
+          ranchName,
+          city,
+          state,
+        });
       }
     } catch (e) {
       console.error('[self-submit] email dedupe pre-check failed (continuing):', e);
@@ -315,7 +360,18 @@ export async function POST(req: Request) {
   if (existing.length > 0) {
     // Don't overwrite a verified record — but a self-submitter matching a
     // non-Verified prospect gets routed into the EXISTING record's wizard.
-    return await dedupeResponse({ existing: existing[0], submitterType, ranchName, city, state });
+    // This tier matched on (ranch name + state) OR website host — all public
+    // information, so it can never return a token. Reported as 'ranch+state';
+    // 'website' decides identically (see lib/rancherSetupLinkDelivery).
+    return await dedupeResponse({
+      existing: existing[0],
+      submitterType,
+      matchedBy: 'ranch+state',
+      submittedEmail: rancherEmail,
+      ranchName,
+      city,
+      state,
+    });
   }
 
   // ── Geocode (best effort) — ZIP-first for ~3-5 mi accuracy, city+state fallback (~city centroid). ──
