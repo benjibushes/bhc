@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, createRecord, TABLES } from '@/lib/airtable';
 import { requireRole } from '@/lib/adminAuth';
+import { sendOperatorSignal } from '@/lib/operatorSignal';
 
 export const maxDuration = 30;
 
@@ -69,7 +70,21 @@ export async function POST(request: Request) {
     const rec = await createRecord(TABLES.AD_SPEND, fields);
     return NextResponse.json({ ok: true, id: rec.id });
   } catch (error: any) {
+    // A dropped spend row is silent money-truth corruption: CAC and ROAS keep
+    // rendering off an incomplete denominator and every channel looks cheaper
+    // than it is. Alert loudly rather than leaving it in the logs.
     console.error('[ad-spend] POST failed:', error?.message);
+    try {
+      await sendOperatorSignal({
+        urgency: 'normal',
+        kind: 'other',
+        summary: 'Ad spend NOT logged — CAC/ROAS will under-report',
+        detail: `Airtable write to "Ad Spend" failed: ${error?.message || 'unknown error'}\nRe-enter the spend on /admin/analytics.`,
+        dedupeKey: 'ad-spend-write-failed',
+      });
+    } catch {
+      /* never let the alert mask the original error */
+    }
     return NextResponse.json({ error: error?.message || 'Failed to log spend' }, { status: 500 });
   }
 }

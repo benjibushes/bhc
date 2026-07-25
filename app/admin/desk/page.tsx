@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import AdminAuthGuard from '../../components/AdminAuthGuard';
+import { rankCloseQueue, DEFAULT_QUEUE_LIMIT, type CloseQueueRow } from '@/lib/closeQueue';
 
 // Shape of a referral as returned by GET /api/referrals (subset we use here).
 interface Referral {
@@ -10,11 +11,14 @@ interface Referral {
   status: string;
   buyer_name: string;
   buyer_email: string;
+  buyer_phone: string;
   buyer_state: string;
   order_type: string;
   budget_range: string;
   intent_score: number;
   rancher_id: string;
+  rancher_name: string;
+  rancher_can_capture: boolean;
   suggested_rancher_name: string;
   suggested_rancher_state: string;
   sale_amount: number;
@@ -151,6 +155,28 @@ function nextActionHint(r: Referral, b: Bucket): string {
   }
 }
 
+// Map an /api/referrals row onto the pure scorer's input shape. Kept next to
+// the fetch so a field rename breaks in exactly one place.
+function toQueueRow(r: Referral): CloseQueueRow {
+  return {
+    id: r.id,
+    status: r.status,
+    buyerName: r.buyer_name,
+    buyerState: r.buyer_state,
+    buyerEmail: r.buyer_email,
+    buyerPhone: r.buyer_phone,
+    rancherName: r.rancher_name || r.suggested_rancher_name || '',
+    hasRancher: !!r.rancher_id,
+    rancherCanCapture: !!r.rancher_can_capture,
+    intentScore: r.intent_score,
+    saleAmount: r.sale_amount,
+    budgetRange: r.budget_range,
+    createdAt: r.created_at,
+    introSentAt: r.intro_sent_at,
+    lastChasedAt: r.last_chased_at,
+  };
+}
+
 // Attention chips: which bucket each one filters to.
 const CHIPS: { key: Bucket; label: string }[] = [
   { key: 'unmatched', label: 'Unmatched' },
@@ -211,6 +237,16 @@ export default function SalesDeskQueuePage() {
     [withBucket]
   );
 
+  // THE CALL QUEUE — ranked "who do I ring right now". All the maths lives in
+  // the pure, unit-tested lib/closeQueue; this page only renders it.
+  // `Date.now()` is read once per referral load, not per render, so rows don't
+  // silently re-rank underneath a click.
+  const loadedAt = useMemo(() => Date.now(), [referrals]);
+  const callQueue = useMemo(
+    () => rankCloseQueue(referrals.map(toQueueRow), { now: loadedAt, limit: DEFAULT_QUEUE_LIMIT }),
+    [referrals, loadedAt]
+  );
+
   // Apply chip filter + text search, then sort by bucket priority, intent desc.
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -255,9 +291,120 @@ export default function SalesDeskQueuePage() {
             </p>
           </div>
 
+          {/* ── CALL QUEUE ──────────────────────────────────────────────
+              Ranked by lib/closeQueue: deal size, stage, whether the rancher
+              can actually capture the fee, staleness, intent. Highest first. */}
+          {!loading && !err && callQueue.length > 0 && (
+            <div className="mt-6">
+              <div className="flex items-baseline justify-between gap-3">
+                <h2 className="font-[family-name:var(--font-serif)] text-xl">
+                  Call queue
+                </h2>
+                <span className="text-xs text-saddle">
+                  Top {callQueue.length} — call top-down
+                </span>
+              </div>
+              <p className="text-xs text-saddle mt-1">
+                Ranked by deal size, stage, whether the rancher can take a
+                deposit, days cold, and intent.
+              </p>
+
+              <ol className="mt-3 space-y-2">
+                {callQueue.map((q, i) => (
+                  <li
+                    key={q.id}
+                    className="border border-dust border-l-4 border-l-charcoal bg-white p-3"
+                  >
+                    {/* Rank + identity + score */}
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex gap-2.5">
+                        <span className="shrink-0 text-sm font-medium text-dust tabular-nums">
+                          {i + 1}
+                        </span>
+                        <div className="min-w-0">
+                          <div className="font-medium truncate">
+                            {q.buyerName || 'Unnamed buyer'}
+                            {q.buyerState && (
+                              <span className="text-saddle font-normal">
+                                {' '}
+                                · {q.buyerState}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs text-saddle mt-0.5 truncate">
+                            {q.hasRancher
+                              ? q.rancherName || 'Matched rancher'
+                              : 'Unmatched'}
+                            {' · '}
+                            {q.status}
+                            {' · '}
+                            {q.daysSinceTouch}d cold
+                          </div>
+                        </div>
+                      </div>
+                      <span
+                        className="shrink-0 text-sm font-medium tabular-nums"
+                        title="Close-queue score (0–100)"
+                      >
+                        {Math.round(q.score)}
+                      </span>
+                    </div>
+
+                    {/* Money estimates */}
+                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                      <span>
+                        <span className="text-saddle">Deal ~</span>
+                        <span className="font-medium">{money(q.estValue)}</span>
+                      </span>
+                      <span>
+                        <span className="text-saddle">BHC fee ~</span>
+                        <span className="font-medium">{money(q.estFee)}</span>
+                      </span>
+                      {!q.rancherCanCapture && (
+                        <span className="text-rust">no deposit rail</span>
+                      )}
+                    </div>
+
+                    {/* Why this one */}
+                    <div className="mt-2 text-xs text-charcoal">
+                      <span className="text-saddle">Why: </span>
+                      {q.why}
+                    </div>
+
+                    {/* One-click actions */}
+                    <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                      {q.buyerPhone && (
+                        <a
+                          href={`tel:${q.buyerPhone}`}
+                          className="text-xs px-2.5 py-1 border border-charcoal rounded-sm hover:bg-charcoal hover:text-bone transition-colors"
+                        >
+                          Call
+                        </a>
+                      )}
+                      {q.buyerEmail && (
+                        <a
+                          href={`mailto:${q.buyerEmail}`}
+                          className="text-xs px-2.5 py-1 border border-dust rounded-sm hover:border-charcoal transition-colors"
+                        >
+                          Email
+                        </a>
+                      )}
+                      <Link
+                        href={`/admin/desk/${q.id}`}
+                        className="text-xs px-2.5 py-1 border border-dust rounded-sm hover:border-charcoal transition-colors"
+                      >
+                        Open deal →
+                      </Link>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+
           {/* Attention chips */}
           {!loading && !err && (
-            <div className="mt-4 flex flex-wrap gap-2">
+            <div className="mt-6 flex flex-wrap gap-2">
               {CHIPS.map((chip) => {
                 const n = counts[chip.key];
                 const on = filter === chip.key;

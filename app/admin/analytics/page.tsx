@@ -25,11 +25,17 @@ interface SourceRow {
   closes: number;
   commissionDue: number;
   saleRevenue?: number;
+  // Connect-rail fee captured at deposit, attributed to this source.
+  connectFee?: number;
+  // BHC's real take: legacy commission + Connect fee.
+  bhcRevenue?: number;
   spend?: number;
-  // commission / spend
+  // BHC revenue (both rails) / spend
   roas?: number | null;
   // sale $ / spend (standard marketing ROAS)
   gmvRoas?: number | null;
+  // spend / paying customers. null when either side is zero.
+  cac?: number | null;
   // slice 4 funnel-quality rates
   qualifiedRate?: number | null;
   payRate?: number | null;
@@ -50,8 +56,11 @@ interface AnalyticsData {
     totalCommission: number;
     conversionRate: number;
     totalSpend?: number;
+    bhcRevenueAllRails?: number;
     blendedRoas?: number | null;
     blendedGmvRoas?: number | null;
+    cac?: number | null;
+    payingCustomers?: number;
   };
   campaigns: CampaignStats[];
   sourceBreakdown?: SourceRow[];
@@ -135,6 +144,9 @@ export default function AnalyticsPage() {
   };
 
   const formatRoas = (v?: number | null) => (v == null ? '—' : `${v.toFixed(2)}×`);
+  // Money-truth guard: "no spend logged" is NOT "$0 spent". Everything derived
+  // from spend renders '—' until at least one Ad Spend row exists in range.
+  const hasSpend = (data?.overview.totalSpend || 0) > 0;
 
   const fetchAnalytics = async (since: SinceFilter) => {
     setLoading(true);
@@ -301,29 +313,46 @@ export default function AnalyticsPage() {
                   </div>
                   <div className="text-xs text-saddle mt-1">sales ÷ consumers</div>
                 </div>
+                {/* Ad Spend / ROAS / CAC all render an em dash + a "no spend
+                    entered" hint when nothing has been logged for the period.
+                    A fake $0 / 0% / ∞ here reads as "ads are free" or "ads
+                    don't work" — both lies. Absent data must look absent. */}
                 <div className="p-6 border border-dust bg-white">
                   <div className="text-sm text-saddle mb-1">Ad Spend</div>
                   <div className="text-2xl font-[family-name:var(--font-serif)]">
-                    {formatCurrency(data.overview.totalSpend || 0)}
+                    {hasSpend ? formatCurrency(data.overview.totalSpend!) : '—'}
                   </div>
-                  {!data.overview.totalSpend && (
+                  {!hasSpend && (
                     <button
                       onClick={() => setShowSpendForm(true)}
                       className="text-xs text-rust underline mt-1"
                     >
-                      Log spend ↓
+                      No spend entered — log it ↓
                     </button>
                   )}
                 </div>
                 <div className="p-6 border border-charcoal bg-white">
                   <div className="text-sm text-saddle mb-1">Blended ROAS</div>
                   <div className="text-2xl font-[family-name:var(--font-serif)]">
-                    {data.overview.totalSpend ? formatRoas(data.overview.blendedGmvRoas) : '—'}
+                    {hasSpend ? formatRoas(data.overview.blendedGmvRoas) : '—'}
                   </div>
                   <div className="text-xs text-saddle mt-1">
-                    {data.overview.totalSpend
-                      ? `${formatRoas(data.overview.blendedRoas)} on commission`
-                      : 'sale $ ÷ ad spend'}
+                    {hasSpend
+                      ? `${formatRoas(data.overview.blendedRoas)} on BHC revenue`
+                      : 'no spend entered'}
+                  </div>
+                </div>
+                <div className="p-6 border border-charcoal bg-white">
+                  <div className="text-sm text-saddle mb-1">CAC</div>
+                  <div className="text-2xl font-[family-name:var(--font-serif)]">
+                    {data.overview.cac == null ? '—' : formatCurrency(data.overview.cac)}
+                  </div>
+                  <div className="text-xs text-saddle mt-1">
+                    {!hasSpend
+                      ? 'no spend entered'
+                      : !data.overview.payingCustomers
+                        ? 'no paying customers yet'
+                        : `per paying customer (${data.overview.payingCustomers})`}
                   </div>
                 </div>
               </div>
@@ -501,9 +530,10 @@ export default function AnalyticsPage() {
                         <th className="text-right p-4 font-medium" title="Paid deposits — real tier_v2 money from this source (the truest 'this source pays' signal)">Deposits</th>
                         <th className="text-right p-4 font-medium" title="Paid deposits ÷ signups — end-to-end signup→money. Compare with Qual % to see WHERE a source leaks (top vs middle).">Pay %</th>
                         <th className="text-right p-4 font-medium">Closes</th>
-                        <th className="text-right p-4 font-medium">Commission $</th>
+                        <th className="text-right p-4 font-medium" title="BHC's own revenue from this source across BOTH rails: legacy invoiced commission + Connect platform fee captured at deposit.">BHC $</th>
                         <th className="text-right p-4 font-medium">Spend</th>
-                        <th className="text-right p-4 font-medium" title="Sale $ ÷ ad spend (platform commission ÷ spend in parens)">ROAS</th>
+                        <th className="text-right p-4 font-medium" title="Ad spend ÷ paying customers (deposits). '—' when no spend is logged or no customer has paid.">CAC</th>
+                        <th className="text-right p-4 font-medium" title="Sale $ ÷ ad spend (BHC revenue ÷ spend, both rails, in the tooltip)">ROAS</th>
                         <th className="text-right p-4 font-medium">Conv %</th>
                       </tr>
                     </thead>
@@ -519,13 +549,20 @@ export default function AnalyticsPage() {
                             <td className="p-4 text-right font-semibold">{s.depositsPaid ?? 0}</td>
                             <td className="p-4 text-right text-sm">{s.payRate != null ? <span className={(s.payRate || 0) > 0 ? 'text-sage-dark font-semibold' : 'text-saddle'}>{formatPercent(s.payRate)}</span> : <span className="text-dust">—</span>}</td>
                             <td className="p-4 text-right">{s.closes}</td>
-                            <td className="p-4 text-right font-semibold">{formatCurrency(s.commissionDue)}</td>
+                            <td className="p-4 text-right font-semibold">{formatCurrency(s.bhcRevenue ?? s.commissionDue)}</td>
                             <td className="p-4 text-right text-saddle">{s.spend ? formatCurrency(s.spend) : '—'}</td>
+                            <td className="p-4 text-right text-sm">
+                              {s.cac == null ? (
+                                <span className="text-dust">—</span>
+                              ) : (
+                                formatCurrency(s.cac)
+                              )}
+                            </td>
                             <td className="p-4 text-right">
                               {s.spend ? (
                                 <span
                                   className={`font-semibold ${(s.gmvRoas || 0) >= 1 ? 'text-sage-dark' : 'text-rust'}`}
-                                  title={`${formatRoas(s.roas)} on commission`}
+                                  title={`${formatRoas(s.roas)} on BHC revenue (both rails)`}
                                 >
                                   {formatRoas(s.gmvRoas)}
                                 </span>

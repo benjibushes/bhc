@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getAllRecords, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { requireRole } from '@/lib/adminAuth';
+import { isRancherOnConnect } from '@/lib/rancherEligibility';
 
 export const maxDuration = 60;
 
@@ -31,7 +32,10 @@ export async function GET(request: Request) {
     }
 
     // Build rancher contact lookup so admin can email/call directly from the UI
-    let rancherMap: Record<string, { email: string; phone: string; name: string }> = {};
+    let rancherMap: Record<
+      string,
+      { email: string; phone: string; name: string; canCapture: boolean }
+    > = {};
     try {
       const ranchers = await getAllRecords(TABLES.RANCHERS) as any[];
       for (const r of ranchers) {
@@ -39,6 +43,13 @@ export async function GET(request: Request) {
           email: r['Email'] || '',
           phone: r['Phone'] || '',
           name: r['Operator Name'] || r['Ranch Name'] || '',
+          // Can this rancher actually capture BHC's fee at deposit? Reuses the
+          // single source of truth (tier_v2 + Connect active) rather than
+          // re-reading the two fields here. Powers the Call Queue's ranking:
+          // closing a lead whose rancher is off Connect earns the platform
+          // nothing automatically. Derived from the rancher read already
+          // performed above — no extra table scan.
+          canCapture: isRancherOnConnect(r),
         };
       }
     } catch (e) {
@@ -63,7 +74,8 @@ export async function GET(request: Request) {
     const referrals = records.map((record: any) => {
       const rancherId = record['Rancher']?.[0] || '';
       const buyerId = record['Buyer']?.[0] || '';
-      const rancherInfo = rancherMap[rancherId] || { email: '', phone: '', name: '' };
+      const rancherInfo =
+        rancherMap[rancherId] || { email: '', phone: '', name: '', canCapture: false };
       const buyerInfo = buyerMap[buyerId] || { warmupStage: '', warmupSentAt: '', warmupEngagedAt: '' };
       return {
         id: record.id,
@@ -83,6 +95,8 @@ export async function GET(request: Request) {
         suggested_rancher_state: record['Suggested Rancher State'] || '',
         rancher_email: rancherInfo.email,
         rancher_phone: rancherInfo.phone,
+        rancher_name: rancherInfo.name,
+        rancher_can_capture: rancherInfo.canCapture,
         notes: record['Notes'] || '',
         sale_amount: record['Sale Amount'] || 0,
         commission_due: record['Commission Due'] || 0,
