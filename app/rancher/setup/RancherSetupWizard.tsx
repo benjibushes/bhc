@@ -11,6 +11,11 @@ import OnboardingRoadmap from '../OnboardingRoadmap';
 import ShopifyConnectCard from '../ShopifyConnectCard';
 import { remapSavedStep, shouldAutoSelectFreeTier } from '@/lib/onboardingFlow';
 import { commissionCopyFor, TIER_FEE_PERCENT } from '@/lib/onboardingPaths';
+import {
+  decideConnectReturnStep,
+  goLiveReadiness,
+  hasSellablePrice,
+} from '@/lib/connectStepDecision';
 import { formatPhoneInput, isValidUsPhone } from '@/lib/phoneFormat';
 import {
   deriveLadder,
@@ -79,6 +84,10 @@ type Rancher = {
   Tier?: string | { name: string };
   'Subscription Status'?: string;
   'Pricing Model'?: string;
+  // Surfaced by GET /api/rancher/setup (read-only — deliberately NOT in that
+  // route's ALLOWED_FIELDS). The wizard needs it to tell a rancher the truth
+  // about whether signing will actually take their page live.
+  'Stripe Connect Status'?: string;
   // Stage-3 fulfillment fields (Task 11B)
   'Fulfillment Types'?: string[];
   'Pickup City'?: string;
@@ -446,9 +455,26 @@ export default function RancherSetupWizard() {
       // data so the Done step reflects reality. Without this, a rancher who
       // JUST finished KYC can still see "connect your bank" from stale cache
       // and leave thinking they're not live when they are (or vice-versa).
+      //
+      // Capture what that read actually SAID. The POST persists the true status
+      // to Airtable, but the refetch below can still race it (and a failed POST
+      // leaves the cache exactly as stale as it was) — so the live answer is
+      // what we branch on, with the refetched cache only as a fallback.
+      let liveConnectStatus = '';
       try {
-        await fetch('/api/rancher/connect/status', { method: 'POST', credentials: 'include' });
-      } catch { /* best-effort — advance regardless */ }
+        const statusRes = await fetch('/api/rancher/connect/status', {
+          method: 'POST',
+          credentials: 'include',
+        });
+        const statusData: Record<string, unknown> = await statusRes
+          .json()
+          .catch(() => ({}));
+        if (statusRes.ok) {
+          liveConnectStatus = statusData?.depositReady
+            ? 'active'
+            : String(statusData?.status || '');
+        }
+      } catch { /* best-effort — fall back to the refetched cache below */ }
       let fresh: any = rancher;
       try {
         const res = await fetch(`/api/rancher/setup?token=${encodeURIComponent(token)}`);
@@ -461,20 +487,47 @@ export default function RancherSetupWizard() {
         }
       } catch { /* keep existing rancher data */ }
       if (!alive) return;
-      // ONE-ROAD (2026-07-24): fulfillment now comes BEFORE Connect, so a
-      // Stripe return normally lands on SIGN (or Done for a rancher redoing
-      // Connect from the Done nudge). BUT an OLD-FLOW rancher who left for
-      // Stripe under the old order (9 before 8) hasn't done fulfillment — send
-      // them to Step 8 first so buyers never see an empty Fulfillment/Refund
-      // section. fulfillmentDone reads the refetched record.
-      if (!fulfillmentDone(fresh)) {
-        setStep(8);
-      } else if (fresh?.agreementSigned) {
+      // The refetch can lose a race with the POST's own persist, so fold the
+      // live answer back over the cached field. Everything downstream that
+      // reads 'Stripe Connect Status' off `rancher` — the sign screen's
+      // go-live promise, the Done screen's readiness checklist — then reflects
+      // what Stripe just said instead of a value that is one write behind.
+      if (liveConnectStatus && String(fresh?.['Stripe Connect Status'] || '') !== liveConnectStatus) {
+        fresh = { ...fresh, 'Stripe Connect Status': liveConnectStatus };
+        setRancher(fresh);
+      }
+      // WHERE THEY LAND — one tested decision, not a ladder of guesses.
+      //
+      // THE BUG THIS CLOSES (the 11→6 loop): this branch used to check
+      // fulfillment and signature and NEVER whether Connect actually went
+      // active. A rancher whose KYC landed pending walked straight to Sign,
+      // signed, did NOT go live (sign-agreement requires connect==='active' for
+      // tier_v2), and then read "Connect your bank →" on the Done screen — the
+      // step they believed they had just finished. Five real ranchers are
+      // sitting in that pending state right now.
+      //
+      // decideConnectReturnStep keeps a not-yet-active rancher ON step 9, where
+      // StripeConnectStep now shows the honest incomplete/restricted state and
+      // the single next action. It also preserves the two branches that were
+      // already right: an OLD-FLOW rancher who never did fulfillment (Connect
+      // came before step 8 back then) still goes to 8 first, and an
+      // already-signed rancher goes to Done rather than into SignStep's 400.
+      // An unread status fails CLOSED — see lib/connectStepDecision.
+      const decision = decideConnectReturnStep({
+        connectStatus: liveConnectStatus || fresh?.['Stripe Connect Status'],
+        fulfillmentDone: fulfillmentDone(fresh),
+        agreementSigned: !!fresh?.agreementSigned,
+        connectRequired:
+          String(fresh?.['Pricing Model'] || 'legacy').toLowerCase() === 'tier_v2',
+      });
+      if (decision.step === 6) {
         setDashboardLink('/rancher');
         setStep(6);
-      } else {
+      } else if (decision.step === 5) {
         primeSigningToken();
         setStep(5);
+      } else {
+        setStep(decision.step);
       }
     })();
     return () => { alive = false; };
@@ -2384,6 +2437,30 @@ export default function RancherSetupWizard() {
                     return;
                   }
                 }
+                // PRICE GUARD — the same truth app/api/ranchers/sign-agreement
+                // enforces at go-live, for BOTH models (:119-148):
+                //
+                //   readyToGoLive = tier_v2 ? slug && price && connect==='active'
+                //                           : slug && price && paymentLink
+                //
+                // `price` is required either way, but step 3's only money guard
+                // was the payment-link one — and that fires ONLY for legacy. So
+                // a tier_v2 rancher could walk out of pricing with no price at
+                // all, connect a bank, sign, NOT go live, and first learn about
+                // it from the Done screen's checklist. (The legacy half of the
+                // same hole is real too: a legacy rancher with a payment link
+                // and no price signs into a page that says "Contact for
+                // pricing" and can't take a deposit.) Block both, here, where
+                // the fix is one field away — and check ONLY the tiers they
+                // sell, because step 3 nulls the rest on save.
+                if (!hasSellablePrice(sells, form)) {
+                  setError(
+                    sells.length === 0
+                      ? 'Pick at least one share you sell above and give it a price — your page can’t go live, or take a deposit, without a price on it.'
+                      : 'Set a price on at least one share you sell. Your page can’t go live without one — buyers just see “Contact for pricing” and we can’t collect their deposit.'
+                  );
+                  return;
+                }
                 // The MONEY-PATH guard now runs AFTER the save + auto-select,
                 // on the ACTUAL resulting Pricing Model — never a prediction.
                 // (Review 2026-07-24: waiving the payment-link requirement on
@@ -2555,19 +2632,39 @@ export default function RancherSetupWizard() {
             rancherId={rancher.id}
             pricingModel={String((rancher as any)['Pricing Model'] || 'legacy')}
             wizardToken={token}
-            onComplete={() => {
-              // Old-flow safety (a legacy rancher who somehow reached Connect
-              // before fulfillment): don't skip Step 8. Then the signed-state
-              // branch — already-signed ranchers must never be routed into
-              // SignStep's 400 "already signed" dead-end.
-              if (!fulfillmentDone(rancher)) {
-                setStep(8);
-              } else if (rancher.agreementSigned) {
+            // First-paint / fallback only. The step reads LIVE status on mount;
+            // this cached value just stops it rendering a blank while that read
+            // is in flight, and is the last resort if the read fails.
+            cachedConnectStatus={rancher['Stripe Connect Status'] || ''}
+            onComplete={(observedState) => {
+              // Same tested branch as the Stripe-return handler, so the two
+              // ways out of this step can never disagree. `observedState` is
+              // what the step actually READ from Stripe — it only calls
+              // onComplete on 'active', or with null for a legacy rancher who
+              // never needed Connect (connectRequired:false below).
+              const isTierV2 =
+                String(rancher['Pricing Model'] || 'legacy').toLowerCase() === 'tier_v2';
+              // The step verified this LIVE against Stripe, so write it over the
+              // (webhook-lagged) cached field — otherwise the very next screen
+              // reads 'onboarding' and tells a rancher who just connected their
+              // bank that they still have to connect their bank.
+              if (observedState === 'active') {
+                setRancher((r) => (r ? { ...r, 'Stripe Connect Status': 'active' } : r));
+              }
+              const decision = decideConnectReturnStep({
+                connectStatus: observedState,
+                fulfillmentDone: fulfillmentDone(rancher),
+                agreementSigned: !!rancher.agreementSigned,
+                connectRequired: isTierV2,
+              });
+              if (decision.step === 6) {
                 setDashboardLink('/rancher');
                 setStep(6);
-              } else {
+              } else if (decision.step === 5) {
                 primeSigningToken();
                 setStep(5);
+              } else {
+                setStep(decision.step);
               }
             }}
             onBack={() => setStep(8)}
@@ -3177,6 +3274,33 @@ function SignStep({
     </>
   );
 
+  // ── Does signing ACTUALLY take this page live? ────────────────────────────
+  // "Sign and your page goes live" / "Sign & go live →" were unconditional.
+  // They are conditional on POST /api/ranchers/sign-agreement's readyToGoLive
+  // union — so a rancher missing a price (or with Connect still pending)
+  // signed, did not go live, and only found out on the Done screen, which has
+  // told this truth honestly for a while. Now both screens agree.
+  //
+  // Inputs mirror that route's reads. Prices/links come from the FORM (what
+  // step 3 just persisted, filtered to the tiers they actually sell — unsold
+  // tiers are nulled on save) unioned with the record, so neither a stale
+  // record nor a locally-deselected tier can make this optimistic.
+  const soldTiers: string[] = Array.isArray(form['Tier Specialty']) ? form['Tier Specialty'] : [];
+  const PRICE_TIERS_SIGN = ['Quarter', 'Half', 'Whole'] as const;
+  const readiness = goLiveReadiness({
+    pricingModel,
+    hasSlug: !!String(rancher.slug || '').trim(),
+    hasPrice:
+      hasSellablePrice(soldTiers, form) ||
+      PRICE_TIERS_SIGN.some((t) => Number(rancher[`${t} Price`]) > 0),
+    hasPaymentLink: PRICE_TIERS_SIGN.some(
+      (t) =>
+        (soldTiers.includes(t) && !!String(form[`${t} Payment Link`] || '').trim()) ||
+        !!String(rancher[`${t} Payment Link`] || '').trim(),
+    ),
+    connectStatus: rancher['Stripe Connect Status'] || '',
+  });
+
   return (
     <section className="space-y-6 bg-bone border border-dust p-7 md:p-8">
       <header>
@@ -3184,11 +3308,30 @@ function SignStep({
         <h2 className="font-serif text-2xl md:text-3xl text-charcoal">
           Lock it in &mdash; sign the partner agreement
         </h2>
-        <p className="text-sm text-saddle mt-1">
-          One signature. No PDF, no notary, no email round-trip. Sign and your
-          page goes live &mdash; buyers can route to you right away.
-        </p>
+        <p className="text-sm text-saddle mt-1">{readiness.promise}</p>
       </header>
+
+      {/* What's actually left, when signing alone won't do it. Calm, specific,
+          and never a block — the signature is still worth taking now. */}
+      {!readiness.readyToGoLive && (
+        <div className="border border-amber-dark/40 bg-amber/10 p-5 space-y-2">
+          <p className="text-xs uppercase tracking-widest text-amber-dark">
+            Still needed before your page goes live
+          </p>
+          <ul className="space-y-1.5 text-sm text-charcoal/85">
+            {readiness.blockers.map((b) => (
+              <li key={b.key}>· {b.label}</li>
+            ))}
+          </ul>
+          <p className="text-xs text-saddle leading-relaxed">
+            Sign now if you&rsquo;re ready &mdash; your agreement is recorded either
+            way, and your page publishes the moment the item{readiness.blockers.length === 1 ? '' : 's'}{' '}
+            above {readiness.blockers.length === 1 ? 'is' : 'are'} done. You can
+            finish {readiness.blockers.length === 1 ? 'it' : 'them'} from your
+            dashboard.
+          </p>
+        </div>
+      )}
 
       {/* Public listing review — what families see */}
       <div className="bg-bone-warm border border-dust p-5 space-y-3 text-sm text-charcoal/85">
@@ -3331,7 +3474,7 @@ function SignStep({
           disabled={signing || !signingToken || !signatureName.trim() || !agreedToTerms}
           className="inline-flex items-center gap-2 justify-center px-7 py-3.5 bg-charcoal text-bone text-sm font-bold tracking-wide uppercase transition-base hover:bg-divider disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {signing ? 'Signing…' : 'Sign & go live →'}
+          {signing ? 'Signing…' : readiness.ctaLabel}
         </button>
         <button
           type="button"
