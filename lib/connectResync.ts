@@ -98,3 +98,73 @@ export function computeConnectResync(input: ConnectResyncInput): ConnectResyncDe
 
   return { changed: true, isNowActive, writeFields, migrationCompleted, wasPausedOverdue };
 }
+
+// ---------------------------------------------------------------------------
+// NIGHTLY RECONCILE WRITE POLICY (2026-07-25)
+// ---------------------------------------------------------------------------
+// app/api/cron/stripe-reconcile ran DRY-RUN by default and only wrote with
+// ?apply=1 — and its vercel.json entry is a bare path, so it never healed
+// anything in its life. The two classes it reconciles are NOT equally risky:
+//
+//   CONNECT   — copies a fact Stripe already considers true (charges_enabled →
+//               'Stripe Connect Status') into BHC's cache. No pricing, no
+//               billing, no comms. Exactly what the account.updated webhook
+//               would have written. Safe to heal unattended.
+//   SUBS      — touches 'Tier' and 'Subscription Status', which drive the
+//               commission rate and the billing rails. Stays observe-only on
+//               the schedule; ?apply=1 is the manual escape hatch so the
+//               founder can watch a few nights of "would heal" first.
+//
+// Split here (pure) rather than inline in the route so the policy is testable
+// and there is exactly one place to flip SUBS on later.
+
+export interface ReconcileWritePolicy {
+  /** Connect account status cache → Airtable. */
+  connect: boolean;
+  /** Tier / Subscription Status / Stripe Subscription Id → Airtable. */
+  subscriptions: boolean;
+}
+
+/**
+ * @param manualApply true when the caller passed `?apply=1` (a human at a
+ *        terminal, per bhc-mutation-guardrails). The scheduled Vercel cron
+ *        never sets it.
+ */
+export function reconcileWritePolicy(manualApply: boolean): ReconcileWritePolicy {
+  return { connect: true, subscriptions: manualApply };
+}
+
+// ---------------------------------------------------------------------------
+// PAUSED-OVERDUE ESCALATION
+// ---------------------------------------------------------------------------
+// `wasPausedOverdue` alone is not enough to bother the founder: a rancher whose
+// Active Status has ALREADY been flipped back to Active (or who is At Capacity)
+// needs nothing. The escalation is exactly "Connect is live AND the row is
+// still sitting at Paused". Mirrors the gate the stripe-connect webhook uses.
+
+export function shouldEscalateUnpause(input: {
+  /** From computeConnectResync. */
+  wasPausedOverdue: boolean;
+  /** Airtable 'Active Status' (already unwrapped from a {name} single-select). */
+  activeStatus: string;
+}): boolean {
+  return (
+    input.wasPausedOverdue &&
+    String(input.activeStatus || '').trim().toLowerCase() === 'paused'
+  );
+}
+
+/**
+ * Telegram callback prefix for the one-tap unpause button carried by the
+ * 'UPGRADE COMPLETE — UNPAUSE …' operator signal. Handled in
+ * app/api/webhooks/telegram (registered as a HIGH_RISK_PREFIX so a double-tap
+ * can't double-write). Lives here so the emitters and the handler cannot drift.
+ *
+ * NOTHING auto-unpauses: a repo rule forbids flipping a rancher's Active Status
+ * without the founder's per-rancher OK. The button IS that OK.
+ */
+export const UNPAUSE_CALLBACK_PREFIX = 'cxunpause_';
+
+export function unpauseCallbackData(rancherId: string): string {
+  return `${UNPAUSE_CALLBACK_PREFIX}${rancherId}`;
+}

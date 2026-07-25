@@ -9,7 +9,7 @@
 import { NextResponse } from 'next/server';
 import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { getConnectAccountStatus, createOnboardingLink, connectHandoff } from '@/lib/stripeConnect';
-import { computeConnectResync } from '@/lib/connectResync';
+import { computeConnectResync, unpauseCallbackData } from '@/lib/connectResync';
 import { requireRancher } from '@/lib/rancherAuth';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 
@@ -193,8 +193,15 @@ export async function POST(req: Request) {
       summary: `UPGRADE COMPLETE — UNPAUSE ${rancher['Ranch Name'] || rancher['Operator Name'] || session.rancherId}`,
       detail:
         `Rancher was auto-paused by the migration deadline (Migration Status was paused_overdue) and has now finished Stripe Connect (active).\n` +
-        `Active Status is still 'Paused' — flip it to 'Active' from /admin/ranchers/${session.rancherId} so buyers route again.`,
+        `Active Status is still 'Paused' — tap below to unpause, or flip it from /admin/ranchers/${session.rancherId} so buyers route again.`,
       refs: [{ type: 'rancher', id: session.rancherId, label: String(rancher['Ranch Name'] || rancher['Operator Name'] || '') }],
+      // One tap = unpaused + routable (app/api/webhooks/telegram). Same button
+      // the stripe-reconcile cron and the Connect webhook attach — all three
+      // share this dedupe key, so whichever fires first must carry it.
+      actions: [{
+        label: `▶️ Unpause ${rancher['Ranch Name'] || rancher['Operator Name'] || 'rancher'}`.slice(0, 60),
+        callbackData: unpauseCallbackData(session.rancherId),
+      }],
       dedupeKey: `paused-overdue-upgrade:${session.rancherId}`,
       dedupeWindowMs: 24 * 3600 * 1000,
     });
