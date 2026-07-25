@@ -5,6 +5,8 @@ import { sendEmail } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
+import { sendOperatorSignal } from '@/lib/operatorSignal';
+import { selectLooksLiveButBlocked, looksLiveDedupeKey } from '@/lib/connectLooksLive';
 import jwt from 'jsonwebtoken';
 import { JWT_SECRET } from '@/lib/secrets';
 
@@ -300,6 +302,49 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     }
   }
 
+  // ── "LOOKS LIVE, RECEIVES NOTHING" DETECTOR ────────────────────────────
+  //
+  // A rancher can sit at Active Status='Active' + Page Live=true + tier_v2
+  // while Stripe Connect is NOT active. They look completely live — to
+  // themselves and to the operator — but isRancherOperationalForBuyers
+  // (lib/rancherEligibility.ts) silently drops every tier_v2 rancher whose
+  // Connect status isn't 'active', so they receive ZERO buyers, forever, with
+  // no alert. Three ranchers are in this state right now; 5 Bar Beef alone
+  // blocks 281 waiting California buyers.
+  //
+  // The rancher-facing 'live-no-deposits' bucket above emails THEM. This tells
+  // the OPERATOR, who is the one who can actually unblock a supply constraint.
+  //
+  // Runs on the rancher list this cron already read — no extra Airtable cost.
+  // Fully isolated: this is a reporting nicety bolted onto a chase cron, and
+  // it must never be able to take the chase down.
+  let looksLiveFlagged = 0;
+  try {
+    const blocked = selectLooksLiveButBlocked(all);
+    for (const f of blocked) {
+      // One signal per rancher. A 7-day window makes this a standing weekly
+      // reminder rather than a single ping that can be missed once and then
+      // never resurface — the original blindness is what this exists to fix.
+      const res = await sendOperatorSignal({
+        urgency: 'loud',
+        kind: 'stuck-rancher',
+        summary: `LOOKS LIVE, RECEIVES NOTHING — ${f.name}${f.state ? ` (${f.state})` : ''}`,
+        detail:
+          `${f.name} shows Active + Page Live, but Stripe Connect is '${f.connectStatus}'.\n` +
+          `Because they're on tier_v2, buyer routing excludes them entirely — they are getting ZERO buyers and have no idea.\n\n` +
+          `The one missing step: ${f.missingStep}\n\n` +
+          `Fix: get them through Stripe Connect (or move them to the legacy rail), then confirm at /admin/ranchers/${f.id}.`,
+        refs: [{ type: 'rancher', id: f.id, label: f.name }],
+        dedupeKey: looksLiveDedupeKey(f.id),
+        dedupeWindowMs: 7 * DAY_MS,
+      });
+      if (res?.sent) looksLiveFlagged++;
+    }
+  } catch (e: any) {
+    // Never let the detector break the host cron.
+    console.error('[onboarding-stuck] looks-live detector failed (chase unaffected):', e?.message);
+  }
+
   if (sent + escalated > 0) {
     try {
       await sendTelegramMessage(
@@ -312,7 +357,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
   return {
     status: 'success',
     recordsTouched: sent + escalated,
-    notes: `sent=${sent} escalated=${escalated}`,
+    notes: `sent=${sent} escalated=${escalated} looksLiveFlagged=${looksLiveFlagged}`,
   };
 }
 

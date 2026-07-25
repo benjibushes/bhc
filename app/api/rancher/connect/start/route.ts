@@ -23,7 +23,15 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import jwt from 'jsonwebtoken';
 import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
-import { createConnectAccount, createOnboardingLink } from '@/lib/stripeConnect';
+import {
+  createConnectAccount,
+  createOnboardingLink,
+  applyConnectPrefill,
+  getConnectAccountStatus,
+  connectHandoff,
+  type ConnectHandoff,
+} from '@/lib/stripeConnect';
+import { buildConnectPrefill, hasMeaningfulPrefill } from '@/lib/connectPrefill';
 import { requireRancher } from '@/lib/rancherAuth';
 import { JWT_SECRET } from '@/lib/secrets';
 
@@ -71,7 +79,10 @@ function verifySetupToken(token: string): string | null {
 async function mintOnboardingUrl(
   req: Request,
   options: MintOptions,
-): Promise<{ ok: true; url: string; accountId: string } | { ok: false; response: NextResponse }> {
+): Promise<
+  | { ok: true; url: string; accountId: string; handoff: ConnectHandoff }
+  | { ok: false; response: NextResponse }
+> {
   if (process.env.STRIPE_CONNECT_ENABLED !== 'true') {
     return {
       ok: false,
@@ -134,6 +145,18 @@ async function mintOnboardingUrl(
   }
 
   let accountId: string = String(rancher['Stripe Connect Account Id'] || '');
+  const isFirstStart = !accountId;
+
+  // ── PREFILL: stop making ranchers retype what we already hold ────────────
+  // Five of the twelve ranchers who started Stripe Connect died at the
+  // IDENTICAL point (verified live 2026-07-24): tos_acceptance.date = null —
+  // Stripe SCREEN ONE. None reached bank details or SSN. All five carried the
+  // same past_due set, three of which BHC already knows: their landing-page
+  // URL, their product description, and their phone. Sending those ahead of
+  // them removes three fields from the screen where they quit.
+  // Best-effort by construction (see lib/connectPrefill.ts): a missing or junk
+  // value is omitted, never guessed, and NEVER blocks account creation.
+  const prefill = buildConnectPrefill(rancher, SITE_URL);
 
   // First-time onboarding: create the V2 Connect account, persist immediately
   if (!accountId) {
@@ -152,6 +175,7 @@ async function mintOnboardingUrl(
         email,
         displayName,
         rancherId: rancherId,
+        prefill,
       });
       accountId = result.accountId;
     } catch (e: any) {
@@ -180,10 +204,9 @@ async function mintOnboardingUrl(
     }
 
     // Persist BEFORE link creation so a refresh mid-flow doesn't create duplicates.
-    // 'Connect Started At' is written ONLY here (the first-start branch, gated by
-    // `if (!accountId)`), so re-entry/refresh never overwrites it. This anchors the
-    // onboarding-stuck recovery-nudge cron, which targets ranchers who began Stripe
-    // Connect and abandoned KYC.
+    // 'Connect Started At' rides this write on a genuine first start. It is ALSO
+    // stamped unconditionally below (see stampConnectStarted) so that a rancher
+    // whose account was created by some OTHER writer still gets an anchor.
     // Retry the persist once — a real, billable Stripe account already exists,
     // so a dropped write here orphans it (the next start mints ANOTHER account,
     // and the webhook can't resync a row it can't find by Account Id).
@@ -219,6 +242,86 @@ async function mintOnboardingUrl(
     }
   }
 
+  // ── STOP BEING BLIND: stamp 'Connect Started At' on EVERY start ─────────
+  //
+  // This field was 0/87 populated while TWELVE ranchers held a Connect
+  // account (verified live 2026-07-24). The field exists and is writable
+  // (Ranchers.fldB1nPQ2AsD6iiQT, dateTime) — the write was simply
+  // UNREACHABLE for these rows. Both writers (here and tier/select) stamped
+  // it only inside their `if (!accountId)` create branch, but the account is
+  // frequently created by a THIRD path — /api/admin/ranchers/[id]/
+  // mark-legacy-connect — which writes 'Stripe Connect Account Id' and never
+  // stamps. After that, `accountId` is always truthy here, the create branch
+  // never runs again, and the anchor can never be written for that rancher.
+  // (Rep Provisions, onboarded 2026-07-23, is exactly this: Tier='Legacy
+  // Connect', account present, anchor null.)
+  //
+  // Without this anchor the onboarding-stuck cron falls back to
+  // Agreement Signed At / Docs Sent At / record-creation date — see its own
+  // comment at app/api/cron/onboarding-stuck/route.ts — so the platform
+  // cannot see the abandonment that costs 50% of everyone who starts.
+  //
+  // Idempotent (never overwrites an existing stamp) and best-effort: an
+  // analytics anchor must never block a rancher from reaching Stripe. Failure
+  // pings the operator rather than dying in a log line.
+  if (!rancher['Connect Started At']) {
+    try {
+      await updateRecord(TABLES.RANCHERS, rancherId, {
+        'Connect Started At': new Date().toISOString(),
+      });
+    } catch (e: any) {
+      console.error('[connect/start] Connect Started At stamp failed:', e?.message);
+      try {
+        const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+        await sendOperatorSignal({
+          urgency: 'normal',
+          kind: 'system-error',
+          summary: 'Connect Started At stamp failed — abandonment tracking blind',
+          detail: `rancher=${rancherId} (${String(rancher['Ranch Name'] || rancher['Operator Name'] || '')}) — ${e?.message?.slice(0, 200) || 'unknown'}. The onboarding-stuck cron will fall back to a weaker anchor for this rancher.`,
+          dedupeKey: `connect-started-stamp-fail-${rancherId}`,
+          dedupeWindowMs: 6 * 60 * 60 * 1000,
+        });
+      } catch {}
+    }
+  }
+
+  // ── RESUME PATH: read the truth, and push the prefill onto the account ──
+  //
+  // A brand-new account was just created WITH the prefill, so there is nothing
+  // to read or push. For an existing account (every one of the five stalled
+  // ranchers) we do two things: read live status so the caller can render one
+  // honest next action, and push the prefill so the fields they abandoned on
+  // are already filled when they walk back in.
+  //
+  // Both are wrapped so that NEITHER can stop the rancher reaching Stripe —
+  // the onboarding link below is the thing that actually matters.
+  let handoff = connectHandoff({ hasAccount: true, status: 'onboarding' });
+  if (!isFirstStart) {
+    try {
+      const live = await getConnectAccountStatus(accountId);
+      handoff = connectHandoff({
+        hasAccount: true,
+        status: live.status,
+        currentlyDue: live.currentlyDue,
+        canResumeOnboarding: live.canResumeOnboarding,
+      });
+      // Only push onto an unfinished account. Never overwrite the support
+      // details a rancher has already curated on a live, working account.
+      if (live.status !== 'active' && hasMeaningfulPrefill(prefill)) {
+        try {
+          await applyConnectPrefill({ accountId, prefill });
+        } catch (e: any) {
+          console.warn('[connect/start] prefill push failed (continuing):', e?.message);
+        }
+      }
+    } catch (e: any) {
+      // Status read failed — we still send them to Stripe. Report the honest
+      // "we don't know yet" shape rather than inventing progress.
+      console.warn('[connect/start] live status read failed (continuing):', e?.message);
+      handoff = connectHandoff({ hasAccount: true, status: null });
+    }
+  }
+
   // Mint a FRESH onboarding link every call. This is the auto-recovery
   // path: a rancher clicking a stale email link gets a brand-new one and
   // 302s straight into Stripe instead of seeing "session expired."
@@ -241,7 +344,7 @@ async function mintOnboardingUrl(
       returnUrl,
       refreshUrl,
     });
-    return { ok: true, url, accountId };
+    return { ok: true, url, accountId, handoff };
   } catch (e: any) {
     console.error('[connect/start] onboarding link failed:', e?.message);
     // U26: same as the account-create failure — alert + calm human message.
@@ -283,7 +386,21 @@ export async function POST(req: Request) {
 
   const result = await mintOnboardingUrl(req, { fromWizard, wizardToken });
   if (!result.ok) return result.response;
-  return NextResponse.json({ url: result.url, accountId: result.accountId });
+  // `url` is a FRESH Stripe account link, minted on this request (Stripe's
+  // links expire ~24h), so it is safe to render as a one-click resume button.
+  // `resumeUrl` is the same link under the name the UI reads; `state` +
+  // `currentlyDue` carry the structured truth so a follow-up PR can render ONE
+  // honest next action instead of guessing from a scatter of booleans.
+  return NextResponse.json({
+    url: result.url,
+    resumeUrl: result.url,
+    accountId: result.accountId,
+    state: result.handoff.state,
+    canResume: result.handoff.canResume,
+    currentlyDueCount: result.handoff.currentlyDueCount,
+    currentlyDue: result.handoff.currentlyDue,
+    nextAction: result.handoff.nextAction,
+  });
 }
 
 /**

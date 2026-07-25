@@ -8,13 +8,15 @@
 
 import { NextResponse } from 'next/server';
 import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
-import { getConnectAccountStatus } from '@/lib/stripeConnect';
+import { getConnectAccountStatus, createOnboardingLink, connectHandoff } from '@/lib/stripeConnect';
 import { computeConnectResync } from '@/lib/connectResync';
 import { requireRancher } from '@/lib/rancherAuth';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 20;
+
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 export async function GET(req: Request) {
   const r = await requireRancher(req);
@@ -26,19 +28,74 @@ export async function GET(req: Request) {
 
   const accountId = String(rancher['Stripe Connect Account Id'] || '');
   if (!accountId) {
-    return NextResponse.json({ status: 'not_connected' as const });
+    // Structured truth for a rancher who has never begun. Shape matches the
+    // connected case so the UI has exactly one contract to render.
+    const handoff = connectHandoff({ hasAccount: false });
+    return NextResponse.json({
+      status: 'not_connected' as const,
+      state: handoff.state,
+      canResume: false,
+      currentlyDueCount: 0,
+      currentlyDue: [],
+      nextAction: handoff.nextAction,
+      resumeUrl: null,
+    });
   }
 
   try {
     const result = await getConnectAccountStatus(accountId);
-    // result already carries currentlyDueCount + canResumeOnboarding so callers
-    // (dashboard banner, billing page) can show exactly what's left and route
-    // the resume action correctly. Return verbatim.
-    return NextResponse.json(result);
+    const handoff = connectHandoff({
+      hasAccount: true,
+      status: result.status,
+      currentlyDue: result.currentlyDue,
+      canResumeOnboarding: result.canResumeOnboarding,
+    });
+
+    // A ready-to-use resume link, minted FRESH on this request — Stripe's
+    // account links expire (~24h), so a cached one is a dead end. Only minted
+    // when a fresh onboarding link is actually the right fix: an active
+    // account has nothing to resume, and a Stripe-side hold can't be cleared
+    // by another onboarding loop (those need the dashboard/support).
+    // Best-effort: a link-mint failure must not turn an otherwise-good status
+    // read into a 500 — the UI degrades to "no one-click resume", not blank.
+    let resumeUrl: string | null = null;
+    if (handoff.canResume) {
+      try {
+        const link = await createOnboardingLink({
+          accountId,
+          returnUrl: `${SITE_URL}/rancher/billing?onboarding=done`,
+          refreshUrl: `${SITE_URL}/api/rancher/connect/start`,
+        });
+        resumeUrl = link.url;
+      } catch (e: any) {
+        console.warn('[connect/status] resume link mint failed (continuing):', e?.message);
+      }
+    }
+
+    // Spread the raw read first so existing consumers (cardPaymentsActive,
+    // onboardingComplete, requirementsStatus, status, currentlyDueCount,
+    // canResumeOnboarding) keep working byte-identically, then add the
+    // structured handoff on top.
+    return NextResponse.json({
+      ...result,
+      state: handoff.state,
+      canResume: handoff.canResume,
+      nextAction: handoff.nextAction,
+      resumeUrl,
+    });
   } catch (e: any) {
     console.error('[connect/status] Stripe retrieve failed:', e?.message);
     return NextResponse.json(
-      { error: `Stripe read failed: ${e?.message || 'unknown'}`, status: 'unknown' },
+      {
+        error: `Stripe read failed: ${e?.message || 'unknown'}`,
+        status: 'unknown',
+        state: 'incomplete' as const,
+        // Actionable, not a silent failure: the rancher can still be sent to
+        // the start endpoint, which re-mints a link and re-reads status.
+        nextAction:
+          "We couldn't reach Stripe to check your payout setup just now. Try again in a moment — if it keeps happening, email hello@buyhalfcow.com and we'll finish it with you.",
+        resumeUrl: null,
+      },
       { status: 500 },
     );
   }
