@@ -3,17 +3,24 @@ import { dispatchDealEvent } from './events';
 import { getRecordById, updateRecord, createRecord, TABLES } from '@/lib/airtable';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 
-// Audit-write failure alarm (bulletproof walkthrough 2026-07-15). The 'Deal
-// Events' audit write 403'd (NOT_AUTHORIZED) on every deal transition for a
-// MONTH and the swallow-all catch below kept it console-only — a silent,
-// permanent audit-trail loss. Verified against the live base schema: the
-// table simply DOES NOT EXIST (it was never created), so every transition's
-// audit row vanishes. The write stays non-blocking (an audit row must never
-// block a close), but the failure is now LOUD: one deduped operator signal
-// per 24h naming the table and the fix. Ben-action: create a 'Deal Events'
-// table in the Airtable base with fields — Referral (link to Referrals),
-// From (text), To (text), Actor (text), Reason (text), At (date-time) — or
-// grant the token access if it exists in another base.
+// Audit-write failure alarm (bulletproof walkthrough 2026-07-15).
+//
+// HISTORY: the 'Deal Events' audit write 403'd (NOT_AUTHORIZED) on every deal
+// transition for a MONTH and the swallow-all catch below kept it console-only —
+// a silent, permanent audit-trail loss. This alarm made the failure LOUD: one
+// deduped operator signal per 24h, non-blocking (an audit row must never block
+// a close).
+//
+// STATUS 2026-07-24: RESOLVED AND VERIFIED. The comment here used to claim the
+// table "simply DOES NOT EXIST (it was never created)" — that is no longer
+// true and was itself a stale-truth trap for the next reader. 'Deal Events'
+// EXISTS in base appgLT4z009iwAfhs (tbllZfXqXg1i0i6fI) and is WORKING: 53 rows,
+// every field populated (From / To / Actor / At), most recent 2026-07-24.
+//
+// The alarm STAYS. It is not a workaround for a missing table — it is the
+// general safety net for any future audit-write failure (token scope revoked,
+// field renamed, rate limit, table archived). What changed is the remediation
+// text: don't tell the operator to create a table that already exists.
 async function alarmAuditWriteFailure(err: unknown): Promise<void> {
   try {
     await sendOperatorSignal({
@@ -22,8 +29,9 @@ async function alarmAuditWriteFailure(err: unknown): Promise<void> {
       summary: `Deal Events audit write failing — deal-transition audit trail is being lost`,
       detail:
         `createRecord('Deal Events') threw: ${(err as any)?.message || String(err)}\n` +
-        `Fix: create a 'Deal Events' table in the Airtable base (fields: Referral link-to-Referrals, ` +
-        `From, To, Actor, Reason, At) — or add it to the Airtable token's base scopes. ` +
+        `The 'Deal Events' table EXISTS and normally works, so this is a regression: check the ` +
+        `Airtable token's scopes for the base, whether the table was renamed/archived, whether a ` +
+        `field (Referral link-to-Referrals, From, To, Actor, Reason, At) was removed, or a rate limit. ` +
         `Transitions still complete; only the audit rows are lost.`,
       dedupeKey: 'deal-events-audit-write-failure',
       dedupeWindowMs: 24 * 60 * 60 * 1000,

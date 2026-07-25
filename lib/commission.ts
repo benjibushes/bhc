@@ -220,3 +220,31 @@ export function partitionUnpaidByRail<T>(rows: T[]): {
   }
   return { depositRail, invoiceEligible };
 }
+
+/**
+ * May an admin close write the LEGACY `Commission Due` receivable? — money-model
+ * truth (2026-07-24).
+ *
+ * `Commission Due` / `Commission Paid` describe ONE rail: the deprecated
+ * "rancher owes BHC 10%, invoiced monthly after close" model. On the live
+ * money model (docs/BUSINESS-MODEL.md ⭐) the 10% is ADDED to the buyer and
+ * captured atomically at deposit via the Stripe Connect `application_fee` —
+ * the rancher owes nothing and there is no receivable to record.
+ *
+ * THE BUG: app/api/referrals/[id] PATCH wrote `Commission Due` unconditionally
+ * whenever a Sale Amount was supplied. Close a Connect deal from /admin and the
+ * founder's dashboard sprouts a receivable Stripe already collected — while the
+ * rancher dashboard (which filters on this same rail) shows nothing. Two
+ * surfaces, same deal, different money.
+ *
+ * FAIL-OPEN ON UNKNOWN, deliberately. `ref === null` means the Airtable read
+ * failed, not that the deal is on Connect. Skipping the write there would
+ * silently destroy a real legacy receivable with no way to recover it; writing
+ * it on a Connect row only over-states a dashboard tile (the monthly invoice
+ * cron independently re-checks the rail via partitionUnpaidByRail, so a stray
+ * row can never actually be billed). Over-state, never destroy.
+ */
+export function shouldWriteLegacyCommissionDue(ref: any): boolean {
+  if (ref === null || ref === undefined) return true;
+  return referralRail(ref) === 'legacy';
+}

@@ -3,7 +3,12 @@ import { updateRecord, getRecordById, getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendTelegramSaleCelebration } from '@/lib/telegram';
 import { requireAdmin } from '@/lib/adminAuth';
-import { calcCommission, calcCommissionForRancher, getCommissionRate } from '@/lib/commission';
+import {
+  calcCommission,
+  calcCommissionForRancher,
+  getCommissionRate,
+  shouldWriteLegacyCommissionDue,
+} from '@/lib/commission';
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { shouldDecrementOnClose } from '@/lib/refundLifecycle';
 import { logAuditEntry, buildAirtableUpdateReverse } from '@/lib/auditLog';
@@ -73,16 +78,34 @@ export async function PATCH(
       // overbilled on every admin close. Resolve the rancher off the referral's
       // Rancher link; fall back to the global rate only if it can't be resolved.
       let rancherForRate: any = null;
+      let refForRail: any = null;
       try {
         const refForRate = await getRecordById(TABLES.REFERRALS, id);
+        refForRail = refForRate;
         const rid = (refForRate as any)['Rancher']?.[0];
         if (rid) rancherForRate = await getRecordById(TABLES.RANCHERS, rid);
       } catch (e: any) {
         console.warn('[referral-close] rancher fetch for commission rate failed, using global default:', e?.message);
       }
-      fields['Commission Due'] = rancherForRate
-        ? calcCommissionForRancher(rancherForRate, amount)
-        : calcCommission(amount);
+      // RAIL GATE (money-model truth, 2026-07-24). `Commission Due` is a
+      // LEGACY-rail artifact — "rancher owes BHC 10%, invoiced monthly after
+      // close". On the live model (docs/BUSINESS-MODEL.md ⭐) the 10% is ADDED
+      // to the buyer and taken atomically at deposit via the Connect
+      // application_fee, so a Connect close owes nothing. Writing it anyway
+      // (which this route did unconditionally) sprouts a receivable on /admin
+      // that Stripe already collected, while the rancher dashboard — which
+      // filters on this same rail — shows the deal settled. Same deal, two
+      // numbers. Decision lives in lib/commission.ts (fails OPEN on an
+      // unreadable referral: over-state a tile, never destroy a receivable).
+      if (shouldWriteLegacyCommissionDue(refForRail)) {
+        fields['Commission Due'] = rancherForRate
+          ? calcCommissionForRancher(rancherForRate, amount)
+          : calcCommission(amount);
+      } else {
+        console.log(
+          `[referral-close] ${id} is on the Connect deposit rail — skipping legacy Commission Due write (fee already captured at deposit)`,
+        );
+      }
     }
 
     if (commissionPaid !== undefined) {
