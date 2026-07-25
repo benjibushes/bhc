@@ -3,6 +3,8 @@ import { getRancherBySlug, getAllRecords, createRecord, createReferral, updateRe
 import { sendTrackedContactEmail } from '@/lib/email';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
+import { normalizeZip } from '@/lib/zipFormat';
+import { buyerZipPatch } from '@/lib/buyerZip';
 
 export const maxDuration = 60;
 
@@ -42,6 +44,12 @@ export async function POST(
     }
 
     const { name, email, phone, message, smsOptIn } = body;
+
+    // Optional ZIP (2026-07-25) — this form mints a real Consumer, so capture
+    // the ZIP that makes that lead routable. normalizeZip is the only gate:
+    // null for blank/short/garbage, and null is simply never written. Never a
+    // 400 — a bad ZIP must not be able to block a message to a rancher.
+    const zip = normalizeZip(body?.zip);
 
     // TCPA SMS consent from the store contact form's checkbox (unchecked by
     // default; phone itself is optional). Only meaningful with a non-empty
@@ -120,17 +128,22 @@ export async function POST(
             // funnel writes and sendSMSToConsumer gates on). Only ever flips
             // false→true; an unchecked box is not a revocation. Failure here
             // hits the surrounding non-fatal catch.
+            const patch: Record<string, any> = {};
             if (wantsSms && (existingConsumers[0] as any)['SMS Opt-In'] !== true) {
-              await updateRecord(TABLES.CONSUMERS, consumerId, {
-                'SMS Opt-In': true,
-                'SMS Opt-In At': new Date().toISOString(),
-              });
+              patch['SMS Opt-In'] = true;
+              patch['SMS Opt-In At'] = new Date().toISOString();
+            }
+            // Fill a blank/garbage Zip; never stomp one they already gave us.
+            Object.assign(patch, buyerZipPatch(zip, (existingConsumers[0] as any)['Zip']));
+            if (Object.keys(patch).length > 0) {
+              await updateRecord(TABLES.CONSUMERS, consumerId, patch);
             }
           } else {
             const createdConsumer: any = await createRecord(TABLES.CONSUMERS, {
               'Full Name': name.trim(),
               'Email': email.trim().toLowerCase(),
               'Phone': phone?.trim() || '',
+              ...(zip ? { 'Zip': zip } : {}),
               'Segment': 'Beef Buyer',
               'Source': `rancher-contact:${slug}`,
               'Interests': ['Beef'],

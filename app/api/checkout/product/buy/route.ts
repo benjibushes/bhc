@@ -50,9 +50,21 @@ export async function POST(request: Request) {
   const resolved = await resolveProductPurchase({
     productId: String(body?.productId || ''),
     quantity: Number(body?.quantity || 1),
+    // ZIP-CAPTURE DECISION (2026-07-25): optional on the wire, exactly like
+    // /api/checkout/reserve. This is a two-tap checkout — we do NOT front-load
+    // a ZIP field on it for the 100% of ranchers who have no service-area
+    // contract. Stripe collects an address at payment and we harvest the ZIP
+    // onto the Consumer at settlement (lib/productSettlement → buyerZipPatch),
+    // so we still gather it, just without the pre-payment friction. A rancher
+    // WITH `Service ZIP Prefixes` needs it before the charge, and the gate
+    // inside resolveProductPurchase fails closed when it's absent.
+    buyerZip: body?.zip,
   });
   if (!resolved.ok) {
-    return NextResponse.json({ error: resolved.error }, { status: resolved.status });
+    return NextResponse.json(
+      { error: resolved.error, ...(resolved.fallback ? { fallback: true } : {}) },
+      { status: resolved.status },
+    );
   }
   const { product, connectAccountId, rancherId, displayCents, baseCents, shippingCents, quantity } = resolved;
 

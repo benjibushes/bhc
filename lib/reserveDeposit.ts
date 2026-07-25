@@ -119,6 +119,12 @@ export function buildReserveConsumerFields(args: {
   buyerEmail: string;
   buyerPhone: string;
   buyerState?: string;
+  /**
+   * Normalized 5-digit US ZIP (output of normalizeZip) or ''/undefined. Written
+   * to Consumers.`Zip` only when present — the route never passes an
+   * unnormalized value, so a malformed ZIP can't reach the record.
+   */
+  buyerZip?: string;
   smsOptIn: boolean;
   /**
    * T2.2 (2026-07-02): VALIDATED affiliate code (output of
@@ -138,6 +144,7 @@ export function buildReserveConsumerFields(args: {
     'Email': args.buyerEmail,
     'Phone': args.buyerPhone,
     ...(args.buyerState ? { 'State': args.buyerState } : {}),
+    ...(args.buyerZip ? { 'Zip': args.buyerZip } : {}),
     'Segment': 'Beef Buyer',
     'Status': 'Approved',
     'Approved At': nowIso,

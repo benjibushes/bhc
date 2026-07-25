@@ -55,9 +55,14 @@ export async function POST(request: Request) {
   const resolved = await resolveProductPurchase({
     productId: String(body?.productId || ''),
     quantity: Number(body?.quantity || 1),
+    // Same optional-ZIP contract as the session route — see the note there.
+    buyerZip: body?.zip,
   });
   if (!resolved.ok) {
-    return NextResponse.json({ error: resolved.error }, { status: resolved.status });
+    return NextResponse.json(
+      { error: resolved.error, ...(resolved.fallback ? { fallback: true } : {}) },
+      { status: resolved.status },
+    );
   }
 
   // Price-drift check (spec R4): the wallet sheet / pay button showed the

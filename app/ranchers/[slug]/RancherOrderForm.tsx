@@ -36,6 +36,14 @@ interface Props {
   quarter?: TierData;
   half?: TierData;
   whole?: TierData;
+  /**
+   * True when this rancher has `Service ZIP Prefixes` — i.e. Ben signed an
+   * exclusivity contract for a specific service area, so the ZIP decides
+   * whether this buyer may be served at all. Makes ZIP REQUIRED (and shows it
+   * to logged-in buyers, who otherwise never see the address fields). False
+   * for every rancher today — the form is byte-identical to before.
+   */
+  requireZip?: boolean;
 }
 
 /**
@@ -51,6 +59,7 @@ export default function RancherOrderForm({
   slug,
   rancherName,
   ranchName,
+  requireZip = false,
   quarter,
   half,
   whole,
@@ -145,6 +154,13 @@ export default function RancherOrderForm({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
+        // `fallbackToMatch` = this ranch can't serve them (paused, or contracted
+        // to a service area that doesn't cover their ZIP). Hand them to the
+        // quiz, which matches them to a ranch that can — never a dead end.
+        if (data?.fallbackToMatch) {
+          window.location.href = '/access';
+          return;
+        }
         setError(data?.error || 'Something went wrong — try again.');
         setLoading(false);
         return;
@@ -319,8 +335,10 @@ export default function RancherOrderForm({
                         </select>
                         <input
                           type="text"
-                          placeholder="ZIP (optional)"
+                          placeholder={requireZip ? 'ZIP' : 'ZIP (optional)'}
+                          required={requireZip}
                           inputMode="numeric"
+                          autoComplete="postal-code"
                           pattern="\d{5}"
                           maxLength={5}
                           value={form.zip}
@@ -342,6 +360,27 @@ export default function RancherOrderForm({
                       <p className="font-medium">{session.name || session.email}</p>
                       <p className="text-saddle">{session.email}</p>
                     </div>
+                  )}
+
+                  {/* Logged-in buyers skip the address fields entirely, so a
+                      ZIP-gated ranch would otherwise have no way to learn where
+                      they are and would (correctly) refuse every request. Ask
+                      here, only in that case. */}
+                  {session && requireZip && (
+                    <input
+                      type="text"
+                      placeholder="Delivery ZIP"
+                      required
+                      inputMode="numeric"
+                      autoComplete="postal-code"
+                      pattern="\d{5}"
+                      maxLength={5}
+                      value={form.zip}
+                      onChange={(e) =>
+                        setForm((f) => ({ ...f, zip: e.target.value.replace(/\D/g, '').slice(0, 5) }))
+                      }
+                      className="w-full px-4 py-3 border border-dust bg-white text-sm"
+                    />
                   )}
 
                   <textarea

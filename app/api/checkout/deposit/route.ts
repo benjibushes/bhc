@@ -23,6 +23,8 @@ import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCa
 import { metaEventId } from '@/lib/analytics';
 import { absorbStripeFee } from '@/lib/feeMath';
 import { isDepositAlreadyPaid } from '@/lib/depositPaidState';
+import { hasServiceZipGate, buyerZipServedBy } from '@/lib/exclusiveZip';
+import { ZIP_OUT_OF_AREA_MESSAGE } from '@/lib/buyerZip';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -145,6 +147,25 @@ export async function POST(req: Request) {
       },
       { status: 409 },
     );
+  }
+
+  // ── EXCLUSIVE-ZIP GATE (2026-07-25) ──────────────────────────────────────
+  // Last money gate before a charge, so it runs here too — reserve/qualify are
+  // upstream doors, but an emailed or campaign deposit link lands straight on
+  // this route. `hasServiceZipGate` short-circuits FIRST on purpose: for every
+  // rancher alive today (no `Service ZIP Prefixes`) this block does nothing at
+  // all — not even the extra Consumers read — so the deposit path keeps its
+  // exact current latency and call count. Only a contracted-territory rancher
+  // pays for the lookup. Fail CLOSED: a read failure leaves the ZIP unknown,
+  // and buyerZipServedBy rejects an unknown ZIP for a gated rancher.
+  if (hasServiceZipGate(rancher)) {
+    const buyerRec: any = await getRecordById(TABLES.CONSUMERS, session.consumerId).catch(() => null);
+    if (!buyerZipServedBy(buyerRec?.['Zip'], rancher)) {
+      return NextResponse.json(
+        { error: 'out_of_area', message: ZIP_OUT_OF_AREA_MESSAGE, redirectUrl: '/access' },
+        { status: 409 },
+      );
+    }
   }
 
   // Tier_v2 gates

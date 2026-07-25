@@ -28,6 +28,7 @@ import ProductCard from '../../components/ProductCard';
 import { loadProductsForRancher, type MarketplaceProduct } from '@/lib/marketplaceProducts';
 import { getClosedWonDealCountForRancher } from '@/lib/socialProof';
 import { jsonLdSafe } from '@/lib/jsonLdSafe';
+import { hasServiceZipGate } from '@/lib/exclusiveZip';
 
 // Public rancher landing page — the unit of conversion. Verified partners
 // get full pricing + lead capture; prospects get the same shell with pricing
@@ -874,6 +875,11 @@ export default async function RancherPage(
                   ranchName={name}
                   operatorFirst={operatorFirst || name}
                   bookingUrl={showCalCta ? calCtaUrl : ''}
+                  // Ask for a ZIP up front ONLY when this ranch has a
+                  // contracted service area, where it decides eligibility and
+                  // must be known before the charge. False for every ranch
+                  // today → the fast path is untouched (lib/exclusiveZip).
+                  requireZip={hasServiceZipGate(r)}
                   quarter={quarterPrice ? { price: quarterPrice, lbs: quarterLbs, depositDue: depositDueDollars(quarterPrice, r['Quarter Deposit']) } : undefined}
                   half={halfPrice ? { price: halfPrice, lbs: halfLbs, depositDue: depositDueDollars(halfPrice, r['Half Deposit']) } : undefined}
                   whole={wholePrice ? { price: wholePrice, lbs: wholeLbs, depositDue: depositDueDollars(wholePrice, r['Whole Deposit']) } : undefined}
@@ -883,6 +889,7 @@ export default async function RancherPage(
                   slug={slug}
                   rancherName={operatorName || name}
                   ranchName={name}
+                  requireZip={hasServiceZipGate(r)}
                   quarter={quarterPrice ? { price: quarterPrice, lbs: quarterLbs } : undefined}
                   half={halfPrice ? { price: halfPrice, lbs: halfLbs } : undefined}
                   whole={wholePrice ? { price: wholePrice, lbs: wholeLbs } : undefined}

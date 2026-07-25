@@ -26,6 +26,7 @@ export default function RancherContactPage() {
     name: '',
     email: '',
     phone: '',
+    zip: '',
     message: '',
   });
   // TCPA SMS consent — UNCHECKED by default, never gates the message. Phone
@@ -78,6 +79,7 @@ export default function RancherContactPage() {
           name: form.name,
           email: form.email,
           phone: form.phone,
+          zip: form.zip,
           message: form.message,
           // Funnel payload convention → Consumers `SMS Opt-In` server-side.
           smsOptIn,
@@ -276,6 +278,26 @@ export default function RancherContactPage() {
                   value={form.phone}
                   onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
                   placeholder="(555) 555-5555"
+                  className="w-full px-4 py-3 border border-dust bg-white text-sm focus:outline-none focus:border-charcoal transition-colors"
+                />
+              </div>
+
+              {/* OPTIONAL — never gates the message. This form mints a real
+                  Consumer, and without a ZIP that lead can only ever be placed
+                  by state, so ask once here rather than chasing it later. */}
+              <div>
+                <label className="block text-sm font-medium mb-1">
+                  ZIP code <span className="text-dust">(optional)</span>
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="postal-code"
+                  pattern="\d{5}"
+                  maxLength={5}
+                  value={form.zip}
+                  onChange={e => setForm(f => ({ ...f, zip: e.target.value.replace(/\D/g, '').slice(0, 5) }))}
+                  placeholder="78701"
                   className="w-full px-4 py-3 border border-dust bg-white text-sm focus:outline-none focus:border-charcoal transition-colors"
                 />
               </div>
