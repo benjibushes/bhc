@@ -17,6 +17,7 @@ import { callClaude } from '@/lib/ai';
 import { bulkRouteStateToRancher } from '@/lib/bulkRoute';
 import { goLiveRancher } from '@/lib/goLiveRancher';
 import { UNPAUSE_CALLBACK_PREFIX } from '@/lib/connectResync';
+import { CLOSE_CHECK_MUTE_DAYS, closeCheckMuteUntilISO } from '@/lib/closeCheckMute';
 import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
 import { normalizeState, normalizeStates } from '@/lib/states';
 import { buildCronStatusCard, pauseCron, resumeCron } from '@/lib/cronIntrospection';
@@ -3118,14 +3119,17 @@ Output ONLY the email body. First line should be the subject line prefixed with 
               } catch {}
               await editTelegramMessage(chatId, messageId, `⏳ <b>Still working</b> — ${buyerName}\n\nLeft as ${previousStatus}. I'll check in again in 7 days.`);
             } else if (action === 'mute') {
-              await answerCallbackQuery(queryId, '🔇 Muted — won\'t ask again');
-              // Mark with a far-future check date so the cron skips forever.
+              await answerCallbackQuery(queryId, `🔇 Snoozed ${CLOSE_CHECK_MUTE_DAYS}d`);
+              // SNOOZE, not silence-forever. This used to stamp the far-future
+              // sentinel '2099-12-31', which made one accidental tap disarm
+              // close-detection on a live deal permanently — no undo, no
+              // expiry. Bounded window instead (lib/closeCheckMute.ts).
               try {
                 await updateRecord(TABLES.REFERRALS, refId, {
-                  'Close Check Sent At': '2099-12-31T00:00:00Z',
+                  'Close Check Sent At': closeCheckMuteUntilISO(Date.now()),
                 });
               } catch {}
-              await editTelegramMessage(chatId, messageId, `🔇 <b>Muted</b> — ${buyerName}\n\nClose detector will skip this referral. Mark Won/Lost manually in Airtable when it resolves.`);
+              await editTelegramMessage(chatId, messageId, `🔇 <b>Snoozed</b> — ${buyerName}\n\nClose detector will skip this referral for ${CLOSE_CHECK_MUTE_DAYS} days, then ask once more. Mark Won/Lost in Airtable to close it out for good.`);
             } else {
               await answerCallbackQuery(queryId, `Unknown action: ${action}`);
             }

@@ -36,6 +36,7 @@ import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
+import { CLOSE_CHECK_MUTE_DAYS } from '@/lib/closeCheckMute';
 
 export const maxDuration = 60;
 
@@ -105,8 +106,11 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     for (const ref of targets) {
       try {
         // Give-up gate: past the realistic close window, stop asking forever.
-        // Stamp the far-future sentinel (same value the manual "Stop asking"
-        // mute uses) so this referral never resurfaces a card.
+        // Stamp the far-future sentinel so this referral never resurfaces a
+        // card. DELIBERATELY PERMANENT — the deal is past any realistic close
+        // window and the machine is done asking on purpose. The manual
+        // "🔇 Snooze" button no longer shares this value (2026-07-25): a
+        // fat-finger there must not disarm a LIVE deal forever.
         const introAt0 = ref['Intro Sent At'] || ref['Approved At'];
         const daysSince0 = Math.floor((now - new Date(introAt0).getTime()) / DAY_MS);
         if (daysSince0 > MAX_DAYS_SINCE_INTRO) {
@@ -151,7 +155,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
             ],
             [
               { text: '⏳ Still working', callback_data: `clcheck_working_${ref.id}` },
-              { text: '🔇 Stop asking', callback_data: `clcheck_mute_${ref.id}` },
+              { text: `🔇 Snooze ${CLOSE_CHECK_MUTE_DAYS}d`, callback_data: `clcheck_mute_${ref.id}` },
             ],
           ],
         };

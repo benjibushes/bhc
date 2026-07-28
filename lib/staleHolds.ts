@@ -13,14 +13,32 @@
 // out — dead intros must drain back into the pool.
 //
 // CONSERVATIVE BY DESIGN — a hold only expires when ALL are true:
-//   - Status ∈ {Intro Sent, Rancher Contacted} (the pre-money stages).
-//     Negotiation / Awaiting Payment / Slot Locked NEVER expire here —
-//     those are live or money-adjacent.
+//   - Status ∈ EXPIRABLE_STATUSES (the pre-money stages). Awaiting Payment /
+//     Slot Locked NEVER expire here — those are money-committed.
 //   - No deposit signal of any kind (Deposit Requested At / Deposit Paid At /
 //     Deposit Amount) — anything money-touched is the operator's call.
-//   - No activity from EITHER side for `staleDays` (default 21): the newest
-//     of Last Rancher Activity At / Last Buyer Activity At / Intro Sent At /
+//   - No activity from EITHER side for the status's window: the newest of
+//     Last Rancher Activity At / Last Buyer Activity At / Intro Sent At /
 //     created time is older than the cutoff.
+//
+// ── 'Negotiation' ADDED 2026-07-25 (pause-asymmetry sweep) ─────────────────
+// The original cut excluded 'Negotiation' as "live". That was the wrong call
+// and it cost real routing: 'Negotiation' IS in HELD_REFERRAL_STATUSES
+// (lib/capacityCount.ts) so it holds a rancher capacity slot, but NO expiry
+// path could ever release it. Live at discovery: 24 referrals parked in
+// Negotiation, oldest silent since April, ALL 24 already carrying the
+// close-detector's far-future give-up sentinel — so nothing on the platform
+// was ever going to ask about them again. They were permanent phantom load on
+// their ranchers' capacity.
+//
+// It gets a LONGER window than an unanswered intro rather than silently
+// inheriting the same one: a real negotiation is more alive than an intro
+// nobody replied to, and a wrong flip here is more expensive. The window is
+// expressed as a MULTIPLE of the base so `STALE_HOLD_DAYS` stays the single
+// knob that scales the whole rail coherently.
+//   Intro Sent / Rancher Contacted → staleDays      (21 default)
+//   Negotiation                    → staleDays × 2  (42 default)
+// Deposit signals still block expiry at ANY age, in every status.
 //
 // Expiry flips Status → 'Dormant' AND (bulletproof 2026-07-08) the cron
 // closes the loop itself: it resets stranded buyers (MATCHED → READY when no
@@ -43,8 +61,24 @@ export interface StaleHoldRow {
   _createdTime?: string;
 }
 
-export const EXPIRABLE_STATUSES = new Set(['Intro Sent', 'Rancher Contacted']);
+export const EXPIRABLE_STATUSES = new Set(['Intro Sent', 'Rancher Contacted', 'Negotiation']);
 export const DEFAULT_STALE_DAYS = 21;
+
+/**
+ * Per-status silence window, as a multiple of the base `staleDays`. Any status
+ * not listed uses the base window (×1). Explicit map (not a bare default) so
+ * "why does Negotiation get longer?" is answerable from the code.
+ */
+export const STALE_DAYS_MULTIPLIER: Record<string, number> = {
+  // A negotiation that has gone quiet is still a warmer thing than an intro
+  // nobody answered — give it double the rope before releasing the slot.
+  Negotiation: 2,
+};
+
+/** Silence window (in days) that a given status must exceed to expire. */
+export function staleDaysForStatus(status: string, baseDays: number): number {
+  return baseDays * (STALE_DAYS_MULTIPLIER[String(status || '')] ?? 1);
+}
 
 function newestActivityMs(ref: StaleHoldRow): number {
   const candidates = [
@@ -68,14 +102,16 @@ export function isStaleHold(
   now: number,
   staleDays: number = DEFAULT_STALE_DAYS,
 ): boolean {
-  if (!EXPIRABLE_STATUSES.has(String(ref?.Status || ''))) return false;
+  const status = String(ref?.Status || '');
+  if (!EXPIRABLE_STATUSES.has(status)) return false;
   // Any deposit signal → never auto-expire (operator's call).
   if (ref['Deposit Requested At'] || ref['Deposit Paid At']) return false;
   if (Number(ref['Deposit Amount'] || 0) > 0) return false;
   const newest = newestActivityMs(ref);
   // No timestamp at all → don't guess; leave it for the operator.
   if (newest === 0) return false;
-  return now - newest > staleDays * 24 * 60 * 60 * 1000;
+  const windowDays = staleDaysForStatus(status, staleDays);
+  return now - newest > windowDays * 24 * 60 * 60 * 1000;
 }
 
 /**

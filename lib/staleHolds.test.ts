@@ -3,7 +3,15 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isStaleHold, selectStaleHolds, freedByRancher, DEFAULT_STALE_DAYS } from './staleHolds';
+import {
+  isStaleHold,
+  selectStaleHolds,
+  freedByRancher,
+  DEFAULT_STALE_DAYS,
+  EXPIRABLE_STATUSES,
+  staleDaysForStatus,
+} from './staleHolds';
+import { HELD_REFERRAL_STATUSES } from './capacityCount';
 
 const NOW = new Date('2026-07-08T12:00:00Z').getTime();
 const days = (n: number) => new Date(NOW - n * 24 * 60 * 60 * 1000).toISOString();
@@ -20,11 +28,75 @@ test('expires a 30-day-silent Intro Sent hold', () => {
   assert.equal(isStaleHold(stale(), NOW), true);
 });
 
-test('Rancher Contacted expires too; money-adjacent statuses NEVER do', () => {
+test('Rancher Contacted expires too; MONEY-COMMITTED statuses NEVER do', () => {
   assert.equal(isStaleHold(stale({ Status: 'Rancher Contacted' }), NOW), true);
-  for (const s of ['Negotiation', 'Awaiting Payment', 'Slot Locked', 'Closed Won', 'Pending Approval']) {
-    assert.equal(isStaleHold(stale({ Status: s }), NOW), false, s);
+  // 'Negotiation' moved OUT of this list 2026-07-25 — it holds capacity, so it
+  // must have SOME expiry path. Awaiting Payment / Slot Locked stay untouchable.
+  for (const s of ['Awaiting Payment', 'Slot Locked', 'Closed Won', 'Closed Lost', 'Dormant', 'Pending Approval']) {
+    assert.equal(isStaleHold(stale({ Status: s, 'Intro Sent At': days(400) }), NOW), false, s);
   }
+});
+
+// ── 'Negotiation' expiry (pause-asymmetry sweep 2026-07-25) ────────────────
+// The leak: Negotiation holds a capacity slot (HELD_REFERRAL_STATUSES) but no
+// expiry path could release it. 24 live referrals were parked there.
+
+test('INVARIANT: every capacity-holding status is either expirable or money-committed', () => {
+  const MONEY_COMMITTED = new Set(['Awaiting Payment', 'Slot Locked']);
+  for (const s of HELD_REFERRAL_STATUSES) {
+    assert.equal(
+      EXPIRABLE_STATUSES.has(s) || MONEY_COMMITTED.has(s),
+      true,
+      `${s} holds capacity but has no expiry path and is not money-committed`,
+    );
+  }
+});
+
+// Fixture where the newest signal of ANY kind is exactly `age` days old, so
+// the window boundary is the only thing under test (the shared `stale()`
+// helper bakes in a 35-day _createdTime that would otherwise dominate).
+const silentFor = (age: number, over: any = {}) => ({
+  id: 'rec1',
+  Status: 'Negotiation',
+  'Intro Sent At': days(age),
+  _createdTime: days(age + 5),
+  ...over,
+});
+
+test('Negotiation expires — but only past its OWN longer window', () => {
+  const base = DEFAULT_STALE_DAYS; // 21
+  // Past the intro window but inside the negotiation window → still held.
+  assert.equal(isStaleHold(silentFor(30), NOW), false);
+  assert.equal(isStaleHold(silentFor(base * 2), NOW), false);
+  // Just past 2× → released.
+  assert.equal(isStaleHold(silentFor(base * 2 + 1), NOW), true);
+  // Same age, an unanswered intro, releases far earlier.
+  assert.equal(isStaleHold(silentFor(30, { Status: 'Intro Sent' }), NOW), true);
+});
+
+test('Negotiation window scales with the STALE_HOLD_DAYS override, not a hardcode', () => {
+  assert.equal(staleDaysForStatus('Negotiation', 21), 42);
+  assert.equal(staleDaysForStatus('Negotiation', 10), 20);
+  assert.equal(staleDaysForStatus('Intro Sent', 21), 21);
+  assert.equal(staleDaysForStatus('Rancher Contacted', 21), 21);
+  // Unknown status falls back to the base window (×1), never to Infinity/NaN.
+  assert.equal(staleDaysForStatus('Whatever', 21), 21);
+  // With a 10-day base the negotiation window is 20d.
+  assert.equal(isStaleHold(silentFor(25), NOW, 10), true);
+  assert.equal(isStaleHold(silentFor(15), NOW, 10), false);
+});
+
+test('a deposit signal blocks Negotiation expiry at ANY age', () => {
+  assert.equal(isStaleHold(silentFor(400), NOW), true); // control
+  assert.equal(isStaleHold(silentFor(400, { 'Deposit Requested At': days(390) }), NOW), false);
+  assert.equal(isStaleHold(silentFor(400, { 'Deposit Paid At': days(390) }), NOW), false);
+  assert.equal(isStaleHold(silentFor(400, { 'Deposit Amount': 600 }), NOW), false);
+});
+
+test('recent activity keeps a Negotiation alive even past 2x the base window', () => {
+  assert.equal(isStaleHold(silentFor(400, { 'Last Buyer Activity At': days(3) }), NOW), false);
+  assert.equal(isStaleHold(silentFor(400, { 'Last Rancher Activity At': days(40) }), NOW), false);
+  assert.equal(isStaleHold(silentFor(400, { 'Last Rancher Activity At': days(43) }), NOW), true);
 });
 
 test('ANY deposit signal blocks expiry', () => {

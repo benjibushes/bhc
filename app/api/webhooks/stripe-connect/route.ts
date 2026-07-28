@@ -38,6 +38,7 @@ import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity
 import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
 import { GO_LIVE_FIELDS } from '@/lib/goLiveGates';
 import { unpauseCallbackData } from '@/lib/connectResync';
+import { autoResumePausedOverdue } from '@/lib/pauseReversal';
 
 // Mirror the platform webhook's Stripe Events table for idempotency.
 const STRIPE_EVENTS_TABLE = 'Stripe Events';
@@ -656,37 +657,74 @@ async function syncRancherConnectStatus(accountId: string): Promise<void> {
   await updateRecord(TABLES.RANCHERS, rancher.id, writeFields);
 
   // ── paused_overdue DEAD-END (audit 2026-07-21) ──────────────────────────
-  // migration-deadline auto-pauses overdue legacy ranchers (Active
-  // Status='Paused', Migration Status='paused_overdue'). When that rancher
-  // later finishes the upgrade, NOTHING unpauses them: the auto-go-live rail
-  // below requires a PRE-live Onboarding Status (a previously-live rancher
-  // carries 'Live'), and go-live-sync excludes Paused. Auto-unpausing here
-  // would violate the no-batch-flip rule (Active Status flips are Ben's
-  // per-rancher call — a Paused row can also be a deliberate manual pause),
-  // so fire a LOUD ops signal at the completion moment instead of letting the
-  // rancher silently receive zero buyers forever. sendOperatorSignal never
-  // throws; 24h dedupe absorbs webhook retries.
+  // migration-deadline auto-pauses overdue ranchers (Active Status='Paused',
+  // Migration Status='paused_overdue'). When that rancher later finishes the
+  // upgrade, no generic rail unpauses them: the auto-go-live rail below
+  // requires a PRE-live Onboarding Status (a previously-live rancher carries
+  // 'Live'), and go-live-sync excludes Paused.
+  //
+  // 2026-07-25 (pause-asymmetry sweep): the machine now REVERSES ITS OWN pause
+  // in the one case it can prove — 'paused_overdue' is written by exactly one
+  // line in the codebase (cron/migration-deadline), so its presence on a
+  // Paused row proves that cron caused the pause, and tier_v2 + Connect live
+  // proves its stated reason has expired. The resume write consumes the marker
+  // (Migration Status → 'completed'), making it single-use, so this can never
+  // override a pause a HUMAN sets later. Anything it cannot prove — a legacy
+  // rancher, a Connect-deauthorize pause, a manual pause — still gets the
+  // founder's one-tap button, and an auto-resumed rancher gets NO card.
+  // Never throws; 24h dedupe absorbs webhook retries.
   const wasPausedOverdueMig =
     String(rancher['Migration Status'] || '').toLowerCase() === 'paused_overdue';
   if (isNowActive && wasPausedOverdueMig && String(rancher['Active Status'] || '') === 'Paused') {
     const pausedLabel = String(
       rancher['Ranch Name'] || rancher['Operator Name'] || rancher['Email'] || accountId,
     );
-    await sendOperatorSignal({
-      urgency: 'loud',
-      kind: 'stuck-rancher',
-      summary: `UPGRADE COMPLETE — UNPAUSE ${pausedLabel}`,
-      detail:
-        `Rancher was auto-paused by the migration deadline (paused_overdue) and just finished Stripe Connect (active).\n` +
-        `Active Status is still 'Paused' — tap below to unpause, or flip it from /admin/ranchers/${rancher.id} so buyers route again.`,
-      refs: [{ type: 'rancher', id: rancher.id, label: pausedLabel }],
-      // One tap = unpaused + routable. Handled in app/api/webhooks/telegram.
-      // Same button the nightly stripe-reconcile cron attaches — these three
-      // emitters share a dedupe key, so whichever fires first must carry it.
-      actions: [{ label: `▶️ Unpause ${pausedLabel}`.slice(0, 60), callbackData: unpauseCallbackData(rancher.id) }],
-      dedupeKey: `paused-overdue-upgrade:${rancher.id}`,
-      dedupeWindowMs: 24 * 3600 * 1000,
-    });
+    // The updateRecord above may have flipped Pricing Model → tier_v2 and/or
+    // advanced Migration Status → 'completed' in this SAME transaction.
+    // Evaluate "is the migration actually done" against the row as it now
+    // stands, but keep the PRE-write Migration Status: provenance is a fact
+    // about who caused the pause, and this request's own bookkeeping write
+    // does not erase it. Without the merge, a rancher auto-flipped to tier_v2
+    // right here would read as 'legacy' and be denied their own resume.
+    const effectiveRancher = {
+      ...rancher,
+      ...writeFields,
+      'Migration Status': rancher['Migration Status'],
+    };
+    const auto = await autoResumePausedOverdue(effectiveRancher, isNowActive);
+    if (auto.resumed) {
+      await sendOperatorSignal({
+        urgency: 'normal',
+        kind: 'stuck-rancher',
+        summary: `AUTO-RESUMED ${pausedLabel}`,
+        detail:
+          `Rancher was auto-paused by the migration deadline (paused_overdue) and just completed it ` +
+          `(tier_v2 + Connect active).\n` +
+          `The machine reversed its own pause: Active Status 'Paused' → '${auto.newStatus}'. ` +
+          `Buyers route again from the next matching pass.\n` +
+          `No action needed. Undo from /admin/ranchers/${rancher.id} if this is wrong.`,
+        refs: [{ type: 'rancher', id: rancher.id, label: pausedLabel }],
+        dedupeKey: `paused-overdue-upgrade:${rancher.id}`,
+        dedupeWindowMs: 24 * 3600 * 1000,
+      });
+    } else {
+      await sendOperatorSignal({
+        urgency: 'loud',
+        kind: 'stuck-rancher',
+        summary: `UPGRADE COMPLETE — UNPAUSE ${pausedLabel}`,
+        detail:
+          `Rancher was auto-paused by the migration deadline (paused_overdue) and just finished Stripe Connect (active).\n` +
+          `Not auto-resumed: ${auto.reason}.\n` +
+          `Active Status is still 'Paused' — tap below to unpause, or flip it from /admin/ranchers/${rancher.id} so buyers route again.`,
+        refs: [{ type: 'rancher', id: rancher.id, label: pausedLabel }],
+        // One tap = unpaused + routable. Handled in app/api/webhooks/telegram.
+        // Same button the nightly stripe-reconcile cron attaches — these three
+        // emitters share a dedupe key, so whichever fires first must carry it.
+        actions: [{ label: `▶️ Unpause ${pausedLabel}`.slice(0, 60), callbackData: unpauseCallbackData(rancher.id) }],
+        dedupeKey: `paused-overdue-upgrade:${rancher.id}`,
+        dedupeWindowMs: 24 * 3600 * 1000,
+      });
+    }
   }
 
   // ── CONNECT DOWNGRADE — tell the rancher + name it for ops ──────────────

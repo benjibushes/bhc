@@ -3,7 +3,7 @@
 
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/adminAuth';
-import { getAdminConfig, saveAdminConfig, ADMIN_CONFIG_DEFAULTS } from '@/lib/adminConfig';
+import { getAdminConfigWithSource, saveAdminConfig, ADMIN_CONFIG_DEFAULTS } from '@/lib/adminConfig';
 import type { AdminConfig } from '@/lib/adminConfig';
 
 export const maxDuration = 30;
@@ -13,8 +13,12 @@ export async function GET(request: Request) {
   if (__auth) return __auth;
 
   try {
-    const config = await getAdminConfig();
-    return NextResponse.json({ config, defaults: ADMIN_CONFIG_DEFAULTS });
+    // `source` tells the UI whether these values were actually READ from
+    // Airtable or are just the baked-in defaults — four outcomes that used to
+    // be indistinguishable. The Admin Config table currently has zero rows, so
+    // every knob here has always been decorative and nothing said so.
+    const { config, source } = await getAdminConfigWithSource();
+    return NextResponse.json({ config, defaults: ADMIN_CONFIG_DEFAULTS, source });
   } catch (err: any) {
     console.error('[/api/admin/config GET]', err);
     return NextResponse.json(

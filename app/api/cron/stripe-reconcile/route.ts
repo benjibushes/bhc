@@ -62,6 +62,7 @@ import {
   unpauseCallbackData,
   type ReconcileWritePolicy,
 } from '@/lib/connectResync';
+import { autoResumePausedOverdue } from '@/lib/pauseReversal';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 import {
   selectValue,
@@ -210,6 +211,7 @@ function realHandlerFor(policy: ReconcileWritePolicy) {
     const subDriftLines: string[] = [];
     const connectDriftLines: string[] = [];
     const unpauseLines: string[] = [];
+    const autoResumedLines: string[] = [];
     const reportLines: string[] = [];
     const errorLines: string[] = [];
     let cancellationsHealed = 0;
@@ -298,36 +300,63 @@ function realHandlerFor(policy: ReconcileWritePolicy) {
           nowISO,
         });
 
-        // ── PAUSED-OVERDUE DEAD-END → loud alert + ONE-TAP unpause ────────
+        // ── PAUSED-OVERDUE DEAD-END → auto-resume, else ONE-TAP unpause ───
         // Runs BEFORE the !changed short-circuit on purpose: the worst version
         // of this dead-end is a rancher whose cache ALREADY says active (so
         // there is no drift to heal) while Active Status sits at 'Paused'
-        // forever. NOT auto-unpaused — Active Status flips are Ben's
-        // per-rancher call. 24h dedupe key is SHARED with the webhook +
-        // dashboard-poll emitters so the founder gets one card, not three.
+        // forever. This nightly pass is what finds those.
+        //
+        // 2026-07-25: when the machine can PROVE it set the pause itself
+        // (Migration Status='paused_overdue') AND its stated reason has
+        // expired (tier_v2 + Connect live), it reverses its own decision
+        // instead of asking. Everything else still gets the founder's button —
+        // and an auto-resumed rancher gets NO card, so a button that appears
+        // is always a real decision. See lib/connectResync.ts for the fence.
         const activeStatus = selectValue(row?.['Active Status']);
         if (shouldEscalateUnpause({ wasPausedOverdue: decision.wasPausedOverdue, activeStatus })) {
           const state = selectValue(row?.['State']);
-          const waiting = await countWaitingBuyers(state);
-          unpauseLines.push(
-            `${r.name} (${r.id}) — ${state || 'state?'} — Connect active but Active Status='Paused'` +
-              (waiting === null ? '' : `, ${waiting} buyer(s) waiting`),
-          );
-          await sendOperatorSignal({
-            urgency: 'loud',
-            kind: 'stuck-rancher',
-            summary: `UPGRADE COMPLETE — UNPAUSE ${r.name}`,
-            detail:
-              `${r.name}${state ? ` (${state})` : ''} was auto-paused by the migration deadline ` +
-              `(paused_overdue) and has now finished Stripe Connect (active).\n` +
-              (waiting === null ? '' : `${waiting} buyer(s) are waiting in ${state}.\n`) +
-              `Active Status is still 'Paused' → they receive ZERO buyers until it flips.\n` +
-              `Tap below to unpause, or do it from /admin/ranchers/${r.id}.`,
-            refs: [{ type: 'rancher', id: r.id, label: r.name }],
-            actions: [{ label: `▶️ Unpause ${r.name}`.slice(0, 60), callbackData: unpauseCallbackData(r.id) }],
-            dedupeKey: `paused-overdue-upgrade:${r.id}`,
-            dedupeWindowMs: 24 * 3600 * 1000,
-          });
+          const auto = await autoResumePausedOverdue(row, decision.isNowActive);
+          if (auto.resumed) {
+            autoResumedLines.push(
+              `${r.name} (${r.id}) — ${state || 'state?'} — Paused → ${auto.newStatus} (${auto.reason})`,
+            );
+            await sendOperatorSignal({
+              urgency: 'normal',
+              kind: 'stuck-rancher',
+              summary: `AUTO-RESUMED ${r.name}`,
+              detail:
+                `${r.name}${state ? ` (${state})` : ''} was auto-paused by the migration deadline ` +
+                `(paused_overdue) and has now completed it (tier_v2 + Connect active).\n` +
+                `The machine reversed its own pause: Active Status 'Paused' → '${auto.newStatus}'. ` +
+                `Buyers route again from the next matching pass.\n` +
+                `No action needed. Undo from /admin/ranchers/${r.id} if this is wrong.`,
+              refs: [{ type: 'rancher', id: r.id, label: r.name }],
+              dedupeKey: `paused-overdue-upgrade:${r.id}`,
+              dedupeWindowMs: 24 * 3600 * 1000,
+            });
+          } else {
+            const waiting = await countWaitingBuyers(state);
+            unpauseLines.push(
+              `${r.name} (${r.id}) — ${state || 'state?'} — Connect active but Active Status='Paused'` +
+                (waiting === null ? '' : `, ${waiting} buyer(s) waiting`),
+            );
+            await sendOperatorSignal({
+              urgency: 'loud',
+              kind: 'stuck-rancher',
+              summary: `UPGRADE COMPLETE — UNPAUSE ${r.name}`,
+              detail:
+                `${r.name}${state ? ` (${state})` : ''} was auto-paused by the migration deadline ` +
+                `(paused_overdue) and has now finished Stripe Connect (active).\n` +
+                (waiting === null ? '' : `${waiting} buyer(s) are waiting in ${state}.\n`) +
+                `Active Status is still 'Paused' → they receive ZERO buyers until it flips.\n` +
+                `Not auto-resumed: ${auto.reason}.\n` +
+                `Tap below to unpause, or do it from /admin/ranchers/${r.id}.`,
+              refs: [{ type: 'rancher', id: r.id, label: r.name }],
+              actions: [{ label: `▶️ Unpause ${r.name}`.slice(0, 60), callbackData: unpauseCallbackData(r.id) }],
+              dedupeKey: `paused-overdue-upgrade:${r.id}`,
+              dedupeWindowMs: 24 * 3600 * 1000,
+            });
+          }
         }
 
         if (!decision.changed) continue;
@@ -376,6 +405,7 @@ function realHandlerFor(policy: ReconcileWritePolicy) {
     const notes = (
       `${mode} | ${tierSubCount} tier subs${subListOk ? '' : ' (LIST FAILED)'}, ${matchedRancherIds.size} matched | ` +
       `${connectNote} | ${subsNote}` +
+      (autoResumedLines.length ? ` | AUTO-RESUMED (${autoResumedLines.length}): ${autoResumedLines.join(' :: ')}` : '') +
       (unpauseLines.length ? ` | UNPAUSE NEEDED (${unpauseLines.length}, one-tap alert sent): ${unpauseLines.join(' :: ')}` : '') +
       (cancellationsHealed ? ` | ${cancellationsHealed} MISSED CANCELLATION(S)` : '') +
       (reportLines.length ? ` | ${reportLines.length} report-only` : '') +
