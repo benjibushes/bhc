@@ -4501,50 +4501,60 @@ export async function sendRancherLaunchWarmupNudge(data: {
 
 
 // =====================================================
-// RANCHER LEAD REMINDER — fires at Day 2 of Intro Sent without rancher action
+// RANCHER LEAD DIGEST — daily, one email per rancher listing every lead
+// still sitting in 'Intro Sent' 2+ days. Replaces the per-referral
+// sendRancherLeadReminder (cap-eaten: 52/58 suppressed — audit 2026-07-28).
+// Throttled by DB state (Ranchers.'Lead Digest Sent At', stamped before
+// send), so it is whitelisted from the frequency cap: a failed stamp can
+// suppress a digest, never multiply one. Selection logic lives in
+// lib/rancherLeadDigest.ts.
 // =====================================================
 
-export async function sendRancherLeadReminder(data: {
+export async function sendRancherLeadDigest(data: {
   rancherEmail: string;
   operatorName: string;
-  buyerName: string;
-  buyerState: string;
-  buyerPhone: string;
-  buyerEmail: string;
-  orderType: string;
-  budgetRange: string;
-  daysSinceIntro: number;
+  leads: Array<{
+    buyerName: string;
+    buyerState: string;
+    buyerPhone: string;
+    buyerEmail: string;
+    orderType: string;
+    budgetRange: string;
+    daysSinceIntro: number;
+  }>;
+  subject: string;
   dashboardUrl: string;
 }) {
   const firstName = data.operatorName.split(' ')[0] || 'there';
-  const reminderSubject = `Reminder — ${data.buyerName} is waiting (${data.daysSinceIntro}d since intro)`;
+  const leadBoxes = data.leads
+    .map(
+      (l) => `<div class="lead-box">
+    <p><strong>${esc(l.buyerName)}</strong> — ${esc(l.buyerState)} · waiting <strong>${l.daysSinceIntro} day${l.daysSinceIntro === 1 ? '' : 's'}</strong></p>
+    <p>${esc(l.buyerPhone || 'Email only')} · ${esc(l.buyerEmail)}</p>
+    <p>Looking for: ${esc(l.orderType || 'Beef share')} · ${esc(l.budgetRange || 'Budget TBD')}</p>
+  </div>`,
+    )
+    .join('\n');
   return guardedSend({
-    templateName: 'sendRancherLeadReminder',
+    templateName: 'sendRancherLeadDigest',
     recipientEmail: data.rancherEmail,
-    subject: reminderSubject,
+    subject: data.subject,
     send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.rancherEmail,
-      subject: reminderSubject,
+      subject: data.subject,
       headers: getUnsubscribeHeaders(data.rancherEmail),
       html: `<!DOCTYPE html><html><head>
-<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.divider{height:1px;background:#A7A29A;margin:24px 0}.lead-box{background:#F4F1EC;border-left:3px solid #0E0E0E;padding:16px 20px;margin:20px 0}.lead-box p{margin:6px 0;color:#0E0E0E;font-size:14px}.cta{display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px;margin:10px 0}</style>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.divider{height:1px;background:#A7A29A;margin:24px 0}.lead-box{background:#F4F1EC;border-left:3px solid #0E0E0E;padding:14px 18px;margin:14px 0}.lead-box p{margin:5px 0;color:#0E0E0E;font-size:14px}.cta{display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px;margin:10px 0}</style>
 </head><body><div class="container">
-  <h1>Quick reminder</h1>
+  <h1>${data.leads.length === 1 ? 'A buyer is waiting on you' : `${data.leads.length} buyers are waiting on you`}</h1>
   <p>Hi ${esc(firstName)},</p>
-  <p>${data.daysSinceIntro} days ago I introduced you to <strong>${esc(data.buyerName)}</strong> in ${esc(data.buyerState)}. They're a verified buyer and they're waiting to hear from you.</p>
-  <div class="lead-box">
-    <p><strong>Buyer:</strong> ${esc(data.buyerName)}</p>
-    <p><strong>State:</strong> ${esc(data.buyerState)}</p>
-    <p><strong>Phone:</strong> ${esc(data.buyerPhone || 'Email only')}</p>
-    <p><strong>Email:</strong> ${esc(data.buyerEmail)}</p>
-    <p><strong>Looking for:</strong> ${esc(data.orderType || 'Beef share')} · ${esc(data.budgetRange || 'Budget TBD')}</p>
-  </div>
-  <p>Reach out today if you can — buyers cool off fast. Even a quick "hey, here's what I have available" text or email keeps the deal alive.</p>
+  <p>${data.leads.length === 1 ? 'This verified buyer was' : 'These verified buyers were'} introduced to you and ${data.leads.length === 1 ? "hasn't" : "haven't"} heard back yet. Buyers cool off fast — even a quick "here's what I have available" text keeps the deal alive.</p>
+  ${leadBoxes}
   <p style="text-align:center;"><a href="${data.dashboardUrl}" class="cta">Open Your Dashboard</a></p>
   <div class="divider"></div>
-  <p style="font-size:13px;">If you've already reached out, log into your dashboard and update the status to <strong>Rancher Contacted</strong> so I stop nudging you.</p>
-  <p style="font-size:13px;">If you can't take this lead, just reply to this email with "pass" and I'll route them to another rancher.</p>
+  <p style="font-size:13px;">Already reached out? Update the lead to <strong>Rancher Contacted</strong> in your dashboard and this daily note stops.</p>
+  <p style="font-size:13px;">Can't take one of these? Reply "pass" with the buyer's name and I'll route them to another rancher.</p>
   <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
 </div></body></html>`,
     }),

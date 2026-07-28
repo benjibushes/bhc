@@ -5,7 +5,8 @@ import { requireCron } from '@/lib/cronAuth';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, sendTelegramUpdate, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { callClaude } from '@/lib/ai';
-import { sendEmail, sendRancherLeadReminder } from '@/lib/email';
+import { sendEmail, sendRancherLeadDigest } from '@/lib/email';
+import { buildDigestLeads, digestSubject, shouldSendLeadDigest } from '@/lib/rancherLeadDigest';
 import { withCronRun } from '@/lib/cronRun';
 import { shouldDecrementOnClose } from '@/lib/refundLifecycle';
 import { isReferralOnHold } from '@/lib/referralHold';
@@ -280,44 +281,49 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
       await sendTelegramUpdate(`🔒 <b>Auto-Closed ${autoClosed} Stale Referrals</b>\nNo response after ${MAX_CHASE_UPS} follow-ups. Rancher capacity freed.`);
     }
 
-    // ── L2a: DAY 2 RANCHER REMINDER ────────────────────────────────────────
-    // Ranchers don't have Telegram — they only have email + dashboard. If a
-    // rancher hasn't moved a lead off "Intro Sent" within 2 days, email them
-    // directly with the buyer's contact info + a CTA. Throttled to one
-    // reminder per 4-day window via Rancher Reminded At field.
-    let rancherReminders = 0;
+    // ── L2a: DAILY RANCHER LEAD DIGEST ────────────────────────────────────
+    // Ranchers don't have Telegram — they only have email + dashboard.
+    // 2026-07-28 (onboarding-comms audit P1): the old per-referral reminder
+    // here was silently cap-eaten (52/58 suppressed in 14d — its 4-day
+    // throttle was per-REFERRAL, so N open leads = N reminders and the 3/week
+    // cap was the only per-recipient ceiling). Replaced with ONE daily digest
+    // per rancher listing every lead still in 'Intro Sent' 2+ days, throttled
+    // by DB state on the RANCHER ('Lead Digest Sent At', stamped before send)
+    // and whitelisted from the cap.
+    //
+    // 2026-05-20 founder directive still holds: only 'Intro Sent' is chased
+    // by automated rancher email — Rancher Contacted / Negotiation deals are
+    // the rancher's. Those get the Monday stale-lead nudge in rancher-followup
+    // only; the digest's per-referral 'Rancher Reminded At' stamps keep
+    // Intro-Sent rows out of that Monday bundle (7-day throttle sees them).
+    let rancherDigests = 0;
     try {
-      // 2026-05-20: Rancher reminder email now fires ONLY on 'Intro Sent'.
-      // Per founder directive: when the rancher updates status to Rancher
-      // Contacted OR Negotiation, the deal is THEIRS — stop hounding them
-      // with email reminders. The dashboard + Telegram operator views still
-      // surface stalled-contacted deals for Ben to act on if he wants;
-      // automated rancher email is killed at this status.
-      const introSentRefs = referrals.filter(r =>
-        r['Status'] === 'Intro Sent'
-      );
       const now = Date.now();
-      const needsReminder = introSentRefs.filter(r => {
-        const introAt = r['Intro Sent At'] || r['Approved At'];
-        if (!introAt) return false;
-        const days = (now - new Date(introAt).getTime()) / DAY_MS;
-        if (days < 2) return false;
-        // Throttle: skip if reminded within last 4 days
-        const lastReminder = r['Rancher Reminded At'];
-        if (lastReminder) {
-          const daysSinceReminder = (now - new Date(lastReminder).getTime()) / DAY_MS;
-          if (daysSinceReminder < 4) return false;
-        }
-        return true;
-      });
+      // Group Intro Sent referrals by rancher; digest decides per lead.
+      const byRancher: Record<string, any[]> = {};
+      for (const r of referrals) {
+        if (r['Status'] !== 'Intro Sent') continue;
+        const rancherIds = r['Rancher'] || r['Suggested Rancher'] || [];
+        const rancherId = Array.isArray(rancherIds) ? rancherIds[0] : null;
+        if (!rancherId) continue;
+        (byRancher[rancherId] ||= []).push(r);
+      }
 
-      for (const ref of needsReminder.slice(0, 10)) {
+      for (const [rancherId, refs] of Object.entries(byRancher).slice(0, 25)) {
         try {
-          const rancherIds = ref['Rancher'] || ref['Suggested Rancher'] || [];
-          const rancherId = Array.isArray(rancherIds) ? rancherIds[0] : null;
-          if (!rancherId) continue;
+          const leads = buildDigestLeads(refs, now);
+          if (leads.length === 0) continue;
           const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
           if (!rancher) continue;
+          // Same status guard as the Monday nudge path: never chase paused/
+          // removed ranchers.
+          const activeStatusObj: any = rancher['Active Status'];
+          const activeStatus = String(
+            typeof activeStatusObj === 'object' && activeStatusObj?.name
+              ? activeStatusObj.name
+              : activeStatusObj || ''
+          );
+          if (['Paused', 'Non-Compliant', 'Removed'].includes(activeStatus)) continue;
           const rancherEmail = rancher['Email'] || '';
           if (!rancherEmail) {
             skipReasons['no-rancher-email'] = (skipReasons['no-rancher-email'] || 0) + 1;
@@ -327,46 +333,45 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
             skipReasons['bounced-or-unsub'] = (skipReasons['bounced-or-unsub'] || 0) + 1;
             continue;
           }
+          if (!shouldSendLeadDigest(rancher['Lead Digest Sent At'], now)) continue;
 
-          const introAt = ref['Intro Sent At'] || ref['Approved At'];
-          const days = Math.floor((now - new Date(introAt).getTime()) / DAY_MS);
-
-          // MISMATCH FIX (P0 2026-06-23): stamp the 4-day throttle BEFORE the
-          // send, matching the stale-prompt block below (line ~543). Prior
-          // order sent the reminder then stamped Rancher Reminded At; if the
-          // Airtable write threw after a good send, the next cron run saw no
-          // throttle stamp and re-sent the same reminder. Stamp-first means at
-          // worst we drop one reminder if the email send throws (the throttle
-          // naturally expires after 4 days and the next run retries) — far
-          // safer than duplicate rancher emails.
-          await updateRecord(TABLES.REFERRALS, ref.id, {
-            'Rancher Reminded At': new Date().toISOString(),
+          // Stamp-first, both levels (P0 pattern 2026-06-23): the rancher
+          // stamp is the digest throttle; the per-referral stamps keep these
+          // rows out of the Monday stale-nudge bundle. A failed send after a
+          // good stamp costs one day's digest — never a duplicate.
+          const stampNow = new Date().toISOString();
+          await updateRecord(TABLES.RANCHERS, rancherId, {
+            'Lead Digest Sent At': stampNow,
           });
+          for (const lead of leads) {
+            try {
+              await updateRecord(TABLES.REFERRALS, lead.referralId, {
+                'Rancher Reminded At': stampNow,
+              });
+            } catch (stampErr: any) {
+              console.warn('[referral-chasup] referral digest stamp failed:', lead.referralId, stampErr?.message);
+            }
+          }
 
-          await sendRancherLeadReminder({
+          await sendRancherLeadDigest({
             rancherEmail,
             operatorName: rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher',
-            buyerName: ref['Buyer Name'] || 'a buyer',
-            buyerState: ref['Buyer State'] || '',
-            buyerPhone: ref['Buyer Phone'] || '',
-            buyerEmail: ref['Buyer Email'] || '',
-            orderType: ref['Order Type'] || '',
-            budgetRange: ref['Budget Range'] || '',
-            daysSinceIntro: days,
+            leads,
+            subject: digestSubject(leads),
             dashboardUrl: `${SITE_URL}/rancher`,
           });
 
-          rancherReminders++;
+          rancherDigests++;
         } catch (e: any) {
-          console.error(`Rancher reminder error for referral ${ref.id}:`, e.message);
+          console.error(`Rancher digest error for rancher ${rancherId}:`, e.message);
         }
       }
 
-      if (rancherReminders > 0) {
-        await sendTelegramUpdate(`📧 <b>${rancherReminders} rancher reminder${rancherReminders > 1 ? 's' : ''} sent</b>\nNudged ranchers sitting on Intro Sent leads for 2+ days.`);
+      if (rancherDigests > 0) {
+        await sendTelegramUpdate(`📧 <b>${rancherDigests} rancher lead digest${rancherDigests > 1 ? 's' : ''} sent</b>\nRanchers with Intro-Sent leads waiting 2+ days got their daily list.`);
       }
     } catch (e: any) {
-      console.error('Rancher reminder query error:', e.message);
+      console.error('Rancher digest query error:', e.message);
     }
 
     // ── L2c: STALLED RANCHER NUDGE ─────────────────────────────────────────
@@ -669,8 +674,8 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
     if (stale.length === 0) {
       return {
         status: 'success',
-        recordsTouched: autoClosed + rancherReminders + stalledNudges + autoReassigned + stalePromptsFired,
-        notes: `no stale; closed=${autoClosed} reminders=${rancherReminders} nudges=${stalledNudges} reassigned=${autoReassigned} prompts=${stalePromptsFired}`,
+        recordsTouched: autoClosed + rancherDigests + stalledNudges + autoReassigned + stalePromptsFired,
+        notes: `no stale; closed=${autoClosed} digests=${rancherDigests} nudges=${stalledNudges} reassigned=${autoReassigned} prompts=${stalePromptsFired}`,
         skipReasonBreakdown: Object.keys(skipReasons).length ? skipReasons : undefined,
       };
     }
@@ -862,11 +867,11 @@ Order interest: ${referral['Order Type'] || 'bulk beef'}, Budget: ${referral['Bu
       await sendTelegramUpdate(`🔄 <b>Repeat Purchase Emails</b>: ${repeatSent} sent to past buyers`);
     }
 
-  const touched = sent + autoClosed + rancherReminders + stalledNudges + autoReassigned + stalePromptsFired + repeatSent;
+  const touched = sent + autoClosed + rancherDigests + stalledNudges + autoReassigned + stalePromptsFired + repeatSent;
   return {
     status: errors > 0 ? 'partial' : 'success',
     recordsTouched: touched,
-    notes: `stale=${stale.length} sent=${sent} closed=${autoClosed} reminders=${rancherReminders} nudges=${stalledNudges} reassigned=${autoReassigned} prompts=${stalePromptsFired} repeat=${repeatSent} errors=${errors}`,
+    notes: `stale=${stale.length} sent=${sent} closed=${autoClosed} digests=${rancherDigests} nudges=${stalledNudges} reassigned=${autoReassigned} prompts=${stalePromptsFired} repeat=${repeatSent} errors=${errors}`,
     skipReasonBreakdown: Object.keys(skipReasons).length ? skipReasons : undefined,
   };
 }
