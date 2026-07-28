@@ -285,9 +285,9 @@ ${stageEmoji[stage] || '⏳'} Stage: <b>${stage}</b>
           const isMapProspect = !!rancher['Self-Submitted At'];
           const introHtml = isMapProspect
             ? `<p>Just a quick check-in &mdash; <strong>${ranchName}</strong> has been on the BuyHalfCow map for a couple days now. Yellow pin, visible to buyers, but not yet routed customers.</p>
-  <p>The fastest way to flip from "visible" to "getting leads" is finishing your setup &mdash; prices, payment link, one e-signature. About 10 minutes.</p>`
+  <p>The fastest way to flip from "visible" to "getting leads" is finishing your setup &mdash; prices, a short Stripe bank connection so deposits land in your own account, one e-signature. About 10 minutes.</p>`
             : `<p>Just a quick check-in &mdash; <strong>${ranchName}</strong> is approved, but your setup isn't finished yet, so buyers can't route to you.</p>
-  <p>Picking up where you left off takes about 10 minutes &mdash; prices, payment link, one e-signature &mdash; and your page goes live the moment you're done.</p>`;
+  <p>Picking up where you left off takes about 10 minutes &mdash; prices, a short Stripe bank connection, one e-signature &mdash; and your page goes live the moment you're done.</p>`;
           try {
             await sendEmail({
               to: rancherEmail,

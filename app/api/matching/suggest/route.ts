@@ -1553,7 +1553,11 @@ export async function POST(request: Request) {
                 </td>
               </tr>
             </table>
-            <p style="font-size:12px;color:#6B4F3F;margin:0 0 18px 0;">One-click status updates — no login. Closed Won button asks for sale amount + auto-generates the 10% commission invoice via Stripe.</p>`;
+            <p style="font-size:12px;color:#6B4F3F;margin:0 0 18px 0;">${
+              String(topMatch['Pricing Model'] || 'legacy') === 'tier_v2'
+                ? `One-click status updates — no login. Closed Won just records the sale. You keep 100% of your price — our fee is added to the buyer at deposit, so you never get an invoice from us. (Only a sale closed entirely off the deposit rail is invoiced.)`
+                : `One-click status updates — no login. Closed Won button asks for sale amount + auto-generates the 10% commission invoice via Stripe.`
+            }</p>`;
           // sendEmail can fail two ways: (a) throw on network/Resend SDK
           // error, (b) return a result with .error set (Resend's documented
           // shape for rate limits, suppression hits, invalid recipient). The

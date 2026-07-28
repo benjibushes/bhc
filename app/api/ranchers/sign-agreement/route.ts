@@ -286,7 +286,7 @@ export async function POST(request: Request) {
     <h1>You're live.</h1>
     <p>Hi ${esc(rancherName.split(' ')[0])},</p>
     <p><strong>${esc(ranchName)}</strong> is signed, published, and live on BuyHalfCow — buyers in your area can route to you starting now.</p>
-    <p>Nothing else is required. When a buyer comes in, you'll get an email and a text with everything you need.</p>
+    <p>Nothing else is required. When a buyer comes in, you'll get an email with everything you need.</p>
     <div style="text-align: center; margin: 32px 0;">
       <a href="${dashboardLink}" class="btn">OPEN MY DASHBOARD</a>
     </div>
@@ -357,7 +357,7 @@ export async function POST(request: Request) {
       <li>A short tagline (one sentence)</li>
       <li>Your "about" story — why buyers should trust you</li>
       <li>Pricing for quarter, half, and/or whole</li>
-      <li>Payment link (Square, Stripe, PayPal, etc.)</li>
+      <li>The bank account you want deposits paid to (Stripe connects it in a couple of minutes)</li>
     </ul>`;
         await sendEmail({
           to: rancherEmail,

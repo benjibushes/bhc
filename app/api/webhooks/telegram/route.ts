@@ -12,7 +12,7 @@ import {
   answerCallbackQuery,
   TELEGRAM_ADMIN_CHAT_ID,
 } from '@/lib/telegram';
-import { sendEmail, sendConsumerApproval, sendBroadcastEmail, sendBuyerIntroNotification, sendRancherCheckIn, sendPipelineUpdateEmail, sendRancherGoLiveEmail } from '@/lib/email';
+import { sendEmail, sendConsumerApproval, sendBroadcastEmail, sendBuyerIntroNotification, sendRancherCheckIn, sendPipelineUpdateEmail, sendRancherGoLiveEmail, sendRancherProductLive } from '@/lib/email';
 import { callClaude } from '@/lib/ai';
 import { bulkRouteStateToRancher } from '@/lib/bulkRoute';
 import { goLiveRancher } from '@/lib/goLiveRancher';
@@ -5082,10 +5082,29 @@ Confirm send?`;
           const connectWarn = String(match['Stripe Connect Status'] || '').toLowerCase() !== 'active'
             ? `\n\n⚠️ This rancher has NO active Stripe Connect — products will display but CHECKOUT WILL FAIL until payout setup is finished.`
             : '';
+          // Close the loop with the RANCHER too — before this (onboarding-comms
+          // audit 2026-07-28), approval pinged the operator three ways and the
+          // rancher zero. Best-effort: an email failure must not roll back the
+          // approvals or the operator confirmation.
+          let rancherNotified = false;
+          if (match['Email']) {
+            try {
+              const res = await sendRancherProductLive({
+                operatorName: String(match['Operator Name'] || ''),
+                ranchName: String(match['Ranch Name'] || match['Operator Name'] || 'your ranch'),
+                email: String(match['Email']),
+                approvedCount: targets.length,
+                liveCount: live,
+                rancherSlug: String(match['Slug'] || '') || undefined,
+              });
+              rancherNotified = !!res?.success;
+            } catch { /* operator message below reports the miss */ }
+          }
           await sendTelegramMessage(
             chatId,
             `✅ <b>Approved ${targets.length}</b> synced product${targets.length === 1 ? '' : 's'} for ${match['Ranch Name'] || match['Operator Name']}` +
               ` — ${live} now LIVE on /shop${targets.length - live > 0 ? ` (${targets.length - live} approved but out of stock)` : ''}.` +
+              `${rancherNotified ? '\n📧 Rancher notified by email.' : '\n⚠️ Rancher NOT emailed (missing address or send failed) — tell them their products are live.'}` +
               connectWarn,
           );
         } catch (e: any) {

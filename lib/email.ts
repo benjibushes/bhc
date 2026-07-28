@@ -2343,6 +2343,73 @@ export async function sendRancherBankConnected(data: {
 }
 
 // =====================================================
+// PRODUCT LIVE EMAIL (onboarding-comms audit 2026-07-28)
+//
+// Closes the one silent step in the rancher journey: products held for
+// marketplace review were approved and the rancher never heard about it —
+// approval pinged the operator (Telegram) three ways and the rancher zero.
+// Fires from the /approvestore Telegram command after the approval loop.
+// One-shot per approval batch (the command only targets rows with
+// Marketplace Approved !== true, so a re-run has an empty target list),
+// whitelisted so the frequency cap can never eat it.
+// =====================================================
+export async function sendRancherProductLive(data: {
+  operatorName: string;
+  ranchName: string;
+  email: string;
+  approvedCount: number;
+  liveCount: number;          // approved AND in stock → visible on /shop now
+  rancherSlug?: string;
+}) {
+  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
+  const firstName = String(data.operatorName || '').trim().split(/\s+/)[0] || 'there';
+  const outOfStock = data.approvedCount - data.liveCount;
+  const plural = data.approvedCount === 1 ? 'product is' : 'products are';
+  const subject = `your ${data.approvedCount === 1 ? 'product is' : 'products are'} live on BuyHalfCow`;
+  const pageLink = data.rancherSlug ? `${baseUrl}/ranchers/${data.rancherSlug}` : `${baseUrl}/shop`;
+  return guardedSend({
+    templateName: 'sendRancherProductLive',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #0E0E0E; background: #F4F1EC; margin: 0; padding: 20px; }
+            .container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border: 1px solid #A7A29A; }
+            h1 { font-family: Georgia, serif; font-size: 28px; margin: 0 0 20px 0; }
+            p { margin: 16px 0; color: #6B4F3F; }
+            .button { display: inline-block; padding: 12px 24px; background: #2A2A2A; color: white; text-decoration: none; font-weight: 600; margin: 16px 0; }
+            .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #A7A29A; font-size: 12px; color: #A7A29A; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>You're on the shelf ✓</h1>
+            <p>Hi ${esc(firstName)},</p>
+            <p><strong>${data.approvedCount === 1 ? 'A product' : `${data.approvedCount} products`} from ${esc(data.ranchName)} just went through review — ${data.liveCount > 0 ? `${data.liveCount === data.approvedCount ? (data.approvedCount === 1 ? "it's" : 'all of them are') : `${data.liveCount} of them are`} live on the marketplace now.` : `approved and ready.`}</strong></p>
+            ${outOfStock > 0 ? `<p>${outOfStock === data.approvedCount ? (outOfStock === 1 ? 'It is' : 'They are') : `${outOfStock} of them are`} approved but showing zero stock — add inventory from your dashboard and ${outOfStock === 1 ? 'it appears' : 'they appear'} on the shop automatically.</p>` : ''}
+            <p>When a buyer orders, you get paid your price — our margin is added on top, and your ${plural} fulfilled the way you already fulfill.</p>
+            <p><a href="${esc(pageLink)}" class="button">See Your Products Live</a></p>
+            <p>Questions? Just reply to this email.</p>
+            <div class="footer">
+              <p>— Ben<br>BuyHalfCow<br>Questions? Email ${ADMIN_EMAIL}</p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `,
+    }),
+  });
+}
+
+// =====================================================
 // CONNECT ATTENTION EMAIL (Wave A 2026-07-14)
 //
 // The active→restricted/onboarding downgrade branch of the Connect webhook:
@@ -4775,7 +4842,7 @@ export async function sendRancherSelfSubmitWelcome(data: {
   <p>Quick context on what this is &mdash; I'm Ben, founder of BuyHalfCow. We help direct-to-consumer ranchers reach more families and sell more beef without the middleman. Public map, buyer routing, marketing services, the whole stack.</p>
   <p>You're not getting routed customers yet &mdash; that flips after you sign the partner agreement. Yellow pin = "we know about you, we haven't onboarded you yet."</p>
   ${setupUrl ? `
-  <p><strong>The fastest way through:</strong> our self-serve wizard. Five minutes, four steps, no call needed unless you want one.</p>
+  <p><strong>The fastest way through:</strong> our self-serve wizard. About 10 minutes &mdash; prices, a short Stripe bank connection, one e-signature. No call needed unless you want one.</p>
   <div style="text-align:center;margin:30px 0;">
     <a href="${utm(setupUrl, 'self-submit-welcome', 'wizard')}" class="cta">Set up your page →</a>
   </div>
@@ -4958,7 +5025,7 @@ export async function sendRancherOnboardingDripDay14(data: {
 </head><body><div class="container">
   <p>Hey ${esc(first)},</p>
   <p>Last note from me unless I hear back &mdash; I don't want to be that guy who emails forever.</p>
-  <p>${esc(data.ranchName)} stays on the map as a yellow pin either way. But yellow doesn't get routed buyers &mdash; green does, and green is a 5-minute setup away.</p>
+  <p>${esc(data.ranchName)} stays on the map as a yellow pin either way. But yellow doesn't get routed buyers &mdash; green does, and green is about 10 minutes of setup away.</p>
   ${ctaBlock}
   <p>If you want OFF the map, just reply "remove" and you're gone, same day.</p>
   <p style="font-size:12px;color:#A7A29A;">&mdash; Ben</p>
@@ -5500,12 +5567,12 @@ export async function sendRancherApplyAutoApproved(data: {
   <div class="box">
     <p style="margin:0 0 6px;font-weight:700;font-family:Georgia,serif;font-size:15px;">About 10 minutes to live. Here&rsquo;s what&rsquo;s ahead:</p>
     <ul>
-      <li><strong>Set your numbers</strong> &mdash; Quarter / Half / Whole prices + deposits + processing fees. You own these. Edit anytime.</li>
-      <li><strong>Paste your payment link</strong> &mdash; the Venmo/Stripe/Square link you already use. Buyers pay you the way you already get paid. No new accounts, no SSN, no bank forms.</li>
+      <li><strong>Set your numbers</strong> &mdash; Quarter / Half / Whole prices + deposits + processing fees. You own these. Edit anytime. You keep 100% of your price &mdash; our fee is added on top and paid by the buyer.</li>
+      <li><strong>Connect your bank</strong> &mdash; a short Stripe form (most of it prefilled) so buyer deposits land straight in your own account. Stripe verifies the account holder once; we never hold your funds.</li>
       <li><strong>Sign &amp; go live</strong> &mdash; one e-signature and your /ranchers page publishes. Buyers in your state start routing your way immediately.</li>
     </ul>
   </div>
-  <p><strong>What to have ready:</strong> your prices and the payment link you already use. That&rsquo;s it. Prefer to talk it through first? There&rsquo;s a book-a-call option right inside the wizard.</p>
+  <p><strong>What to have ready:</strong> your prices, plus the bank account you want paid and the account holder&rsquo;s legal details for Stripe&rsquo;s one-time verification. That&rsquo;s it. Prefer to talk it through first? There&rsquo;s a book-a-call option right inside the wizard.</p>
   <p>Got questions? Reply directly &mdash; this email lands in my inbox. I read every one.</p>
   <p style="margin-top:32px;">&mdash; Ben</p>
 </div></body></html>`,
