@@ -101,9 +101,14 @@ export default function SellPage() {
             <p className="text-xs uppercase tracking-widest text-saddle font-semibold">
               for ranchers
             </p>
+            {/* P3 (2026-07-28): "keep more of the check" was banned
+                deducted-model framing (implies BHC takes a slice of the
+                rancher's money). LOCKED money model (docs/BUSINESS-MODEL.md):
+                the rancher keeps 100% of their price; our fee is added to the
+                buyer. Same two-line rhythm, locked-model words. */}
             <h1 className="font-serif text-4xl md:text-6xl leading-tight lowercase">
               sell your beef direct.<br />
-              keep more of the check.
+              keep 100% of your price.
             </h1>
             <p className="text-lg md:text-2xl max-w-2xl mx-auto leading-snug md:leading-relaxed text-saddle">
               We send real buyers from your own area to your ranch — and keep

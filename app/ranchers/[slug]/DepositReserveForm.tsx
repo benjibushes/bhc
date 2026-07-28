@@ -10,6 +10,7 @@ import { useEffect, useState } from 'react';
 import { track } from '@/lib/track';
 import { deriveDeposit } from '@/lib/pricing';
 import { REFUND_POLICY_SHORT } from '@/lib/refundPolicy';
+import { accessFallbackUrl } from '@/lib/accessFallbackUrl';
 import SmsConsentCheckbox, { TermsNotice } from '@/app/components/SmsConsentCheckbox';
 
 type Cut = 'quarter' | 'half' | 'whole';
@@ -67,6 +68,17 @@ export default function DepositReserveForm({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState('');
+  // P2 (2026-07-28): seconds until the magic-link "resend" re-enables. A buyer
+  // whose email is slow (or misfiled) used to hit a dead end on the "check your
+  // email" card. No dedicated resend endpoint exists — re-POSTing the reserve
+  // re-sends the link (same referral is reused server-side); the client-side
+  // cooldown keeps a tap-happy buyer from burning sends.
+  const [resendCooldown, setResendCooldown] = useState(0);
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const t = setTimeout(() => setResendCooldown((s) => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendCooldown]);
   // T2.2 (2026-07-02): affiliate attribution. Success-page share links append
   // ?ref=<code> to this rancher page; capture it client-side (the page itself
   // is a server component — reading searchParams there would fragment its
@@ -120,6 +132,11 @@ export default function DepositReserveForm({
       setError('Please enter your 5-digit ZIP code.');
       return;
     }
+    await submitReserve();
+  }
+
+  // Core POST — shared by the submit button and the magic-link "resend" (P2).
+  async function submitReserve() {
     setLoading(true);
     setError('');
     try {
@@ -142,21 +159,25 @@ export default function DepositReserveForm({
         // flow, re-pinning this ranch so the buyer lands back here qualified.
         // EXCEPT out-of-area: this ranch can never serve them, so re-pinning it
         // would loop them right back — send them to the open quiz instead.
-        if (j?.outOfArea) { window.location.href = '/access'; return; }
-        if (j?.fallback) { window.location.href = `/access?rancher=${slug}`; return; }
+        // K1 (2026-07-28): every quiz hand-off carries ?error= so /access shows
+        // an honest banner instead of a pristine quiz with zero explanation.
+        if (j?.outOfArea) { window.location.href = accessFallbackUrl('out_of_area'); return; }
+        if (j?.fallback) { window.location.href = accessFallbackUrl('reserve_fallback', slug); return; }
         // Server error (Airtable/Stripe transient, unexpected 5xx): never
         // dead-end the buyer on the fast path. Route them to the quiz, which
         // mints its own referral + session and still lands them at a deposit.
         // 4xx validation (bad email, etc.) stays inline so they can correct it.
-        if (res.status >= 500) { window.location.href = `/access?rancher=${slug}`; return; }
+        if (res.status >= 500) { window.location.href = accessFallbackUrl('reserve_fallback', slug); return; }
         setError(j?.error || 'Something went wrong — try again.');
         setLoading(false);
         return;
       }
       // Returning buyer (existing email, not logged in): the server emailed a
       // secure magic link instead of minting a session. Confirm + stop.
+      // Arm the resend cooldown (P2) — a send just happened.
       if (j.requiresEmailVerification) {
         setSent(j.message || 'Check your email for a secure link to finish your deposit.');
+        setResendCooldown(30);
         setLoading(false);
         return;
       }
@@ -180,9 +201,24 @@ export default function DepositReserveForm({
 
   if (sent) {
     return (
-      <div id="reserve" className="scroll-mt-12 rounded-lg border border-dust bg-white p-6 text-center space-y-2">
+      <div id="reserve" className="scroll-mt-12 rounded-lg border border-dust bg-white p-6 text-center space-y-3">
         <p className="text-xs uppercase tracking-widest text-saddle">Check your email</p>
         <p className="text-sm text-charcoal">{sent}</p>
+        {/* P2 — nothing arrived? Re-POST the reserve (the server re-sends the
+            magic link for the same reservation); 30s client-side cooldown. */}
+        {error && <p className="text-sm text-weathered">{error}</p>}
+        <button
+          type="button"
+          disabled={loading || resendCooldown > 0}
+          onClick={() => { setResendCooldown(30); void submitReserve(); }}
+          className="text-xs text-saddle underline underline-offset-2 hover:text-charcoal disabled:opacity-50 disabled:no-underline"
+        >
+          {loading
+            ? 'Sending…'
+            : resendCooldown > 0
+              ? `Didn't get it? Resend in ${resendCooldown}s`
+              : "Didn't get it? Resend the link"}
+        </button>
       </div>
     );
   }

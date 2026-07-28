@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { track } from '@/lib/track';
+import { accessFallbackUrl } from '@/lib/accessFallbackUrl';
+import { formatPhoneInput, isValidUsPhone } from '@/lib/phoneFormat';
 import SmsConsentCheckbox, { TermsNotice } from '@/app/components/SmsConsentCheckbox';
 
 const US_STATES = [
@@ -115,6 +117,41 @@ export default function RancherOrderForm({
     };
   }, []);
 
+  // H3 (2026-07-28): the modal had no backdrop-tap close and no Escape — the
+  // only exits were the tiny Cancel text link or Done. Success state closes
+  // like Done (full reset); form state closes like Cancel (keeps typed input
+  // for a re-open). Never closes mid-submit — a mis-tap during the POST would
+  // hide the confirmation the buyer is about to get.
+  function closeModal() {
+    if (loading) return;
+    if (success) {
+      setSuccess(null);
+      setForm({
+        fullName: session?.name || '',
+        email: session?.email || '',
+        phone: '',
+        state: session?.state || '',
+        zip: '',
+        message: '',
+        website: '',
+      });
+      setSmsOptIn(false);
+    }
+    setSelectedTier(null);
+  }
+
+  // Escape closes while the modal is open (standard dialog affordance; the
+  // backdrop click handler below is its pointer twin).
+  useEffect(() => {
+    if (!selectedTier) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeModal();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTier, success, loading, session]);
+
   function handleTierClick(tier: 'quarter' | 'half' | 'whole') {
     const tierData = tier === 'quarter' ? quarter : tier === 'half' ? half : whole;
     track('ViewContent', {
@@ -131,6 +168,15 @@ export default function RancherOrderForm({
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!selectedTier) return;
+    // H1 (2026-07-28): phone is REQUIRED on the guest form (the success screen
+    // promises a 48h callback; phone is the rescue channel when rancher email
+    // goes quiet). isValidUsPhone strips a leading +1 before counting digits —
+    // same shared guard as every other signup door. Logged-in members never
+    // see the phone field; the API tolerates their record's existing contact.
+    if (!session && !isValidUsPhone(form.phone)) {
+      setError(`Please enter a valid phone number so ${rancherName} can reach you.`);
+      return;
+    }
     setLoading(true);
     setError('');
 
@@ -157,8 +203,11 @@ export default function RancherOrderForm({
         // `fallbackToMatch` = this ranch can't serve them (paused, or contracted
         // to a service area that doesn't cover their ZIP). Hand them to the
         // quiz, which matches them to a ranch that can — never a dead end.
+        // K1 (2026-07-28): carry ?error= so /access shows an honest banner
+        // instead of a pristine quiz that looks like the form silently reset.
+        // No rancher re-pin — this ranch just declined them.
         if (data?.fallbackToMatch) {
-          window.location.href = '/access';
+          window.location.href = accessFallbackUrl('reserve_fallback');
           return;
         }
         setError(data?.error || 'Something went wrong — try again.');
@@ -225,10 +274,22 @@ export default function RancherOrderForm({
         )}
       </div>
 
-      {/* Modal */}
+      {/* Modal — backdrop tap + Escape close (H3). The click guard checks
+          e.target === e.currentTarget so clicks INSIDE the panel never close;
+          keyboard users keep normal tab flow inside the panel. */}
       {selectedTier && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-bone max-w-md w-full p-8 space-y-6 max-h-[90vh] overflow-y-auto">
+        <div
+          className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) closeModal();
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`${ranchName} — ${tierLabel} share order request`}
+            className="bg-bone max-w-md w-full p-8 space-y-6 max-h-[90vh] overflow-y-auto"
+          >
             {success ? (
               <div className="space-y-4">
                 <p className="text-xs uppercase tracking-widest text-saddle">
@@ -248,20 +309,7 @@ export default function RancherOrderForm({
                 </p>
                 <button
                   type="button"
-                  onClick={() => {
-                    setSelectedTier(null);
-                    setSuccess(null);
-                    setForm({
-                      fullName: session?.name || '',
-                      email: session?.email || '',
-                      phone: '',
-                      state: session?.state || '',
-                      zip: '',
-                      message: '',
-                      website: '',
-                    });
-                    setSmsOptIn(false);
-                  }}
+                  onClick={closeModal}
                   className="w-full py-3 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase hover:bg-saddle transition-colors"
                 >
                   Done
@@ -313,11 +361,18 @@ export default function RancherOrderForm({
                         onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
                         className="w-full px-4 py-3 border border-dust bg-white text-sm"
                       />
+                      {/* H1 (2026-07-28): REQUIRED. The success screen promises
+                          a 48h callback and phone is the rescue channel when
+                          rancher email goes quiet — "(optional)" was a promise
+                          we couldn't keep. Formatting/validation shared with
+                          every other door via lib/phoneFormat (never fork). */}
                       <input
                         type="tel"
-                        placeholder="Phone (optional)"
+                        placeholder="Phone"
+                        required
+                        autoComplete="tel"
                         value={form.phone}
-                        onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
+                        onChange={(e) => setForm((f) => ({ ...f, phone: formatPhoneInput(e.target.value) }))}
                         className="w-full px-4 py-3 border border-dust bg-white text-sm"
                       />
                       <div className="grid grid-cols-2 gap-3">

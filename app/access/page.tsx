@@ -50,6 +50,12 @@ export default async function AccessPage({
     'expired-token': 'that link expired — no worries, pick up right here.',
     'invalid-token': "that link didn't work — start fresh below, takes a minute.",
     'used-token': 'looks like that link was already used — pick up here.',
+    // K1 (2026-07-28) — reserve/order fast-path hand-offs (accessFallbackUrl).
+    // Buyers used to be silently teleported here mid-checkout with zero
+    // explanation. Copy rule: NEVER name ZIPs or territories (exclusivity
+    // contracts must not be probeable from the banner).
+    'out_of_area': "that ranch doesn't deliver to your area — 60 seconds of questions and we'll match you with one that does.",
+    'reserve_fallback': "that ranch can't take instant deposits right now — 60 seconds and we'll get you matched.",
   };
   // Welcome-back treatment for re-engagement links: an honest banner (+ state
   // prefill via ?state= when the minting link carries it). The quiz itself

@@ -13,6 +13,7 @@ import Link from 'next/link';
 import { loadStripe } from '@stripe/stripe-js/pure';
 import type { Stripe } from '@stripe/stripe-js';
 import { EmbeddedCheckoutProvider, EmbeddedCheckout } from '@stripe/react-stripe-js';
+import { accessFallbackUrl } from '@/lib/accessFallbackUrl';
 import PaymentForm from './PaymentForm';
 
 const PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
@@ -60,6 +61,10 @@ function LegacyEmbeddedMount({ productId, quantity }: { productId: string; quant
   const [stripePromise, setStripePromise] = useState<Promise<Stripe | null> | null>(null);
   const [clientSecret, setClientSecret] = useState('');
   const [err, setErr] = useState('');
+  // H4 (2026-07-28): bumped by the retry button so the session-create effect
+  // re-runs. A create failure used to dead-end at "back to the shop" — the
+  // buyer at the money moment deserves a retry before an exit ramp.
+  const [attempt, setAttempt] = useState(0);
   const startedRef = useRef(false);
 
   useEffect(() => {
@@ -82,8 +87,10 @@ function LegacyEmbeddedMount({ productId, quantity }: { productId: string; quant
         // `fallback` = nothing the buyer can fix here (today: the ranch is
         // contracted to a service area that doesn't cover them). Hand them to
         // the quiz, which re-matches them — never strand them on this page.
+        // K1 (2026-07-28): ?error= keys the honest banner on /access so the
+        // hand-off never looks like a silent reset.
         if (!res.ok && data?.fallback) {
-          window.location.href = '/access';
+          window.location.href = accessFallbackUrl('out_of_area');
           return;
         }
         if (!res.ok) throw new Error(data?.error || 'could not start checkout');
@@ -105,14 +112,27 @@ function LegacyEmbeddedMount({ productId, quantity }: { productId: string; quant
     return () => {
       cancelled = true;
     };
-  }, [productId, quantity]);
+  }, [productId, quantity, attempt]);
 
   const fetchClientSecret = useCallback(() => Promise.resolve(clientSecret), [clientSecret]);
 
   if (err) {
+    // H4 — retry re-arms the guard and re-runs the create; the shop link stays
+    // as the secondary exit, never the only option.
     return (
       <div className="bg-bone border border-dust p-5">
         <p className="text-weathered text-sm mb-3">{err}</p>
+        <button
+          type="button"
+          onClick={() => {
+            startedRef.current = false;
+            setErr('');
+            setAttempt((a) => a + 1);
+          }}
+          className="w-full py-3 mb-3 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase hover:bg-saddle transition-colors"
+        >
+          try again — no charge yet
+        </button>
         <Link href="/shop" className="text-sm font-semibold text-charcoal underline underline-offset-4">
           &larr; back to the shop
         </Link>

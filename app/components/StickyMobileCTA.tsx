@@ -9,7 +9,7 @@
 // reusable primitive — drop on /map, /access, /wins, /brand-partners.
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 interface StickyMobileCTAProps {
   href: string;
@@ -19,20 +19,24 @@ interface StickyMobileCTAProps {
 
 export default function StickyMobileCTA({ href, label, subLabel }: StickyMobileCTAProps) {
   const [visible, setVisible] = useState(true);
-  const [lastY, setLastY] = useState(0);
+  // P1 (2026-07-28): lastY lives in a ref, not state — as state (and an
+  // effect dep) every scroll event tore down and re-subscribed the listener,
+  // churning add/removeEventListener for the whole scroll. The ref updates
+  // without re-rendering; the listener subscribes exactly once.
+  const lastYRef = useRef(0);
 
   useEffect(() => {
     const onScroll = () => {
       const y = window.scrollY;
       // Hide on scroll-down past 200px, re-show on scroll-up.
       if (y < 200) setVisible(true);
-      else if (y > lastY) setVisible(false);
+      else if (y > lastYRef.current) setVisible(false);
       else setVisible(true);
-      setLastY(y);
+      lastYRef.current = y;
     };
     window.addEventListener('scroll', onScroll, { passive: true });
     return () => window.removeEventListener('scroll', onScroll);
-  }, [lastY]);
+  }, []);
 
   return (
     <>

@@ -186,13 +186,38 @@ function DepositPageContent() {
         window.location.href = j.url;
       } else {
         setErrCode('checkout_failed');
-        setError('no checkout url');
+        setError("hmm — that didn't go through. your card wasn't charged — give it another try.");
         setSubmitting(false);
       }
     } catch {
       setErrCode('network');
-      setError('network');
+      setError("network hiccup — your card wasn't charged. check your connection and try again.");
       setSubmitting(false);
+    }
+  };
+
+  // K2 — hosted rescue for the embedded Stripe mount. When Stripe.js can't
+  // load on this page (ad blocker, flaky network), DepositCheckoutMount calls
+  // this: re-run the SAME checkout POST without mode:'embedded' — the API
+  // returns the hosted checkout.stripe.com url — and redirect. Mirrors the
+  // shop rail's hosted path (app/shop/checkout/[id]/CheckoutMount.tsx).
+  // Resolves false when the rescue itself failed so the mount shows a retry.
+  const fallbackToHosted = async (): Promise<boolean> => {
+    try {
+      const res = await fetch('/api/checkout/deposit', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ referralId: refId, cutSize: selectedCut, termsAccepted }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (res.ok && j?.url) {
+        window.location.href = j.url;
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
     }
   };
 
@@ -204,8 +229,21 @@ function DepositPageContent() {
 
   // Never render a raw API/Stripe error to a buyer, and never dead-end. Map the
   // machine error code to warm copy + a forward path (retry / sign-in / storefront).
-  if (error || !info) {
-    const code = String(errCode || error).toLowerCase();
+  //
+  // K3 (conversion audit 2026-07-28): the full-screen takeover is reserved for
+  // TERMINAL states (referral closed / auth / not found) or a page that never
+  // loaded (!info). It used to fire on ANY error — a transient POST blip
+  // rug-pulled the loaded cut selector, price, and trust content and replaced
+  // them with "hmm — that didn't go through". Generic POST errors now render
+  // inline above the pay button (see the sticky block below) with everything
+  // the buyer already read still on screen.
+  const code = String(errCode || error).toLowerCase();
+  const terminalError =
+    code.includes('referral_closed') || code.includes('already') ||
+    code.includes('auth') || code.includes('forbidden') || code.includes('sign in') ||
+    code.includes('401') || code.includes('403') ||
+    code.includes('not_found') || code.includes('not found');
+  if (!info || (error && terminalError)) {
     const storefrontHref = errSlug ? `/ranchers/${errSlug}` : '/ranchers';
     const Shell = ({ children }: { children: React.ReactNode }) => (
       <div className="min-h-screen bg-bone text-charcoal flex items-center justify-center p-6">
@@ -280,16 +318,17 @@ function DepositPageContent() {
       );
     }
 
-    // A1 — generic failure (checkout create / network / load). Card was NOT
-    // charged; offer a real retry + a human. Retry re-runs checkout when the
-    // reservation loaded, else reloads the page.
+    // A1 — generic failure. Since K3, this shell is only reachable when the
+    // reservation itself never loaded (!info — GET failed/network); a POST
+    // failure with a loaded page renders inline instead. Card was NOT charged;
+    // offer a real retry (reload re-runs the GET) + a human.
     return (
       <Shell>
         <h1 className="font-serif text-2xl">hmm — that didn&apos;t go through</h1>
         <p className="text-saddle">your card wasn&apos;t charged. give it another try — these things are usually a quick blip.</p>
         <div className="flex flex-col gap-2">
           <button
-            onClick={() => { setError(''); setErrCode(''); if (info) { continueToCheckout(); } else { window.location.reload(); } }}
+            onClick={() => { setError(''); setErrCode(''); window.location.reload(); }}
             className="px-6 py-3 bg-charcoal text-bone text-sm uppercase tracking-wide"
           >try again</button>
           <Link href={`/checkout/${refId}/ask`} className="underline text-saddle text-sm">message your rancher instead</Link>
@@ -543,7 +582,11 @@ function DepositPageContent() {
             <p className="text-saddle text-sm mb-3">
               fully refundable until {info.rancher.name} accepts · secured by stripe · we don&apos;t store card data
             </p>
-            <DepositCheckoutMount clientSecret={embedded.clientSecret} connectAccountId={embedded.connectAccountId} />
+            <DepositCheckoutMount
+              clientSecret={embedded.clientSecret}
+              connectAccountId={embedded.connectAccountId}
+              onHostedFallback={fallbackToHosted}
+            />
             <p className="text-center mt-3">
               <button
                 type="button"
@@ -556,8 +599,11 @@ function DepositPageContent() {
           </div>
         ) : (
         <div className="sticky -mx-4 md:mx-0 px-4 md:px-0 pt-3 pb-4 md:pb-0 md:static bg-bone md:bg-transparent border-t border-divider md:border-0" style={{ bottom: 'var(--consent-h, 0px)' }}>
-          {/* error surfaces here, above the button, so it's never hidden under
-              the sticky block on mobile */}
+          {/* K3 — generic (non-terminal) POST errors land HERE, above the pay
+              button and inside the sticky block so they're visible on mobile,
+              while the cut selector / price / trust content stay on screen.
+              Messages are the API's buyer-safe `message` strings or this
+              page's own warm copy — never a raw Stripe/dev string. */}
           {error && <p className="text-red-700 mb-2 text-sm text-center">{error}</p>}
 
           {/* honest scarcity — real processing date only, never a fake count */}

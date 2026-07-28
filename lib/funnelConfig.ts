@@ -83,6 +83,24 @@ export const STORAGE_OPTIONS: FunnelOption[] = [
   { value: 'rancher_holds', label: 'Rancher holds it', detail: 'Pick up in batches', icon: 'ti-clock' },
 ];
 
+// ── Progress display (H2, conversion audit 2026-07-28) ─────────────────────
+// `reveal` is the destination, not a question. Counting it in the display
+// total made the final commit tap read "Step 6 of 7 · 83%" — telling the buyer
+// another question was coming at the exact commit moment. The progress header
+// is hidden on reveal anyway, so displayed steps = every step but reveal.
+export const FUNNEL_DISPLAY_STEP_COUNT = FUNNEL_STEPS.length - 1; // 6
+
+/**
+ * 0-based FUNNEL_STEPS index → 0–100 progress for the bar. The last DISPLAYED
+ * step (commit) is 100% — the buyer is committing, not "83% done". Indices at
+ * or past reveal clamp to 100 (the bar is hidden there, but never lie).
+ */
+export function funnelProgressPct(stepIndex: number): number {
+  const lastDisplayed = FUNNEL_DISPLAY_STEP_COUNT - 1;
+  if (lastDisplayed <= 0) return 100;
+  return Math.round((Math.min(stepIndex, lastDisplayed) / lastDisplayed) * 100);
+}
+
 // On-brand accent used across the flow — the brand saddle (--color-saddle).
 // Matches the state landing pages so /access/[state] → funnel doesn't shift brown.
 export const FUNNEL_ACCENT = '#6B4F3F';
