@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getRecordById, updateRecord, getAllRecords, escapeAirtableValue, TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { signatureAuditFields } from '@/lib/agreementAudit';
 import jwt from 'jsonwebtoken';
 
 import { JWT_SECRET } from '@/lib/secrets';
@@ -279,6 +280,10 @@ export async function POST(request: Request) {
           'Agreement Signed At': rancher['Agreement Signed At'] || today,
           'Onboarding Status': 'Agreement Signed',
           'Custom Notes': notes ? `${notes}\n${holdLine}` : holdLine,
+          // E-sign audit parity with sign-agreement (2026-07-28). Only on the
+          // FIRST signature — a re-click must not clobber the original
+          // IP/UA/version trail. Missing headers are omitted, never thrown.
+          ...(rancher['Agreement Signed'] ? {} : signatureAuditFields(request.headers)),
         });
       } catch (e: any) {
         console.error('[activate] agreement-only stamp failed:', e?.message);
@@ -338,6 +343,10 @@ export async function POST(request: Request) {
     const fields: Record<string, any> = {
       'Agreement Signed': true,
       'Agreement Signed At': today,
+      // E-sign audit parity with sign-agreement (2026-07-28). Only on the
+      // FIRST signature — an already-signed rancher re-clicking their
+      // activation link must not clobber the original IP/UA/version trail.
+      ...(rancher['Agreement Signed'] ? {} : signatureAuditFields(request.headers)),
       'Active Status': 'Active',
       'Onboarding Status': 'Live',
       'Status': 'Active',

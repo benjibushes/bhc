@@ -628,6 +628,11 @@ export async function GET(req: Request) {
         // (whole-cow → pins a chest freezer first). Best-effort; a blank
         // Order Type just yields universal-only gear (cut=null).
         orderType: String(referral['Order Type'] || ''),
+        // Attribution (2026-07-28): the success page's GearBlock threads this
+        // into /go/product?buyer= click logging. This is the AUTHED buyer
+        // (ownership-checked against referral.Buyer above) — not new data
+        // exposure, the session already belongs to this consumer.
+        buyerId: session.consumerId,
         // Buyer-paid deposit total (dollars) — the success page fires the client
         // Purchase Pixel with this value + event_id=deposit_<refId> to dedup
         // against the server CAPI deposit Purchase.

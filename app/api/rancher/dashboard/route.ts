@@ -208,6 +208,15 @@ export async function GET(request: Request) {
       final_invoice_sent_at: r['Final Invoice Sent At'] || '',
       final_invoice_amount: Number(r['Final Invoice Amount'] || 0),
       final_paid_at: r['Final Paid At'] || '',
+      // Money-truth trail (2026-07-28) — display-only paid-state stamps the
+      // dashboard was structurally blind to (missing from the projection in
+      // lib/referralReads until today): the settled final amount, the manual
+      // off-platform confirmation (confirm-payment route), and the
+      // commission-paid stamp. No decisions ride these here.
+      final_paid_amount: Number(r['Final Paid Amount'] || 0),
+      payment_confirmed_at: r['Payment Confirmed At'] || '',
+      payment_confirmation_method: r['Payment Confirmation Method'] || '',
+      commission_paid_at: r['Commission Paid At'] || '',
       total_sale_amount: Number(r['Total Sale Amount'] || 0),
       // Processing Fee is stamped per-referral by send-final-invoice when the
       // rancher submits the invoice (Airtable field 'Processing Fee'). It's the

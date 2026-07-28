@@ -53,6 +53,13 @@ export const REFERRAL_DASHBOARD_FIELDS = [
   'Deposit Paid At', 'Deposit Amount', 'Deposit Requested At', 'Deposit Link Opened At',
   'Final Invoice URL', 'Final Invoice Sent At', 'Final Invoice Amount',
   'Final Paid At', 'Total Sale Amount', 'Processing Fee', 'Processing Date',
+  // money-truth trail (2026-07-28) — rancher dashboards were structurally
+  // BLIND to these: settled final amount, manual off-platform payment
+  // confirmation, and commission-paid stamp all existed in Airtable but were
+  // stripped by this projection. Display-only readers; the projection
+  // breaker above degrades gracefully if a field is ever renamed.
+  'Final Paid Amount', 'Payment Confirmed At', 'Payment Confirmation Method',
+  'Commission Paid At',
 ];
 
 const READ_PATH_BREAKER_MS = 5 * 60 * 1000;
