@@ -165,6 +165,13 @@ export async function POST(request: Request) {
     'Rancher Name': String(rancher['Ranch Name'] || session.ranchName || session.name || ''),
     'Rancher Record ID': session.rancherId,
     Active: active,
+    // Stamp the curation truth at birth: auto-live rows (flag off) are
+    // approved-by-definition. Inert for hand-entered rows today (isSellableRow
+    // gates on Active) — but it means the day REQUIRE_PRODUCT_APPROVAL flips
+    // on, held-for-review rows (Marketplace Approved ≠ true) are
+    // distinguishable from rancher-hidden ones, so the dashboard can show
+    // "pending review" instead of a misleading 'hidden' (audit 2026-07-28).
+    'Marketplace Approved': active,
   });
   if (!created?.id) {
     return NextResponse.json({ error: 'could not save the product — try again.' }, { status: 500 });

@@ -69,6 +69,11 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   // downgrade edge (webhook fires it only on the wasActive transition,
   // deduped), so whitelisting cannot cause volume.
   'sendRancherConnectAttention',
+  // Rancher-expected milestone: their held-for-review products were approved
+  // and are live on /shop. Fired only from the operator /approvestore command,
+  // which only targets rows with Marketplace Approved !== true — a re-run has
+  // an empty target list, so whitelisting cannot cause volume.
+  'sendRancherProductLive',
   'sendRancherSelfSubmitWelcome',
   'sendProspectClaimMagicLink',
   // The ONLY email persisting the 60-day wizard link for /apply + /partners
