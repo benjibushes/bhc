@@ -47,9 +47,12 @@ Five closed loops, all live as of today:
    Drift-check every 6h. Reaper crons chase orphaned checkouts, frozen
    deposits, unpaid finals.
 4. **Money** — deposit (embedded, on-domain) → rancher accepts → final
-   invoice → settle (rancher paid, commission held out). Products: brand
-   Payment Element → direct charge → rancher paid minus fee + shipping
-   passthrough. Commission invoices for legacy closes: 1st of month.
+   invoice → settle. Buyer-pays-on-top (LOCKED, docs/BUSINESS-MODEL.md ⭐):
+   rancher nets 100% of their price; BHC's fee is ADDED to the buyer and
+   captured atomically at deposit via Connect application_fee. Products:
+   brand Payment Element → direct charge → rancher nets base + full shipping
+   passthrough; BHC keeps the buyer-paid markup. Commission invoices for
+   legacy (pre-Connect) closes only: 1st of month.
 5. **Retention/expansion** — replenishment (cut-aware reorder asks),
    review asks post-delivery, product-recovery (abandoned checkout),
    orphan rewarm, rancher reactivation. All flipped live today.
