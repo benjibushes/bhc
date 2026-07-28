@@ -2320,7 +2320,8 @@ export default function RancherSetupWizard() {
                         </p>
                         <p className="text-saddle italic mt-1">
                           You keep your full listed ${price.toLocaleString()}. The buyer pays that plus BHC&rsquo;s
-                          commission on top — the exact rate is set by the plan you choose at the end.
+                          commission on top — 10% on the free plan every new ranch starts on (paid plans
+                          lower it), always added to the buyer, never taken from you.
                         </p>
                       </div>
                     )}

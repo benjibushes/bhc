@@ -124,7 +124,9 @@ export default function ShopifyConnectCard({ payoutsReady = true }: { payoutsRea
         setApiSecret('');
         setOpen(false);
       } else {
-        setError((data?.report || ['Connection failed.']).join(' '));
+        // One line per check — joined into a paragraph this read as a wall of
+        // text instead of "which field is wrong" (2026-07-28 listing audit).
+        setError((data?.report || ['Connection failed.']).join('\n'));
       }
     } catch {
       setError('Network error — try again.');
@@ -227,7 +229,7 @@ export default function ShopifyConnectCard({ payoutsReady = true }: { payoutsRea
             </span>
             <input
               value={markup}
-              onChange={(e) => setMarkup(e.target.value.replace(/[^0-9.]/g, ''))}
+              onChange={(e) => onMarkupChange(e.target.value)}
               inputMode="decimal"
               placeholder="15"
               className="w-32 border border-dust bg-bone px-3 py-2 text-sm"
@@ -236,7 +238,7 @@ export default function ShopifyConnectCard({ payoutsReady = true }: { payoutsRea
               We list your products at your price plus this margin. The margin is our cut — your payout stays your full price.
             </span>
           </div>
-          {error && <p className="text-sm text-weathered border border-weathered/40 px-3 py-2">{error}</p>}
+          {error && <p className="text-sm text-weathered border border-weathered/40 px-3 py-2 whitespace-pre-line">{error}</p>}
           <div className="flex gap-3 items-center">
             <button
               onClick={submitOneClick}
@@ -317,7 +319,7 @@ export default function ShopifyConnectCard({ payoutsReady = true }: { payoutsRea
             </span>
             <input
               value={markup}
-              onChange={(e) => setMarkup(e.target.value.replace(/[^0-9.]/g, ''))}
+              onChange={(e) => onMarkupChange(e.target.value)}
               inputMode="decimal"
               placeholder="15"
               className="w-32 border border-dust bg-bone px-3 py-2 text-sm"
@@ -326,7 +328,7 @@ export default function ShopifyConnectCard({ payoutsReady = true }: { payoutsRea
               We list your products at your price plus this margin. The margin is our cut — your payout stays your full price.
             </span>
           </div>
-          {error && <p className="text-sm text-weathered border border-weathered/40 px-3 py-2">{error}</p>}
+          {error && <p className="text-sm text-weathered border border-weathered/40 px-3 py-2 whitespace-pre-line">{error}</p>}
           <div className="flex gap-3">
             <button
               onClick={submit}
