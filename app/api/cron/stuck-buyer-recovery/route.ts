@@ -64,7 +64,10 @@ async function readActiveDealReferrals(): Promise<any[]> {
 //   - If still no match → leaves buyer at READY (we'll retry tomorrow)
 //   - Telegram digest summarizes what was retried + outcomes
 
-export const maxDuration = 60;
+// 120s (capacity audit 2026-07-28): Cron Runs shows this cron peaked at
+// 54.8s — one busy morning from a maxDuration kill mid-batch. Double the
+// headroom; the wrapper's heartbeat/watchdog still catches a real hang.
+export const maxDuration = 120;
 
 async function realHandler(_request: Request): Promise<{ status: 'success' | 'maintenance-blocked'; recordsTouched: number; notes: string; skipReasonBreakdown?: Record<string, number> }> {
   if (isMaintenanceMode()) {

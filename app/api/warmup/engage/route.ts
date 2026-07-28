@@ -34,7 +34,14 @@ async function findInStateRancher(buyerState: unknown): Promise<any | null> {
 // to those created since `sinceISO`. Used to gate the founder-approval
 // flow: in the first week, every intro to a new rancher needs Ben's eyes.
 async function countOnboardingIntros(rancherId: string, sinceISO?: string | null): Promise<number> {
-  const refs = await getAllRecords(TABLES.REFERRALS) as any[];
+  // Airtable diet 2026-07-28: was an UNFILTERED full Referrals scan on a
+  // PUBLIC per-click route. Server-filter on Status (the linked Rancher field
+  // can't be formula-matched by record id — ARRAYJOIN renders primary-field
+  // VALUES, see the dedupe comment below — so the rancher check stays in JS).
+  const refs = await getAllRecords(
+    TABLES.REFERRALS,
+    `OR(${ONBOARDING_INTRO_STATUSES.map((s) => `{Status}="${s}"`).join(', ')})`,
+  ) as any[];
   let count = 0;
   const sinceMs = sinceISO ? new Date(sinceISO).getTime() : 0;
   for (const ref of refs) {
@@ -79,9 +86,15 @@ async function stageOnboardingApproval(args: {
   // record ID — so FIND(id, ARRAYJOIN({Rancher})) silently never
   // matches. Same bug as the rancher dashboard (PR #36 audit #30).
   try {
-    const allRefs = (await getAllRecords(TABLES.REFERRALS)) as any[];
-    const existing = allRefs.filter((r: any) => {
-      if (r['Status'] !== 'Pending Approval') return false;
+    // Airtable diet 2026-07-28: was the second UNFILTERED full Referrals scan
+    // on this public per-click route. Pending Approval rows are a handful at
+    // any time — server-filter on Status, keep the buyer/rancher link checks
+    // in JS (record-id formula matching is impossible per the note above).
+    const pendingRefs = (await getAllRecords(
+      TABLES.REFERRALS,
+      `{Status}="Pending Approval"`,
+    )) as any[];
+    const existing = pendingRefs.filter((r: any) => {
       const buyers = Array.isArray(r['Buyer']) ? r['Buyer'] : [];
       if (!buyers.includes(buyer.id)) return false;
       const rancher = Array.isArray(r['Rancher']) ? r['Rancher'] : [];

@@ -325,7 +325,7 @@ export function invalidateAirtableCache(tableName?: string): void {
 export async function getAllRecords(
   tableName: string,
   filterByFormula?: string,
-  opts?: { fields?: string[] },
+  opts?: { fields?: string[]; maxRecords?: number },
 ) {
   // DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
   // lib/demo/demoMode.ts. Return in-memory fixtures, best-effort formula-
@@ -335,7 +335,13 @@ export async function getAllRecords(
   if (isDemoMode()) return (require('./demo/demoStore') as typeof import('./demo/demoStore')).demoQuery(tableName, filterByFormula);
   try {
     const projected = !!(opts?.fields && opts.fields.length);
-    const key = !filterByFormula && !projected ? _cacheKey(tableName) : null;
+    // opts.maxRecords — stop pagination after N rows (request-diet for callers
+    // like log-retention that only ever process a capped batch: 10 requests
+    // instead of walking a 10k-row backlog). A limited read never touches the
+    // cache: the cache stores the FULL table and a truncated result stored
+    // under the full key would silently starve other callers of rows.
+    const limited = typeof opts?.maxRecords === 'number' && opts.maxRecords > 0;
+    const key = !filterByFormula && !projected && !limited ? _cacheKey(tableName) : null;
     if (key) {
       // L1: in-process. A warm lambda serving a burst answers from here and
       // never touches Redis or Airtable.
@@ -357,6 +363,7 @@ export async function getAllRecords(
         .select({
           ...(filterByFormula && { filterByFormula }),
           ...(projected && { fields: opts!.fields }),
+          ...(limited && { maxRecords: opts!.maxRecords }),
         })
         .all(),
       tableName
@@ -675,6 +682,31 @@ export async function updateRecord(tableName: string, recordId: string, fields: 
   throw new Error(`Failed to update record in ${tableName} after ${maxRetries} retries`);
 }
 
+// Batch delete — Airtable's DELETE endpoint takes up to 10 record ids per
+// request, so 10 rows cost ONE request instead of ten (capacity audit
+// 2026-07-28: log-retention was deleting one-per-request at 6.7 req/s,
+// OVER the 5 req/s base ceiling). Chunks >10 automatically; rides the same
+// withRateLimitRetry as every other write. Callers own pacing BETWEEN calls.
+export async function deleteRecordsBatch(tableName: string, recordIds: string[]) {
+  if (isDemoMode()) {
+    const demoStore = require('./demo/demoStore') as typeof import('./demo/demoStore');
+    for (const id of recordIds) demoStore.demoDelete(tableName, id);
+    return recordIds.map((id) => ({ id, fields: {} })) as any[];
+  }
+  const out: any[] = [];
+  for (let i = 0; i < recordIds.length; i += 10) {
+    const chunk = recordIds.slice(i, i + 10);
+    try {
+      const deleted = await withRateLimitRetry(() => base(tableName).destroy(chunk), tableName);
+      out.push(...deleted);
+    } catch (error) {
+      console.error(`Error batch-deleting ${chunk.length} records from ${tableName}:`, error);
+      throw error;
+    }
+  }
+  return out;
+}
+
 // Helper function to delete a record
 export async function deleteRecord(tableName: string, recordId: string) {
   // DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
@@ -699,7 +731,13 @@ export async function getActiveRancherPages() {
   // active page (drives generateStaticParams + the discovery map).
   if (isDemoMode()) return (require('./demo/demoStore') as typeof import('./demo/demoStore')).demoTableRecords(TABLES.RANCHERS);
   try {
-    const records = await withTimeout(
+    // withRateLimitRetry (build tourniquet 2026-07-28): this feeds
+    // generateStaticParams during `next build` — it was the ONLY read path
+    // with no 429 backoff, so a rate-limit blip during a build could throw →
+    // callers' catch returned [] → a deploy silently shipped ZERO rancher
+    // pages. Same retry treatment as every other read; each attempt keeps its
+    // own timeout budget (withRateLimitRetry wraps attempts in withTimeout).
+    const records = await withRateLimitRetry(() =>
       base(TABLES.RANCHERS)
         .select({
           // Mirror getRancherOrProspectBySlug's visibility gates: a hidden or
@@ -709,7 +747,6 @@ export async function getActiveRancherPages() {
             'AND({Page Live} = 1, NOT({Public Map Hidden} = 1), {Verification Status} != "Removed")',
         })
         .all(),
-      resolveAirtableTimeoutMs(),
       TABLES.RANCHERS,
     );
     return records.map((record) => ({

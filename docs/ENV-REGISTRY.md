@@ -3,7 +3,7 @@
 > Auto-generated from a full code sweep 2026-07-14. THE reference for "what env vars do I need."
 > ⚠️ = load-bearing: silent absence breaks money or comms. The email-canary/watchdog rails monitor these.
 
-**176 variables · 26 load-bearing.** Owner legend: **ben-flips** = a business switch you toggle deliberately · **set-once** = key/secret, set correctly and forget (watchdog guards it) · **code-default** = safe fallback exists.
+**176 variables · 26 load-bearing** (+8 prod-set orphans documented in the last section — set in Vercel but read by no code). Owner legend: **ben-flips** = a business switch you toggle deliberately · **set-once** = key/secret, set correctly and forget (watchdog guards it) · **code-default** = safe fallback exists.
 
 
 ## 💰 Money-critical
@@ -223,3 +223,18 @@
 | `SHOPIFY_APP_CLIENT_ID` | Vercel prod (Sensitive) | Public BuyHalfCow app client id. Unset → one-click connect disabled; card falls back to token form (silent, by design). |
 | `SHOPIFY_APP_CLIENT_SECRET` | Vercel prod (Sensitive) | Public app secret: OAuth token exchange + compliance-webhook HMAC. Unset → same fallback as above; compliance topics 401. |
 | `SHOPIFY_PUBLIC_APP_LIVE` | Vercel prod — **flip to `1` on Shopify's approval email** | Gate for OFFERING the one-click public-app flow (`publicAppLive()`, lib/shopifyOauth.ts). Unset/false → dashboard card shows the token form + install route 503s, even with creds set. Creds stay set during review (compliance-webhook HMAC needs them) but Shopify refuses merchant installs of an in-review app — offering the flow early dead-ends ranchers on a Shopify error page with no callback and no alert (audit 2026-07-21). |
+
+## Prod-set orphans (runtime audit sweep 2026-07-28)
+
+These 8 vars exist in the Vercel prod env but a full repo grep (`process.env.<name>` across app/lib/scripts/middleware/instrumentation) finds ZERO readers — they are historical leftovers, documented so the next sweep doesn't re-flag them as "undocumented". Purpose below is reconstructed from code comments + naming convention, never from values. Safe to delete from Vercel once Ben confirms nothing external (Vercel integrations, other repos on the same project) consumes them.
+
+| Var | Purpose (historical) | Status |
+|---|---|---|
+| `ADMIN_EMAILS` | Plural predecessor of `ADMIN_EMAIL` (admin alert/notification targets); code reads `ADMIN_EMAIL` only (lib/email.ts, lib/operatorSignal.ts) | orphan |
+| `BLOB_STORE_ID` | Vercel Blob store id, auto-added by the Vercel Blob integration; code only uses `BLOB_READ_WRITE_TOKEN` | integration-managed |
+| `BLOB_WEBHOOK_PUBLIC_KEY` | Vercel Blob webhook signature key, auto-added by the integration; no Blob-webhook consumer exists in code | integration-managed |
+| `CALENDLY_LINK` | Legacy fixed Calendly booking URL; superseded by live Cal.com resolution (`getOperatorBookingUrl`) — flagged stale in app/api/book/link/route.ts + app/api/rancher/checkin-response/route.ts comments | orphan |
+| `CAL_RANCHER_EVENT_TYPE_ID` | Old fixed Cal.com event-type id for rancher calls; event types are now resolved at runtime via `CAL_API_KEY` | orphan |
+| `STRIPE_BRAND_LINK_COMARKETED` | Legacy brand-partner Stripe Payment Link (co-marketed tier); replaced by dynamic checkout — app/api/checkout/brand/route.ts explicitly notes `STRIPE_BRAND_LINK_*` is "intentionally no longer consulted" | orphan |
+| `STRIPE_BRAND_LINK_FEATURED` | Legacy brand-partner Payment Link ($595 Featured tier); same replacement as above | orphan |
+| `STRIPE_BRAND_LINK_SPOTLIGHT` | Legacy brand-partner Payment Link ($295 Spotlight tier); same replacement as above | orphan |

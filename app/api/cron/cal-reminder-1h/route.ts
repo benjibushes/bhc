@@ -28,6 +28,7 @@ interface CronResult {
   status: 'success' | 'partial' | 'error';
   recordsTouched: number;
   notes: string;
+  skipLog?: boolean;
 }
 
 function esc(s: string): string {
@@ -89,7 +90,12 @@ async function realHandler(_request: Request): Promise<CronResult> {
   }
 
   if (bookings.length === 0) {
-    return { status: 'success', recordsTouched: 0, notes: 'no bookings in window' };
+    // skipLog (capacity audit 2026-07-28): this every-10-min cron's pure
+    // no-op rows were 31% of ALL Cron Runs inflow (~144/day). The wrapper
+    // still writes ONE no-op heartbeat row per day so the daily-health-digest
+    // dead-man's switch keeps seeing this cron; any real work or error below
+    // always writes.
+    return { status: 'success', recordsTouched: 0, notes: 'no bookings in window', skipLog: true };
   }
 
   let touched = 0;

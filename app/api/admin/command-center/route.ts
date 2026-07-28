@@ -25,6 +25,7 @@
 
 import { NextResponse } from 'next/server';
 import { getAllRecords, TABLES } from '@/lib/airtable';
+import { adminSnapshotTable } from '@/lib/adminSnapshot';
 import { requireAdmin } from '@/lib/adminAuth';
 import { getAdminConfig } from '@/lib/adminConfig';
 import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
@@ -70,13 +71,18 @@ export async function GET(request: Request) {
   // Scale audit 2026-07-07: the Funnel Events full scan was DEAD WEIGHT —
   // the funnel section uses the state-snapshot model and the read ended in
   // `void funnelEvents;`. Dropping it cut ~16 paginated requests per open.
+  //
+  // Airtable diet 2026-07-28: all six reads now ride lib/adminSnapshot
+  // (module-scope + shared-Redis, 3-min TTL) — health / analytics /
+  // referrals-stats scan the same big tables, so the whole admin surface now
+  // shares ONE set of scans per TTL window instead of 4-5 independent ones.
   const [consumers, ranchers, referrals, payments, conversations, rancherOrders] = await Promise.all([
-    safe(() => getAllRecords(TABLES.CONSUMERS) as Promise<any[]>, 'consumers'),
-    safe(() => getAllRecords(TABLES.RANCHERS) as Promise<any[]>, 'ranchers'),
-    safe(() => getAllRecords(TABLES.REFERRALS) as Promise<any[]>, 'referrals'),
-    safe(() => getAllRecords(TABLES.PAYMENTS) as Promise<any[]>, 'payments'),
-    safe(() => getAllRecords(TABLES.CONVERSATIONS) as Promise<any[]>, 'conversations'),
-    safe(() => getAllRecords(TABLES.RANCHER_ORDERS) as Promise<any[]>, 'rancherOrders'),
+    safe(() => adminSnapshotTable(TABLES.CONSUMERS) as Promise<any[]>, 'consumers'),
+    safe(() => adminSnapshotTable(TABLES.RANCHERS) as Promise<any[]>, 'ranchers'),
+    safe(() => adminSnapshotTable(TABLES.REFERRALS) as Promise<any[]>, 'referrals'),
+    safe(() => adminSnapshotTable(TABLES.PAYMENTS) as Promise<any[]>, 'payments'),
+    safe(() => adminSnapshotTable(TABLES.CONVERSATIONS) as Promise<any[]>, 'conversations'),
+    safe(() => adminSnapshotTable(TABLES.RANCHER_ORDERS) as Promise<any[]>, 'rancherOrders'),
   ]);
 
   const now = Date.now();

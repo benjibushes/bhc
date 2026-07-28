@@ -19,11 +19,12 @@
 //   'true'      → deletes, capped + paced under the 5 req/s ceiling
 //
 // Deletes are capped per table per run (the backlog drains over days, the
-// cron never monopolizes the rate budget) and paced 150ms apart. Never
-// touches entity tables (Consumers/Referrals/Ranchers/Payments/Orders).
+// cron never monopolizes the rate budget), batched 10-per-request, and paced
+// so the request rate stays under the 5 req/s ceiling. Never touches entity
+// tables (Consumers/Referrals/Ranchers/Payments/Orders).
 
 import { NextResponse } from 'next/server';
-import { getAllRecords, deleteRecord, TABLES } from '@/lib/airtable';
+import { getAllRecords, deleteRecordsBatch, TABLES } from '@/lib/airtable';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
@@ -37,10 +38,18 @@ const RETENTION: { table: string; days: number }[] = [
   { table: 'Stripe Events', days: 60 },
 ];
 
-// Per-table per-run delete cap: 4 tables × 300 = worst-case 1,200 deletes
-// (~3 min at 150ms pacing) — inside maxDuration, and the initial ~10k
-// Cron Runs backlog drains in about a month of daily runs.
-const MAX_DELETES_PER_TABLE = 300;
+// Capacity audit 2026-07-28. Deletes now go 10-per-request (Airtable's batch
+// DELETE limit, via deleteRecordsBatch) — the old one-per-request loop paced
+// at 150ms was 6.7 req/s, OVER the 5 req/s base ceiling this cron exists to
+// protect. New shape: one 10-row request every BATCH_PACING_MS = ≤4 req/s.
+//
+// Per-table per-run cap raised 300 → 1,000: measured inflow is ~424 Cron Runs
+// rows/day (~600/day across all log tables), so the old cap barely broke even
+// and the backlog never drained. 1,000 = 100 requests ≈ 25s per table at this
+// pacing; 4 tables worst-case ≈ 100s + reads, comfortably inside maxDuration.
+const MAX_DELETES_PER_TABLE = 1000;
+const DELETE_BATCH_SIZE = 10;
+const BATCH_PACING_MS = 250;
 
 interface CronResult {
   status: 'success' | 'partial';
@@ -57,34 +66,41 @@ async function realHandler(_request: Request): Promise<CronResult> {
   for (const { table, days } of RETENTION) {
     let old: any[] = [];
     try {
+      // maxRecords caps the READ too: we only ever act on the first
+      // MAX_DELETES_PER_TABLE rows, so walking a 10k-row backlog (100+
+      // paginated requests) just to slice it was pure request waste. +1 so
+      // the report can still say "backlog remains" vs "fully drained".
       old = (await getAllRecords(
         table,
         `IS_BEFORE(CREATED_TIME(), DATEADD(NOW(), -${days}, 'days'))`,
+        { maxRecords: MAX_DELETES_PER_TABLE + 1 },
       )) as any[];
     } catch (e: any) {
       errors.push(`${table}: read failed ${e?.message?.slice(0, 60) || 'err'}`);
       continue;
     }
 
-    const batch = old.slice(0, MAX_DELETES_PER_TABLE);
+    const backlogLabel = old.length > MAX_DELETES_PER_TABLE ? `${MAX_DELETES_PER_TABLE}+` : String(old.length);
+    const batchIds = old.slice(0, MAX_DELETES_PER_TABLE).map((r: any) => r.id);
     if (dryRun) {
-      lines.push(`${table}: ${old.length} rows past ${days}d (would delete ${batch.length} this run)`);
+      lines.push(`${table}: ${backlogLabel} rows past ${days}d (would delete ${batchIds.length} this run)`);
       continue;
     }
 
     let deleted = 0;
-    for (const row of batch) {
+    for (let i = 0; i < batchIds.length; i += DELETE_BATCH_SIZE) {
+      const chunk = batchIds.slice(i, i + DELETE_BATCH_SIZE);
       try {
-        await deleteRecord(table, row.id);
-        deleted++;
-        await new Promise((r) => setTimeout(r, 150)); // pace under 5 req/s
+        const res = await deleteRecordsBatch(table, chunk);
+        deleted += res.length;
       } catch (e: any) {
-        errors.push(`${table}/${row.id}: ${e?.message?.slice(0, 50) || 'err'}`);
+        errors.push(`${table}: batch delete failed at ${deleted} — ${e?.message?.slice(0, 50) || 'err'}`);
         break; // a delete failure mid-table → stop this table, keep others
       }
+      await new Promise((r) => setTimeout(r, BATCH_PACING_MS)); // ≤4 req/s
     }
     totalDeleted += deleted;
-    lines.push(`${table}: deleted ${deleted}/${old.length} past ${days}d`);
+    lines.push(`${table}: deleted ${deleted}/${backlogLabel} past ${days}d`);
   }
 
   // Report in BOTH modes — dry-run is exactly the eyeball step before the
