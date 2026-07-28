@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import AdminAuthGuard from '../../components/AdminAuthGuard';
 import { rankCloseQueue, DEFAULT_QUEUE_LIMIT, type CloseQueueRow } from '@/lib/closeQueue';
+import { selectDepositNeverOpened } from '@/lib/depositRequestNudge';
 import {
   rankStuckRancherQueue,
   DEFAULT_STUCK_QUEUE_LIMIT,
@@ -36,6 +37,13 @@ interface Referral {
   chase_count: number;
   last_chased_at: string;
   warmup_engaged_at: string;
+  // Deposit-rescue surface (2026-07-28) — see /api/referrals.
+  deposit_requested_at: string;
+  deposit_paid_at: string;
+  deposit_link_opened_at: string;
+  deposit_nudge_count: number;
+  deposit_sms_nudged_at: string;
+  deposit_pay_link: string;
 }
 
 // Urgency buckets, most-urgent first. Order here drives the sort.
@@ -301,6 +309,28 @@ export default function SalesDeskQueuePage() {
       }),
     [stuckRows, stuckLoadedAt, showAllStuck]
   );
+
+  // THE DEPOSIT RESCUE LIST — "deposit requested, never opened >7d". Both
+  // email nudges (and the one-shot SMS, when lit) have had their shot; these
+  // are Ben's manual calls/texts. Pure, unit-tested selector
+  // (lib/depositRequestNudge.selectDepositNeverOpened) over the referral rows
+  // this page ALREADY fetched — zero extra reads. Read-only surface.
+  const depositRescueAll = useMemo(() => {
+    const shaped = referrals.map((r) => ({
+      id: r.id,
+      Status: r.status,
+      ['Deposit Requested At']: r.deposit_requested_at || '',
+      ['Deposit Paid At']: r.deposit_paid_at || '',
+      ['Deposit Link Opened At']: r.deposit_link_opened_at || '',
+      __r: r,
+    }));
+    return selectDepositNeverOpened(shaped, {
+      nowMs: loadedAt,
+      limit: Number.MAX_SAFE_INTEGER,
+    }).map((x) => x.__r);
+  }, [referrals, loadedAt]);
+  const DEPOSIT_RESCUE_LIMIT = 10;
+  const depositRescue = depositRescueAll.slice(0, DEPOSIT_RESCUE_LIMIT);
 
   // Apply chip filter + text search, then sort by bucket priority, intent desc.
   const visible = useMemo(() => {
@@ -611,6 +641,118 @@ export default function SalesDeskQueuePage() {
                     : `Show all ${stuckQueue.totalStuck}`}
                 </button>
               )}
+            </div>
+          )}
+
+          {/* ── DEPOSIT RESCUE — requested, never opened >7d ─────────────
+              The email (and, when lit, SMS) automation has had its shot on
+              these; the deposit page converts ~1-for-1 WHEN OPENED, so an
+              unopened 7-day-old request is a hand-dial. Read-only — actions
+              are a phone, an email client, and the durable pay link Ben can
+              text manually (never a raw Stripe URL; /api/referrals blanks
+              those). */}
+          {!loading && !err && depositRescue.length > 0 && (
+            <div className="mt-8">
+              <div className="flex items-baseline justify-between gap-3">
+                <h2 className="font-[family-name:var(--font-serif)] text-xl">
+                  Deposit sent, never opened
+                </h2>
+                <span className="text-xs text-saddle">
+                  {depositRescue.length}
+                  {depositRescueAll.length > depositRescue.length
+                    ? ` of ${depositRescueAll.length}`
+                    : ''}{' '}
+                  — oldest first
+                </span>
+              </div>
+              <p className="text-xs text-saddle mt-1">
+                Rancher requested a deposit 7+ days ago and the buyer never
+                opened the pay page. Nudges are done — call them, or text the
+                pay link below.
+              </p>
+
+              <ol className="mt-3 space-y-2">
+                {depositRescue.map((r) => {
+                  const days = daysSince(r.deposit_requested_at);
+                  return (
+                    <li
+                      key={r.id}
+                      className="border border-dust border-l-4 border-l-amber-600 bg-white p-3"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="font-medium truncate">
+                            {r.buyer_name || r.buyer_email || 'Unnamed buyer'}
+                            {r.buyer_state && (
+                              <span className="text-saddle font-normal">
+                                {' '}
+                                · {r.buyer_state}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs text-saddle mt-0.5 truncate">
+                            {r.rancher_name || r.suggested_rancher_name || 'Rancher'}
+                            {' · requested '}
+                            {days != null ? `${days}d ago` : fmtDate(r.deposit_requested_at)}
+                            {' · '}
+                            {r.deposit_nudge_count || 0} email nudge
+                            {(r.deposit_nudge_count || 0) === 1 ? '' : 's'}
+                            {r.deposit_sms_nudged_at ? ' + SMS' : ''}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* One-click actions — all read-only */}
+                      <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                        {r.buyer_phone && (
+                          <a
+                            href={`tel:${r.buyer_phone}`}
+                            className="text-xs px-2.5 py-1 border border-charcoal rounded-sm hover:bg-charcoal hover:text-bone transition-colors"
+                          >
+                            Call
+                          </a>
+                        )}
+                        {r.buyer_email && (
+                          <a
+                            href={`mailto:${r.buyer_email}`}
+                            className="text-xs px-2.5 py-1 border border-dust rounded-sm hover:border-charcoal transition-colors"
+                          >
+                            Email
+                          </a>
+                        )}
+                        <Link
+                          href={`/admin/desk/${r.id}`}
+                          className="text-xs px-2.5 py-1 border border-dust rounded-sm hover:border-charcoal transition-colors"
+                        >
+                          Open deal →
+                        </Link>
+                      </div>
+
+                      {/* The durable pay link, ready to text. Selectable +
+                          copy button; never a raw Stripe URL. */}
+                      {r.deposit_pay_link && (
+                        <div className="mt-2 flex items-center gap-2 text-xs">
+                          <span className="text-saddle shrink-0">Pay link:</span>
+                          <span className="min-w-0 truncate select-all text-charcoal">
+                            {r.deposit_pay_link}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              try {
+                                navigator.clipboard?.writeText(r.deposit_pay_link);
+                              } catch { /* select-all span is the fallback */ }
+                            }}
+                            className="shrink-0 px-2 py-0.5 border border-dust rounded-sm hover:border-charcoal transition-colors"
+                          >
+                            Copy
+                          </button>
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ol>
             </div>
           )}
 

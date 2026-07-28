@@ -3,6 +3,7 @@ import { getAllRecords, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { requireRole } from '@/lib/adminAuth';
 import { isRancherOnConnect } from '@/lib/rancherEligibility';
+import { durableDepositPayLink, DEPOSIT_SMS_SENT_FIELD } from '@/lib/depositRequestNudge';
 
 export const maxDuration = 60;
 
@@ -108,6 +109,17 @@ export async function GET(request: Request) {
         chase_count: record['Chase Count'] || 0,
         last_chased_at: record['Last Chased At'] || '',
         rancher_reminded_at: record['Rancher Reminded At'] || '',
+        // Deposit-rescue surface (2026-07-28) — powers the desk's
+        // "requested, never opened" list. Derived from the referral read
+        // already performed above; no extra Airtable calls. deposit_pay_link
+        // is ONLY the durable /r/p mint (raw Stripe URLs expire ~24h —
+        // durableDepositPayLink blanks them so Ben never texts a dead link).
+        deposit_requested_at: record['Deposit Requested At'] || '',
+        deposit_paid_at: record['Deposit Paid At'] || '',
+        deposit_link_opened_at: record['Deposit Link Opened At'] || '',
+        deposit_nudge_count: Number(record['Deposit Nudge Count']) || 0,
+        deposit_sms_nudged_at: record[DEPOSIT_SMS_SENT_FIELD] || '',
+        deposit_pay_link: durableDepositPayLink(record['Deposit Checkout URL']),
         warmup_stage: buyerInfo.warmupStage,
         warmup_sent_at: buyerInfo.warmupSentAt,
         warmup_engaged_at: buyerInfo.warmupEngagedAt,

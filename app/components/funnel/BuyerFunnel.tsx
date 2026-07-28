@@ -56,6 +56,12 @@ import { US_STATES } from '@/lib/states';
 import Button from '@/app/components/Button';
 import CalInlineBooker from '@/app/qualify/[consumerId]/CalInlineBooker';
 import { trackEvent, metaEventId } from '@/lib/analytics';
+import {
+  QUIZ_START_BEACON_PATH,
+  QUIZ_START_SESSION_KEY,
+  shouldFireQuizStart,
+  buildQuizStartPayload,
+} from '@/lib/quizStart';
 import { BEN_SALES_CAL_URL } from '@/lib/salesContact';
 import { isDepositCapableMatch } from '@/lib/depositOptionality';
 import { REFUND_POLICY_SHORT } from '@/lib/refundPolicy';
@@ -380,9 +386,55 @@ export default function BuyerFunnel({
       stepKey === 'storage' || stepKey === 'commit') &&
     !(mode === 'resume' && stepKey === 'storage');
 
+  // ── quiz_start funnel event (2026-07-28 conversion audit) ─────────────────
+  // Fired ONCE per session at the FIRST quiz ANSWER (not page view — bots and
+  // bounces would pollute; the first tap is the intent signal). Writes through
+  // the same Funnel Events pipeline as 'signup' so the dashboard can finally
+  // see pre-contact abandonment. Fresh mode only — resume buyers already have
+  // a 'signup' event and would corrupt the quiz_start→signup rate. Beacon is
+  // fire-and-forget: any failure is swallowed, the quiz never waits on it.
+  const quizStartFired = useRef(false);
+  function fireQuizStartOnce() {
+    try {
+      if (!shouldFireQuizStart({ mode, alreadyFired: quizStartFired.current })) return;
+      quizStartFired.current = true;
+      // Session flag survives remounts/navigation within the tab. If storage
+      // is blocked (private mode) the ref above still guards this mount —
+      // bias to a rare re-count over losing the event entirely.
+      try {
+        if (window.sessionStorage.getItem(QUIZ_START_SESSION_KEY)) return;
+        window.sessionStorage.setItem(QUIZ_START_SESSION_KEY, '1');
+      } catch { /* storage blocked — ref guard only */ }
+      const payload = JSON.stringify(
+        buildQuizStartPayload({
+          state,
+          source: attribution.current.source,
+          campaign: attribution.current.campaign,
+          utm_source: attribution.current.utm_source,
+          utm_medium: attribution.current.utm_medium,
+          utm_campaign: attribution.current.utm_campaign,
+          utm_content: attribution.current.utm_content,
+          utm_term: attribution.current.utm_term,
+        }),
+      );
+      if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+        navigator.sendBeacon(QUIZ_START_BEACON_PATH, payload);
+      } else {
+        fetch(QUIZ_START_BEACON_PATH, {
+          method: 'POST',
+          body: payload,
+          keepalive: true,
+        }).catch(() => { /* fire-and-forget */ });
+      }
+    } catch { /* never block or slow the quiz */ }
+  }
+
   // Tap-card select → flash the check → auto-advance. The `from` guard prevents a
   // double-tap (or a late timer) from skipping the next question.
   function selectAndAdvance(setter: (v: string) => void, value: string, from: StepKey) {
+    // First answer of a fresh session = quiz_start (size is always the first
+    // question in fresh mode; the guard makes later calls no-ops).
+    fireQuizStartOnce();
     setter(value);
     setFlashing(value);
     if (advanceTimer.current) clearTimeout(advanceTimer.current);
