@@ -42,6 +42,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   FUNNEL_STEPS,
   FUNNEL_COPY,
+  FUNNEL_DISPLAY_STEP_COUNT,
+  funnelProgressPct,
   SIZE_OPTIONS,
   TIMING_OPTIONS,
   BUDGET_OPTIONS,
@@ -142,7 +144,12 @@ const STEP_INDEX: Record<StepKey, number> = FUNNEL_STEPS.reduce(
   (m, k, i) => ({ ...m, [k]: i }),
   {} as Record<StepKey, number>,
 );
-const TOTAL_DISPLAY_STEPS = FUNNEL_STEPS.length; // 5
+// H2 (2026-07-28): display count EXCLUDES `reveal` (it's the destination, not
+// a question). Counting it made the final commit tap read "Step 6 of 7 · 83%"
+// — telling the buyer another question was coming at the exact commit moment.
+// Count + percent math live in lib/funnelConfig next to FUNNEL_STEPS so they
+// can never drift from the config (unit-tested in lib/funnelConfig.test.ts).
+const TOTAL_DISPLAY_STEPS = FUNNEL_DISPLAY_STEP_COUNT; // 6 — size…commit
 
 // Format an integer with thousands separators ("1,901"). Guards NaN.
 function commas(n: number | undefined | null): string {
@@ -348,7 +355,7 @@ export default function BuyerFunnel({
 
   // ── Derived progress ───────────────────────────────────────────────────────
   const stepNumber = STEP_INDEX[stepKey] + 1; // 1-based
-  const progressPct = Math.round((STEP_INDEX[stepKey] / (TOTAL_DISPLAY_STEPS - 1)) * 100);
+  const progressPct = funnelProgressPct(STEP_INDEX[stepKey]); // commit = 100%
 
   const emailValid = useMemo(() => isValidEmail(email.trim()), [email]);
   const phoneDigits = phone.replace(/\D/g, '');
