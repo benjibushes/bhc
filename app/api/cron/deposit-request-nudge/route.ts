@@ -22,6 +22,10 @@
 // ('Deposit Checkout URL') — Stripe Checkout sessions expire in ~24h, which
 // is exactly when this cron first fires. The deposit page mints a fresh
 // session on arrival.
+//
+// SMS RESCUE LEG (2026-07-28): after the first email nudge gets no deposit-
+// page open within 48h, ONE SMS per referral ever — see runDepositSmsRescue
+// below for the full gate stack. Ships DARK until ENABLE_SMS is set.
 
 import { NextResponse } from 'next/server';
 import { getAllRecords, getRecordById, updateRecord, TABLES, isInvalidFilterFormulaError } from '@/lib/airtable';
@@ -36,7 +40,13 @@ import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 import { generateMemberLoginToken } from '@/lib/secrets';
-import { selectDepositNudges, selectDepositAbandonNudges } from '@/lib/depositRequestNudge';
+import {
+  selectDepositNudges,
+  selectDepositAbandonNudges,
+  selectDepositSmsRescues,
+  renderDepositSmsNudge,
+  DEPOSIT_SMS_SENT_FIELD,
+} from '@/lib/depositRequestNudge';
 import { isRancherOperationalForBuyers, isRancherOnConnect } from '@/lib/rancherEligibility';
 import {
   selectReserveAbandonRecovery,
@@ -255,6 +265,109 @@ async function runReserveAbandonRail(nowMs: number): Promise<ReserveRailResult> 
   return out;
 }
 
+// ── SMS RESCUE LEG (2026-07-28 conversion audit) ─────────────────────────────
+// The deposit page converts ~1-for-1 WHEN OPENED; the email in front of it is
+// the leak (0/7 stuck requests ever opened). After the FIRST email nudge gets
+// no deposit-page open within 48h ('Deposit Link Opened At' still blank), send
+// ONE SMS — per referral, EVER. Selection is pure + unit-tested
+// (lib/depositRequestNudge.isDepositSmsRescueEligible); this function owns the
+// gates and the stamp.
+//
+// GATING (all checked BEFORE the one-shot stamp — a skip must never burn it,
+// same discipline as the reserve rail's SMS step):
+//   1. DEPOSIT_SMS_RESCUE_ENABLED !== 'false'  (kill-switch, defaults ON)
+//   2. smsEnabled()        — ENABLE_SMS env; unset in prod = the leg is DARK
+//   3. buyer 'SMS Opt-In'  — TCPA explicit consent (sendSMSToConsumer re-checks)
+//   4. isSmsWindow(state)  — TCPA quiet hours in the buyer's local time
+//   5. suppression trio    — Unsubscribed/Bounced/Complained
+//
+// STAMP: 'Reserve Recovery SMS Sent At' (REUSED — fields can't be created from
+// code; the reserve rail's cohort is disjoint since it requires Deposit
+// Requested At EMPTY, and sharing gives the right invariant: at most one
+// deposit-chase SMS per referral across every rail). CLAIM-BEFORE-SEND with
+// verify-persist: if the stamp doesn't survive the write, the leg ABORTS —
+// no dedupe = no sends.
+
+interface SmsRescueResult {
+  selected: number;
+  sent: number;
+  suppressed: number;
+  errors: string[];
+  /** Non-empty when the leg aborted (stamp field missing in Airtable). */
+  aborted: string;
+}
+
+async function runDepositSmsRescue(
+  candidates: any[],
+  nowMs: number,
+  excludeIds: ReadonlySet<string>,
+): Promise<SmsRescueResult> {
+  const out: SmsRescueResult = { selected: 0, sent: 0, suppressed: 0, errors: [], aborted: '' };
+  if (process.env.DEPOSIT_SMS_RESCUE_ENABLED === 'false') return out;
+
+  // Same candidate rows the email rail already fetched — zero extra reads.
+  const picked = selectDepositSmsRescues(candidates, { nowMs, batchCap: 10, excludeIds });
+  out.selected = picked.length;
+  if (picked.length === 0) return out;
+  const smsOn = smsEnabled();
+
+  for (const r of picked) {
+    try {
+      const buyerId: string = ((r['Buyer'] || []) as string[])[0] || '';
+      if (!buyerId) continue;
+      const buyer: any = await getRecordById(TABLES.CONSUMERS, buyerId).catch(() => null);
+      if (!buyer) continue;
+      if (buyer['Unsubscribed'] || buyer['Bounced'] || buyer['Complained']) { out.suppressed++; continue; }
+      const buyerEmail = String(buyer['Email'] || '').trim().toLowerCase();
+      if (!buyerEmail) continue; // magic-link mint needs the email identity
+
+      // Channel gates BEFORE the stamp — skipping must not burn the one-shot.
+      if (!smsOn || buyer['SMS Opt-In'] !== true) continue;
+      if (!isSmsWindow(buyer['State'], nowMs)) continue;
+
+      // CLAIM BEFORE SEND + verify-persist (fields-missing abort — the same
+      // field the reserve rail verifies, so both legs fail closed together).
+      const updated: any = await updateRecord(TABLES.REFERRALS, r.id, {
+        [DEPOSIT_SMS_SENT_FIELD]: new Date(nowMs).toISOString(),
+      });
+      if (!updated || !updated[DEPOSIT_SMS_SENT_FIELD]) {
+        out.aborted =
+          `sms-rescue stamp did not persist for ${r.id} — verify "${DEPOSIT_SMS_SENT_FIELD}" ` +
+          `(dateTime) exists on Referrals`;
+        return out;
+      }
+
+      // Rancher name for the copy — best-effort, generic fallback.
+      let rancherName = String(r['Suggested Rancher Name'] || '').trim();
+      try {
+        const rancherId: string = ((r['Rancher'] || []) as string[])[0] || '';
+        if (rancherId) {
+          const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
+          rancherName = String(rancher?.['Ranch Name'] || rancherName || '').trim();
+        }
+      } catch { /* generic fallback below */ }
+
+      // Magic-link hop → deposit page (fresh Stripe session minted on arrival
+      // — NEVER the stored ~24h-expiry Checkout URL). Same link the emails use.
+      const token = generateMemberLoginToken(buyerId, buyerEmail);
+      const link = `${SITE_URL}/api/auth/member/verify?token=${token}&next=${encodeURIComponent(`/checkout/${r.id}/deposit`)}`;
+
+      const body = renderDepositSmsNudge({
+        firstName: String(buyer['Full Name'] || r['Buyer Name'] || '').trim().split(/\s+/)[0] || 'there',
+        rancherName,
+        link,
+      });
+      const ok = await sendSMSToConsumer({ consumer: buyer, body, reason: 'deposit-request-nudge sms-rescue' });
+      if (ok) out.sent++;
+      await new Promise((res) => setTimeout(res, 400)); // pace Twilio + Airtable
+    } catch (e: any) {
+      out.errors.push(`sms-rescue ${r.id}: ${e?.message?.slice(0, 80) || 'unknown'}`);
+    }
+  }
+
+  return out;
+}
+
 async function realHandler(_request: Request): Promise<CronResult> {
   if (isMaintenanceMode()) {
     return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
@@ -372,6 +485,23 @@ async function realHandler(_request: Request): Promise<CronResult> {
     }
   }
 
+  // SMS rescue leg — rail-A rows whose first email nudge got no deposit-page
+  // open within 48h. Runs on the SAME candidate read; `seen` (this run's email
+  // picks) is excluded so a referral never gets two touches in one hour. DARK
+  // until ENABLE_SMS is set (plus per-buyer opt-in + quiet hours).
+  const smsRescue = await runDepositSmsRescue(candidates, nowMs, seen);
+  errors.push(...smsRescue.errors);
+  if (smsRescue.aborted) {
+    await sendOperatorSignal({
+      urgency: 'normal',
+      kind: 'system-error',
+      summary: 'deposit SMS rescue ABORTED — stamp field missing on Referrals',
+      detail: smsRescue.aborted,
+      dedupeKey: 'deposit-request-nudge-sms-abort',
+      dedupeWindowMs: 24 * 60 * 60 * 1000,
+    }).catch(() => {});
+  }
+
   // Rail C — reserve-abandon recovery (all operational Connect ranchers).
   const reserve = await runReserveAbandonRail(nowMs);
   errors.push(...reserve.errors);
@@ -389,24 +519,29 @@ async function realHandler(_request: Request): Promise<CronResult> {
   const reserveNote =
     ` reserve: sel=${reserve.selectedEmail}+${reserve.selectedSms} email=${reserve.emailSent} sms=${reserve.smsSent}` +
     (reserve.aborted ? ' ABORTED(fields-missing)' : '');
+  const smsRescueNote =
+    ` smsRescue: sel=${smsRescue.selected} sent=${smsRescue.sent}` +
+    (smsRescue.aborted ? ' ABORTED(fields-missing)' : '');
 
-  if (selected.length > 0 || reserve.emailSent > 0 || reserve.smsSent > 0) {
+  const totalSent = sent + smsRescue.sent + reserve.emailSent + reserve.smsSent;
+  if (selected.length > 0 || totalSent > 0) {
     await sendOperatorSignal({
       urgency: 'normal',
       kind: 'other',
-      summary: `deposit-request-nudge: ${sent + reserve.emailSent + reserve.smsSent} buyer nudge${sent + reserve.emailSent + reserve.smsSent === 1 ? '' : 's'} sent`,
-      detail: `request=${candidates.length} abandon=${abandonCandidates.length} selected=${selected.length} sent=${sent} suppressed=${suppressed + reserve.suppressed} errs=${errors.length}${reserveNote}`,
+      summary: `deposit-request-nudge: ${totalSent} buyer nudge${totalSent === 1 ? '' : 's'} sent`,
+      detail: `request=${candidates.length} abandon=${abandonCandidates.length} selected=${selected.length} sent=${sent} suppressed=${suppressed + smsRescue.suppressed + reserve.suppressed} errs=${errors.length}${smsRescueNote}${reserveNote}`,
       dedupeKey: 'deposit-request-nudge-summary',
       dedupeWindowMs: 6 * 60 * 60 * 1000,
     }).catch(() => {});
   }
 
   return {
-    status: errors.length || reserve.aborted ? 'partial' : 'success',
-    recordsTouched: sent + reserve.emailSent + reserve.smsSent,
+    status: errors.length || reserve.aborted || smsRescue.aborted ? 'partial' : 'success',
+    recordsTouched: totalSent,
     notes:
       `candidates=${candidates.length} selected=${selected.length} sent=${sent} ` +
-      `suppressed=${suppressed + reserve.suppressed} errs=${errors.length}` +
+      `suppressed=${suppressed + smsRescue.suppressed + reserve.suppressed} errs=${errors.length}` +
+      smsRescueNote +
       reserveNote +
       (errors.length ? ` err1=${errors[0].slice(0, 80)}` : ''),
   };

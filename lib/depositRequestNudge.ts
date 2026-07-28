@@ -170,3 +170,138 @@ export function selectDepositAbandonNudges<T extends DepositNudgeReferralLike>(
     .sort((a, b) => (parseMs(a['Deposit Invite Sent At']) ?? 0) - (parseMs(b['Deposit Invite Sent At']) ?? 0))
     .slice(0, cap);
 }
+
+// ── SMS RESCUE LEG (2026-07-28 conversion audit) ─────────────────────────────
+// The deposit-request rail was email-only, and the audit's ground truth is
+// brutal: the deposit page converts ~1-for-1 WHEN OPENED — the email in front
+// of it is the leak (0/7 stuck requests were ever opened). This leg sends ONE
+// SMS per referral, ever, when the first email nudge got no deposit-page open
+// within 48h.
+//
+// Channel gating lives in the CRON, not here (smsEnabled() env gate + the
+// consumer's SMS Opt-In + quiet hours via isSmsWindow + sendSMSToConsumer's
+// own hard gates). This module only answers "is this row due" — pure and
+// unit-tested. With ENABLE_SMS unset the whole leg ships DARK, by design.
+//
+// STAMP: 'Reserve Recovery SMS Sent At' is REUSED as the one-shot marker (we
+// cannot create Airtable fields; see docs/WRITE-MAP.md discipline). It is safe
+// to share with the reserve-abandon rail (lib/reserveRecovery) because the two
+// cohorts are DISJOINT by construction: this leg requires 'Deposit Requested
+// At' SET, the reserve rail requires it EMPTY — and sharing yields the right
+// global invariant anyway: at most one deposit-chase SMS per referral, ever,
+// across every rail.
+
+export const DEPOSIT_SMS_NO_OPEN_WINDOW_MS = 48 * 60 * 60 * 1000; // no-open window after nudge 1
+export const DEPOSIT_SMS_SENT_FIELD = 'Reserve Recovery SMS Sent At';
+
+/**
+ * Pure per-row predicate: does this rancher-requested referral get the ONE
+ * rescue SMS right now? Fails CLOSED on any missing/corrupt anchor.
+ */
+export function isDepositSmsRescueEligible(
+  r: DepositNudgeReferralLike,
+  nowMs: number,
+): boolean {
+  // Rail-A shape: a rancher-sent request that's still unpaid + still awaiting.
+  const requestedMs = parseMs(r['Deposit Requested At']);
+  if (requestedMs === null) return false;
+  if (String(r['Deposit Paid At'] || '').trim()) return false;
+  if (statusName(r['Status']) !== 'Awaiting Payment') return false;
+
+  // SMS never leads: the FIRST email nudge must already be out.
+  if (nudgeCount(r) < 1) return false;
+
+  // 48h no-open window, anchored on the last email nudge. A blank or corrupt
+  // anchor (count>=1 with no parseable stamp = data drift) fails closed —
+  // never SMS blind.
+  const lastMs = parseMs(r['Deposit Nudge Last Sent At']);
+  if (lastMs === null) return false;
+  if (nowMs - lastMs < DEPOSIT_SMS_NO_OPEN_WINDOW_MS) return false;
+
+  // The buyer opened the deposit page → email is working, no SMS needed.
+  if (String(r['Deposit Link Opened At'] || '').trim()) return false;
+
+  // ONE SMS per referral, EVER (cross-rail via the shared stamp).
+  if (String(r[DEPOSIT_SMS_SENT_FIELD] || '').trim()) return false;
+
+  return true;
+}
+
+/**
+ * Select the referrals that get the rescue SMS this run: eligible per the
+ * predicate, minus any row already touched by email in the SAME run
+ * (excludeIds — never two touches in one hour), oldest request first, capped.
+ */
+export function selectDepositSmsRescues<T extends DepositNudgeReferralLike>(
+  referrals: T[],
+  opts: { nowMs: number; batchCap?: number; excludeIds?: ReadonlySet<string> },
+): T[] {
+  const cap = Math.floor(opts.batchCap ?? 10);
+  if (!Array.isArray(referrals) || referrals.length === 0 || cap <= 0) return [];
+  const excluded = opts.excludeIds ?? new Set<string>();
+  return referrals
+    .filter((r) => !excluded.has(String(r.id || '')) && isDepositSmsRescueEligible(r, opts.nowMs))
+    .sort((a, b) => (parseMs(a['Deposit Requested At']) ?? 0) - (parseMs(b['Deposit Requested At']) ?? 0))
+    .slice(0, cap);
+}
+
+// PLACEHOLDER COPY — marketing is drafting the final body in
+// docs/marketing/sms-deposit-nudge.md; when it lands, swap THIS constant only
+// (tokens: {first} {rancher} {link}). Keep it short, honest, STOP-compliant.
+export const DEPOSIT_SMS_NUDGE_BODY =
+  '{first}, your beef share with {rancher} is still reserved — the deposit link is waiting: {link} — Ben @ BuyHalfCow. Reply STOP to opt out.';
+
+/** Fill the SMS template. Pure string work — the cron owns every send gate. */
+export function renderDepositSmsNudge(ctx: {
+  firstName: string;
+  rancherName: string;
+  link: string;
+}): string {
+  return DEPOSIT_SMS_NUDGE_BODY
+    .replace('{first}', String(ctx.firstName || 'there').trim() || 'there')
+    .replace('{rancher}', String(ctx.rancherName || 'your rancher').trim() || 'your rancher')
+    .replace('{link}', String(ctx.link || '').trim());
+}
+
+// ── DESK RESCUE LIST (read-only) ─────────────────────────────────────────────
+// "Deposit requested, never opened >7d" — past both email nudges and the SMS,
+// automation has had its shot; these are Ben's manual calls/texts. Pure filter
+// over rows /api/referrals already returns (no new Airtable read).
+
+export const DEPOSIT_NEVER_OPENED_MIN_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Pure per-row predicate for the desk list. */
+export function isDepositNeverOpened(
+  r: DepositNudgeReferralLike,
+  nowMs: number,
+): boolean {
+  const requestedMs = parseMs(r['Deposit Requested At']);
+  if (requestedMs === null) return false;
+  if (String(r['Deposit Paid At'] || '').trim()) return false;
+  if (statusName(r['Status']) !== 'Awaiting Payment') return false;
+  if (String(r['Deposit Link Opened At'] || '').trim()) return false;
+  return nowMs - requestedMs >= DEPOSIT_NEVER_OPENED_MIN_AGE_MS;
+}
+
+/** Oldest request first (they leak first), capped for the desk. */
+export function selectDepositNeverOpened<T extends DepositNudgeReferralLike>(
+  rows: T[],
+  opts: { nowMs: number; limit?: number },
+): T[] {
+  const cap = Math.floor(opts.limit ?? 25);
+  if (!Array.isArray(rows) || rows.length === 0 || cap <= 0) return [];
+  return rows
+    .filter((r) => isDepositNeverOpened(r, opts.nowMs))
+    .sort((a, b) => (parseMs(a['Deposit Requested At']) ?? 0) - (parseMs(b['Deposit Requested At']) ?? 0))
+    .slice(0, cap);
+}
+
+/**
+ * The link Ben can text a buyer manually: ONLY the durable /r/p mint (re-mints
+ * a fresh Stripe session at click). A raw checkout.stripe.com URL expires in
+ * ~24h — handing one to Ben is a dead end, so anything else returns ''.
+ */
+export function durableDepositPayLink(url: unknown): string {
+  const s = String(url || '').trim();
+  return s.includes('/r/p/') ? s : '';
+}
