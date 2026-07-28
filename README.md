@@ -210,15 +210,7 @@ Detailed operational docs are in the project root:
 
 | Guide | What it covers |
 |---|---|
-| `AIRTABLE_SETUP.md` | Full Airtable table/field setup |
-| `CALENDLY_SETUP_GUIDE.md` | Cal.com scheduling configuration |
-| `BUSINESS_EMAIL_SETUP.md` | Resend/Google Workspace email setup |
-| `PAYMENT_TRACKING_GUIDE.md` | Commission tracking, invoicing workflow |
 | `RANCHER_ONBOARDING_CALLS_GUIDE.md` | Call scripts, tips, follow-up process |
-| `DEPLOY_NOW.md` | Deployment commands and troubleshooting |
-| `EMAIL_ATTRIBUTION_SYSTEM.md` | Campaign tracking and attribution |
-| `BRAND_COMPLIANCE.md` | Brand colors, typography, design standards |
-| `LIVE_TEST_CHECKLIST.md` | Full end-to-end test procedure |
 
 ## Project Structure
 
