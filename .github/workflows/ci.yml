@@ -1,0 +1,72 @@
+# ──────────────────────────────────────────────────────────────────────────
+# CI — the merge gauntlet, automated.
+#
+# Mirrors the manual pre-merge ritual exactly:
+#   1. npx tsc --noEmit          — type check
+#   2. npm test                  — unit tests (script bakes its own env; no secrets)
+#   3. npm run boundaries:check  — vertical-boundary lint
+#   4. next build in DEMO MODE   — full prerender against in-memory fixtures
+#
+# Step 4 note: a REAL `next build` needs live Airtable/Stripe env, hits the
+# Airtable API during prerender (flaky ~1-in-3 transient timeout, burns API
+# quota per run), so CI builds with NEXT_PUBLIC_DEMO_MODE=true instead —
+# lib/demo/demoMode.ts no-ops every external call (Airtable/Stripe/Resend/
+# Twilio/Telegram) and prerender runs against fixtures. That catches build
+# breaks (imports, prerender crashes, config) with ZERO secrets and ZERO
+# external calls. The build output is discarded — nothing here deploys.
+# The real-env `next build` before merging risky route/page changes stays a
+# local judgment call (see MEMORY: "bhc-next-build-gate").
+#
+# No repo secrets are configured or needed. Never add real keys here.
+# ──────────────────────────────────────────────────────────────────────────
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  gauntlet:
+    name: gauntlet
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # No .nvmrc / engines in the repo; Node 24 LTS matches the
+          # Next 16 / React 19 toolchain. Bump deliberately, not implicitly.
+          node-version: 24
+          cache: npm
+
+      - name: Install (npm ci)
+        run: npm ci --no-audit --no-fund
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        # The package.json test script hardcodes its own throwaway env
+        # (JWT_SECRET etc.) — values are CI-only fakes, not secrets.
+        run: npm test
+
+      - name: Boundary check
+        run: npm run boundaries:check
+
+      - name: Build (demo mode — no external calls)
+        # lib/secrets.ts fail-fast-throws at import when these are unset
+        # (next build runs with NODE_ENV=production). These are CI-only
+        # dummies — same pattern the npm test script uses — NOT real keys.
+        env:
+          NEXT_PUBLIC_DEMO_MODE: 'true'
+          JWT_SECRET: ci-dummy-jwt-secret
+          ADMIN_PASSWORD: ci-dummy-admin
+          CRON_SECRET: ci-dummy-cron
+        run: npm run build
