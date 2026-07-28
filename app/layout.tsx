@@ -15,6 +15,7 @@ import ConsentBanner from "./components/ConsentBanner";
 // DEMO MODE watermark — renders nothing unless NEXT_PUBLIC_DEMO_MODE==='true'
 // (a local-only flag never set in Vercel). See lib/demo/demoMode.ts.
 import DemoBanner from "./components/DemoBanner";
+import { REVEAL_BACKSTOP_JS } from "@/lib/revealBackstop";
 
 const playfair = Playfair_Display({
   variable: "--font-playfair",
@@ -104,6 +105,17 @@ export default function RootLayout({
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        />
+        {/* Suspense reveal backstop — React 19.2 schedules streamed-boundary
+            reveals via requestAnimationFrame; environments that never deliver
+            a rAF frame (hidden tabs, prerender, headless verifiers) otherwise
+            show an eternal skeleton on any page with a deferred segment (the
+            /ranchers/[slug] blank-render incident). See lib/revealBackstop.ts.
+            The data attribute is a canary marker — lib/storefrontRenderCheck
+            asserts it whenever served HTML contains a deferred boundary. */}
+        <script
+          data-bhc-reveal-backstop=""
+          dangerouslySetInnerHTML={{ __html: REVEAL_BACKSTOP_JS }}
         />
       </head>
       <body

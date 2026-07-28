@@ -681,9 +681,26 @@ export default async function RancherPage(
                 </p>
               )}
 
-              {/* CTA row — verified gets pricing-jump, prospect gets claim */}
+              {/* CTA row — Connect-active + priced jumps straight to the
+                  deposit form (#reserve, rendered by DepositReserveForm under
+                  exactly these conditions) with reserve copy — never waitlist
+                  language on a deposit-ready page. Legacy-priced keeps the
+                  pricing jump (lead form). Prospect gets claim. Verified but
+                  unpriced falls back to the quiz — ALWAYS carrying
+                  ?rancher=<slug> so attribution survives (2026-07-28: hero was
+                  linking bare /access, dropping the rancher on every ad click). */}
               <div className="flex flex-wrap gap-3 pt-2">
-                {hasPricing ? (
+                {hasPricing && onConnect ? (
+                  <RancherPricingCTA
+                    href="#reserve"
+                    rancherSlug={slug}
+                    rancherState={state}
+                    className="inline-flex items-center gap-2 px-7 py-3.5 bg-bone text-charcoal text-sm font-medium tracking-wide uppercase transition-base hover:bg-bone-warm"
+                  >
+                    Reserve your share
+                    <span aria-hidden>↓</span>
+                  </RancherPricingCTA>
+                ) : hasPricing ? (
                   <RancherPricingCTA
                     href="#shares"
                     rancherSlug={slug}
@@ -703,10 +720,10 @@ export default async function RancherPage(
                   </Link>
                 ) : (
                   <Link
-                    href="/access"
+                    href={`/access?rancher=${encodeURIComponent(slug)}`}
                     className="inline-flex items-center gap-2 px-7 py-3.5 bg-bone text-charcoal text-sm font-medium tracking-wide uppercase transition-base hover:bg-bone-warm"
                   >
-                    Get on the list
+                    Check availability
                     <span aria-hidden>→</span>
                   </Link>
                 )}
