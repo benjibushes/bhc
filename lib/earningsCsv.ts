@@ -34,6 +34,11 @@ export interface EarningsRow {
    *  carry the settlement-stamped Rancher Payout). When set, it wins over the
    *  referral-rail net computation — product orders never rode either rail. */
   netOverride?: number;
+  /** Money-truth trail (2026-07-28): 'Final Paid Amount' — the settled
+   *  final-invoice amount stamped by settleFinalInvoice. Display-only.
+   *  undefined ⇒ no final settlement recorded ⇒ the CSV cell stays BLANK
+   *  (0.00 would read as a real $0 payment in a tax file). */
+  finalPaidAmount?: number;
 }
 
 /**
@@ -89,6 +94,9 @@ export const EARNINGS_CSV_HEADERS = [
   'Net to You',
   'Intro Sent',
   'Closed',
+  // Money-truth trail (2026-07-28): trailing so existing sheet templates
+  // keep their column positions.
+  'Final Paid Amount',
 ] as const;
 
 /**
@@ -153,6 +161,11 @@ export function buildEarningsCsv(rows: EarningsRow[], fallbackRail: string = 'le
       csvEscape(money(net)),
       csvEscape(dateOnly(r.introSentAt)),
       csvEscape(dateOnly(r.closedAt)),
+      csvEscape(
+        typeof r.finalPaidAmount === 'number' && isFinite(r.finalPaidAmount)
+          ? money(r.finalPaidAmount)
+          : '',
+      ),
     ].join(','));
   }
   return lines.join('\r\n') + '\r\n';

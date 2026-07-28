@@ -37,6 +37,7 @@ import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 import { CLOSE_CHECK_MUTE_DAYS } from '@/lib/closeCheckMute';
+import { isReferralOnHold } from '@/lib/referralHold';
 
 export const maxDuration = 60;
 
@@ -76,6 +77,10 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
 
     // Filter to ones that are stale enough + haven't been checked recently.
     const candidates = referrals.filter((r: any) => {
+      // Operator hold gate (2026-07-28): the Telegram "⏸️ Hold" button stamps
+      // `Hold Until` — a parked row must not get "did this close?" cards
+      // until the hold expires. Fail-open: blank/unparseable = not held.
+      if (isReferralOnHold(r['Hold Until'], now)) return false;
       const introAt = r['Intro Sent At'] || r['Approved At'];
       if (!introAt) return false;
       const daysSinceIntro = (now - new Date(introAt).getTime()) / DAY_MS;

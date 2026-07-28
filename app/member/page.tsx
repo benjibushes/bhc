@@ -691,7 +691,17 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                 const gearCut = cutForBuyer({ 'Order Type': latest?.order_type || '' });
                 return (
                   <div className="space-y-2">
-                    <GearBlock stage={gearStage} cut={gearCut} surface="member" />
+                    {/* Attribution (2026-07-28): 118 gear clicks, 0 attributed —
+                        the /go/product route reads ?buyer= and ?ref= but this
+                        emitter never passed them. The page KNOWS the session
+                        buyer (member.id) + their latest referral. */}
+                    <GearBlock
+                      stage={gearStage}
+                      cut={gearCut}
+                      surface="member"
+                      buyerId={member.id}
+                      refId={latest?.id || ''}
+                    />
                     <p className="text-xs text-dust">
                       <Link href="/gear" className="underline hover:text-charcoal">
                         see all the gear we trust →

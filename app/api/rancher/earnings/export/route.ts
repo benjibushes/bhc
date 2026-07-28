@@ -80,6 +80,11 @@ export async function GET(request: Request) {
         // RAIL-PER-ROW (audit fix #3): lets buildEarningsCsv decide net per
         // row so a migrated rancher's legacy/off-rail history isn't overstated.
         depositPaidAt: String(ref['Deposit Paid At'] || ''),
+        // Money-truth trail (2026-07-28): settled final-invoice amount.
+        // undefined (not 0) when Airtable has no value so the CSV cell stays
+        // blank — see EarningsRow.finalPaidAmount.
+        finalPaidAmount:
+          ref['Final Paid Amount'] == null ? undefined : Number(ref['Final Paid Amount']),
       }));
   } catch (e: any) {
     console.error('[rancher/earnings/export] referrals load failed:', e?.message || e);

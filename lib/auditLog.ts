@@ -9,7 +9,8 @@
 //      to the AI_AUDIT_LOG Airtable table.
 //   2. The reverse_action field stores a JSON blob describing how to undo:
 //      { type: 'update', table, recordId, fields: <previousValues> }
-//   3. A cron / Telegram callback can replay the inverse from the log.
+//      (documentation-of-intent + forensics; undo handlers are route-specific
+//      — the generic replayer was deleted 2026-07-28, see note below).
 //
 // GRACEFUL DEGRADATION:
 //   If the AI_AUDIT_LOG Airtable table doesn't exist yet (Ben hasn't created
@@ -30,7 +31,7 @@
 //     - Telegram Card ID (text) — message_id of the undo card if posted
 //     - Reverted (checkbox) — set true when an undo card is tapped
 
-import { createRecord, getAllRecords, escapeAirtableValue } from './airtable';
+import { createRecord } from './airtable';
 
 const AUDIT_TABLE = 'AI Audit Log';
 
@@ -95,51 +96,12 @@ export async function logAuditEntry(entry: AuditEntry): Promise<string | null> {
   }
 }
 
-/**
- * Reverse an audit entry by replaying its reverse_action.
- * Used by Telegram "undo" callbacks within the 30-min window.
- */
-export async function reverseAuditEntry(auditId: string): Promise<{
-  ok: boolean;
-  reason?: string;
-}> {
-  try {
-    // Find the audit record
-    const records = await getAllRecords(
-      AUDIT_TABLE,
-      `RECORD_ID() = "${escapeAirtableValue(auditId)}"`
-    );
-    if (!records.length) return { ok: false, reason: 'audit entry not found' };
-    const audit = records[0] as any;
-
-    if (audit['Reverted']) return { ok: false, reason: 'already reverted' };
-
-    const ra: ReverseAction = JSON.parse(audit['Reverse Action'] || 'null');
-    if (!ra) return { ok: false, reason: 'no reverse action stored' };
-
-    if (ra.type === 'noop') {
-      return { ok: false, reason: ra.reason || 'irreversible' };
-    }
-
-    if (ra.type === 'airtable-update') {
-      const { updateRecord } = await import('./airtable');
-      await updateRecord(ra.table, ra.recordId, ra.fields as Record<string, unknown>);
-    }
-
-    if (ra.type === 'airtable-delete') {
-      // Delete operations rare; skipping implementation until needed.
-      return { ok: false, reason: 'delete reversal not implemented' };
-    }
-
-    // Mark the audit as reverted
-    const { updateRecord } = await import('./airtable');
-    await updateRecord(AUDIT_TABLE, auditId, { 'Reverted': true });
-    return { ok: true };
-  } catch (e: any) {
-    console.error('[auditLog] reverseAuditEntry failed:', e?.message || e);
-    return { ok: false, reason: e?.message || 'unknown error' };
-  }
-}
+// (reverseAuditEntry — the generic replay-the-inverse undo — was DELETED
+// 2026-07-28: zero callers ever existed; every real undo shipped as a
+// route-specific handler (telegram approve-rollback, admin PATCH reverse,
+// refund revive). The `Reverse Action` payloads below keep being WRITTEN on
+// purpose — they document intent and are cheap forensics even without a
+// generic replayer.)
 
 /**
  * Helper: build a reverse action for an Airtable update before applying it.

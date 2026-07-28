@@ -5,6 +5,7 @@ import { sendTelegramUpdate, sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from 
 import { sendEmail } from '@/lib/email';
 import { getCommissionRate, normalizeCommissionRate } from '@/lib/commission';
 import { GO_LIVE_FIELDS, isAlreadyLive } from '@/lib/goLiveGates';
+import { signatureAuditFields } from '@/lib/agreementAudit';
 import jwt from 'jsonwebtoken';
 
 import { JWT_SECRET } from '@/lib/secrets';
@@ -183,6 +184,11 @@ export async function POST(request: Request) {
       'Onboarding Status': 'Agreement Signed',
       'Commission Rate': rateToLock,
       'Commission Rate Locked At': now,
+      // E-sign audit trail (2026-07-28): Signature IP (first x-forwarded-for
+      // hop, x-real-ip fallback) + Signature User Agent (truncated) +
+      // Agreement Version. Pure helper omits missing headers — a stripped
+      // proxy header must never block signing.
+      ...signatureAuditFields(request.headers),
     };
 
     // Pre-vetted = tier_v2 rancher with an ACTIVE Stripe Connect account. They

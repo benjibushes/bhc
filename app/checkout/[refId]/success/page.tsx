@@ -67,6 +67,10 @@ function DepositSuccessContent() {
   // Buyer's share size (raw Order Type), surfaced by the referral_closed 409 —
   // feeds the affiliate GearBlock's cut selection (whole → freezer-first gear).
   const [orderType, setOrderType] = useState('');
+  // Attribution (2026-07-28): the authed buyer's record id, surfaced by the
+  // referral_closed 409 — threads into the GearBlock's /go/product?buyer=
+  // click log (was hardcoded '' → 118 gear clicks, 0 attributed).
+  const [buyerRecordId, setBuyerRecordId] = useState('');
   // A6 — only claim "confirmed" once payment is actually verified. The paid
   // signal is the referral flipping closed (GET returns referral_closed). Until
   // then (webhook lag, or a direct/bookmarked/back-button hit) we say
@@ -167,6 +171,8 @@ function DepositSuccessContent() {
             if (j.affiliateCode) setAffiliateCode(String(j.affiliateCode));
             // Order Type → drives the affiliate GearBlock's cut selection.
             if (j.orderType) setOrderType(String(j.orderType));
+            // Buyer record id → GearBlock click attribution.
+            if (j.buyerId) setBuyerRecordId(String(j.buyerId));
             // Buyer-paid total for the client Purchase Pixel (fired below once
             // paid is confirmed). 0 when unreadable — the Pixel still fires,
             // matching the server (value defaults to 0 there too under the same
@@ -334,7 +340,7 @@ function DepositSuccessContent() {
           <GearBlock
             stage="waiting"
             cut={cutForBuyer({ 'Order Type': orderType })}
-            buyerId=""
+            buyerId={buyerRecordId}
             refId={refId}
             surface="success"
           />

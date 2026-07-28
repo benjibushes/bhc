@@ -160,6 +160,23 @@ test('buildEarningsCsv mixes share + product rows without cross-contamination', 
   assert.match(lines[2], /^product,ORD-9,.*100\.00,15\.00,85\.00/);
 });
 
+// Money-truth trail (2026-07-28): the settled final-invoice amount rides the
+// bookkeeping file as a trailing display-only column.
+test('buildEarningsCsv ends with a Final Paid Amount column', () => {
+  const csv = buildEarningsCsv([row({ finalPaidAmount: 1250 })]);
+  const lines = csv.trimEnd().split('\r\n');
+  assert.equal(lines[0].split(',').pop(), 'Final Paid Amount');
+  assert.equal(lines[1].split(',').pop(), '1250.00');
+});
+
+test('buildEarningsCsv leaves Final Paid Amount BLANK when unknown (not 0.00)', () => {
+  // Blank = "no final-invoice settlement recorded" — 0.00 would read as a
+  // real $0 payment in a tax file.
+  const csv = buildEarningsCsv([row()]);
+  const lines = csv.trimEnd().split('\r\n');
+  assert.equal(lines[1].split(',').pop(), '');
+});
+
 test('filterByClosedDate: no bounds returns a copy of all rows', () => {
   const rows = [row({ id: 'a' }), row({ id: 'b' })];
   const out = filterByClosedDate(rows);

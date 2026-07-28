@@ -146,6 +146,14 @@ export async function settleBuyerDeposit(pi: any): Promise<void> {
       'Deposit Amount': depositCents / 100,
       'Deposit Paid At': new Date().toISOString(),
       'Last Buyer Activity At': new Date().toISOString(),
+      // Referral-level fee truth (2026-07-28). Until now the buyer-paid BHC
+      // fee lived ONLY on the Payments ledger row (Platform Fee Cents) — the
+      // Referral itself never recorded it. Stamp it here at deposit settle,
+      // the one moment the fee is captured (the final invoice takes 0 fee by
+      // design, so this is the ONLY writer). 0 is a valid value (missing
+      // metadata / legacy sessions) — it still records "no fee captured".
+      'BHC Fee Cents': platformFeeCents,
+      'Fee Captured At': new Date().toISOString(),
     });
   } catch (e: any) {
     console.error('[stripe webhook] deposit referral stamp failed:', e?.message);

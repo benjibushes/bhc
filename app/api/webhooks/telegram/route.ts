@@ -3405,9 +3405,17 @@ Output ONLY the email body. First line should be the subject line prefixed with 
                 const future = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
                 await updateRecord(TABLES.REFERRALS, refId, {
                   'Approval Status': 'held',
-                  // Stamp Approved At as the hold-until pointer. Cheap
-                  // re-surface signal without adding a new field.
-                  'Approved At': future,
+                  // Hold Until (dateTime, fldbwlPiIIweXamRP) — the dedicated
+                  // re-surface pointer. This used to stamp now+7d into
+                  // `Approved At` (singleLineText!) as the hold marker, which
+                  // made every ager that treats Approved At as an age origin
+                  // (close-detector, referral-chasup, buyer-pulse, the
+                  // reply-attach recency sort in lib/airtable.ts) read a held
+                  // lead as approved-in-the-future. Agers skip active holds
+                  // via lib/referralHold.isReferralOnHold. No legacy-read
+                  // shim needed: a live probe (2026-07-28) found ZERO rows
+                  // carrying a future Approved At.
+                  'Hold Until': future,
                 });
               } catch {}
               await editTelegramMessage(

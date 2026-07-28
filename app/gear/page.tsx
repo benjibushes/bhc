@@ -13,6 +13,7 @@ import Divider from '../components/Divider';
 import AffiliateDisclosure from '../components/AffiliateDisclosure';
 import ProductImage from '../shop/ProductImage';
 import { getGearCatalog, type GearProduct } from '@/lib/gear';
+import { resolveBuyerSession } from '@/lib/buyerAuth';
 
 export const dynamic = 'force-dynamic';
 
@@ -89,6 +90,17 @@ export default async function GearPage() {
   const catalog = await getGearCatalog();
   const groups = groupByCategory(catalog);
 
+  // Attribution (2026-07-28): when a MEMBER session exists, thread the buyer
+  // record id into the /go/product click log — server-side cookie read only
+  // (resolveBuyerSession ignores its Request arg; cookies() is the source).
+  // Anonymous visitors stay anonymous: no session ⇒ bare surface=gear link.
+  // Best-effort — a resolver error must never break the public catalog page.
+  let buyerQs = '';
+  try {
+    const session = await resolveBuyerSession(undefined as unknown as Request);
+    if (session?.consumerId) buyerQs = `&buyer=${encodeURIComponent(session.consumerId)}`;
+  } catch {}
+
   return (
     <main className="min-h-screen pt-8 pb-16 md:py-24 bg-bone text-charcoal">
       <Container>
@@ -147,7 +159,7 @@ export default async function GearPage() {
                             branded placeholder until Ben adds an Image URL, so
                             the grid never looks broken while photos land. */}
                         <a
-                          href={`/go/product/${p.id}?surface=gear`}
+                          href={`/go/product/${p.id}?surface=gear${buyerQs}`}
                           target="_blank"
                           rel="nofollow sponsored noopener noreferrer"
                           className="block aspect-[4/3] overflow-hidden bg-bone-deep"
@@ -167,7 +179,7 @@ export default async function GearPage() {
                           ) : null}
                           <div className="mt-auto pt-2">
                             <a
-                              href={`/go/product/${p.id}?surface=gear`}
+                              href={`/go/product/${p.id}?surface=gear${buyerQs}`}
                               target="_blank"
                               rel="nofollow sponsored noopener noreferrer"
                               className="inline-flex w-full items-center justify-center px-4 py-2.5 border border-charcoal text-xs font-medium uppercase tracking-wide text-charcoal hover:bg-charcoal hover:text-bone transition-base"

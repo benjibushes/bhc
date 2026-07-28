@@ -8,6 +8,7 @@ import { callClaude } from '@/lib/ai';
 import { sendEmail, sendRancherLeadReminder } from '@/lib/email';
 import { withCronRun } from '@/lib/cronRun';
 import { shouldDecrementOnClose } from '@/lib/refundLifecycle';
+import { isReferralOnHold } from '@/lib/referralHold';
 import jwt from 'jsonwebtoken';
 
 // 60 → 300 (2026-07-08): 7-day peak hit 47s (78% of the old ceiling) and the
@@ -41,10 +42,22 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
   // (LOCK-2026-06-06 rule) — buyer is mid-deposit, chasing them would
   // confuse the flow. Closed states never reach chasup. Negotiation
   // intentionally excluded — rancher actively negotiating, never auto-chase.
-  const referrals = await getAllRecords(
+  const fetchedReferrals = await getAllRecords(
       TABLES.REFERRALS,
       'OR({Status} = "Intro Sent", {Status} = "Rancher Contacted")'
     ) as any[];
+
+    // Operator hold gate (2026-07-28): the Telegram "⏸️ Hold" button stamps
+    // `Hold Until` (dateTime) — a parked row must be invisible to EVERY pool
+    // in this cron (chase emails, maxed-out alerts, rancher reminders,
+    // stalled nudges, disengaged auto-close) until the hold expires. Filter
+    // once at the top so no downstream pool can leak a held lead. Fail-open
+    // predicate: blank/unparseable/past values are NOT held.
+    const referrals = fetchedReferrals.filter((r: any) => {
+      if (!isReferralOnHold(r['Hold Until'])) return true;
+      skipReasons['operator-hold'] = (skipReasons['operator-hold'] || 0) + 1;
+      return false;
+    });
 
     // Fetch unsubscribed emails to skip them. SCALE (#3): this read ONLY needs
     // unsubscribed rows, so filter server-side instead of scanning every
