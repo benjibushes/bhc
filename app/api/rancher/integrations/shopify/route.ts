@@ -49,7 +49,10 @@ export async function POST(request: Request) {
 
   // Validation + webhook registration hit the rancher's store — keep a tight
   // per-IP lid so a stuck retry loop can't hammer Shopify with bad tokens.
-  const rl = await rateLimit(`shopify-connect:${getTrustedClientIp(request)}`, { requests: 5, window: '15m' });
+  // 5 → 10 (2026-07-28 listing audit): the manual token-paste path has three
+  // copy-paste fields from a multi-step custom-app walkthrough; 5 attempts is
+  // exactly a first-timer's fumble budget and locked them out mid-onboarding.
+  const rl = await rateLimit(`shopify-connect:${getTrustedClientIp(request)}`, { requests: 10, window: '15m' });
   if (!rl.ok) {
     return NextResponse.json({ error: 'Too many attempts — wait a few minutes and try again.' }, { status: 429 });
   }

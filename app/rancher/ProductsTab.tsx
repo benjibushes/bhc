@@ -502,11 +502,14 @@ export default function ProductsTab({
       {connectActive && showForm && (
         <div className="border border-dust bg-bone-warm p-5 space-y-4 max-w-2xl">
           <div className="font-serif text-lg">{editingId ? 'edit product' : 'add a product'}</div>
+          <p className="text-xs text-saddle">
+            Only <span className="text-weathered">*</span> name, category, and price are required — everything else is optional.
+          </p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <label className="block">
               <span className="block text-xs uppercase tracking-wider text-saddle mb-1.5">
-                product name
+                product name <span className="text-weathered">*</span>
               </span>
               <input
                 type="text"
@@ -519,7 +522,7 @@ export default function ProductsTab({
             </label>
             <label className="block">
               <span className="block text-xs uppercase tracking-wider text-saddle mb-1.5">
-                category
+                category <span className="text-weathered">*</span>
               </span>
               <select
                 value={form.category}
@@ -539,7 +542,7 @@ export default function ProductsTab({
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <label className="block">
               <span className="block text-xs uppercase tracking-wider text-saddle mb-1.5">
-                retail price (what the buyer pays)
+                retail price (what the buyer pays) <span className="text-weathered">*</span>
               </span>
               <input
                 type="number"
@@ -1090,6 +1093,13 @@ export default function ProductsTab({
                 >
                   edit
                 </button>
+                {p.depositStyle && (
+                  // Visible on touch too — the title-only tooltip was the sole
+                  // explanation for the disabled button (listing audit 2026-07-28).
+                  <span className="text-[11px] text-saddle self-center">
+                    deposit-style — text Ben for detail/price changes; stock updates in the box to the left
+                  </span>
+                )}
                 {!p.depositStyle && (
                   <button
                     onClick={() => startDuplicate(p)}
