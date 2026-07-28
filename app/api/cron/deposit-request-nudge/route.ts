@@ -45,6 +45,7 @@ import {
   selectDepositAbandonNudges,
   selectDepositSmsRescues,
   renderDepositSmsNudge,
+  durableDepositPayLink,
   DEPOSIT_SMS_SENT_FIELD,
 } from '@/lib/depositRequestNudge';
 import { isRancherOperationalForBuyers, isRancherOnConnect } from '@/lib/rancherEligibility';
@@ -347,13 +348,19 @@ async function runDepositSmsRescue(
         }
       } catch { /* generic fallback below */ }
 
-      // Magic-link hop → deposit page (fresh Stripe session minted on arrival
-      // — NEVER the stored ~24h-expiry Checkout URL). Same link the emails use.
-      const token = generateMemberLoginToken(buyerId, buyerEmail);
-      const link = `${SITE_URL}/api/auth/member/verify?token=${token}&next=${encodeURIComponent(`/checkout/${r.id}/deposit`)}`;
+      // Link preference: the stored durable /r/p/<grant> mint (30d, purpose-
+      // built for this deposit, re-mints a fresh Stripe session at click) —
+      // request-deposit stamps it on every rail-A row. Fallback: the magic-
+      // link → deposit-page hop the email leg uses. NEVER a raw Stripe URL
+      // (durableDepositPayLink blanks those).
+      const durable = durableDepositPayLink(r['Deposit Checkout URL']);
+      const link = durable ||
+        `${SITE_URL}/api/auth/member/verify?token=${generateMemberLoginToken(buyerId, buyerEmail)}&next=${encodeURIComponent(`/checkout/${r.id}/deposit`)}`;
 
+      const cutRaw = String(r['Order Type'] || buyer['Order Type'] || '').trim().toLowerCase().split(/\s+/)[0];
       const body = renderDepositSmsNudge({
         firstName: String(buyer['Full Name'] || r['Buyer Name'] || '').trim().split(/\s+/)[0] || 'there',
+        cut: cutRaw,
         rancherName,
         link,
       });

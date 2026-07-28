@@ -131,19 +131,58 @@ test('selector: empty/garbage input never throws', () => {
   assert.deepEqual(selectDepositSmsRescues([ref()], { nowMs: NOW, batchCap: 0 }), []);
 });
 
-// ── SMS template ─────────────────────────────────────────────────────────────
+// ── SMS template (final copy: docs/marketing/sms-deposit-nudge.md Message 1) ─
 
-test('SMS body: tokens filled, link present, STOP-compliant', () => {
+test('SMS body: tokens filled, link present, STOP-compliant, no pressure verbs', () => {
   const body = renderDepositSmsNudge({
     firstName: 'Dana',
+    cut: 'half',
     rancherName: 'Foodstead',
     link: 'https://www.buyhalfcow.com/r/p/tok123',
   });
+  assert.ok(body.startsWith('BuyHalfCow:'), 'identifies the sender');
   assert.ok(body.includes('Dana'));
+  assert.ok(body.includes('half share'));
   assert.ok(body.includes('Foodstead'));
   assert.ok(body.includes('https://www.buyhalfcow.com/r/p/tok123'));
   assert.ok(/reply stop/i.test(body));
   assert.ok(!body.includes('{'), 'no unfilled tokens');
+  // The fence: the hold is real, fake cliffs are banned.
+  assert.ok(!/last chance|expires|final notice/i.test(body));
+});
+
+test('SMS body: cut falls back to "beef", first name to "there"', () => {
+  const body = renderDepositSmsNudge({
+    firstName: '',
+    cut: 'garbage-value',
+    rancherName: 'Foodstead',
+    link: 'https://x.co/r/p/t',
+  });
+  assert.ok(body.includes('there'));
+  assert.ok(body.includes('beef share'));
+});
+
+test('SMS body: long ranch name falls back to "your ranch" when that fits a segment', () => {
+  const shortLink = 'https://x.co/r/p/t';
+  const body = renderDepositSmsNudge({
+    firstName: 'Dana',
+    cut: 'half',
+    rancherName: 'The Extremely Long Historical Cattle Company of Greater West Texas LLC',
+    link: shortLink,
+  });
+  assert.ok(body.length <= 160, `expected single segment, got ${body.length}`);
+  assert.ok(body.includes('your ranch'));
+});
+
+test('SMS body: keeps the real ranch name when the fallback cannot reach 160 anyway (JWT-length links)', () => {
+  const longLink = `https://www.buyhalfcow.com/r/p/${'x'.repeat(220)}`;
+  const body = renderDepositSmsNudge({
+    firstName: 'Dana',
+    cut: 'half',
+    rancherName: 'Foodstead',
+    link: longLink,
+  });
+  assert.ok(body.includes('Foodstead'), 'no pointless copy downgrade');
 });
 
 // ── desk never-opened selector ───────────────────────────────────────────────

@@ -245,22 +245,40 @@ export function selectDepositSmsRescues<T extends DepositNudgeReferralLike>(
     .slice(0, cap);
 }
 
-// PLACEHOLDER COPY — marketing is drafting the final body in
-// docs/marketing/sms-deposit-nudge.md; when it lands, swap THIS constant only
-// (tokens: {first} {rancher} {link}). Keep it short, honest, STOP-compliant.
+// FINAL COPY (docs/marketing/sms-deposit-nudge.md, Message 1 — landed #501).
+// Any future copy change swaps THIS constant only; tokens: {first} {cut}
+// {rancher} {payLink}. Tone fence from the doc: "your reservation link", never
+// "last chance" — the rancher is holding a real slot; no fake cliffs.
 export const DEPOSIT_SMS_NUDGE_BODY =
-  '{first}, your beef share with {rancher} is still reserved — the deposit link is waiting: {link} — Ben @ BuyHalfCow. Reply STOP to opt out.';
+  'BuyHalfCow: {first}, your {cut} share at {rancher} is held. Your reservation link: {payLink} Reply STOP to opt out';
+
+// Single GSM-7 SMS segment. The doc's rule: if a long ranch name pushes the
+// render past this, fall back to "your ranch" — but only when the fallback
+// actually gets under the limit (a JWT-length link can't be rescued by a
+// shorter ranch name; keep the real name rather than downgrade for nothing).
+const SMS_SINGLE_SEGMENT_CHARS = 160;
 
 /** Fill the SMS template. Pure string work — the cron owns every send gate. */
 export function renderDepositSmsNudge(ctx: {
   firstName: string;
+  cut: string;
   rancherName: string;
   link: string;
 }): string {
-  return DEPOSIT_SMS_NUDGE_BODY
-    .replace('{first}', String(ctx.firstName || 'there').trim() || 'there')
-    .replace('{rancher}', String(ctx.rancherName || 'your rancher').trim() || 'your rancher')
-    .replace('{link}', String(ctx.link || '').trim());
+  const first = String(ctx.firstName || 'there').trim() || 'there';
+  const cutRaw = String(ctx.cut || '').trim().toLowerCase();
+  const cut = cutRaw === 'quarter' || cutRaw === 'half' || cutRaw === 'whole' ? cutRaw : 'beef';
+  const link = String(ctx.link || '').trim();
+  const fill = (rancher: string) =>
+    DEPOSIT_SMS_NUDGE_BODY
+      .replace('{first}', first)
+      .replace('{cut}', cut)
+      .replace('{rancher}', rancher)
+      .replace('{payLink}', link);
+  const full = fill(String(ctx.rancherName || 'your ranch').trim() || 'your ranch');
+  if (full.length <= SMS_SINGLE_SEGMENT_CHARS) return full;
+  const short = fill('your ranch');
+  return short.length <= SMS_SINGLE_SEGMENT_CHARS ? short : full;
 }
 
 // ── DESK RESCUE LIST (read-only) ─────────────────────────────────────────────
