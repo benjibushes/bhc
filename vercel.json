@@ -126,10 +126,6 @@
       "schedule": "0 */6 * * *"
     },
     {
-      "path": "/api/cron/capacity-liberator",
-      "schedule": "30 12 * * *"
-    },
-    {
       "path": "/api/cron/deploy-drift",
       "schedule": "*/30 * * * *"
     },
@@ -207,7 +203,7 @@
     },
     {
       "path": "/api/cron/product-stock-checkin",
-      "schedule": "0 16 1 * *"
+      "schedule": "0 16 * * *"
     },
     {
       "path": "/api/cron/product-review-ask",

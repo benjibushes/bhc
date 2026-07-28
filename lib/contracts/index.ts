@@ -4,6 +4,5 @@
 
 export * from './buyer';
 export * from './rancher';
-export * from './admin';
 export * from './threads';
 export * from './payments';

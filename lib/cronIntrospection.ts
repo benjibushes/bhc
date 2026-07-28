@@ -43,7 +43,6 @@ export const EXPECTED_CRONS_24H = [
   'buyer-pulse',
   'cal-reminder-1h',
   'capacity-drift-check',
-  'capacity-liberator',
   'close-detector',
   'commission-invoices',
   'compliance-reminders',
@@ -112,8 +111,11 @@ export const EXCLUDED_CRONS_24H: Readonly<Record<string, string>> = {
   'spam-audit':
     'weekly (Sat 14:00 UTC) — a 24h expectation would false-alarm 6 days a week',
   'product-stock-checkin':
-    'monthly (1st, 16:00 UTC) — a 24h expectation would false-alarm ~29 days a month; ' +
-    'also dark-by-default (PRODUCT_STOCK_CHECKIN_ENABLED gate returns before withCronRun)',
+    'dark-by-default: the PRODUCT_STOCK_CHECKIN_ENABLED gate returns BEFORE withCronRun, so no ' +
+    'Cron Runs row exists while dark and the watchdog would alarm daily by design. Scheduled ' +
+    'daily with a date-1 guard (Hobby monthly-slot silent-drop workaround, same as ' +
+    'commission-invoices) — MOVE to EXPECTED_CRONS_24H when the flag goes live ' +
+    "(dry-run/'true' both write a daily row, skipped-not-1st included).",
   'weekly-scorecard':
     'weekly (Mondays 14:00 UTC) — a 24h expectation would false-alarm six days a week by design.',
   'log-retention':

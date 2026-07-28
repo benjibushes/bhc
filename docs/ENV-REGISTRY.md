@@ -85,7 +85,6 @@
 | `CAL_NATIVE_BOOKER` | 'true' → /book/[refId] renders native Cal embed instead of link-out | fail-open | ben-flips |
 | `CAMPAIGN_LIVE` | 'true' → campaign sends real emails/SMS (vs dry-run) | fail-silent | ben-flips |
 | `CAMPAIGN_ROUTER_ENABLED` | 'true' → demand-router campaign cron active | fail-silent | ben-flips |
-| `CAPACITY_LIBERATOR_ENABLED` | 'true' → capacity-liberator cron live (kept OFF — conflicts with stale-expiry) | fail-silent | ben-flips |
 | `EMAIL_SEQUENCES_ALLOW` | Allowlist scoping which sequences may send when the cron is on | fail-silent | ben-flips |
 | ⚠️ `EMAIL_SEQUENCES_ENABLED` | Master gate for the email-sequences cron; ≠'true' → cron returns before withCronRun (invisible even to cron introspection) | fail-silent | ben-flips |
 | ⚠️ `ENABLE_SMS` | Platform-wide SMS master gate ('1' or 'true' via smsEnabled()); unset → whole SMS channel off by design | fail-silent | ben-flips |

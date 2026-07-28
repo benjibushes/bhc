@@ -8,41 +8,10 @@
 // duplicated the Buyer Stage write logic + the Funnel Events emit. This
 // module centralizes both so future stage additions ripple in one place.
 
-import { updateRecord, createRecord, TABLES } from '@/lib/airtable';
+import { updateRecord, TABLES } from '@/lib/airtable';
 import { funnelRecord } from '@/lib/funnelMetrics';
 
 export type BuyerStage = 'NEW' | 'WAITING' | 'READY' | 'MATCHED' | 'CLOSED';
-
-export interface BuyerCreateInput {
-  fullName: string;
-  email: string;
-  state: string;
-  phone?: string;
-  orderType?: string;
-  budget?: string;
-  source: string;
-  intentScore: number;
-  intentClassification: 'High' | 'Medium' | 'Low';
-}
-
-export async function createBuyer(input: BuyerCreateInput): Promise<{ id: string; stage: BuyerStage }> {
-  const record: any = await createRecord(TABLES.CONSUMERS, {
-    'Full Name': input.fullName,
-    'Email': input.email,
-    'State': input.state,
-    'Phone': input.phone || '',
-    'Order Type': input.orderType || '',
-    'Budget': input.budget || '',
-    'Source': input.source,
-    'Intent Score': input.intentScore,
-    'Intent Classification': input.intentClassification,
-    'Buyer Stage': 'NEW',
-    'Buyer Stage Updated At': new Date().toISOString(),
-    'Segment': 'Beef Buyer',
-  });
-  await funnelRecord({ stage: 'signup', buyerId: record.id, intentScore: input.intentScore });
-  return { id: record.id, stage: 'NEW' };
-}
 
 export async function transitionBuyerStage(buyerId: string, to: BuyerStage, reason: string): Promise<void> {
   const now = new Date().toISOString();

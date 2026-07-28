@@ -12,6 +12,9 @@
 //   Email Sends   90d  (engagement metrics read 30d; keep a quarter)
 //   Funnel Events 90d  (funnel uses the state-snapshot model; events = audit)
 //   Stripe Events 60d  (webhook dedup ledger; Stripe redelivers ≤3 days)
+//   AI Audit Log  90d  (append-only AI action journal; a quarter is plenty)
+//   Gear Clicks   90d  (affiliate click log; attribution reads recent windows)
+//   Deal Events  180d  (deal audit trail; keep two quarters for disputes)
 //
 // DARK BY DEFAULT — env LOG_RETENTION_ENABLED, platform 3-state contract:
 //   unset/other → skipped BEFORE withCronRun (no Cron Runs row while dark)
@@ -36,6 +39,9 @@ const RETENTION: { table: string; days: number }[] = [
   { table: TABLES.EMAIL_SENDS, days: 90 },
   { table: 'Funnel Events', days: 90 },
   { table: 'Stripe Events', days: 60 },
+  { table: 'AI Audit Log', days: 90 },
+  { table: TABLES.GEAR_CLICKS, days: 90 },
+  { table: 'Deal Events', days: 180 },
 ];
 
 // Capacity audit 2026-07-28. Deletes now go 10-per-request (Airtable's batch

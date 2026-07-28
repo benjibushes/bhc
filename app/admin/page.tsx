@@ -669,9 +669,6 @@ export default function AdminPage() {
                 <Button href="/admin/inquiries" variant="secondary">
                   Inquiries
                 </Button>
-                <Button href="/admin/backfill" variant="secondary">
-                  Backfill Campaign
-                </Button>
               </div>
 
               {/* Tab Navigation */}
