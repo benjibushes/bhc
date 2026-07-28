@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
-import { getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
+// Airtable diet 2026-07-28: full-table reads ride the shared admin snapshot
+// (module-scope + Redis, 3-min TTL) — this route, health, command-center and
+// referrals-stats were each independently re-scanning the same big tables.
+import { adminSnapshotTable } from '@/lib/adminSnapshot';
 import { requireRole } from '@/lib/adminAuth';
 import { getSpendInRange } from '@/lib/adSpend';
 import { sourceQualityRates } from '@/lib/sourceQuality';
@@ -30,13 +33,13 @@ export async function GET(request: Request) {
       return Number.isFinite(t) && t >= cutoff;
     };
 
-    const consumers = await getAllRecords(TABLES.CONSUMERS);
-    const inquiries = await getAllRecords(TABLES.INQUIRIES);
-    const campaigns = await getAllRecords(TABLES.CAMPAIGNS);
+    const consumers = await adminSnapshotTable(TABLES.CONSUMERS);
+    const inquiries = await adminSnapshotTable(TABLES.INQUIRIES);
+    const campaigns = await adminSnapshotTable(TABLES.CAMPAIGNS);
 
     let referrals: any[] = [];
     try {
-      referrals = await getAllRecords(TABLES.REFERRALS);
+      referrals = await adminSnapshotTable(TABLES.REFERRALS);
     } catch {
       // Referrals table may not exist yet
     }
@@ -47,7 +50,7 @@ export async function GET(request: Request) {
     // page still renders if the table read fails.
     let payments: any[] = [];
     try {
-      payments = await getAllRecords(TABLES.PAYMENTS);
+      payments = await adminSnapshotTable(TABLES.PAYMENTS);
     } catch {
       // Payments table may not exist in every environment
     }

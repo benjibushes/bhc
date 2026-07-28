@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
-import { getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
+// Airtable diet 2026-07-28: full-table reads ride the shared admin snapshot
+// (module-scope + Redis, 3-min TTL) shared with health/command-center/analytics.
+import { adminSnapshotTable } from '@/lib/adminSnapshot';
 import { requireAdmin } from '@/lib/adminAuth';
 import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
 import { getAdminConfig } from '@/lib/adminConfig';
@@ -19,13 +21,13 @@ export async function GET(request: Request) {
     if (__authResp) return __authResp;
     const adminCfg = await getAdminConfig();
     const [consumers, ranchers] = await Promise.all([
-      getAllRecords(TABLES.CONSUMERS),
-      getAllRecords(TABLES.RANCHERS),
+      adminSnapshotTable(TABLES.CONSUMERS),
+      adminSnapshotTable(TABLES.RANCHERS),
     ]);
 
     let referrals: any[] = [];
     try {
-      referrals = await getAllRecords(TABLES.REFERRALS);
+      referrals = await adminSnapshotTable(TABLES.REFERRALS);
     } catch (e) {
       console.warn('Referrals table not accessible');
     }
@@ -99,7 +101,7 @@ export async function GET(request: Request) {
     let connectFeeCaptured: number | null = null;
     let connectFeeCount: number | null = null;
     try {
-      const payments = await getAllRecords(TABLES.PAYMENTS);
+      const payments = await adminSnapshotTable(TABLES.PAYMENTS);
       connectFeeCaptured = computeConnectFeeCaptured(payments as any[]);
       connectFeeCount = countConnectFeePayments(payments as any[]);
     } catch (e: any) {

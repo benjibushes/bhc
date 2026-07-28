@@ -23,7 +23,7 @@
     },
     {
       "path": "/api/cron/daily-digest",
-      "schedule": "0 14 * * *"
+      "schedule": "7 14 * * *"
     },
     {
       "path": "/api/cron/batch-approve",
@@ -107,7 +107,7 @@
     },
     {
       "path": "/api/cron/backer-monthly-letter",
-      "schedule": "0 14 1 * *"
+      "schedule": "3 14 1 * *"
     },
     {
       "path": "/api/cron/orphan-checkout-reaper",

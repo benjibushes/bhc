@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, TABLES } from '@/lib/airtable';
+import { adminSnapshot, adminSnapshotTable } from '@/lib/adminSnapshot';
 import { requireAdmin } from '@/lib/adminAuth';
 import { countHeldReferrals } from '@/lib/capacityCount';
 import {
@@ -20,8 +21,17 @@ import {
 //   - Capacity counter drift
 //   - Live rancher per-state coverage + uncovered buyer demand
 //
-// Cheap: getAllRecords(RANCHERS) is cached 10s. Other table reads pay
-// once per request — admin-only endpoint, called infrequently.
+// Airtable diet (runtime audit 2026-07-28, the July-timeout killer):
+//   • All full-table reads go through lib/adminSnapshot (module-scope +
+//     shared-Redis, 3-min TTL) — the same 4-5 tables were being scanned
+//     independently by health / command-center / analytics / referrals-stats
+//     on every open. Admin boards are stale-tolerant; 3 min is invisible.
+//   • Cron Runs was the worst offender: an UNFILTERED scan of a ~13k-row
+//     append-only log (~130 paginated requests per open). The tile only
+//     renders latest-run-per-cron, so a last-24h filtered read (same pattern
+//     as lib/cronIntrospection.getLatestCronRuns) is ~3 requests. A cron with
+//     NO run in 24h now simply drops off this tile — the daily-health-digest
+//     dead-man's switch owns that alarm.
 
 export const maxDuration = 60;
 
@@ -30,14 +40,16 @@ export async function GET(request: Request) {
   if (__authResp) return __authResp;
 
   const [ranchers, refs, consumers, cronRuns, payments] = await Promise.all([
-    getAllRecords(TABLES.RANCHERS) as Promise<any[]>,
-    getAllRecords(TABLES.REFERRALS) as Promise<any[]>,
-    getAllRecords(TABLES.CONSUMERS) as Promise<any[]>,
-    (getAllRecords(TABLES.CRON_RUNS) as Promise<any[]>).catch(() => [] as any[]),
-    // Connect-rail fee revenue lives here, not in Referrals. Small table, and
-    // this endpoint is admin-only + infrequent (already scans 4 tables).
+    adminSnapshotTable(TABLES.RANCHERS) as Promise<any[]>,
+    adminSnapshotTable(TABLES.REFERRALS) as Promise<any[]>,
+    adminSnapshotTable(TABLES.CONSUMERS) as Promise<any[]>,
+    (adminSnapshot('cron-runs-24h', () => {
+      const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      return getAllRecords(TABLES.CRON_RUNS, `IS_AFTER({Started At}, "${cutoff}")`) as Promise<any[]>;
+    }) as Promise<any[]>).catch(() => [] as any[]),
+    // Connect-rail fee revenue lives here, not in Referrals. Small table.
     // Failure is non-fatal: null figure renders "—", never a wrong number.
-    (getAllRecords(TABLES.PAYMENTS) as Promise<any[]>).catch(() => null),
+    (adminSnapshotTable(TABLES.PAYMENTS) as Promise<any[]>).catch(() => null),
   ]);
 
   // Cron Runs — collapse to most-recent-per-name view.

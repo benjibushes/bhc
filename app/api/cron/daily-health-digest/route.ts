@@ -16,6 +16,7 @@ import { NextResponse } from 'next/server';
 import { getAllRecords, TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { getLatestCronRuns, missingExpectedCrons } from '@/lib/cronIntrospection';
+import { aggregatePausedCrons } from '@/lib/pausedCrons';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
@@ -90,7 +91,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
       return [];
     }
   };
-  const [cronRuns, ranchers, consumers, referrals, emailSends, stuckRanchers, failedSignupAttempts] = await Promise.all([
+  const [cronRuns, ranchers, consumers, referrals, emailSends, stuckRanchers, failedSignupAttempts, cronPauses] = await Promise.all([
     safeRead('cronRuns', getAllRecords('Cron Runs', `IS_AFTER({Started At}, '${cutoff24h}')`) as Promise<any[]>),
     safeRead('ranchers', getAllRecords(TABLES.RANCHERS, `{Active Status}='Active'`) as Promise<any[]>),
     safeRead('consumers', getAllRecords(
@@ -113,6 +114,15 @@ async function realHandler(_request: Request): Promise<CronResult> {
     safeRead('signupAttempts', getAllRecords(
       'Signup Attempts',
       `AND(IS_AFTER(CREATED_TIME(), '${cutoff24h}'), {Outcome}!='created')`
+    ) as Promise<any[]>),
+    // Invisible-pause fix (2026-07-28): a cron paused via Cron Pauses keeps
+    // writing status='paused' rows, so it never trips the dead-man's switch —
+    // synthetic-e2e sat paused 49 days with zero digest visibility. Small
+    // filtered read; aggregatePausedCrons also falls back to the 24h run rows
+    // if this read degrades.
+    safeRead('cronPauses', getAllRecords(
+      TABLES.CRON_PAUSES,
+      `{Paused}=TRUE()`
     ) as Promise<any[]>),
   ]);
 
@@ -224,6 +234,11 @@ async function realHandler(_request: Request): Promise<CronResult> {
   const stuck = aggregateStuckOnboarding(stuckRanchers, now);
   const failedSignups24h = failedSignupAttempts.length;
 
+  // ⏸ Paused bucket — every deliberately-paused cron gets a daily line so a
+  // pause can never be invisible again. Not a red condition (pausing is an
+  // operator decision) but it must be SEEN daily.
+  const pausedCrons = aggregatePausedCrons({ pauseRows: cronPauses, recentRuns: cronRuns, nowMs: now });
+
   // ── MORNING-PULSE PROBES (2026-07-14) ──
   // Live assertions, not env-presence guesses: Stripe key, Resend key, Redis,
   // and the silent-killer env set — each red line carries its fix. Born from
@@ -285,14 +300,19 @@ async function realHandler(_request: Request): Promise<CronResult> {
       : missingCrons.length > 0
         ? `🚨 <b>No run in 25h:</b> ${missingCrons.join(', ')} — check Vercel cron schedule / recent deploys`
         : `✅ <b>Watchdog:</b> all expected crons wrote a run in the last 25h`,
+    pausedCrons.length > 0
+      ? `⏸ <b>Paused crons:</b> ${pausedCrons
+          .map((p) => `${p.name}${p.pausedDays !== null ? ` ${p.pausedDays}d` : ''}${p.reason ? ` (${p.reason.slice(0, 40)})` : ''}`)
+          .join(' · ')} — /resumecron to wake`
+      : null,
   ];
 
   // Surface read failures IN the digest so a blind monitor is impossible.
-  // 8 reads total: the 7 parallel pulls + the watchdog's Cron Runs read.
+  // 9 reads total: the 8 parallel pulls + the watchdog's Cron Runs read.
   if (readErrors.length > 0) {
     lines.push(
       '',
-      `⚠️ <b>Health read errors:</b> ${readErrors.length}/8 Airtable reads failed (${readErrors.map((e) => e.split(':')[0]).join(', ')}) — numbers above are incomplete.`
+      `⚠️ <b>Health read errors:</b> ${readErrors.length}/9 Airtable reads failed (${readErrors.map((e) => e.split(':')[0]).join(', ')}) — numbers above are incomplete.`
     );
   }
 
@@ -311,7 +331,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
   return {
     status,
     recordsTouched: 1,
-    notes: `signups=${signups24h} qualified=${qualified24h} closed=${referralsClosedToday.length} cronErrors=${cronErrorRuns.length} missingCrons=${missingCrons === null ? 'read-failed' : missingCrons.length} readErrors=${readErrors.length} stuck=${stuck.blankOver2d.length}/${stuck.signedNotLive.length}/${stuck.welcomeFailed.length} failedSignups24h=${failedSignups24h}`,
+    notes: `signups=${signups24h} qualified=${qualified24h} closed=${referralsClosedToday.length} cronErrors=${cronErrorRuns.length} missingCrons=${missingCrons === null ? 'read-failed' : missingCrons.length} paused=${pausedCrons.length} readErrors=${readErrors.length} stuck=${stuck.blankOver2d.length}/${stuck.signedNotLive.length}/${stuck.welcomeFailed.length} failedSignups24h=${failedSignups24h}`,
   };
 }
 

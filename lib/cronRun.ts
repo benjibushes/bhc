@@ -1,4 +1,6 @@
 import { createRecord, getAllRecords, updateRecord, TABLES, escapeAirtableValue } from './airtable';
+import { sendOperatorSignal } from './operatorSignal';
+import { shouldWriteCronRunRow } from './cronRunPolicy';
 
 type CronStatus = 'success' | 'partial' | 'error' | 'maintenance-blocked' | 'paused';
 
@@ -14,35 +16,41 @@ interface CronRunResult {
    * the queue isn't draining.
    */
   skipReasonBreakdown?: Record<string, number>;
+  /**
+   * Set true on PURE no-op runs (nothing in the work window, nothing touched)
+   * to suppress the Cron Runs row (capacity audit 2026-07-28: cal-reminder-1h
+   * "no bookings in window" rows were 31% of all log inflow). The wrapper
+   * still writes ONE no-op heartbeat row per UTC day (Redis claimOnce) so the
+   * daily-health-digest dead-man's switch keeps seeing the cron, and it
+   * ALWAYS writes on error/partial/paused or recordsTouched > 0 — see
+   * lib/cronRunPolicy.ts.
+   */
+  skipLog?: boolean;
 }
 
-// In-memory per-cron alert throttle. Survives the lifetime of a serverless
-// function instance — fine for the use-case (we don't want to spam Telegram
-// when a cron stays broken across multiple runs in the same warm container).
-// Cross-instance throttle isn't required because a still-broken cron will
-// re-alert on the first cold start, which is good signal.
-const _alertLast: Map<string, number> = new Map();
 const ALERT_COOLDOWN_MS = 60 * 60 * 1000;
 
-async function maybeAlertTelegram(cron: string, status: CronStatus, notes: string): Promise<void> {
+// Alert-integrity fix (runtime audit 2026-07-28): this was a raw Telegram
+// fetch — response unchecked, silently skipped when the bot token was unset.
+// Now rides sendOperatorSignal: delivery is verified, a failed Telegram wire
+// falls back to SMS/email on loud, and dedupe (in-memory + Redis claimOnce)
+// replaces the old per-instance cooldown map with a fleet-wide window.
+async function maybeAlertOperator(cron: string, status: CronStatus, notes: string): Promise<void> {
   if (status !== 'error' && status !== 'partial') return;
-  const last = _alertLast.get(cron) || 0;
-  if (Date.now() - last < ALERT_COOLDOWN_MS) return;
-  _alertLast.set(cron, Date.now());
-
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chat = process.env.TELEGRAM_ADMIN_CHAT_ID;
-  if (!token || !chat) return;
-
-  const emoji = status === 'error' ? '🚨' : '🟡';
-  const text = `${emoji} <b>CRON ${status.toUpperCase()}</b> · <code>${cron}</code>\n\n${notes.slice(0, 500)}`;
   try {
-    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chat, text, parse_mode: 'HTML' }),
+    await sendOperatorSignal({
+      // error = loud (SMS/email fallback if Telegram is down); partial = normal.
+      urgency: status === 'error' ? 'loud' : 'normal',
+      kind: 'system-error',
+      summary: `CRON ${status.toUpperCase()} · ${cron}`,
+      detail: notes.slice(0, 500),
+      refs: [{ type: 'cron', id: cron }],
+      dedupeKey: `cron-${status}:${cron}`,
+      dedupeWindowMs: ALERT_COOLDOWN_MS,
     });
   } catch (e: any) {
+    // sendOperatorSignal is designed never to throw; belt-and-suspenders so
+    // an alerting failure can never mask the cron's own result.
     console.warn(`[withCronRun:${cron}] alert send failed:`, e?.message);
   }
 }
@@ -86,6 +94,7 @@ export function withCronRun<T extends CronRunResult>(
     let status: CronStatus = 'error';
     let recordsTouched = 0;
     let notes = '';
+    let skipLogRequested = false;
     let skipReasonBreakdown: Record<string, number> | undefined;
     let returnedResponse: Response | null = null;
     let heartbeatRowId: string | null = null;
@@ -136,6 +145,7 @@ export function withCronRun<T extends CronRunResult>(
       status = result.status;
       recordsTouched = result.recordsTouched ?? 0;
       notes = result.notes ?? '';
+      skipLogRequested = result.skipLog === true;
       skipReasonBreakdown = result.skipReasonBreakdown;
       returnedResponse = new Response(
         JSON.stringify({ ok: true, status, recordsTouched, notes }),
@@ -150,34 +160,70 @@ export function withCronRun<T extends CronRunResult>(
       );
     } finally {
       endedAt = new Date();
+      // No-op row suppression (see CronRunResult.skipLog). Decision is pure
+      // (lib/cronRunPolicy); the only I/O is the once-per-day Redis claim,
+      // which fails OPEN (claim errors / Redis absent → write like before).
+      let writeRow = true;
       try {
-        const row: Record<string, unknown> = {
-          Name: name,
-          'Started At': startedAt.toISOString(),
-          'Ended At': endedAt.toISOString(),
-          'Duration ms': endedAt.getTime() - startedAt.getTime(),
-          Status: status,
-          'Records Touched': recordsTouched,
-          Notes: notes,
-        };
-        if (skipReasonBreakdown && Object.keys(skipReasonBreakdown).length > 0) {
-          row['Skip Reason Breakdown'] = JSON.stringify(skipReasonBreakdown);
-        }
-        if (heartbeatRowId) {
-          // Complete the started-heartbeat row in place (don't write a second
-          // row — a duplicate would double cron-run counts in the digest).
+        if (skipLogRequested && status === 'success' && recordsTouched === 0 && !heartbeatRowId) {
+          let dailyClaim: boolean | null = null;
           try {
-            await updateRecord(TABLES.CRON_RUNS, heartbeatRowId, row);
+            const { claimOnce } = await import('./rancherCapacity');
+            dailyClaim = await claimOnce(
+              `cronrun:noop-heartbeat:${name}:${new Date().toISOString().slice(0, 10)}`,
+              26 * 60 * 60, // outlives the 25h dead-man window; date-keyed anyway
+            );
           } catch {
+            dailyClaim = null; // fail open
+          }
+          writeRow = shouldWriteCronRunRow({
+            skipLogRequested,
+            status,
+            recordsTouched,
+            heartbeatRowPending: !!heartbeatRowId,
+            dailyHeartbeatClaimed: dailyClaim,
+          });
+          if (writeRow && dailyClaim === true) {
+            notes = `${notes} · daily no-op heartbeat (other no-op rows suppressed)`.slice(0, 500);
+          }
+        }
+      } catch {
+        writeRow = true; // any surprise in the skip path → old behavior
+      }
+      if (!writeRow) {
+        // Skip the Airtable write entirely; alerting below still runs
+        // (a no-op success has nothing to alert anyway).
+        console.info(`[withCronRun:${name}] no-op run — Cron Runs row suppressed (daily heartbeat already written)`);
+      } else {
+        try {
+          const row: Record<string, unknown> = {
+            Name: name,
+            'Started At': startedAt.toISOString(),
+            'Ended At': endedAt.toISOString(),
+            'Duration ms': endedAt.getTime() - startedAt.getTime(),
+            Status: status,
+            'Records Touched': recordsTouched,
+            Notes: notes,
+          };
+          if (skipReasonBreakdown && Object.keys(skipReasonBreakdown).length > 0) {
+            row['Skip Reason Breakdown'] = JSON.stringify(skipReasonBreakdown);
+          }
+          if (heartbeatRowId) {
+            // Complete the started-heartbeat row in place (don't write a second
+            // row — a duplicate would double cron-run counts in the digest).
+            try {
+              await updateRecord(TABLES.CRON_RUNS, heartbeatRowId, row);
+            } catch {
+              await createRecord(TABLES.CRON_RUNS, row);
+            }
+          } else {
             await createRecord(TABLES.CRON_RUNS, row);
           }
-        } else {
-          await createRecord(TABLES.CRON_RUNS, row);
+        } catch (logErr: any) {
+          console.error(`[withCronRun:${name}] log write failed:`, logErr?.message);
         }
-      } catch (logErr: any) {
-        console.error(`[withCronRun:${name}] log write failed:`, logErr?.message);
       }
-      await maybeAlertTelegram(name, status, notes);
+      await maybeAlertOperator(name, status, notes);
     }
     return returnedResponse!;
   };
