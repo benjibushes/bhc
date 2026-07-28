@@ -27,6 +27,7 @@ import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
+import { checkStorefrontHtml } from '@/lib/storefrontRenderCheck';
 
 export const maxDuration = 120;
 
@@ -258,6 +259,54 @@ async function realHandler(_request: Request): Promise<E2EResult> {
     }
   }
 
+  // ── Storefront render canary (2026-07-28 blank-render incident) ─────────
+  // /ranchers/foodstead served COMPLETE HTML (200, 97KB, closed </html>) while
+  // rendering as a blank skeleton in every rAF-less browser: the whole body
+  // was streamed behind a deferred Suspense boundary whose React 19.2 reveal
+  // depends on a requestAnimationFrame tick. Status-code probes were blind.
+  // checkStorefrontHtml asserts the reveal contract on the served bytes:
+  // boundaries complete (template + hidden segment + $RC) AND the layout's
+  // reveal backstop present whenever any boundary is deferred. Read-only,
+  // one GET, no records touched. Foodstead is the same live rancher the
+  // buyer-funnel steps above already depend on.
+  let renderFailure: StepFailure | null = null;
+  try {
+    const r = await fetch(`${SITE_URL}/ranchers/foodstead`, {
+      headers: { 'User-Agent': 'bhc-synthetic-e2e/storefront-render-canary' },
+    });
+    if (!r.ok) {
+      renderFailure = { step: 'GET /ranchers/foodstead', error: `HTTP ${r.status}` };
+    } else {
+      const html = await r.text();
+      const check = checkStorefrontHtml(html, { expectContent: 'Foodstead' });
+      if (!check.ok) {
+        renderFailure = {
+          step: 'storefront render contract',
+          error: check.problems.join(' | ').slice(0, 400),
+          detail: { deferredBoundaries: check.deferredBoundaries, bytes: html.length },
+        };
+      }
+    }
+  } catch (e: any) {
+    renderFailure = { step: 'GET /ranchers/foodstead (network)', error: e?.message || 'unknown' };
+  }
+
+  if (renderFailure) {
+    await sendOperatorSignal({
+      urgency: 'loud',
+      kind: 'system-error',
+      summary: 'rancher storefront may be rendering BLANK',
+      detail:
+        `Storefront render canary failed at: ${renderFailure.step} — ${renderFailure.error}\n` +
+        (renderFailure.detail ? `${JSON.stringify(renderFailure.detail).slice(0, 300)}\n\n` : '\n') +
+        `The served HTML can be complete while the page renders as an empty skeleton ` +
+        `(deferred Suspense boundary whose reveal never runs — the 2026-07-28 incident). ` +
+        `Check /ranchers/foodstead in a real browser before spending on ads. Run ID: ${runId}`,
+      dedupeKey: 'synthetic-storefront-render-broken',
+      dedupeWindowMs: 60 * 60 * 1000,
+    }).catch(() => {});
+  }
+
   if (applyFailure) {
     // Loud, deduped — a fully-broken signup door means qualified ranchers are
     // failing silently RIGHT NOW (the Justin class). Rides SMS/email fallback.
@@ -288,10 +337,11 @@ async function realHandler(_request: Request): Promise<E2EResult> {
       );
     } catch {}
   }
-  if (failure || applyFailure) {
+  if (failure || applyFailure || renderFailure) {
     const parts = [
       failure ? `buyer:${failure.step} — ${failure.error}` : null,
       applyFailure ? `apply:${applyFailure.step} — ${applyFailure.error}` : null,
+      renderFailure ? `render:${renderFailure.step} — ${renderFailure.error}` : null,
     ].filter(Boolean);
     return {
       status: 'error',
