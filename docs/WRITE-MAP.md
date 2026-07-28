@@ -237,6 +237,11 @@ W: app/api/rancher/connect/start/route.ts:219,270 (guarded not-already-set :267)
 R: app/api/cron/onboarding-stuck/route.ts:128-144 — stuck-bucket clock.
 Sem: funnel-visibility stamp (was 0/87 before #481). Write-once.
 
+### Lead Digest Sent At (dateTime) — fldPYqaAYFreEdbln
+W: app/api/cron/referral-chasup/route.ts (L2a digest block) — stamped BEFORE the send.
+R: same block via lib/rancherLeadDigest.ts `shouldSendLeadDigest` — 24h DB-state throttle.
+Sem: per-RANCHER throttle for the daily lead digest (audit 2026-07-28). Because the throttle is recipient-level DB state, `sendRancherLeadDigest` is frequency-cap-whitelisted; a failed stamp write suppresses a digest, never multiplies one. The digest also stamps each included referral's `Rancher Reminded At`, which keeps Intro-Sent rows out of rancher-followup's Monday stale-nudge bundle (its 7-day per-referral throttle).
+
 ### Max Active Referalls (number — SINGLE-L TYPO is the real schema field)
 W: app/api/admin/ranchers/[id]/route.ts:49 + app/api/rancher/landing-page/route.ts:206 — both via `MAX_ACTIVE_REFERRALS_FIELD` (lib/rancherCapacity.ts:79 = typo spelling); app/api/rancher/activate/route.ts:347 — default 5; scripts/brimstone-launch.mjs:195.
 R: lib/rancherCapacity.ts:55-63 `getMaxActiveReferrals` — reads correct spelling FIRST then typo, default 5 — from app/api/matching/suggest/route.ts:592,755,1206,1364; app/api/ranchers/capacity-check/route.ts:26; app/api/referrals/[id]/approve/route.ts:41; app/api/admin/referrals/[id]/reassign/route.ts:96; lib/campaignReferral.ts:183; lib/capacityLiberator.ts:147,200; lib/demandRouter.ts:706.

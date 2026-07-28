@@ -44,11 +44,10 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   //     old always-send." batch-approve re-pulls the same stale buyers DAILY,
   //     so whitelisting turns a stamp-write failure into an unbounded daily
   //     storm to the exact cohort whose email promises "no more nags."
-  //   - sendRancherLeadReminder: the 4-day throttle is per-REFERRAL, not
-  //     per-recipient — a rancher with N open leads can get N reminders per
-  //     window; the 3/week cap was the only per-recipient ceiling.
   // These stay capped. The eaten-email leak for them needs a robust throttle
   // fix, not a blanket cap exemption (tracked in memory).
+  // (sendRancherLeadReminder lived here too until 2026-07-28 — replaced by
+  // sendRancherLeadDigest below, whose throttle IS per-recipient DB state.)
   // P0 hotfix (2026-06-02): rancher intro email from /api/matching/suggest
   // was hitting the 3/week cap silently — 60%+ of intros suppressed during
   // volume spikes. Whitelisted because this is revenue-critical (without it
@@ -74,6 +73,13 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   // which only targets rows with Marketplace Approved !== true — a re-run has
   // an empty target list, so whitelisting cannot cause volume.
   'sendRancherProductLive',
+  // Daily per-rancher lead digest (audit 2026-07-28): ONE email listing all
+  // Intro-Sent leads waiting 2+ days. Throttled by DB state — Ranchers.'Lead
+  // Digest Sent At' is stamped BEFORE the send and checked per recipient, so
+  // whitelisting cannot create volume (a failed stamp write suppresses the
+  // next digest rather than multiplying it). Rancher silence drives 44% of
+  // real losses; the cap was eating 90% of the old per-referral reminders.
+  'sendRancherLeadDigest',
   'sendRancherSelfSubmitWelcome',
   'sendProspectClaimMagicLink',
   // The ONLY email persisting the 60-day wizard link for /apply + /partners
