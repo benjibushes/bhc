@@ -125,7 +125,12 @@ export async function generateMetadata(
     openGraph: {
       title: `${name} — BuyHalfCow`,
       description: tagline,
-      ...(logo && { images: [{ url: logo, width: 800, height: 600, alt: name }] }),
+      // Always emit an og:image: a rancher with no Logo URL (e.g. DD Ranch)
+      // otherwise gets NO openGraph image and FB/IG link previews pick an
+      // arbitrary page image. Fall back to the site card, same as twitter:image.
+      images: logo
+        ? [{ url: logo, width: 800, height: 600, alt: name }]
+        : [{ url: 'https://www.buyhalfcow.com/og-image.png', width: 1200, height: 630, alt: 'BuyHalfCow' }],
     },
   };
 }
