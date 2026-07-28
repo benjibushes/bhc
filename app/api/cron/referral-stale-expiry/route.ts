@@ -23,7 +23,7 @@
 // Selection prioritizes capacity-BLOCKED operational ranchers (the flips
 // that actually reopen routing), excludes unlinked rows (free nothing), and
 // stays conservative: pre-money statuses only, any deposit signal blocks,
-// 21d silent both sides, 50/run.
+// 21d silent both sides (Negotiation: 42d — see lib/staleHolds), 50/run.
 //
 // DARK: STALE_HOLD_EXPIRY_ENABLED unset → skip · 'dry-run' → Telegram
 // report, writes NOTHING · 'true' → full loop. STALE_HOLD_DAYS overrides 21.
@@ -33,7 +33,13 @@ import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
-import { selectStaleHolds, freedByRancher, DEFAULT_STALE_DAYS, EXPIRABLE_STATUSES } from '@/lib/staleHolds';
+import {
+  selectStaleHolds,
+  freedByRancher,
+  DEFAULT_STALE_DAYS,
+  EXPIRABLE_STATUSES,
+  staleDaysForStatus,
+} from '@/lib/staleHolds';
 import { countHeldReferrals, isActiveDealReferral } from '@/lib/capacityCount';
 import { setCapacityCounter, getMaxActiveReferrals } from '@/lib/rancherCapacity';
 import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
@@ -89,7 +95,7 @@ async function realHandler(_request: Request): Promise<ExpiryResult> {
   const stale = selectStaleHolds(candidates, Date.now(), { staleDays, cap: RUN_CAP, priorityRancherIds });
 
   if (stale.length === 0) {
-    return { status: 'success', recordsTouched: 0, notes: `no stale holds (${candidates.length} open intros scanned)` };
+    return { status: 'success', recordsTouched: 0, notes: `no stale holds (${candidates.length} open holds scanned)` };
   }
 
   const perRancher = freedByRancher(stale);
@@ -103,7 +109,8 @@ async function realHandler(_request: Request): Promise<ExpiryResult> {
       TELEGRAM_ADMIN_CHAT_ID,
       `🧪 <b>stale-hold expiry DRY RUN</b> — nothing written\n\n` +
         `would free <b>${stale.length}</b> slot${stale.length === 1 ? '' : 's'} ` +
-        `(intros silent &gt;${staleDays}d, zero deposit signals):\n${reportLines.join('\n')}\n\n` +
+        `(silent &gt;${staleDays}d — Negotiation &gt;${staleDaysForStatus('Negotiation', staleDays)}d — zero deposit signals):\n` +
+        `${reportLines.join('\n')}\n\n` +
         `live mode also: resets stranded buyers → READY + resyncs capacity counters (Redis + mirror) ` +
         `so the 14:30 UTC recovery pass routes freed slots same-day. flip STALE_HOLD_EXPIRY_ENABLED=true.`,
     ).catch(() => {});
@@ -117,11 +124,18 @@ async function realHandler(_request: Request): Promise<ExpiryResult> {
 
   // ── LEG 1: FLIP (+ audit note so cron-expired ≠ manually-set Dormant) ──
   const flippedIds = new Set<string>();
-  const auditStamp = `[auto-expired ${new Date().toISOString().slice(0, 10)}: no activity ${staleDays}d — slot released]`;
+  const today = new Date().toISOString().slice(0, 10);
   let failed = 0;
   for (const ref of stale) {
     try {
       const existingNotes = String((ref as any)['Notes'] || '');
+      // Stamp the window that ACTUALLY applied to this row's status — a
+      // Negotiation row expires on 2×staleDays, and a note claiming 21d when
+      // the rail waited 42d would mislead whoever reads the record later.
+      const prevStatus = String((ref as any)['Status'] || '');
+      const appliedDays = staleDaysForStatus(prevStatus, staleDays);
+      const auditStamp =
+        `[auto-expired ${today}: ${prevStatus || 'open hold'} — no activity ${appliedDays}d — slot released]`;
       await updateRecord(TABLES.REFERRALS, ref.id, {
         Status: 'Dormant',
         Notes: existingNotes ? `${existingNotes}\n${auditStamp}` : auditStamp,

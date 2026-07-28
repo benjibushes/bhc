@@ -6,6 +6,8 @@ import {
   shouldEscalateUnpause,
   unpauseCallbackData,
   UNPAUSE_CALLBACK_PREFIX,
+  shouldAutoResumePausedOverdue,
+  buildPausedOverdueResumeFields,
 } from './connectResync';
 
 const NOW = '2026-06-30T00:00:00.000Z';
@@ -200,4 +202,137 @@ test('unpause callbackData round-trips the rancher id under the shared prefix', 
 test('unpause callbackData fits Telegram 64-byte callback_data limit', () => {
   // Airtable record ids are rec + 14 chars; prefix must leave room.
   assert.ok(Buffer.byteLength(unpauseCallbackData('recQWERTYUIOPASD')) <= 64);
+});
+
+// ── AUTO-REVERSE THE MACHINE'S OWN PAUSE (pause-asymmetry sweep 2026-07-25) ─
+//
+// The scope fence is the product here, not the happy path. Four code paths
+// write Active Status='Paused'; exactly ONE of them is safe to reverse
+// automatically, and these tests pin the boundary of that one.
+
+const resumable = {
+  connectIsActive: true,
+  pricingModel: 'tier_v2',
+  migrationStatus: 'paused_overdue',
+  activeStatus: 'Paused',
+};
+
+test('auto-resumes ONLY the migration-deadline pause whose reason expired', () => {
+  assert.equal(shouldAutoResumePausedOverdue(resumable), true);
+});
+
+test('SCOPE FENCE: a pause with no machine provenance is NEVER auto-reversed', () => {
+  // 'paused_overdue' is written by exactly ONE line in the codebase
+  // (cron/migration-deadline), in the same write as Active Status='Paused'.
+  // Absent that marker there is no proof the machine caused the pause, so
+  // every one of these must decline and fall through to the founder's button.
+  for (const migrationStatus of [
+    '',                 // pilot-goal pause, admin pause, rancher self-pause
+    'completed',        // already migrated — marker consumed, or never paused for it
+    'invited',
+    'call_scheduled',
+    'upgrading',
+    'not_invited',
+    'detached',         // not a real Migration Status; still must not qualify
+  ]) {
+    assert.equal(
+      shouldAutoResumePausedOverdue({ ...resumable, migrationStatus }),
+      false,
+      `migrationStatus=${migrationStatus || '(empty)'} must not auto-resume`,
+    );
+  }
+});
+
+test('SCOPE FENCE: compliance + non-Paused states are never touched', () => {
+  for (const activeStatus of ['Non-Compliant', 'Active', 'At Capacity', '', 'Removed']) {
+    assert.equal(
+      shouldAutoResumePausedOverdue({ ...resumable, activeStatus }),
+      false,
+      `activeStatus=${activeStatus || '(empty)'} must not auto-resume`,
+    );
+  }
+});
+
+test('SCOPE FENCE: the reason must be GONE — Connect live is not enough on its own', () => {
+  // Connect dead → the rancher could not take money; resuming would route
+  // buyers at a rancher who cannot be paid.
+  assert.equal(shouldAutoResumePausedOverdue({ ...resumable, connectIsActive: false }), false);
+  // Connect live but still legacy → they have NOT done the thing they were
+  // paused for. The migration is the stated reason; it is not complete.
+  for (const pricingModel of ['legacy', '', 'tier_v1', 'byoc']) {
+    assert.equal(
+      shouldAutoResumePausedOverdue({ ...resumable, pricingModel }),
+      false,
+      `pricingModel=${pricingModel || '(empty)'} must not auto-resume`,
+    );
+  }
+});
+
+test('predicate is case/whitespace tolerant on Airtable single-select values', () => {
+  assert.equal(
+    shouldAutoResumePausedOverdue({
+      connectIsActive: true,
+      pricingModel: ' Tier_V2 ',
+      migrationStatus: ' PAUSED_OVERDUE ',
+      activeStatus: ' paused ',
+    }),
+    true,
+  );
+});
+
+test('SINGLE USE: the resume write consumes the provenance marker', () => {
+  // This is what makes auto-reversal safe under repo rule #5. After the write,
+  // Migration Status is 'completed', so the predicate can never fire again for
+  // this rancher — a pause a HUMAN sets later can never be overridden.
+  const fields = buildPausedOverdueResumeFields({ heldReferrals: 0, maxReferrals: 10 });
+  assert.equal(fields['Migration Status'], 'completed');
+  assert.equal(
+    shouldAutoResumePausedOverdue({ ...resumable, migrationStatus: fields['Migration Status'] }),
+    false,
+  );
+});
+
+test('resume is CAPACITY-AWARE — never a bare Active over a full rancher', () => {
+  // Mirrors /api/admin/ranchers/[id]/resume exactly: at/over cap → At Capacity,
+  // so the matcher cannot over-fill them the moment the pause lifts.
+  assert.equal(buildPausedOverdueResumeFields({ heldReferrals: 0, maxReferrals: 10 })['Active Status'], 'Active');
+  assert.equal(buildPausedOverdueResumeFields({ heldReferrals: 9, maxReferrals: 10 })['Active Status'], 'Active');
+  assert.equal(buildPausedOverdueResumeFields({ heldReferrals: 10, maxReferrals: 10 })['Active Status'], 'At Capacity');
+  assert.equal(buildPausedOverdueResumeFields({ heldReferrals: 12, maxReferrals: 10 })['Active Status'], 'At Capacity');
+});
+
+test('resume tolerates missing/garbage capacity numbers without stranding', () => {
+  // A cap that reads as 0/NaN must not mean "always At Capacity" — that would
+  // silently re-strand the rancher we just resumed.
+  assert.equal(
+    buildPausedOverdueResumeFields({ heldReferrals: NaN as any, maxReferrals: NaN as any })['Active Status'],
+    'Active',
+  );
+  assert.equal(
+    buildPausedOverdueResumeFields({ heldReferrals: 0, maxReferrals: 0 })['Active Status'],
+    'Active',
+  );
+});
+
+test('auto-resume and the one-tap button are mutually exclusive on the same row', () => {
+  // Every emitter branches on this: escalate (send the button) only when
+  // auto-resume declines. A rancher must never get both.
+  const decision = computeConnectResync({
+    ...base,
+    liveStatus: 'active',
+    previousStatus: 'active',
+    migrationStatus: 'paused_overdue',
+  });
+  const escalates = shouldEscalateUnpause({
+    wasPausedOverdue: decision.wasPausedOverdue,
+    activeStatus: 'Paused',
+  });
+  const autoResumes = shouldAutoResumePausedOverdue({ ...resumable, connectIsActive: decision.isNowActive });
+  assert.equal(escalates, true);   // the row IS a dead-end
+  assert.equal(autoResumes, true); // and the machine can prove it owns the pause
+  // The legacy rancher on the same dead-end still needs the human button.
+  assert.equal(
+    shouldAutoResumePausedOverdue({ ...resumable, pricingModel: 'legacy' }),
+    false,
+  );
 });

@@ -8,7 +8,12 @@
 // today" guardrail, proven at the caller boundary (not just the primitive).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { getAdminConfig, saveAdminConfig, ADMIN_CONFIG_DEFAULTS } from './adminConfig';
+import {
+  getAdminConfig,
+  getAdminConfigWithSource,
+  saveAdminConfig,
+  ADMIN_CONFIG_DEFAULTS,
+} from './adminConfig';
 import { serialize, deserialize } from './sharedCache';
 import type { AdminConfig } from './adminConfigTypes';
 
@@ -29,13 +34,45 @@ test('getAdminConfig is stable across repeated calls (L1/L2 no-op path)', { skip
   assert.deepEqual(b, ADMIN_CONFIG_DEFAULTS);
 });
 
-test('saveAdminConfig with no Airtable → invalidates + returns defaults, never throws', { skip: airtableConfigured }, async () => {
-  // No base → nothing persists, but the call must resolve to defaults and not
-  // throw (the shared-cache delete inside is fail-safe).
-  await assert.doesNotReject(async () => {
-    const out = await saveAdminConfig({ stallThresholdDays: 99 });
-    assert.deepEqual(out, ADMIN_CONFIG_DEFAULTS); // not persisted (no base)
-  });
+// ── THE FALSE SUCCESS (pause-asymmetry sweep 2026-07-25) ───────────────────
+// saveAdminConfig used to swallow its own write failure and return a
+// success-shaped config, so /admin/settings rendered "Config saved" over a
+// write that never happened. The read path made it worse: defaults and real
+// overrides were byte-identical, so nobody could tell the Admin Config table
+// was empty (it has ZERO rows in production). Both now tell the truth.
+
+test('saveAdminConfig THROWS when nothing was persisted — never a silent success', { skip: airtableConfigured }, async () => {
+  // No Airtable base → nothing can persist. The old contract resolved with a
+  // defaults-shaped object, which the UI rendered as "saved".
+  await assert.rejects(
+    () => saveAdminConfig({ stallThresholdDays: 99 }),
+    (err: Error) => {
+      assert.match(err.message, /NOT saved/i);
+      return true;
+    },
+  );
+});
+
+test('a failed save does not silently mutate the live config', { skip: airtableConfigured }, async () => {
+  await saveAdminConfig({ stallThresholdDays: 99 }).catch(() => {});
+  const after = await getAdminConfig();
+  assert.deepEqual(after, ADMIN_CONFIG_DEFAULTS);
+  assert.notEqual(after.stallThresholdDays, 99);
+});
+
+test('read path says WHERE the config came from — defaults are distinguishable', { skip: airtableConfigured }, async () => {
+  const { config, source } = await getAdminConfigWithSource();
+  assert.deepEqual(config, ADMIN_CONFIG_DEFAULTS);
+  // Never 'airtable' when nothing was read — that is the whole point.
+  assert.notEqual(source, 'airtable');
+  assert.ok(source.startsWith('defaults:'), `unexpected source: ${source}`);
+});
+
+test('getAdminConfig stays a plain config — callers are not broken by the new shape', { skip: airtableConfigured }, async () => {
+  const cfg = await getAdminConfig();
+  assert.deepEqual(cfg, ADMIN_CONFIG_DEFAULTS);
+  assert.equal((cfg as any).source, undefined);
+  assert.equal((cfg as any).config, undefined);
 });
 
 // The L2 layer stores/loads the resolved AdminConfig via serialize/deserialize.

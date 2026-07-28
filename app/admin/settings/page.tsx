@@ -78,6 +78,9 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Where the loaded values actually came from. 'airtable' = a real override
+  // was read; anything else means these knobs are decorative right now.
+  const [source, setSource] = useState<string | null>(null);
 
   // Track which fields were modified vs server state
   const isDirty =
@@ -102,9 +105,11 @@ export default function SettingsPage() {
       const cfg: AdminConfig = { ...ADMIN_CONFIG_DEFAULTS, ...j.config };
       setConfig(cfg);
       setDraft(cfg);
+      setSource(typeof j.source === 'string' ? j.source : null);
     } catch (err: any) {
       const msg = err?.message || 'Failed to load config';
       setLoadError(msg);
+      setSource(null);
       // Still show defaults so the form is usable
       const fallback = { ...ADMIN_CONFIG_DEFAULTS };
       setConfig(fallback);
@@ -135,6 +140,9 @@ export default function SettingsPage() {
       const saved: AdminConfig = { ...ADMIN_CONFIG_DEFAULTS, ...j.config };
       setConfig(saved);
       setDraft(saved);
+      // A successful POST means rows really landed in Airtable — the banner
+      // must clear, or it would keep claiming "defaults" over a real save.
+      setSource('airtable');
       toast.success('Config saved');
     } catch (err: any) {
       toast.error('Save failed', err?.message);
@@ -196,6 +204,25 @@ export default function SettingsPage() {
                 <strong>Warning:</strong> Could not read saved config from Airtable ({loadError}).
                 Showing defaults. You can still edit and save — this will create the config table
                 rows.
+              </div>
+            )}
+
+            {/* Running-on-defaults banner. The read path used to return the
+                same shape whether it had read real overrides or fallen back to
+                the baked-in defaults, so a page full of numbers looked
+                "configured" when the Admin Config table was in fact EMPTY —
+                which it is today, for every knob below. */}
+            {!loadError && source && source !== 'airtable' && (
+              <div className="px-4 py-3 border border-weathered bg-weathered/10 text-weathered text-sm">
+                <strong>These are defaults, not saved settings.</strong>{' '}
+                {source === 'defaults:table-empty'
+                  ? 'The Airtable “Admin Config” table has no rows yet, so the pipeline is running on the built-in defaults.'
+                  : source === 'defaults:table-missing'
+                    ? 'The Airtable “Admin Config” table does not exist in this base, so the pipeline is running on the built-in defaults.'
+                    : source === 'defaults:no-airtable'
+                      ? 'Airtable is not configured in this environment, so nothing can be saved from here.'
+                      : 'Saved config could not be read, so the built-in defaults are in effect.'}{' '}
+                Editing and saving below writes the rows for real.
               </div>
             )}
 

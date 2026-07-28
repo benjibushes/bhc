@@ -45,6 +45,24 @@ const FIELD_TO_KEY: Record<keyof AdminConfig, string> = Object.fromEntries(
 
 const ADMIN_CONFIG_TABLE = 'Admin Config';
 
+/**
+ * Where the returned config actually came from. Only 'airtable' means an
+ * operator override was really read; every 'defaults:*' value means the knobs
+ * on /admin/settings are decorative right now, for four DIFFERENT reasons that
+ * used to be indistinguishable.
+ */
+export type AdminConfigSource =
+  | 'airtable'           // rows read; overrides applied
+  | 'defaults:table-empty'   // table exists, zero rows (the live state today)
+  | 'defaults:table-missing' // table not provisioned in this base
+  | 'defaults:read-error'    // permission / network — config may exist but is unreadable
+  | 'defaults:no-airtable';  // AIRTABLE_* env unset (local/CI)
+
+export interface LoadedAdminConfig {
+  config: AdminConfig;
+  source: AdminConfigSource;
+}
+
 // ── Airtable access ───────────────────────────────────────────────────────
 function getBase() {
   const apiKey = process.env.AIRTABLE_API_KEY;
@@ -60,12 +78,23 @@ function getBase() {
  * Falls back to ADMIN_CONFIG_DEFAULTS for any missing key or if the table
  * does not exist. Never throws.
  */
-let _cfgCache: { value: AdminConfig; at: number } | null = null;
+let _cfgCache: { value: LoadedAdminConfig; at: number } | null = null;
 const CFG_TTL_MS = 60_000;
 // L2 shared-cache key. Distinct namespace from the Airtable-table cache.
-const CFG_REDIS_KEY = 'adminconfig:cache';
+// :v2 (2026-07-25) — the payload shape changed from a bare AdminConfig to
+// {config, source}. Bumping the key means a mid-deploy instance can never read
+// the other shape; the old key just expires on its 60s TTL.
+const CFG_REDIS_KEY = 'adminconfig:cache:v2';
 
 export async function getAdminConfig(): Promise<AdminConfig> {
+  return (await getAdminConfigWithSource()).config;
+}
+
+/**
+ * Same read, but says WHERE the values came from. Use this anywhere the UI
+ * would otherwise imply a knob is configured when it is really a default.
+ */
+export async function getAdminConfigWithSource(): Promise<LoadedAdminConfig> {
   // Two-layer TTL cache — /access (the paid-ad front door) calls this on EVERY
   // render. The Airtable read can error (permission) and fall back to defaults,
   // so without a cache every ad hit pays a failing round-trip on the critical
@@ -81,11 +110,15 @@ export async function getAdminConfig(): Promise<AdminConfig> {
   if (_cfgCache && Date.now() - _cfgCache.at < CFG_TTL_MS) return _cfgCache.value;
 
   // L2: shared Redis. On L1 miss, adopt a value another instance already read.
-  const shared = await sharedCacheGet<AdminConfig>(CFG_REDIS_KEY);
+  const shared = await sharedCacheGet<LoadedAdminConfig>(CFG_REDIS_KEY);
   if (shared !== undefined) {
     // Merge over defaults defensively so an older shared shape (missing a
-    // newly-added key) never drops a field.
-    const merged = { ...ADMIN_CONFIG_DEFAULTS, ...shared };
+    // newly-added key) never drops a field. `source` is tolerated as missing
+    // for the same reason — never trust a cross-instance shape blindly.
+    const merged: LoadedAdminConfig = {
+      config: { ...ADMIN_CONFIG_DEFAULTS, ...(shared?.config ?? {}) },
+      source: shared?.source ?? 'defaults:read-error',
+    };
     _cfgCache = { value: merged, at: Date.now() };
     return merged;
   }
@@ -107,9 +140,9 @@ async function invalidateAdminConfigCache(): Promise<void> {
   await sharedCacheDel(CFG_REDIS_KEY);
 }
 
-async function _loadAdminConfig(): Promise<AdminConfig> {
+async function _loadAdminConfig(): Promise<LoadedAdminConfig> {
   const base = getBase();
-  if (!base) return { ...ADMIN_CONFIG_DEFAULTS };
+  if (!base) return { config: { ...ADMIN_CONFIG_DEFAULTS }, source: 'defaults:no-airtable' };
 
   try {
     const records = await base(ADMIN_CONFIG_TABLE).select({ maxRecords: 50 }).all();
@@ -131,7 +164,15 @@ async function _loadAdminConfig(): Promise<AdminConfig> {
       }
     }
 
-    return { ...ADMIN_CONFIG_DEFAULTS, ...overrides };
+    // DISTINGUISHABLE (2026-07-25): a successful read of an EMPTY table is not
+    // the same fact as "the table isn't there" or "every key is set", even
+    // though all three produce identical config values. The Admin Config table
+    // is live with ZERO rows, so every knob on /admin/settings has always been
+    // running on ADMIN_CONFIG_DEFAULTS — and the UI could not say so because
+    // this path collapsed all four outcomes into one shape.
+    const source: AdminConfigSource =
+      records.length === 0 ? 'defaults:table-empty' : 'airtable';
+    return { config: { ...ADMIN_CONFIG_DEFAULTS, ...overrides }, source };
   } catch (err: any) {
     // Table missing, permission denied, network error — degrade gracefully
     const msg = String(err?.message || err || '');
@@ -143,7 +184,10 @@ async function _loadAdminConfig(): Promise<AdminConfig> {
     if (!isMissing) {
       console.warn('[adminConfig] getAdminConfig error (using defaults):', msg);
     }
-    return { ...ADMIN_CONFIG_DEFAULTS };
+    return {
+      config: { ...ADMIN_CONFIG_DEFAULTS },
+      source: isMissing ? 'defaults:table-missing' : 'defaults:read-error',
+    };
   }
 }
 
@@ -153,18 +197,27 @@ async function _loadAdminConfig(): Promise<AdminConfig> {
  * For each supplied key:
  *   - If a row with Key=<airtable_key> exists → update its Value.
  *   - Otherwise → create a new row.
- * Falls back silently if the table is missing.
  * Returns the resulting full config.
+ *
+ * THROWS when nothing was persisted (2026-07-25). It used to swallow its own
+ * Airtable failure and return a success-shaped object, so /admin/settings
+ * rendered "saved" over a write that never happened — the operator-facing twin
+ * of the pause rails that never reversed: the machine reported an outcome it
+ * had not achieved. Callers surface the error; the route already maps a throw
+ * to a 500 with the message.
  */
 export async function saveAdminConfig(
   updates: Partial<AdminConfig>,
 ): Promise<AdminConfig> {
   const base = getBase();
   if (!base) {
-    // No Airtable → nothing persisted, but still bust the cache so a stale
-    // in-memory/shared value doesn't mask the (defaults) truth.
+    // No Airtable → nothing persisted. Bust the cache so a stale in-memory/
+    // shared value doesn't mask the (defaults) truth, then say so out loud
+    // rather than returning a config that looks like it saved.
     await invalidateAdminConfigCache();
-    return getAdminConfig();
+    throw new Error(
+      'Admin config NOT saved: Airtable is not configured (AIRTABLE_API_KEY / AIRTABLE_BASE_ID unset).',
+    );
   }
 
   try {
@@ -202,8 +255,35 @@ export async function saveAdminConfig(
     ]);
   } catch (err: any) {
     const msg = String(err?.message || err || '');
-    console.warn('[adminConfig] saveAdminConfig error:', msg);
-    // Return defaults-merged result even if save failed
+    console.error('[adminConfig] saveAdminConfig FAILED — nothing persisted:', msg);
+
+    // Bust the cache anyway: a partial batch may have landed, and a stale
+    // cached value would be a second lie on top of the first.
+    await invalidateAdminConfigCache();
+
+    // Alert. A silently-failing settings write is exactly the class of bug
+    // that hides for months (the Admin Config table has zero rows). Lazy
+    // import so this module stays cheap on the /access render path, and so a
+    // signal-layer failure can never mask the real error below.
+    try {
+      const { sendOperatorSignal } = await import('./operatorSignal');
+      await sendOperatorSignal({
+        urgency: 'loud',
+        kind: 'system-error',
+        summary: 'ADMIN CONFIG SAVE FAILED',
+        detail:
+          `/admin/settings tried to persist ${Object.keys(updates).join(', ') || '(nothing)'} ` +
+          `to the Airtable "Admin Config" table and the write failed.\n` +
+          `Nothing was saved — the pipeline is still running on ADMIN_CONFIG_DEFAULTS.\n` +
+          `Airtable said: ${msg}`,
+        dedupeKey: 'admin-config-save-failed',
+        dedupeWindowMs: 30 * 60 * 1000,
+      });
+    } catch (signalErr: any) {
+      console.error('[adminConfig] save-failure alert also failed:', signalErr?.message);
+    }
+
+    throw new Error(`Admin config NOT saved: ${msg}`);
   }
 
   // Bust BOTH cache layers so the read below (and every other instance) sees
