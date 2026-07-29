@@ -204,6 +204,23 @@ export async function POST(
         consumer: buyerRecord,
         vars: { firstName, ranchName },
       });
+      // Keep the consumer's denormalized deal state in step with the referral
+      // (2026-07-28): classifyBuyer reads Consumers.'Referral Status' to keep
+      // in-deal buyers out of nurture pools — a stale denorm here let the
+      // sequences engine nag a paying customer. Buyer Stage is belt +
+      // suspenders (the deposit-settle path already flips it MATCHED).
+      if (buyerRecord?.id) {
+        try {
+          await updateRecord(TABLES.CONSUMERS, buyerRecord.id, {
+            'Referral Status': 'Slot Locked',
+            ...(String(buyerRecord['Buyer Stage'] || '') !== 'MATCHED' && String(buyerRecord['Buyer Stage'] || '') !== 'CLOSED'
+              ? { 'Buyer Stage': 'MATCHED', 'Buyer Stage Updated At': nowIso }
+              : {}),
+          });
+        } catch (denormErr: any) {
+          console.warn('[NRD-accept] consumer denorm refresh failed (non-fatal):', denormErr?.message);
+        }
+      }
     } catch (e: any) {
       console.warn('[NRD-accept] SMS fire failed:', e?.message);
     }
