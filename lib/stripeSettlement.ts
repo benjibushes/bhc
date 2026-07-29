@@ -276,6 +276,29 @@ export async function settleBuyerDeposit(pi: any): Promise<void> {
       } catch (zipErr: any) {
         console.warn('[settleBuyerDeposit] buyer ZIP capture skipped (non-fatal):', zipErr?.message);
       }
+
+      // ── STAGE FLIP ON DEPOSIT (2026-07-28) ────────────────────────────────
+      // The final-invoice settle path flips Buyer Stage, but the DEPOSIT path
+      // never did: a direct-deposit buyer (reserve/request-deposit rail —
+      // never routed through matching) kept a stale pre-payment stage
+      // (READY + 'Waitlisted' denorm). classifyBuyer then read them as an
+      // incomplete-profile nurture target and the sequences engine sent a
+      // paying customer marketing nags (Dave, CV half, 2 nags post-payment).
+      // MATCHED + the fresh denorm short-circuit to TERMINAL in
+      // lib/routingSegment.ts and keep every routing/nurture pool off them.
+      // Own try/catch: a stage write must never interrupt welcome/CAPI below.
+      try {
+        const stage = String(buyer['Buyer Stage'] || '');
+        if (stage !== 'MATCHED' && stage !== 'CLOSED') {
+          await updateRecord(TABLES.CONSUMERS, buyer.id, {
+            'Buyer Stage': 'MATCHED',
+            'Buyer Stage Updated At': new Date().toISOString(),
+            'Referral Status': 'Awaiting Payment',
+          });
+        }
+      } catch (stageErr: any) {
+        console.warn('[settleBuyerDeposit] buyer stage flip skipped (non-fatal):', stageErr?.message);
+      }
     }
 
     if (buyer?.['Email']) {
