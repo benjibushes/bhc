@@ -161,6 +161,11 @@ R: referral-chasup :380 — throttle; lib/firstTouchSla.ts:16,42 — deliberatel
 W: app/api/rancher/referrals/[id]/fulfillment/route.ts:91 via FULFILLMENT_FIELDS (lib/fulfillmentTracking.ts:50). Only writer.
 R: lib/fulfillmentChase.ts:118 — 'fulfilled' suppresses the chase cron (with Fulfillment Confirmed At :117).
 
+### Referral Source (singleLineText — fldC5pUi90WDpBTsa) — My Leads provenance
+W: app/api/rancher/referrals/route.ts (POST create) via buildLeadReferralFields (lib/rancherLeads.ts) — the ONLY writer; value always 'rancher-added' (constant REFERRAL_SOURCE_RANCHER_ADDED).
+R (every reader is an EXCLUSION — 'rancher-added' rows are invisible to automation built for routed leads): lib/capacityCount.ts isCapacityCountedReferral — countHeldReferrals + heldCountsByRancher skip them (Redis seed lib/rancherCapacity.ts:47, capacity-drift-check, batch-approve self-heal, referral-stale-expiry resync, admin/health); lib/staleHolds.ts isStaleHold — never auto-expire to Dormant; app/api/cron/referral-chasup (top filter — chase emails, digests, stalled nudges, ghost close); app/api/cron/close-detector candidates filter; lib/lossRecovery.ts selectLossRecovery (skip 'rancher-added-crm'); lib/replenishment.ts isReplenishEligible; lib/contracts/rancher.ts recordCloseBehavior — close skips capacity DECR + affiliate/CAPI, lost flips buyer CLOSED (never READY-restore); app/api/rancher/referrals/[id] PATCH — {stage} rail requires it, legacy status/_action writes 400 on it; app/api/rancher/dashboard — activeReferrals stat excludes, referral_source projected (lib/referralReads.ts REFERRAL_DASHBOARD_FIELDS).
+Sem: 'rancher-added' = the rancher typed this lead in themselves (My Leads CRM). It STILL counts as an active deal for routing (lib/capacityCount isActiveDealReferral — deliberate: never double-deal the buyer). NO emails fire on create. Deposit rail works unchanged (request-deposit stamps its own fields).
+
 ---
 
 ## Ranchers (`tbl08y9Be45zNG0OG`)
@@ -387,6 +392,11 @@ R: nurture-drip :85 (d2/d6/d12/d21 off Qualified/Funnel-Completed At, lib/nurtur
 W: app/api/webhooks/stripe/route.ts:1120 only (founder checkout).
 R: none on Consumers (same-named RANCHERS field is a different thing — do not conflate).
 Sem: LANDMINE — Consumers uses `...ID`, Ranchers uses `...Id`; Airtable silently strips wrong-cased writes (stripe wh :1121-1127).
+
+### Lead Source (singleLineText) — My Leads provenance ('rancher-crm')
+W: app/api/rancher/referrals/route.ts (POST) via buildLeadConsumerFields (lib/rancherLeads.ts) — ONLY on CREATE of a new consumer; an EXISTING consumer found by email keeps their organic provenance (never overwritten). Value always 'rancher-crm' (constant CONSUMER_LEAD_SOURCE_CRM). Rows are created with Buyer Stage='MATCHED' (+ paired Buyer Stage Updated At) and NO Status / Qualified At / Segment / Intent Score — cron-invisible by design.
+R (all exclusions — this buyer opted into the RANCHER, never into BHC marketing): lib/nurtureDrip.ts dueNurtureTouch (leadSource gate); lib/waitingActivation.ts isWaitingNudgeEligible + isReadyChaseEligible; app/api/cron/email-sequences (approved-pool filter — belt over the blank-Status gate, covers the CLOSED post-purchase track after a won close); app/api/cron/send-scheduled isMailable (broadcast audiences 'consumers'/'consumers-community' would otherwise sweep blank-Segment rows).
+Sem: zero BHC marketing to these buyers. Transactional deposit-request emails (rancher-initiated) are fine. If this field is missing from the Airtable schema, createRecord strips it silently — verify it exists before relying on the exclusions (the blank-Status / no-Qualified-At belts still hold).
 
 ### Link fields: Referalls / Payments / Affiliates / Preferred Rancher
 Referalls (single-L typo IS the schema name): **zero code references** — auto-maintained reverse of Referrals.`Buyer` (written at lib/reserveDeposit.ts:222, lib/bulkRoute.ts:268, every referral create). Payments: reverse of Payments.`Buyer` (lib/contracts/payments.ts:250). Affiliates: reverse of Affiliates.`Linked Consumer` (lib/affiliates.ts:220); companion scalars Affiliate Code/Created At written at contracts/rancher.ts:398-403; attribution INTO the system is scalar `Referred By` (consumers :712, reserve :230-231; read at contracts/rancher.ts:370). Preferred Rancher: consumers :734 only.

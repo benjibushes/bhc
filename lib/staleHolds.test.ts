@@ -142,6 +142,37 @@ test('selectStaleHolds: capacity-blocked ranchers jump the queue', () => {
   assert.deepEqual(picked.map((r) => r.id), ['newer-blocked', 'old-noop']);
 });
 
+// ── My Leads (2026-07-29): rancher-entered leads NEVER auto-expire ─────────
+// A rancher's own customer ('Referral Source' = 'rancher-added') can sit
+// quiet for months — market-season timing is the rancher's business. Flipping
+// them Dormant after 21 silent days would delete the rancher's pipeline.
+
+test('a rancher-added lead never expires, at any age, in any expirable status', () => {
+  for (const status of EXPIRABLE_STATUSES) {
+    const row = stale({
+      Status: status,
+      'Intro Sent At': days(400),
+      'Referral Source': 'rancher-added',
+      Rancher: ['recR'],
+    });
+    assert.equal(isStaleHold(row as any, NOW), false, status);
+  }
+});
+
+test('rancher-added exclusion tolerates the Airtable {name} read shape', () => {
+  const row = stale({ 'Referral Source': { name: 'rancher-added' }, Rancher: ['recR'] });
+  assert.equal(isStaleHold(row as any, NOW), false);
+});
+
+test('selectStaleHolds drops rancher-added rows while keeping routed ones', () => {
+  const rows = [
+    stale({ id: 'routed', Rancher: ['recA'] }),
+    stale({ id: 'crm', Rancher: ['recA'], 'Referral Source': 'rancher-added' }),
+  ];
+  const picked = selectStaleHolds(rows as any, NOW, { cap: 10 });
+  assert.deepEqual(picked.map((r) => r.id), ['routed']);
+});
+
 test('freedByRancher groups by first Rancher link', () => {
   const rows = [
     stale({ Rancher: ['recA'] }),

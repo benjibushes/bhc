@@ -15,7 +15,33 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildRecordCloseUpdates } from './rancher';
+import { buildRecordCloseUpdates, recordCloseBehavior } from './rancher';
+
+// ── recordCloseBehavior — My Leads (rancher-entered) close semantics ────────
+// A 'Referral Source' = 'rancher-added' row closes through the SAME contract
+// but: no capacity DECR (never INCR'd), no affiliate/CAPI (no consent, no ad
+// attribution), and lost → buyer CLOSED (never READY-restored into the
+// routing pool — the buyer belongs to the rancher).
+
+test('recordCloseBehavior: routed rows keep every historical side effect', () => {
+  for (const ref of [{}, { 'Referral Source': '' }, { 'Referral Source': 'ads' }, null]) {
+    assert.deepEqual(recordCloseBehavior(ref), {
+      skipCapacityDecrement: false,
+      skipAffiliateAndCapi: false,
+      lostBuyerHandling: 'restore',
+    });
+  }
+});
+
+test('recordCloseBehavior: rancher-added rows skip DECR + affiliate/CAPI and close the buyer on lost', () => {
+  for (const src of ['rancher-added', { name: 'rancher-added' }]) {
+    assert.deepEqual(recordCloseBehavior({ 'Referral Source': src }), {
+      skipCapacityDecrement: true,
+      skipAffiliateAndCapi: true,
+      lostBuyerHandling: 'close',
+    });
+  }
+});
 
 const NOW = '2026-07-01T12:00:00.000Z';
 

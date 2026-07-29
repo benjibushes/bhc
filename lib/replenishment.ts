@@ -29,6 +29,8 @@ export interface ReplenishReferralLike {
   'Replenishment Nudged At'?: unknown;
   Buyer?: unknown;
   'Buyer Email'?: unknown;
+  /** My Leads (2026-07-29): 'rancher-added' deals never get reorder nudges. */
+  'Referral Source'?: unknown;
   [key: string]: unknown;
 }
 
@@ -72,6 +74,17 @@ export function isReplenishEligible(
   opts: Pick<ReplenishOptions, 'nowISO'>,
 ): boolean {
   if (String(ref['Status'] || '').trim() !== 'Closed Won') return false;
+  // My Leads (2026-07-29): rancher-entered deals ('Referral Source' =
+  // 'rancher-added') closed on the RANCHER's own relationship — the buyer
+  // never consented to BHC marketing, so the reorder nudge belongs to the
+  // rancher, not to this cron. Tolerates the {name} object read shape.
+  {
+    const src = ref['Referral Source'];
+    const s = src && typeof src === 'object' && 'name' in (src as any)
+      ? String((src as any).name || '')
+      : String(src ?? '');
+    if (s.trim() === 'rancher-added') return false;
+  }
   const sale = Number(ref['Sale Amount']);
   if (!Number.isFinite(sale) || sale <= 0) return false;
 

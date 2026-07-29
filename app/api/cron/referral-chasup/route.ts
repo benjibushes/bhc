@@ -10,6 +10,7 @@ import { buildDigestLeads, digestSubject, shouldSendLeadDigest } from '@/lib/ran
 import { withCronRun } from '@/lib/cronRun';
 import { shouldDecrementOnClose } from '@/lib/refundLifecycle';
 import { isReferralOnHold } from '@/lib/referralHold';
+import { isRancherAddedReferral } from '@/lib/rancherLeads';
 import jwt from 'jsonwebtoken';
 
 // 60 → 300 (2026-07-08): 7-day peak hit 47s (78% of the old ceiling) and the
@@ -55,6 +56,17 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
     // once at the top so no downstream pool can leak a held lead. Fail-open
     // predicate: blank/unparseable/past values are NOT held.
     const referrals = fetchedReferrals.filter((r: any) => {
+      // My Leads (2026-07-29): rancher-entered leads ('Referral Source' =
+      // 'rancher-added') are created at 'Rancher Contacted', so they land in
+      // this fetch — but every pool in this cron (buyer AI chase, digests,
+      // stalled nudges, stale prompts, ghost close) exists to chase leads BHC
+      // routed. Never nag a rancher about a lead they entered themselves, and
+      // never email their own customer. One filter at the top so no
+      // downstream pool can leak one.
+      if (isRancherAddedReferral(r)) {
+        skipReasons['rancher-added-crm'] = (skipReasons['rancher-added-crm'] || 0) + 1;
+        return false;
+      }
       if (!isReferralOnHold(r['Hold Until'])) return true;
       skipReasons['operator-hold'] = (skipReasons['operator-hold'] || 0) + 1;
       return false;

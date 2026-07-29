@@ -13,6 +13,7 @@ import jwt from 'jsonwebtoken';
 import { requireRancher } from '@/lib/rancherAuth';
 import { fetchReferralRowsForRancher } from '@/lib/referralReads';
 import { lossReasonFromCloseReason, lossReasonFromPassReason } from '@/lib/lossReasons';
+import { isRancherAddedReferral, decideLeadStagePatch, CRM_LOSS_REASON } from '@/lib/rancherLeads';
 
 // Pass reasons a rancher can give when declining a lead.
 // Mutually exclusive — "Other" deliberately omitted to force a real signal.
@@ -73,6 +74,192 @@ export async function PATCH(
 
     if (!isOwner) {
       return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
+    }
+
+    // ── MY LEADS STAGE PATCH (2026-07-29) ────────────────────────────────
+    // Body {stage: 'new'|'talking'|'won'|'lost', saleAmount?} — the CRM rail
+    // for rancher-entered leads ('Referral Source' = 'rancher-added').
+    // decideLeadStagePatch (lib/rancherLeads, pure + unit-tested) owns every
+    // gate: provenance (routed referrals 403 — their transitions belong to
+    // the legacy handler below / quick-action / admin), Rancher-link
+    // ownership, deposit money-lock, terminal idempotency, won-amount.
+    // Closes ride recordClose — the SAME contract as quick-action — which is
+    // rancher-added-aware (no capacity DECR, no affiliate/CAPI, lost → buyer
+    // CLOSED not READY-restored).
+    if (body.stage !== undefined) {
+      const decision = decideLeadStagePatch({
+        referral,
+        rancherId: decoded.rancherId,
+        stage: body.stage,
+        saleAmount: body.saleAmount !== undefined ? Number(body.saleAmount) : undefined,
+      });
+      if (decision.kind === 'error') {
+        return NextResponse.json({ error: decision.message }, { status: decision.httpStatus });
+      }
+      if (decision.kind === 'noop') {
+        return NextResponse.json({ ok: true, noop: true, message: decision.message });
+      }
+
+      const nowIso = new Date().toISOString();
+      if (decision.kind === 'update') {
+        // Open-stage move (new ↔ talking) — plain status write + freshness.
+        try {
+          await updateRecord(TABLES.REFERRALS, id, {
+            'Status': decision.status,
+            'Last Rancher Activity At': nowIso,
+            'Rancher Engaged Flag': true,
+          });
+        } catch (e: any) {
+          return NextResponse.json({ error: 'Could not update — try again.' }, { status: 500 });
+        }
+        return NextResponse.json({ ok: true, status: decision.status });
+      }
+
+      // decision.kind === 'close'
+      if (decision.outcome === 'won') {
+        // HARD GATE (mirror quick-action + dashboard close): a locked
+        // Commission Rate is required before any Closed Won (Ashcraft scar).
+        let rancherForRate: any = null;
+        try {
+          rancherForRate = await getRecordById(TABLES.RANCHERS, decoded.rancherId);
+        } catch {}
+        if (!hasLockedCommissionRate(rancherForRate)) {
+          return NextResponse.json({
+            error: 'No Commission Rate locked on your account. Contact hello@buyhalfcow.com before closing deals.',
+          }, { status: 400 });
+        }
+        const saleAmount = Number(decision.saleAmount);
+        const commissionDue = calcCommissionForRancher(rancherForRate, saleAmount);
+
+        const { recordClose } = await import('@/lib/contracts');
+        try {
+          await recordClose({
+            referralId: id,
+            rancherId: decoded.rancherId,
+            outcome: 'won',
+            saleAmount,
+          });
+        } catch (e: any) {
+          return NextResponse.json({ error: `Couldn't close — try again. (${e?.message || 'unknown'})` }, { status: 500 });
+        }
+        // Supplemental field outside the contract (same as quick-action).
+        try {
+          await updateRecord(TABLES.REFERRALS, id, { 'Commission Due': commissionDue });
+        } catch (e: any) {
+          console.warn('[my-leads won] Commission Due write failed:', e?.message);
+        }
+
+        // RAIL-PER-ROW (mirror quick-action): invoice ONLY when this referral
+        // did NOT ride the deposit rail. A My Leads close is blocked once the
+        // deposit settles, so referralRail() is 'legacy' here by construction
+        // — the honest off-rail commission invoice fires for ranchers with a
+        // locked rate; tier_v2 deposit-rail rows can never reach this branch.
+        let stripeInvoiceUrl = '';
+        try {
+          const skipLegacyInvoice = referralRail(referral) === 'tier_v2';
+          if (skipLegacyInvoice) {
+            console.log(`[my-leads won] ${id} rode the deposit rail — commission taken at deposit, skipping post-close invoice`);
+          }
+          if (!skipLegacyInvoice && rancherForRate?.['Email']) {
+            try {
+              const stripeResult = await createCommissionInvoice({
+                rancher: {
+                  id: decoded.rancherId,
+                  operatorName: rancherForRate['Operator Name'] || rancherForRate['Ranch Name'] || '',
+                  ranchName: rancherForRate['Ranch Name'] || '',
+                  email: rancherForRate['Email'],
+                  stripeCustomerId: rancherForRate['Stripe Customer ID'] || undefined,
+                },
+                referral: {
+                  id,
+                  buyerName: referral['Buyer Name'] || '',
+                  orderType: referral['Order Type'] || 'Beef order',
+                  saleAmount,
+                  commissionDue,
+                },
+              });
+              stripeInvoiceUrl = stripeResult.invoiceUrl;
+              await updateRecord(TABLES.REFERRALS, id, {
+                'Stripe Invoice ID': stripeResult.invoiceId,
+                'Stripe Invoice URL': stripeInvoiceUrl,
+              });
+            } catch (e: any) {
+              console.error('[my-leads won] stripe invoice error:', e?.message);
+            }
+            try {
+              await sendInstantCommissionInvoice({
+                operatorName: rancherForRate['Operator Name'] || rancherForRate['Ranch Name'] || '',
+                ranchName: rancherForRate['Ranch Name'] || '',
+                email: rancherForRate['Email'],
+                buyerName: referral['Buyer Name'] || '',
+                orderType: referral['Order Type'] || 'Beef order',
+                saleAmount,
+                commissionDue,
+                closedAt: nowIso,
+                stripeInvoiceUrl: stripeInvoiceUrl || undefined,
+              });
+            } catch (e: any) {
+              console.error('[my-leads won] commission email error:', e?.message);
+            }
+          }
+        } catch (e: any) {
+          console.error('[my-leads won] invoice block error:', e?.message);
+        }
+
+        // Operator visibility (operational, Ben only — never the buyer).
+        try {
+          if (TELEGRAM_ADMIN_CHAT_ID) {
+            await sendTelegramMessage(
+              TELEGRAM_ADMIN_CHAT_ID,
+              `🤝 <b>CRM close — Closed Won</b>\n\n` +
+                `🤠 ${decoded.name} closed their own lead\n` +
+                `👤 ${referral['Buyer Name'] || '?'}\n` +
+                `💰 $${saleAmount.toFixed(2)} · commission $${commissionDue.toFixed(2)}\n\n` +
+                `Referral ${id} (rancher-added)`,
+            );
+          }
+        } catch {}
+
+        return NextResponse.json({ ok: true, status: 'Closed Won' });
+      }
+
+      // decision.outcome === 'lost'
+      {
+        const { recordClose } = await import('@/lib/contracts');
+        try {
+          await recordClose({
+            referralId: id,
+            rancherId: decoded.rancherId,
+            outcome: 'lost',
+            // Existing singleSelect choice whose loss-recovery action is
+            // 'none' — the recovery rail never emails this buyer.
+            extraFields: { 'Loss Reason': CRM_LOSS_REASON },
+          });
+        } catch (e: any) {
+          return NextResponse.json({ error: `Couldn't update — try again. (${e?.message || 'unknown'})` }, { status: 500 });
+        }
+        // Provenance note so the row reads honestly in Airtable.
+        try {
+          const stamp = `[MY LEADS ${nowIso.slice(0, 10)}] closed lost by rancher`;
+          const existingNotes = String(referral['Notes'] || '');
+          await updateRecord(TABLES.REFERRALS, id, {
+            'Notes': existingNotes ? `${stamp}\n\n${existingNotes}` : stamp,
+          });
+        } catch (e: any) {
+          console.warn('[my-leads lost] notes stamp failed:', e?.message);
+        }
+        return NextResponse.json({ ok: true, status: 'Closed Lost' });
+      }
+    }
+
+    // Rancher-added leads accept ONLY the stage rail above — the legacy
+    // handler below carries routed-lead side effects (buyer re-route on lost,
+    // auto-match on freed capacity, pass re-route, post-purchase emails) that
+    // must never fire on a customer the rancher brought themselves.
+    if (isRancherAddedReferral(referral)) {
+      return NextResponse.json({
+        error: 'This is one of your own leads — update it from My Leads (stage: new | talking | won | lost).',
+      }, { status: 400 });
     }
 
     // ── MONEY LOCK (dashboard parity with the email quick-action rail) ───

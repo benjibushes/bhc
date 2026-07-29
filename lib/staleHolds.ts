@@ -58,6 +58,8 @@ export interface StaleHoldRow {
   'Intro Sent At'?: unknown;
   'Rancher'?: unknown;
   'Buyer Name'?: unknown;
+  /** My Leads (2026-07-29): 'rancher-added' rows never auto-expire. */
+  'Referral Source'?: unknown;
   _createdTime?: string;
 }
 
@@ -104,6 +106,17 @@ export function isStaleHold(
 ): boolean {
   const status = String(ref?.Status || '');
   if (!EXPIRABLE_STATUSES.has(status)) return false;
+  // My Leads (2026-07-29): a rancher-entered lead ('Referral Source' =
+  // 'rancher-added', lib/rancherLeads) is the rancher's OWN customer — it can
+  // legitimately sit quiet for months (market-season timing) and it holds no
+  // counted capacity (lib/capacityCount skips it), so expiring it frees
+  // nothing and silently deletes the rancher's pipeline. Never auto-expire.
+  const src = ref?.['Referral Source'];
+  const srcStr =
+    src && typeof src === 'object' && 'name' in (src as any)
+      ? String((src as any).name || '')
+      : String(src ?? '');
+  if (srcStr.trim() === 'rancher-added') return false;
   // Any deposit signal → never auto-expire (operator's call).
   if (ref['Deposit Requested At'] || ref['Deposit Paid At']) return false;
   if (Number(ref['Deposit Amount'] || 0) > 0) return false;

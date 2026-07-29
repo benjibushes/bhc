@@ -38,6 +38,7 @@ import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 import { CLOSE_CHECK_MUTE_DAYS } from '@/lib/closeCheckMute';
 import { isReferralOnHold } from '@/lib/referralHold';
+import { isRancherAddedReferral } from '@/lib/rancherLeads';
 
 export const maxDuration = 60;
 
@@ -81,6 +82,10 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
       // `Hold Until` — a parked row must not get "did this close?" cards
       // until the hold expires. Fail-open: blank/unparseable = not held.
       if (isReferralOnHold(r['Hold Until'], now)) return false;
+      // My Leads (2026-07-29): rancher-entered leads never get "did this
+      // close?" cards — the rancher IS the close authority for their own
+      // lead, and these rows have no Intro Sent At anyway. Explicit > lucky.
+      if (isRancherAddedReferral(r)) return false;
       const introAt = r['Intro Sent At'] || r['Approved At'];
       if (!introAt) return false;
       const daysSinceIntro = (now - new Date(introAt).getTime()) / DAY_MS;

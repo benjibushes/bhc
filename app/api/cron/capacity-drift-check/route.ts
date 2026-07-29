@@ -43,7 +43,7 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, TABLES, isInvalidFilterFormulaError } from '@/lib/airtable';
 import { peekRedisCapacity, setCapacityCounter } from '@/lib/rancherCapacity';
-import { HELD_REFERRAL_STATUSES } from '@/lib/capacityCount';
+import { heldCountsByRancher } from '@/lib/capacityCount';
 import { heldReferralsFormula } from '@/lib/cronReadFilters';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
@@ -56,10 +56,10 @@ interface DriftResult {
   notes: string;
 }
 
-// Held-slot statuses come from the canonical capacityCount module so this cron,
-// batch-approve's self-heal, the admin-health drift readout, and the Redis
-// bootstrap ALL use the SAME set (they used to differ and overwrite each other).
-const HELD_STATUSES = HELD_REFERRAL_STATUSES;
+// Held-slot counting comes from the canonical capacityCount module so this
+// cron, batch-approve's self-heal, the admin-health drift readout, and the
+// Redis bootstrap ALL use the SAME rule (they used to differ and overwrite
+// each other).
 
 // Count held referrals per rancher id, in memory.
 //
@@ -73,17 +73,14 @@ const HELD_STATUSES = HELD_REFERRAL_STATUSES;
 // returns the {Rancher} link as an array of rec… id strings, so an in-memory
 // `.includes(rancherId)` is the correct id match (same approach batch-approve
 // uses). This also drops N per-rancher Airtable calls.
+// My Leads (2026-07-29): the bucketing moved into lib/capacityCount
+// (heldCountsByRancher) so this reconciler, batch-approve's self-heal, and
+// the canonical countHeldReferrals apply ONE rule — held status, Rancher-link
+// attribution, and the 'Referral Source' = 'rancher-added' skip (rancher-
+// entered leads never INCR'd, so counting them here would "repair" every
+// counter upward and manufacture daily drift alarms).
 function buildHeldCountsByRancher(referrals: any[]): Record<string, number> {
-  const counts: Record<string, number> = {};
-  for (const ref of referrals) {
-    if (!HELD_STATUSES.has(ref['Status'])) continue;
-    const link = ref['Rancher'];
-    if (!Array.isArray(link)) continue;
-    for (const rid of link) {
-      if (typeof rid === 'string') counts[rid] = (counts[rid] || 0) + 1;
-    }
-  }
-  return counts;
+  return heldCountsByRancher(referrals);
 }
 
 async function realHandler(_request: Request): Promise<DriftResult> {
@@ -97,7 +94,7 @@ async function realHandler(_request: Request): Promise<DriftResult> {
   try {
     // SCALE (#3): only held-status referrals contribute to the count, so ask
     // Airtable for exactly those instead of scanning all 24+ pages. The JS
-    // buildHeldCountsByRancher re-applies HELD_STATUSES as the exact belt.
+    // buildHeldCountsByRancher re-applies the held set as the exact belt.
     // On an INVALID_FILTER_BY_FORMULA-class error (e.g. a future rename of the
     // {Status} field) fall back to today's unfiltered scan so a bad formula
     // degrades instead of breaking the reconciler.

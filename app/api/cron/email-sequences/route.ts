@@ -182,8 +182,17 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
 
     // Fetch all approved consumers + active ranchers once
     const approvedRaw = await getAllRecords(TABLES.CONSUMERS, '{Status} = "Approved"') as any[];
-    // Skip unsubscribed consumers
-    const approved = approvedRaw.filter((c: any) => !c['Unsubscribed']);
+    // Skip unsubscribed consumers. My Leads (2026-07-29): also skip
+    // rancher-entered buyers ('Lead Source' = 'rancher-crm') — they never
+    // consented to BHC marketing. Their rows are created WITHOUT Status, so
+    // they normally never reach this pool; this is the belt for the day an
+    // operator hand-flips one to Approved (the CLOSED post-purchase track
+    // would otherwise pick them up after a won close).
+    const approved = approvedRaw.filter(
+      (c: any) =>
+        !c['Unsubscribed'] &&
+        String((c['Lead Source'] as any)?.name || c['Lead Source'] || '').trim() !== 'rancher-crm',
+    );
     const activeRanchers = await getAllRecords(TABLES.RANCHERS, '{Active Status} = "Active"') as any[];
 
     // Cache active referrals ONCE (was re-fetched per Day-7 buyer inside the

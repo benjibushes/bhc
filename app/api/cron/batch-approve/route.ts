@@ -9,7 +9,7 @@ import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { bulkRouteStateToRancher } from '@/lib/bulkRoute';
 import { getOperationalServedStates } from '@/lib/rancherEligibility';
 import { isQualifiedForRouting } from '@/lib/qualification';
-import { HELD_REFERRAL_STATUSES } from '@/lib/capacityCount';
+import { HELD_REFERRAL_STATUSES, heldCountsByRancher } from '@/lib/capacityCount';
 import { setCapacityCounter } from '@/lib/rancherCapacity';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
@@ -90,16 +90,11 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
       // two reconcilers computed different numbers and overwrote each other
       // daily. Now they compute identically. Pending Approval stays excluded
       // (pre-INCR); Suggested-only rows are not billed (a held referral has
-      // `Rancher` set once introduced).
-      const actualCounts: Record<string, number> = {};
-      for (const ref of allReferrals) {
-        if (!HELD_REFERRAL_STATUSES.has(ref['Status'])) continue;
-        const link = ref['Rancher'];
-        if (!Array.isArray(link)) continue;
-        for (const rId of link) {
-          if (typeof rId === 'string') actualCounts[rId] = (actualCounts[rId] || 0) + 1;
-        }
-      }
+      // `Rancher` set once introduced). My Leads (2026-07-29): the shared
+      // heldCountsByRancher also skips 'Referral Source' = 'rancher-added'
+      // rows — rancher-entered leads never INCR'd, so counting them here
+      // would "heal" every counter upward against the Redis truth.
+      const actualCounts: Record<string, number> = heldCountsByRancher(allReferrals);
 
       // Fix any rancher where the stored counter doesn't match reality
       for (const rancher of allRanchers) {

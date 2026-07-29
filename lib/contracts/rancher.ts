@@ -75,10 +75,44 @@ export function buildRecordCloseUpdates(
   return updates;
 }
 
+/**
+ * Pure per-row close behavior (My Leads, 2026-07-29). A rancher-entered lead
+ * ('Referral Source' = 'rancher-added', lib/rancherLeads) closes through the
+ * SAME recordClose contract as every other deal, with three deliberate
+ * differences, decided here so they are unit-testable:
+ *   - skipCapacityDecrement: the lead never INCR'd a capacity slot (it was
+ *     never routed), so a DECR would drift the Redis counter low and
+ *     over-book the rancher until the next truth reseed.
+ *   - skipAffiliateAndCapi: no affiliate-welcome email to a buyer who never
+ *     consented to BHC email, and no Meta Purchase — this sale was the
+ *     rancher's own sourcing, attributing it to ads would poison bidding.
+ *   - lostBuyerHandling 'close': a lost rancher-entered lead must NOT be
+ *     restored to READY / Ready-to-Buy (that would drop the rancher's own
+ *     customer into BHC's routing pool). They go quietly to CLOSED.
+ */
+export function recordCloseBehavior(ref: any): {
+  skipCapacityDecrement: boolean;
+  skipAffiliateAndCapi: boolean;
+  lostBuyerHandling: 'restore' | 'close';
+} {
+  const src = ref?.['Referral Source'];
+  const srcStr =
+    src && typeof src === 'object' && 'name' in (src as any)
+      ? String((src as any).name || '')
+      : String(src ?? '');
+  const rancherAdded = srcStr.trim() === 'rancher-added';
+  return {
+    skipCapacityDecrement: rancherAdded,
+    skipAffiliateAndCapi: rancherAdded,
+    lostBuyerHandling: rancherAdded ? 'close' : 'restore',
+  };
+}
+
 export async function recordClose(input: RecordCloseInput): Promise<{ ok: boolean; capacityFreed: boolean }> {
   const ref: any = await getRecordById(TABLES.REFERRALS, input.referralId);
   if (!ref) return { ok: false, capacityFreed: false };
   const prevStatus = String(ref['Status'] || '') as ReferralStatus;
+  const behavior = recordCloseBehavior(ref);
 
   const now = new Date().toISOString();
   const nextStatus: ReferralStatus =
@@ -98,7 +132,7 @@ export async function recordClose(input: RecordCloseInput): Promise<{ ok: boolea
   // slot frees once, at the real terminal close) — pre-fix it double-freed
   // when the deal later closed Won from Awaiting Payment.
   let capacityFreed = false;
-  if (shouldDecrementOnClose(prevStatus, nextStatus)) {
+  if (!behavior.skipCapacityDecrement && shouldDecrementOnClose(prevStatus, nextStatus)) {
     try {
       const newCount = await decrementCapacity(input.rancherId);
       await syncCapacityToAirtable(input.rancherId, newCount);
@@ -142,19 +176,25 @@ export async function recordClose(input: RecordCloseInput): Promise<{ ok: boolea
     // T2.2 (2026-07-02): also pays the UPSTREAM affiliate ('Referred By' on
     // the buyer) — ONLY on a fresh transition into Closed Won so dual webhook
     // delivery / retries can never double-credit a commission.
-    await enrollClosedWonAffiliate(buyerId, {
-      ...(prevStatus !== 'Closed Won' &&
-      typeof input.saleAmount === 'number' &&
-      input.saleAmount > 0
-        ? {
-            credit: {
-              referralId: input.referralId,
-              rancherId: input.rancherId,
-              saleAmount: input.saleAmount,
-            },
-          }
-        : {}),
-    });
+    //
+    // My Leads: rancher-entered leads skip enrollment entirely — the welcome
+    // email is a BHC marketing touch this buyer never consented to, and the
+    // sale wasn't sourced by any affiliate.
+    if (!behavior.skipAffiliateAndCapi) {
+      await enrollClosedWonAffiliate(buyerId, {
+        ...(prevStatus !== 'Closed Won' &&
+        typeof input.saleAmount === 'number' &&
+        input.saleAmount > 0
+          ? {
+              credit: {
+                referralId: input.referralId,
+                rancherId: input.rancherId,
+                saleAmount: input.saleAmount,
+              },
+            }
+          : {}),
+      });
+    }
 
     // Meta CAPI: the attributed Purchase for this close. recordClose covers the
     // Stripe final-invoice, Telegram/quick-action, and tier_v2 webhook close
@@ -164,16 +204,29 @@ export async function recordClose(input: RecordCloseInput): Promise<{ ok: boolea
     // guard + positive amount). Off-session, so attribution rides on the buyer's
     // stored fbclid rebuilt into _fbc. When the flag is off, settleFinalInvoice
     // keeps firing its legacy Purchase (no double-count). Never blocks the close.
-    fireClosePurchaseIfEnabled({
-      referralId: input.referralId,
-      buyerId,
-      saleAmount: input.saleAmount,
-      prevStatus,
-      closedAtIso: now,
-    });
+    if (!behavior.skipAffiliateAndCapi) {
+      fireClosePurchaseIfEnabled({
+        referralId: input.referralId,
+        buyerId,
+        saleAmount: input.saleAmount,
+        prevStatus,
+        closedAtIso: now,
+      });
+    }
   }
   if (buyerId && input.outcome === 'lost') {
-    await restoreBuyerAfterClosedLost(buyerId, input.referralId);
+    if (behavior.lostBuyerHandling === 'close') {
+      // Rancher-entered lead: the buyer belongs to the RANCHER. Never restore
+      // them to READY / Ready-to-Buy — that would hand the rancher's own
+      // customer to the routing pool. Quiet CLOSED, nothing else.
+      try {
+        await transitionBuyerStage(buyerId, 'CLOSED', 'rancher-crm:lost');
+      } catch (e: any) {
+        console.warn('[contracts.recordClose] rancher-crm lost buyer flip failed:', e?.message);
+      }
+    } else {
+      await restoreBuyerAfterClosedLost(buyerId, input.referralId);
+    }
   }
 
   // Only on a FRESH transition — a re-run (dual webhook delivery / retry) must

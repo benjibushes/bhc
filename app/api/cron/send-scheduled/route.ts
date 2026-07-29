@@ -41,6 +41,13 @@ async function getRecipients(audienceType: string, _selectedStates?: string[]) {
     if (record['Unsubscribed'] === true) return false;
     if (record['Bounced'] === true) return false;
     if (record['Complained'] === true) return false;
+    // My Leads (2026-07-29): rancher-entered buyers ('Lead Source' =
+    // 'rancher-crm') never consented to BHC broadcasts — they opted into the
+    // RANCHER. Their rows carry a blank Segment, which the 'consumers' and
+    // 'consumers-community' audiences would otherwise sweep up. No-op for
+    // Ranchers rows (field absent reads '').
+    const leadSource = String((record['Lead Source'] as any)?.name || record['Lead Source'] || '');
+    if (leadSource.trim() === 'rancher-crm') return false;
     return true;
   };
 
