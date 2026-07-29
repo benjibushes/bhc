@@ -114,8 +114,12 @@ export async function GET(request: Request) {
       return rancherLinks.includes(myId) || suggested.includes(myId);
     });
 
+    // Routed active intros only — My Leads rows ('Referral Source' =
+    // 'rancher-added') are the rancher's own CRM pipeline, not BHC-routed
+    // buyer slots, so they stay out of this vitals stat.
     const activeReferrals = myReferrals.filter((r: any) =>
-      ['Intro Sent', 'Rancher Contacted', 'Negotiation'].includes(r['Status'])
+      ['Intro Sent', 'Rancher Contacted', 'Negotiation'].includes(r['Status']) &&
+      String((r['Referral Source'] as any)?.name || r['Referral Source'] || '') !== 'rancher-added'
     );
 
     const closedWon = myReferrals.filter((r: any) => r['Status'] === 'Closed Won');
@@ -225,6 +229,11 @@ export async function GET(request: Request) {
       // deposit_amount, matching the send-final-invoice server charge).
       processing_fee: Number(r['Processing Fee'] || 0),
       processing_date: r['Processing Date'] || '',
+      // My Leads (2026-07-29): provenance marker — 'rancher-added' rows are
+      // the rancher's own CRM leads. The dashboard renders them in the My
+      // Leads block (Customers tab) and keeps them out of the routed Deals
+      // lists. Tolerates the Airtable {name} object read shape.
+      referral_source: String((r['Referral Source'] as any)?.name || r['Referral Source'] || ''),
       };
     });
 

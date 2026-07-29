@@ -122,6 +122,74 @@ test('isActiveDealReferral: malformed input does not throw', () => {
   assert.equal(isActiveDealReferral({ Status: 'Pending Approval', Rancher: 'not-an-array' } as any), false);
 });
 
+// ── rancher-added leads NEVER consume routing capacity (My Leads, 2026-07-29) ──
+// A rancher-entered lead ('Referral Source' = 'rancher-added') was never
+// routed and never INCR'd — counting it would shrink the rancher's visible
+// capacity for the leads BHC routes. One choke point: the canonical counter
+// (and the shared per-rancher bucketing below) skip these rows, so the Redis
+// seed, drift-check, batch-approve self-heal, stale-expiry resync, and
+// admin/health all agree. isActiveDealReferral deliberately still counts them
+// (a buyer mid-deal with their own rancher must not be double-routed).
+
+import { heldCountsByRancher } from './capacityCount';
+
+test('countHeldReferrals: skips rancher-added rows in every held status', () => {
+  const refs = [...HELD_REFERRAL_STATUSES].map((s) => ({
+    Status: s,
+    Rancher: [RID],
+    'Referral Source': 'rancher-added',
+  }));
+  assert.equal(countHeldReferrals(RID, refs), 0);
+});
+
+test('countHeldReferrals: mixed routed + rancher-added counts only routed', () => {
+  const refs = [
+    { Status: 'Rancher Contacted', Rancher: [RID] },
+    { Status: 'Rancher Contacted', Rancher: [RID], 'Referral Source': 'rancher-added' },
+    { Status: 'Negotiation', Rancher: [RID], 'Referral Source': { name: 'rancher-added' } },
+  ];
+  assert.equal(countHeldReferrals(RID, refs), 1);
+});
+
+test('heldCountsByRancher: same rule as countHeldReferrals, bucketed per rancher', () => {
+  const counts = heldCountsByRancher([
+    { Status: 'Intro Sent', Rancher: [RID] },
+    { Status: 'Slot Locked', Rancher: [RID] },
+    { Status: 'Rancher Contacted', Rancher: [OTHER] },
+    { Status: 'Rancher Contacted', Rancher: [RID], 'Referral Source': 'rancher-added' },
+    { Status: 'Pending Approval', Rancher: [RID] }, // pre-INCR — excluded
+    { Status: 'Closed Won', Rancher: [RID] },       // terminal — excluded
+    { Status: 'Intro Sent' },                        // unlinked — excluded
+  ]);
+  assert.deepEqual(counts, { [RID]: 2, [OTHER]: 1 });
+});
+
+test('heldCountsByRancher and countHeldReferrals can never disagree (drift-alarm guard)', () => {
+  const refs = [
+    { Status: 'Intro Sent', Rancher: [RID] },
+    { Status: 'Negotiation', Rancher: [RID], 'Referral Source': 'rancher-added' },
+    { Status: 'Awaiting Payment', Rancher: [RID] },
+    { Status: 'Rancher Contacted', Rancher: [OTHER, RID] },
+  ];
+  const bucketed = heldCountsByRancher(refs);
+  assert.equal(bucketed[RID] || 0, countHeldReferrals(RID, refs));
+  assert.equal(bucketed[OTHER] || 0, countHeldReferrals(OTHER, refs));
+});
+
+test('isActiveDealReferral: a HELD rancher-added lead IS an active deal (no double-routing)', () => {
+  // Guard (d): matching/suggest, batch-approve and stuck-buyer-recovery all
+  // derive "buyer already in a deal" from this predicate — a rancher-entered
+  // lead mid-conversation must block a second referral for the same buyer.
+  assert.equal(
+    isActiveDealReferral({ Status: 'Rancher Contacted', 'Referral Source': 'rancher-added', Rancher: [RID] }),
+    true,
+  );
+  assert.equal(
+    isActiveDealReferral({ Status: 'Negotiation', 'Referral Source': 'rancher-added', Rancher: [RID] }),
+    true,
+  );
+});
+
 import { countClosedWonReferrals } from './capacityCount';
 test('countClosedWonReferrals: counts only Closed Won on the Rancher link', () => {
   const R='recR1';

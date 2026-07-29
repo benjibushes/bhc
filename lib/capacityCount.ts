@@ -2,6 +2,18 @@
 // Airtable) so it can be unit-tested directly and reused as the ONE canonical
 // definition of "how many active referrals does a rancher hold."
 //
+// MY LEADS (2026-07-29): rancher-entered leads — Referrals rows with
+// 'Referral Source' = 'rancher-added' — NEVER consume routing capacity. They
+// were never routed and never INCR'd, so counting them would silently shrink
+// the rancher's visible capacity for the leads BHC routes (and manufacture
+// drift alarms against the Redis counter, which never saw an INCR for them).
+// The skip lives HERE, in the one canonical counter + the shared per-rancher
+// bucketing, so the Redis seed (liveHeldCountForRancher), capacity-drift-check,
+// batch-approve's self-heal, referral-stale-expiry's resync, and admin/health
+// all compute the SAME number. isActiveDealReferral deliberately does NOT
+// skip them: a buyer mid-deal with their own rancher must still block a new
+// match (no double-dealing a buyer).
+//
 // Before this module the "held referral" definition was duplicated across
 // capacity-drift-check (5 statuses, Rancher link), batch-approve ((Rancher||
 // Suggested)[0]), and admin/health (4 statuses incl. Pending Approval) — three
@@ -44,8 +56,20 @@ export function isActiveDealReferral(ref: any): boolean {
   return false;
 }
 
+// Does this referral count toward the rancher's held-capacity number?
+// Held status AND not a rancher-entered lead (see header — 'rancher-added'
+// rows never INCR'd, so they must never be counted). Tolerates the Airtable
+// {name}-object read shape for the source field. Pure + synchronous.
+export function isCapacityCountedReferral(ref: any): boolean {
+  if (!HELD_REFERRAL_STATUSES.has(ref?.['Status'])) return false;
+  const src = ref?.['Referral Source'];
+  const srcStr =
+    src && typeof src === 'object' && 'name' in src ? String((src as any).name || '') : String(src ?? '');
+  return srcStr.trim() !== 'rancher-added';
+}
+
 // Count held referrals attributed to a rancher from a referrals array.
-// Attribution = Status ∈ HELD_REFERRAL_STATUSES AND the `Rancher` link array
+// Attribution = isCapacityCountedReferral AND the `Rancher` link array
 // includes the rancher id. NOT `Suggested Rancher` — a held referral always has
 // `Rancher` set once introduced (the INCR fires at Intro Sent, which sets it);
 // counting Suggested would double-bill a slot mid-reassign. Pure + synchronous.
@@ -53,11 +77,30 @@ export function countHeldReferrals(rancherId: string, referrals: any[]): number 
   if (!rancherId || !Array.isArray(referrals)) return 0;
   let n = 0;
   for (const ref of referrals) {
-    if (!HELD_REFERRAL_STATUSES.has(ref?.['Status'])) continue;
+    if (!isCapacityCountedReferral(ref)) continue;
     const link = ref?.['Rancher'];
     if (Array.isArray(link) && link.includes(rancherId)) n++;
   }
   return n;
+}
+
+// Per-rancher held counts in ONE pass — the shared bucketing for the
+// reconcilers (capacity-drift-check + batch-approve self-heal). Same rule as
+// countHeldReferrals by construction (both gate on isCapacityCountedReferral
+// + the Rancher link), pinned by lib/capacityCount.test.ts — a filter applied
+// in one reconciler but not the other would manufacture daily drift alarms.
+export function heldCountsByRancher(referrals: any[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  if (!Array.isArray(referrals)) return counts;
+  for (const ref of referrals) {
+    if (!isCapacityCountedReferral(ref)) continue;
+    const link = ref?.['Rancher'];
+    if (!Array.isArray(link)) continue;
+    for (const rid of link) {
+      if (typeof rid === 'string' && rid) counts[rid] = (counts[rid] || 0) + 1;
+    }
+  }
+  return counts;
 }
 
 // CAPACITY = CLOSED SALES, not held leads (founder rule 2026-07-08). A rancher

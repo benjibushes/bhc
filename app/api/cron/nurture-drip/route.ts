@@ -84,6 +84,9 @@ async function realHandler(_request: Request): Promise<DripResult> {
         email: String(c['Email'] || ''),
         nurtureTouch: Number(c['Nurture Touch'] || 0),
         hasActiveDeal: activeDealBuyers.has(c.id),
+        // My Leads (2026-07-29): 'rancher-crm' buyers never enter the drip —
+        // they opted into the RANCHER, not into BHC marketing.
+        leadSource: String((c['Lead Source'] as any)?.name || c['Lead Source'] || ''),
       },
       now,
     );

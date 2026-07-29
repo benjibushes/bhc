@@ -183,6 +183,11 @@ interface Referral {
   // deposit_amount (the server charges total − deposit in send-final-invoice).
   processing_fee?: number;
   processing_date?: string;
+  // MY LEADS (2026-07-29): 'rancher-added' = a lead the rancher entered
+  // themselves (My Leads CRM in the Customers tab). These rows are excluded
+  // from the routed Deals lists and use the {stage} PATCH rail, never the
+  // legacy status buttons.
+  referral_source?: string;
 }
 
 interface NetworkBenefit {
@@ -299,6 +304,20 @@ export default function RancherDashboardPage() {
   // WAVE 3a — CRM customers, loaded from the scoped /api/rancher/customers route.
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [customerSearch, setCustomerSearch] = useState('');
+  // MY LEADS (2026-07-29) — rancher-entered lead CRM (Customers tab). The add
+  // form is three inputs + note; one contact method (email OR phone) required,
+  // said up front in the legend so it's never a 400 surprise (#508 lesson).
+  const [leadForm, setLeadForm] = useState({ name: '', phone: '', email: '', note: '' });
+  const [leadSubmitting, setLeadSubmitting] = useState(false);
+  const [leadFormError, setLeadFormError] = useState('');
+  // Per-row stage updates: id being updated + last row-scoped error.
+  const [leadUpdatingId, setLeadUpdatingId] = useState<string | null>(null);
+  const [leadRowError, setLeadRowError] = useState<{ id: string; message: string } | null>(null);
+  // Won modal (sale amount prompt, matching existing modal style) + two-tap
+  // Lost confirm (first tap arms, second confirms — no window.prompt on mobile).
+  const [leadWonModal, setLeadWonModal] = useState<Referral | null>(null);
+  const [leadWonAmount, setLeadWonAmount] = useState('');
+  const [leadLostArmedId, setLeadLostArmedId] = useState<string | null>(null);
   const [rancherInfo, setRancherInfo] = useState<RancherInfo | null>(null);
   const [stats, setStats] = useState<Stats | null>(null);
   const [referrals, setReferrals] = useState<Referral[]>([]);
@@ -1311,6 +1330,90 @@ export default function RancherDashboardPage() {
     }
   };
 
+  // ── MY LEADS (2026-07-29) — add + stage handlers ─────────────────────────
+  const submitAddLead = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLeadFormError('');
+    if (leadForm.name.trim().length < 2) {
+      setLeadFormError('Give the lead a name (2+ characters).');
+      return;
+    }
+    if (!leadForm.email.trim() && !leadForm.phone.trim()) {
+      setLeadFormError('Add at least one way to reach them — email or phone.');
+      return;
+    }
+    setLeadSubmitting(true);
+    try {
+      const res = await fetch('/api/rancher/referrals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          name: leadForm.name.trim(),
+          email: leadForm.email.trim(),
+          phone: leadForm.phone.trim(),
+          note: leadForm.note.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setLeadFormError(data.error || 'Could not save the lead — try again.');
+        return;
+      }
+      setLeadForm({ name: '', phone: '', email: '', note: '' });
+      await fetchDashboard();
+    } catch {
+      setLeadFormError('Network error. Please try again.');
+    } finally {
+      setLeadSubmitting(false);
+    }
+  };
+
+  const updateLeadStage = async (
+    ref: Referral,
+    stage: 'new' | 'talking' | 'won' | 'lost',
+    saleAmount?: number,
+  ) => {
+    setLeadUpdatingId(ref.id);
+    setLeadRowError(null);
+    try {
+      const res = await fetch(`/api/rancher/referrals/${ref.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ stage, ...(saleAmount !== undefined ? { saleAmount } : {}) }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setLeadRowError({ id: ref.id, message: data.error || 'Could not update — try again.' });
+        return false;
+      }
+      await fetchDashboard();
+      return true;
+    } catch {
+      setLeadRowError({ id: ref.id, message: 'Network error. Please try again.' });
+      return false;
+    } finally {
+      setLeadUpdatingId(null);
+      setLeadLostArmedId(null);
+    }
+  };
+
+  const submitLeadWon = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!leadWonModal) return;
+    const amount = parseFloat(leadWonAmount);
+    if (!isFinite(amount) || amount <= 0) {
+      setLeadRowError({ id: leadWonModal.id, message: 'Enter the sale amount (e.g. 2500).' });
+      return;
+    }
+    const ok = await updateLeadStage(leadWonModal, 'won', amount);
+    if (ok) {
+      setLeadWonModal(null);
+      setLeadWonAmount('');
+    }
+  };
+
   const handleLogout = async () => {
     await fetch('/api/auth/rancher/session', { method: 'DELETE' });
     router.push('/');
@@ -1711,10 +1814,22 @@ export default function RancherDashboardPage() {
 
   if (!rancherInfo || !stats) return null;
 
-  const activeRefs = referrals.filter(r => ['Intro Sent', 'Rancher Contacted', 'Negotiation'].includes(r.status));
+  // MY LEADS (2026-07-29): rancher-entered leads live in the Customers tab
+  // CRM block and use the {stage} PATCH rail — the routed Deals lists (whose
+  // cards wire the legacy status/pass actions) exclude them. Deposit-touched
+  // My Leads rows still ride the money rails below (awaiting payment /
+  // collect balance) so the existing deposit → final invoice flow completes.
+  const isMyLead = (r: Referral) => (r.referral_source || '') === 'rancher-added';
+  const myLeads = referrals
+    .filter(isMyLead)
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  const myLeadsOpen = myLeads.filter(r => !['Closed Won', 'Closed Lost', 'Refunded', 'Dormant'].includes(r.status));
+  const myLeadsClosed = myLeads.filter(r => ['Closed Won', 'Closed Lost', 'Refunded'].includes(r.status));
+
+  const activeRefs = referrals.filter(r => ['Intro Sent', 'Rancher Contacted', 'Negotiation'].includes(r.status) && !isMyLead(r));
   // Wave C: 'Refunded' rides the closed bucket so a refunded deal stays
   // visible (previously it matched no bucket and vanished from the dashboard).
-  const closedRefs = referrals.filter(r => ['Closed Won', 'Closed Lost', 'Refunded'].includes(r.status));
+  const closedRefs = referrals.filter(r => ['Closed Won', 'Closed Lost', 'Refunded'].includes(r.status) && !isMyLead(r));
 
   // ── WAVE 3a: find/awareness layer (derived from already-loaded referrals) ──
   // The dashboard payload IS the complete set of this rancher's referrals, so
@@ -1764,7 +1879,9 @@ export default function RancherDashboardPage() {
   // referrals list already renders every active/closed row, so switching tabs +
   // closing the search panel is enough; deep-scroll is a nice-to-have we skip.
   const jumpToReferral = (referralId: string) => {
-    setActiveTab('referrals');
+    // My Leads rows render in the Customers tab CRM block, not Deals.
+    const target = referrals.find((r) => r.id === referralId);
+    setActiveTab(target && isMyLead(target) ? 'customers' : 'referrals');
     setSearchOpen(false);
     setSearchQuery('');
     setMoreOpen(false);
@@ -1796,8 +1913,12 @@ export default function RancherDashboardPage() {
   // the confirm-payment endpoint existed but had zero callers, so the rancher
   // could never finish the close from the dashboard. Surface them here. Exclude
   // deposit-paid rows that the Collect Balance section already handles.
+  // My Leads rows with an UNPAID deposit link stay in the My Leads block
+  // (chip + won/lost + re-request) — the ReferralCard here wires legacy
+  // actions their PATCH rail rejects. Once the deposit PAYS they graduate to
+  // the collect-balance money rail below like any other deal.
   const awaitingPaymentRefs = referrals.filter(
-    (r) => r.status === 'Awaiting Payment' && !(r.deposit_paid_at && (r.deposit_amount || 0) > 0),
+    (r) => r.status === 'Awaiting Payment' && !(r.deposit_paid_at && (r.deposit_amount || 0) > 0) && !isMyLead(r),
   );
   // Collect Balance: deposit-paid + final balance not yet collected. Sorted
   // oldest deposit first so ranchers collect in the right priority order. Purely
@@ -2797,6 +2918,196 @@ export default function RancherDashboardPage() {
                     aria-label="Filter customers"
                     className="w-full sm:w-64 px-3 py-2 min-h-[44px] text-sm border border-dust bg-bone text-charcoal placeholder:text-dust focus:outline-none focus:border-charcoal transition-colors"
                   />
+                )}
+              </div>
+
+              {/* ── MY LEADS (2026-07-29) — rancher-entered lead CRM ─────────
+                  People the rancher meets at markets, on calls, neighbors —
+                  typed in here, tracked like a real pipeline. Rows are
+                  Referrals with 'Referral Source'='rancher-added'; stage
+                  moves ride the {stage} PATCH rail (never the legacy deal
+                  buttons). Deposit ask reuses the EXISTING request-deposit
+                  modal — email required for that, said inline. */}
+              <div className="space-y-4 p-4 sm:p-6 border border-dust bg-white">
+                <div>
+                  <h3 className="font-serif text-xl text-charcoal">my leads</h3>
+                  <p className="text-sm text-saddle mt-1">
+                    {myLeads.length === 0
+                      ? 'met someone at the market or on a call? add them here and track the sale.'
+                      : 'your own pipeline — people you brought, tracked to the close.'}
+                  </p>
+                </div>
+
+                {/* Add form — three inputs + optional note, one button. */}
+                <form onSubmit={submitAddLead} className="space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <input
+                      type="text"
+                      value={leadForm.name}
+                      onChange={(e) => setLeadForm({ ...leadForm, name: e.target.value })}
+                      placeholder="name"
+                      aria-label="Lead name"
+                      maxLength={80}
+                      className="w-full px-3 py-2 min-h-[44px] text-sm border border-dust bg-bone text-charcoal placeholder:text-dust focus:outline-none focus:border-charcoal transition-colors"
+                    />
+                    <input
+                      type="tel"
+                      value={leadForm.phone}
+                      onChange={(e) => setLeadForm({ ...leadForm, phone: e.target.value })}
+                      placeholder="phone"
+                      aria-label="Lead phone"
+                      className="w-full px-3 py-2 min-h-[44px] text-sm border border-dust bg-bone text-charcoal placeholder:text-dust focus:outline-none focus:border-charcoal transition-colors"
+                    />
+                    <input
+                      type="email"
+                      value={leadForm.email}
+                      onChange={(e) => setLeadForm({ ...leadForm, email: e.target.value })}
+                      placeholder="email"
+                      aria-label="Lead email"
+                      className="w-full px-3 py-2 min-h-[44px] text-sm border border-dust bg-bone text-charcoal placeholder:text-dust focus:outline-none focus:border-charcoal transition-colors"
+                    />
+                  </div>
+                  <input
+                    type="text"
+                    value={leadForm.note}
+                    onChange={(e) => setLeadForm({ ...leadForm, note: e.target.value })}
+                    placeholder="note (optional) — e.g. wants a half in the fall"
+                    aria-label="Lead note"
+                    maxLength={500}
+                    className="w-full px-3 py-2 min-h-[44px] text-sm border border-dust bg-bone text-charcoal placeholder:text-dust focus:outline-none focus:border-charcoal transition-colors"
+                  />
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                    <button
+                      type="submit"
+                      disabled={leadSubmitting}
+                      className="px-5 py-2 min-h-[44px] text-sm font-medium bg-charcoal text-bone hover:bg-saddle transition-colors disabled:opacity-50"
+                    >
+                      {leadSubmitting ? 'Adding…' : 'Add lead'}
+                    </button>
+                    <p className="text-[11px] uppercase tracking-widest text-dust">
+                      phone or email — at least one
+                    </p>
+                  </div>
+                  {leadFormError && <p className="text-sm text-weathered">{leadFormError}</p>}
+                </form>
+
+                {/* Open leads — newest first. */}
+                {myLeadsOpen.length > 0 && (
+                  <div className="space-y-3">
+                    {myLeadsOpen.map((lead) => {
+                      const depositPaid = !!lead.deposit_paid_at;
+                      const depositOut = !!lead.deposit_requested_at && !depositPaid;
+                      const onDepositRail = ['Awaiting Payment', 'Slot Locked'].includes(lead.status);
+                      const stageChip = depositPaid
+                        ? { label: 'deposit paid', cls: 'bg-sage/15 text-sage-dark' }
+                        : depositOut || onDepositRail
+                          ? { label: 'deposit link sent', cls: 'bg-amber/20 text-amber-dark' }
+                          : lead.status === 'Negotiation'
+                            ? { label: 'in talks', cls: 'bg-amber/20 text-amber-dark' }
+                            : { label: 'new', cls: 'bg-bone-warm text-charcoal' };
+                      const busy = leadUpdatingId === lead.id;
+                      // Shown for pre-deposit leads AND unpaid deposit-link
+                      // rows (the existing modal handles the re-request path).
+                      const canRequestDeposit = depositEligible && !!lead.buyer_email && !depositPaid;
+                      return (
+                        <div key={lead.id} id={`ref-${lead.id}`} className="p-4 border border-dust bg-bone scroll-mt-24 space-y-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className={`inline-block px-2 py-0.5 text-xs font-medium ${stageChip.cls}`}>
+                              {stageChip.label}
+                            </span>
+                            <span className="font-medium text-charcoal">{lead.buyer_name}</span>
+                          </div>
+                          <p className="text-xs text-dust">
+                            {[lead.buyer_phone, lead.buyer_email].filter(Boolean).join(' · ') || 'no contact on file'}
+                          </p>
+                          {lead.notes && (
+                            <p className="text-xs text-saddle whitespace-pre-line">{lead.notes.split('[Source]')[0].replace('[Rancher note]', '').trim()}</p>
+                          )}
+                          {leadRowError?.id === lead.id && (
+                            <p className="text-xs text-weathered">{leadRowError.message}</p>
+                          )}
+                          {depositPaid ? (
+                            <p className="text-xs text-saddle">
+                              deposit in — finish this one from the Deals tab (final invoice &amp; fulfillment).
+                            </p>
+                          ) : (
+                            <div className="flex flex-wrap gap-2 pt-1">
+                              {lead.status === 'Rancher Contacted' && (
+                                <button
+                                  onClick={() => updateLeadStage(lead, 'talking')}
+                                  disabled={busy}
+                                  className="px-3 py-1.5 min-h-[44px] text-xs border border-charcoal text-charcoal hover:bg-charcoal hover:text-bone transition-colors disabled:opacity-50"
+                                >
+                                  {busy ? 'Saving…' : 'In talks'}
+                                </button>
+                              )}
+                              {canRequestDeposit && (
+                                <button
+                                  onClick={() => openDepositModal(lead)}
+                                  disabled={busy}
+                                  className="px-3 py-1.5 min-h-[44px] text-xs font-medium bg-sage text-bone hover:bg-sage-dark transition-colors disabled:opacity-50"
+                                  title="Send a deposit link — card payment straight to your Stripe account."
+                                >
+                                  {lead.deposit_requested_at ? 'Re-request deposit' : 'Request deposit'}
+                                </button>
+                              )}
+                              {depositEligible && !lead.buyer_email && !onDepositRail && (
+                                <span className="text-[11px] text-dust self-center">
+                                  add email to send a deposit link
+                                </span>
+                              )}
+                              <button
+                                onClick={() => { setLeadWonModal(lead); setLeadWonAmount(''); }}
+                                disabled={busy}
+                                className="px-3 py-1.5 min-h-[44px] text-xs font-medium bg-charcoal text-bone hover:bg-saddle transition-colors disabled:opacity-50"
+                              >
+                                Won
+                              </button>
+                              {leadLostArmedId === lead.id ? (
+                                <button
+                                  onClick={() => updateLeadStage(lead, 'lost')}
+                                  disabled={busy}
+                                  className="px-3 py-1.5 min-h-[44px] text-xs font-medium bg-weathered text-bone transition-colors disabled:opacity-50"
+                                >
+                                  {busy ? 'Saving…' : 'Confirm lost?'}
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => setLeadLostArmedId(lead.id)}
+                                  disabled={busy}
+                                  className="px-3 py-1.5 min-h-[44px] text-xs border border-dust text-saddle hover:border-charcoal transition-colors disabled:opacity-50"
+                                >
+                                  Lost
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Closed leads — compact list, chip + amount. */}
+                {myLeadsClosed.length > 0 && (
+                  <div className="space-y-1 pt-1">
+                    <p className="text-[11px] uppercase tracking-widest text-dust">closed</p>
+                    {myLeadsClosed.map((lead) => (
+                      <div key={lead.id} className="flex items-center justify-between gap-2 py-1.5 border-b border-dust/40 last:border-b-0">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className={`inline-block px-2 py-0.5 text-[10px] font-medium ${statusStyles[lead.status] || 'bg-dust/20 text-saddle'}`}>
+                            {lead.status === 'Closed Won' ? 'won' : lead.status === 'Closed Lost' ? 'lost' : lead.status.toLowerCase()}
+                          </span>
+                          <span className="text-sm text-charcoal truncate">{lead.buyer_name}</span>
+                        </div>
+                        {lead.status === 'Closed Won' && (lead.sale_amount || 0) > 0 && (
+                          <span className="text-sm font-medium text-charcoal flex-shrink-0">
+                            ${Number(lead.sale_amount).toLocaleString()}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
 
@@ -4780,6 +5091,51 @@ export default function RancherDashboardPage() {
       </Container>
 
       {/* Mark Lost Modal — Audit #17 (2026-05-28) replaces window.prompt */}
+      {/* MY LEADS — won modal: one input (sale amount), matching modal style. */}
+      {leadWonModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-bone p-8 max-w-md w-full space-y-6 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-start">
+              <h2 className="font-serif text-2xl">mark lead won</h2>
+              <button
+                onClick={() => { setLeadWonModal(null); setLeadWonAmount(''); }}
+                className="text-2xl leading-none hover:text-saddle"
+              >
+                ×
+              </button>
+            </div>
+            <p className="text-sm text-saddle">
+              Lead: <strong className="text-charcoal">{leadWonModal.buyer_name}</strong>
+            </p>
+            <form onSubmit={submitLeadWon} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-2">Final sale amount ($)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={leadWonAmount}
+                  onChange={(e) => setLeadWonAmount(e.target.value)}
+                  placeholder="2500"
+                  autoFocus
+                  className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal"
+                />
+              </div>
+              {leadRowError?.id === leadWonModal.id && (
+                <div className="p-3 border border-weathered text-weathered text-sm">{leadRowError.message}</div>
+              )}
+              <button
+                type="submit"
+                disabled={leadUpdatingId === leadWonModal.id}
+                className="w-full px-5 py-3 min-h-[44px] text-sm font-medium bg-charcoal text-bone hover:bg-saddle transition-colors disabled:opacity-50"
+              >
+                {leadUpdatingId === leadWonModal.id ? 'Saving…' : 'Confirm won'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
       {lostModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-bone p-8 max-w-md w-full space-y-6 max-h-[90vh] overflow-y-auto">

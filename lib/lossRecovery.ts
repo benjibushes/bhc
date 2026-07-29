@@ -273,6 +273,17 @@ export function selectLossRecovery(input: SelectLossRecoveryInput): LossRecovery
   for (const ref of candidates || []) {
     if (readEnumOrString(ref['Status']).trim() !== 'Closed Lost') { skip('not-closed-lost'); continue; }
 
+    // My Leads (2026-07-29): a rancher-entered lead ('Referral Source' =
+    // 'rancher-added') that closed lost is the RANCHER's own relationship —
+    // recovery emails would market to a buyer who never consented, and a
+    // 're-engage' action could route them toward a DIFFERENT rancher. Skip
+    // before any action mapping. (Belt: the My Leads lost path also writes
+    // Loss Reason 'Other', whose action is 'none'.)
+    if (readEnumOrString(ref['Referral Source']).trim() === 'rancher-added') {
+      skip('rancher-added-crm');
+      continue;
+    }
+
     const reason = readEnumOrString(ref[LOSS_REASON_FIELD]).trim();
     const action = actionForLossReason(reason);
     if (!reason) { skip('no-loss-reason'); continue; } // pre-#396 rows — graceful no-op

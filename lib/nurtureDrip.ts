@@ -54,6 +54,10 @@ export interface NurtureCandidate {
   email: string;           // Consumers['Email']
   nurtureTouch: number;    // Consumers['Nurture Touch'] (0/NaN = none sent)
   hasActiveDeal: boolean;  // any isActiveDealReferral row for this buyer
+  /** Consumers['Lead Source'] — 'rancher-crm' rows (My Leads, 2026-07-29)
+   *  never enter the drip: the buyer opted into the RANCHER, not into BHC
+   *  marketing. Belt over the stage/stamp gates. */
+  leadSource?: string;
 }
 
 /**
@@ -63,6 +67,9 @@ export interface NurtureCandidate {
  */
 export function dueNurtureTouch(c: NurtureCandidate, nowMs: number): NurtureTouch | null {
   if (!c.email || !c.email.includes('@')) return null;
+  // My Leads (2026-07-29): rancher-entered buyers never consented to BHC
+  // marketing — the marker alone excludes them, regardless of stage/stamps.
+  if (String(c.leadSource || '').trim() === 'rancher-crm') return null;
   const stage = String(c.buyerStage || '');
   if (stage !== 'WAITING' && stage !== 'READY') return null;
   if (c.hasActiveDeal) return null;

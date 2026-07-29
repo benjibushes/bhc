@@ -106,11 +106,22 @@ function createdTimeMs(c: WaitingConsumerLike): number {
  * Per-record predicate: should this consumer get a waiting-activation nudge
  * right now? Pure — reads only the record + options.
  */
+// My Leads (2026-07-29): rancher-entered buyers ('Lead Source' =
+// 'rancher-crm', lib/rancherLeads) opted into the RANCHER, never into BHC
+// marketing — both nudge rails exclude them on the marker alone, regardless
+// of stage/stamps. Tolerates the Airtable {name} object read shape.
+function isRancherCrmConsumer(c: WaitingConsumerLike): boolean {
+  const v = c?.['Lead Source'];
+  const s = v && typeof v === 'object' && 'name' in (v as any) ? String((v as any).name || '') : String(v ?? '');
+  return s.trim() === 'rancher-crm';
+}
+
 export function isWaitingNudgeEligible(
   c: WaitingConsumerLike,
   opts: Pick<WaitingNudgeOptions, 'nowISO' | 'cooldownDays'>,
 ): boolean {
   if (String(c['Buyer Stage'] || '').trim() !== 'WAITING') return false;
+  if (isRancherCrmConsumer(c)) return false;
 
   if (!String(c['Email'] || '').trim()) return false;
 
@@ -209,6 +220,7 @@ export function isReadyChaseEligible(
   opts: Pick<WaitingNudgeOptions, 'nowISO' | 'cooldownDays'>,
 ): boolean {
   if (String(c['Buyer Stage'] || '').trim() !== 'READY') return false;
+  if (isRancherCrmConsumer(c)) return false;
 
   if (!String(c['Email'] || '').trim()) return false;
 
