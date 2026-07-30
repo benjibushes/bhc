@@ -7,23 +7,16 @@
 // Connect pays the rancher's bank automatically per the connected account's
 // payout schedule.
 //
-// What it does:
-//   1. Rancher-session JWT auth
-//   2. Validate referral exists + rancher owns it
-//   3. Validate a succeeded Payments row exists for this referral
-//      (no marking fulfillment for a deal that never collected money)
-//   4. Stamp Referrals.Fulfillment Confirmed At = now (idempotent — re-confirm is no-op)
-//   5. Fire buyer fulfillment-confirmation email (closes the loop)
-//   6. Fire Telegram alert to admin (celebration + audit trail)
+// Wave 2 (2026-07-29): the validation + stamp + side effects (payment gate,
+// Fulfillment Confirmed At, buyer email, funnel, Telegram) moved verbatim to
+// lib/fulfillmentConfirm.ts confirmFulfillmentForReferral so the richer
+// tracker's `fulfilled` status (/api/rancher/referrals/[id]/fulfillment)
+// fires the SAME rail. This route keeps: auth, body parse, ownership.
 
 import { NextResponse } from 'next/server';
-import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
-import { findPaymentsByReferral } from '@/lib/contracts/payments';
-import { sendBuyerFulfillmentConfirmation } from '@/lib/email';
-import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { getRecordById, TABLES } from '@/lib/airtable';
 import { requireRancher } from '@/lib/rancherAuth';
-import { funnelRecord } from '@/lib/funnelMetrics';
-import { referralRail } from '@/lib/commission';
+import { confirmFulfillmentForReferral } from '@/lib/fulfillmentConfirm';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -57,127 +50,26 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Referral not assigned to this rancher' }, { status: 403 });
   }
 
-  // ── Idempotency ──
-  if (referral['Fulfillment Confirmed At']) {
+  // ── Shared confirm rail (idempotency + payment gate + stamp + side effects) ──
+  const result = await confirmFulfillmentForReferral({
+    referralId,
+    rancherId,
+    referral,
+    rancherNote,
+  });
+
+  if (!result.ok) {
+    return NextResponse.json(
+      { error: result.error, ...(result.rail ? { rail: result.rail } : {}) },
+      { status: result.status },
+    );
+  }
+  if (result.alreadyConfirmed) {
     return NextResponse.json({
       ok: true,
       alreadyConfirmed: true,
-      fulfillmentConfirmedAt: referral['Fulfillment Confirmed At'],
+      fulfillmentConfirmedAt: result.fulfillmentConfirmedAt,
     });
   }
-
-  // ── Payment gate ──
-  // Don't allow fulfillment confirm without a settled deposit. Either the
-  // tier_v2 path (Payments row Status='succeeded') OR the legacy path
-  // (Referrals.Payment Confirmed At set by /confirm-payment) qualifies.
-  let paymentVerified = false;
-  let paymentTier = '';
-  let paymentAmountCents = 0;
-  try {
-    // Payments-by-referral (G1/E6): exact match on the denormalized
-    // {Referral Id Text} first, legacy ARRAYJOIN scan only as the back-compat
-    // fallback for pre-field rows (see findPaymentsByReferral — the legacy
-    // formula never matched in this base anyway; Referrals' primary field is
-    // empty, so ARRAYJOIN({Referral}) emits "").
-    const payments: any[] = await findPaymentsByReferral(referralId, {
-      statusClause: `{Status} = "succeeded"`,
-    });
-    if (payments.length > 0) {
-      paymentVerified = true;
-      paymentTier = String(payments[0]['Tier'] || '');
-      paymentAmountCents = Number(payments[0]['Amount Cents'] || 0);
-    }
-  } catch (e: any) {
-    console.warn('[fulfillment/confirm] Payments lookup failed:', e?.message);
-  }
-  // Payment verification gate — RAIL-PER-REFERRAL, not per-rancher (same
-  // discriminator as every commission path: lib/commission.ts referralRail).
-  //   - Deposit-rail rows (Deposit Paid At stamped) MUST have a Payments row
-  //     at Status='succeeded' — rancher-self-attested Payment Confirmed At
-  //     would let a rail close skip Stripe evidence (2026-05-25 Audit A).
-  //   - Everything else (legacy rancher OR tier_v2 off-rail close) accepts a
-  //     Payments row OR Payment Confirmed At. Off-rail tier_v2 closes are
-  //     commission-invoiced at close time now, so self-attest no longer
-  //     bypasses commission — the old per-rancher gate 409'd those referrals
-  //     forever ("pay via the deposit link" on a deal closed off the rail).
-  const rancherForGate: any = await getRecordById(TABLES.RANCHERS, rancherId).catch(() => null);
-  const rancherPricingModel = String(rancherForGate?.['Pricing Model'] || 'legacy');
-  if (referralRail(referral) === 'tier_v2') {
-    if (!paymentVerified) {
-      return NextResponse.json({
-        error: 'No settled Stripe deposit on this referral. Buyer must pay via the deposit link first.',
-        rail: 'tier_v2',
-      }, { status: 409 });
-    }
-  } else if (!paymentVerified && !referral['Payment Confirmed At']) {
-    return NextResponse.json({
-      error: 'No settled payment on this referral. Confirm payment first.',
-    }, { status: 409 });
-  }
-
-  // ── Stamp ──
-  const now = new Date().toISOString();
-  try {
-    await updateRecord(TABLES.REFERRALS, referralId, {
-      'Fulfillment Confirmed At': now,
-    });
-  } catch (e: any) {
-    console.error('[fulfillment/confirm] Airtable update failed:', e);
-    return NextResponse.json({ error: 'Could not record fulfillment. Please try again.' }, { status: 500 });
-  }
-
-  // H-2 audit fix: funnel event for the fulfillment moment. Pre-fix the
-  // funnel dashboard could see close:won but not the actual delivered-to-buyer
-  // milestone — couldn't measure close→fulfillment lag or re-order conversion.
-  try {
-    const buyerLinksForFunnel: string[] = (referral['Buyer'] || []) as string[];
-    const buyerIdForFunnel = Array.isArray(buyerLinksForFunnel) ? buyerLinksForFunnel[0] : undefined;
-    await funnelRecord({
-      stage: 'fulfillment_confirmed',
-      referralId,
-      rancherId,
-      buyerId: buyerIdForFunnel,
-      amount: paymentAmountCents ? paymentAmountCents / 100 : undefined,
-      metadata: {
-        tier: paymentTier,
-        pricingModel: rancherPricingModel,
-        hasNote: !!rancherNote,
-      },
-    });
-  } catch (e) { console.error('[funnel] fulfillment_confirmed failed:', e); }
-
-  // ── Buyer email (best-effort — don't block the response on email infra) ──
-  try {
-    const buyerLinks: string[] = (referral['Buyer'] || []) as string[];
-    const buyerId = Array.isArray(buyerLinks) ? buyerLinks[0] : null;
-    const buyer: any = buyerId ? await getRecordById(TABLES.CONSUMERS, buyerId).catch(() => null) : null;
-    const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId).catch(() => null);
-    if (buyer?.['Email'] && rancher) {
-      const firstName = String(buyer['Full Name'] || '').split(' ')[0] || '';
-      await sendBuyerFulfillmentConfirmation({
-        email: String(buyer['Email']),
-        firstName,
-        rancherName: String(rancher['Operator Name'] || rancher['Ranch Name'] || 'your rancher'),
-        ranchName: String(rancher['Ranch Name'] || rancher['Operator Name'] || ''),
-        orderType: String(referral['Order Type'] || ''),
-        rancherNote,
-      });
-    }
-  } catch (e: any) {
-    console.warn('[fulfillment/confirm] buyer email failed:', e?.message);
-  }
-
-  // ── Telegram alert (best-effort) ──
-  try {
-    const amountDollars = paymentAmountCents ? `$${(paymentAmountCents / 100).toFixed(2)} ` : '';
-    const tierTag = paymentTier ? `${paymentTier} tier · ` : '';
-    await sendTelegramMessage(
-      TELEGRAM_ADMIN_CHAT_ID,
-      `📦 FULFILLMENT CONFIRMED — ${tierTag}${amountDollars}ref=${referralId.slice(-6)}${rancherNote ? `\n💬 ${rancherNote}` : ''}`,
-    );
-  } catch (e: any) {
-    console.warn('[fulfillment/confirm] telegram alert failed:', e?.message);
-  }
-
-  return NextResponse.json({ ok: true, fulfillmentConfirmedAt: now });
+  return NextResponse.json({ ok: true, fulfillmentConfirmedAt: result.fulfillmentConfirmedAt });
 }

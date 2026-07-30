@@ -29,7 +29,8 @@ import { TABLES, getRecordById, updateRecord } from '@/lib/airtable';
 import { requireRancher } from '@/lib/rancherAuth';
 import { validateFulfillmentUpdate, FULFILLMENT_FIELDS } from '@/lib/fulfillmentTracking';
 import { carrierTrackingUrl } from '@/lib/trackingLink';
-import { sendBuyerShippingNotification } from '@/lib/email';
+import { sendBuyerShippingNotification, sendBuyerHandoffScheduled } from '@/lib/email';
+import { confirmFulfillmentForReferral } from '@/lib/fulfillmentConfirm';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -76,6 +77,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       carrier: body?.carrier,
       trackingNumber: body?.trackingNumber,
       processingDate: body?.processingDate,
+      handoffDate: body?.handoffDate,
+      clearProcessingDate: body?.clearProcessingDate,
+      clearHandoffDate: body?.clearHandoffDate,
     },
   });
 
@@ -94,6 +98,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: 'Could not save fulfillment details. Please try again.' }, { status: 500 });
   }
 
+  // Lazy one-shot buyer/rancher loads shared by the side-effect blocks below.
+  let _buyer: any | undefined;
+  let _rancher: any | undefined;
+  const loadBuyer = async () => {
+    if (_buyer === undefined) {
+      const buyerLinks: string[] = (referral['Buyer'] || []) as string[];
+      const buyerId = Array.isArray(buyerLinks) ? buyerLinks[0] : null;
+      _buyer = buyerId ? await getRecordById(TABLES.CONSUMERS, buyerId).catch(() => null) : null;
+    }
+    return _buyer;
+  };
+  const loadRancher = async () => {
+    if (_rancher === undefined) {
+      _rancher = await getRecordById(TABLES.RANCHERS, rancherId).catch(() => null);
+    }
+    return _rancher;
+  };
+
   // ── D3: FIRST tracking-number save → buyer "your beef is on the way" email ──
   // Idempotent by construction: fires only when the referral had NO tracking
   // number before this write AND has one after it, so edits/corrections never
@@ -107,10 +129,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const priorTracking = String(referral[FULFILLMENT_FIELDS.trackingNumber] || '').trim();
     const savedTracking = String(updated?.[FULFILLMENT_FIELDS.trackingNumber] || '').trim();
     if (!priorTracking && savedTracking) {
-      const buyerLinks: string[] = (referral['Buyer'] || []) as string[];
-      const buyerId = Array.isArray(buyerLinks) ? buyerLinks[0] : null;
-      const buyer: any = buyerId ? await getRecordById(TABLES.CONSUMERS, buyerId).catch(() => null) : null;
-      const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId).catch(() => null);
+      const buyer: any = await loadBuyer();
+      const rancher: any = await loadRancher();
       if (buyer?.['Email']) {
         const carrier = String(updated?.[FULFILLMENT_FIELDS.carrier] || '').trim();
         await sendBuyerShippingNotification({
@@ -129,5 +149,81 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     console.warn('[rancher/fulfillment] buyer shipping email failed:', e?.message);
   }
 
-  return NextResponse.json({ ok: true, status: result.status, fields: result.fields });
+  // ── Wave 2 (2026-07-29): Handoff Date SET or CHANGED → buyer schedule email ──
+  // Same persisted-value discipline as the tracking email: compare the stored
+  // Handoff Date before this write with what updateRecord actually returned.
+  // Equal (including a re-save of the same date) → no send. Field stripped by
+  // Airtable (not yet in schema) → savedHandoff empty → no send. Best-effort.
+  try {
+    const priorHandoff = String(referral[FULFILLMENT_FIELDS.handoffDate] || '').trim();
+    const savedHandoff = String(updated?.[FULFILLMENT_FIELDS.handoffDate] || '').trim();
+    if (savedHandoff && savedHandoff !== priorHandoff) {
+      const buyer: any = await loadBuyer();
+      const rancher: any = await loadRancher();
+      if (buyer?.['Email']) {
+        // Word pickup vs delivery: the rancher's own Fulfillment Method wins
+        // (pickup→pickup, ship→delivery), else the buyer's stated pref
+        // (Buyer Fulfillment Pref: 'Pickup'|'Delivery'), else generic.
+        const method = String(updated?.[FULFILLMENT_FIELDS.method] || referral[FULFILLMENT_FIELDS.method] || '').toLowerCase();
+        const pref = String(referral['Buyer Fulfillment Pref'] || '').toLowerCase();
+        const mode: 'pickup' | 'delivery' | null =
+          method === 'pickup' ? 'pickup'
+          : method === 'ship' ? 'delivery'
+          : pref === 'pickup' ? 'pickup'
+          : pref === 'delivery' ? 'delivery'
+          : null;
+        await sendBuyerHandoffScheduled({
+          email: String(buyer['Email']),
+          firstName: String(buyer['Full Name'] || '').split(' ')[0] || '',
+          rancherName: String(rancher?.['Operator Name'] || rancher?.['Ranch Name'] || 'Your rancher'),
+          ranchName: String(rancher?.['Ranch Name'] || rancher?.['Operator Name'] || 'the ranch'),
+          orderType: String(referral['Order Type'] || ''),
+          handoffDate: savedHandoff,
+          mode,
+          isReschedule: !!priorHandoff,
+        });
+      }
+    }
+  } catch (e: any) {
+    console.warn('[rancher/fulfillment] buyer handoff email failed:', e?.message);
+  }
+
+  // ── Wave 2 (2026-07-29): transition TO 'fulfilled' → the shared confirm rail ──
+  // The tracker's `fulfilled` used to be a dead end: no Fulfillment Confirmed
+  // At stamp, no buyer email, no funnel/Telegram — so the chase cron kept
+  // nagging deals the rancher had already marked delivered, and the two
+  // delivered-systems disagreed forever. Route through the SAME helper the
+  // binary confirm row uses (lib/fulfillmentConfirm) — idempotent (skips when
+  // Fulfillment Confirmed At already set) and best-effort: a payment-gate
+  // refusal (409) must not fail the tracker save that already persisted; it's
+  // surfaced in the response + logs instead.
+  let fulfillmentConfirmedAt: string | null = null;
+  let confirmSkipReason: string | null = null;
+  const priorStatus = String(referral[FULFILLMENT_FIELDS.status] || '').toLowerCase();
+  if (result.status === 'fulfilled' && priorStatus !== 'fulfilled') {
+    try {
+      const confirm = await confirmFulfillmentForReferral({
+        referralId,
+        rancherId,
+        referral,
+      });
+      if (confirm.ok) {
+        fulfillmentConfirmedAt = confirm.fulfillmentConfirmedAt;
+      } else {
+        confirmSkipReason = confirm.error;
+        console.warn('[rancher/fulfillment] fulfilled sync skipped:', confirm.status, confirm.error);
+      }
+    } catch (e: any) {
+      confirmSkipReason = 'confirm rail errored';
+      console.warn('[rancher/fulfillment] fulfilled sync failed:', e?.message);
+    }
+  }
+
+  return NextResponse.json({
+    ok: true,
+    status: result.status,
+    fields: result.fields,
+    ...(fulfillmentConfirmedAt ? { fulfillmentConfirmedAt } : {}),
+    ...(confirmSkipReason ? { confirmSkipped: confirmSkipReason } : {}),
+  });
 }

@@ -10,14 +10,22 @@
 // escalation, no signal at all that a paying customer may not have gotten
 // their beef. This daily cron is the backstop.
 //
-// Escalation tiers (days past Processing Date, or past accept-date + fallback
-// when no Processing Date is set — see lib/fulfillmentChase.ts):
+// Escalation tiers (days past the due date — Handoff Date > Processing Date >
+// accept + 14d fallback; see lib/fulfillmentChase.ts):
 //   T+2d → gentle rancher nudge email ("one tap confirms").
 //   T+5d → second rancher nudge + LOUD operator signal (money at risk).
 //   T+8d → operator signal only — a human takes over. Deliberately NO buyer
 //          email at any tier: we can't verify what actually happened, and
 //          "checking on your order" promises we can't back. Buyer comms at
 //          this stage is Ben's call.
+//
+// Wave 2 (2026-07-29) — two earlier kinds so an accepted deal is never silent
+// for a month (the old accept+30d fallback meant first touch at accept+32d):
+//   accept+3d, no Handoff/Processing Date → 'schedule' ("pick a date").
+//   accept+7d, no Final Invoice Sent At   → 'invoice' ("send the invoice",
+//                                           max 2 touches).
+// Both ride the SAME stamps/cadence, skip 'rancher-added' CRM leads (#511),
+// and NEVER email the buyer (deliberate).
 //
 // Mirrors deposit-accept-sla exactly: CRON_SECRET fail-closed auth wrapper +
 // withCronRun + maintenance gate + claim-stamp-BEFORE-send ordering +
@@ -90,7 +98,7 @@ async function realHandler(
   // persisted (read-back) before allowing any sends this run.
   let stampVerified = false;
 
-  for (const { referralId, tier, daysPastDue } of toChase) {
+  for (const { referralId, kind, tier, daysPastDue } of toChase) {
     try {
       const ref = byId.get(referralId);
       if (!ref) continue;
@@ -168,12 +176,17 @@ async function realHandler(
         stampVerified = true;
       }
 
-      // ── Sends by tier. Each wire best-effort in its own try/catch.
-      const dueLabel = ref[FULFILLMENT_FIELDS.processingDate]
-        ? `processing date ${ref[FULFILLMENT_FIELDS.processingDate]}`
-        : `no processing date set (accept + fallback window)`;
+      // ── Sends by kind + tier. Each wire best-effort in its own try/catch.
+      // Wave 2: 'schedule'/'invoice' are rancher-email-only kinds (never the
+      // buyer, never the operator signal — that stays a confirm-tier
+      // escalation). Due label prefers the buyer-facing Handoff Date.
+      const dueLabel = ref[FULFILLMENT_FIELDS.handoffDate]
+        ? `handoff date ${ref[FULFILLMENT_FIELDS.handoffDate]}`
+        : ref[FULFILLMENT_FIELDS.processingDate]
+          ? `processing date ${ref[FULFILLMENT_FIELDS.processingDate]}`
+          : `no handoff/processing date set (accept + fallback window)`;
 
-      if (tier === 1 || tier === 2) {
+      if (kind !== 'confirm' || tier === 1 || tier === 2) {
         const email = resolveRancherEmail(rancher);
         if (email) {
           try {
@@ -184,7 +197,8 @@ async function realHandler(
               cut: cut ? String(cut) : undefined,
               processingDate: ref[FULFILLMENT_FIELDS.processingDate] || undefined,
               rancherId,
-              isSecondNudge: tier === 2,
+              isSecondNudge: kind === 'confirm' && tier === 2,
+              kind,
             });
           } catch (e: any) {
             errors.push(`${referralId}: nudge email failed (${e?.message?.slice(0, 80)})`);
@@ -194,7 +208,7 @@ async function realHandler(
         }
       }
 
-      if (tier === 2 || tier === 3) {
+      if (kind === 'confirm' && (tier === 2 || tier === 3)) {
         try {
           await sendOperatorSignal({
             urgency: 'loud',
@@ -224,7 +238,7 @@ async function realHandler(
   return {
     status: errors.length ? 'partial' : 'success',
     recordsTouched: touched,
-    notes: `candidates=${candidates.length} eligible=${eligible.length} chased=${touched} tiers=[${toChase.map((c) => c.tier).join(',')}] errs=${errors.length}${errors.length ? ' err1=' + errors[0].slice(0, 80) : ''}`,
+    notes: `candidates=${candidates.length} eligible=${eligible.length} chased=${touched} kinds=[${toChase.map((c) => (c.kind === 'confirm' ? `t${c.tier}` : c.kind)).join(',')}] errs=${errors.length}${errors.length ? ' err1=' + errors[0].slice(0, 80) : ''}`,
   };
 }
 

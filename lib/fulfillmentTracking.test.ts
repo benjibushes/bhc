@@ -143,3 +143,69 @@ test('empty patch → 400 (nothing to write)', () => {
   if (res.ok) return;
   assert.equal(res.status, 400);
 });
+
+// ── Wave 2 (2026-07-29): data-wipe fix — '' is a NO-OP, never a delete ───────
+
+test("empty-string processing date no longer nulls the field (data-wipe fix)", () => {
+  const res = validateFulfillmentUpdate(input({ patch: { processingDate: '', status: 'processing' } }));
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+  assert.equal(FULFILLMENT_FIELDS.processingDate in res.fields, false);
+});
+
+test('empty-string processing date ALONE → 400 (nothing to write)', () => {
+  const res = validateFulfillmentUpdate(input({ patch: { processingDate: '' } }));
+  assert.equal(res.ok, false);
+  if (res.ok) return;
+  assert.equal(res.status, 400);
+});
+
+test('explicit clearProcessingDate flag nulls the field (deliberate clear)', () => {
+  const res = validateFulfillmentUpdate(input({ patch: { processingDate: '', clearProcessingDate: true } }));
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+  assert.equal(res.fields[FULFILLMENT_FIELDS.processingDate], null);
+});
+
+// ── Wave 2 (2026-07-29): Handoff Date — the buyer-facing pickup/delivery date ──
+
+test('valid future handoff date persists', () => {
+  const res = validateFulfillmentUpdate(input({ patch: { handoffDate: '2026-07-15' } }));
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+  assert.equal(res.fields[FULFILLMENT_FIELDS.handoffDate], '2026-07-15');
+});
+
+test('same-day handoff date is allowed (nowIso is mid-day)', () => {
+  const res = validateFulfillmentUpdate(input({ patch: { handoffDate: '2026-06-30' } }));
+  assert.equal(res.ok, true);
+});
+
+test('yesterday (UTC) handoff date allowed — 1-day timezone grace', () => {
+  const res = validateFulfillmentUpdate(input({ patch: { handoffDate: '2026-06-29' } }));
+  assert.equal(res.ok, true);
+});
+
+test('clearly-past handoff date → 400', () => {
+  const res = validateFulfillmentUpdate(input({ patch: { handoffDate: '2026-06-20' } }));
+  assert.equal(res.ok, false);
+  if (res.ok) return;
+  assert.equal(res.status, 400);
+});
+
+test('garbage handoff date → 400', () => {
+  const res = validateFulfillmentUpdate(input({ patch: { handoffDate: 'next tuesday' } }));
+  assert.equal(res.ok, false);
+  if (res.ok) return;
+  assert.equal(res.status, 400);
+});
+
+test("empty-string handoff date is a no-op; explicit clear flag nulls it", () => {
+  const noop = validateFulfillmentUpdate(input({ patch: { handoffDate: '', status: 'processing' } }));
+  assert.equal(noop.ok, true);
+  if (noop.ok) assert.equal(FULFILLMENT_FIELDS.handoffDate in noop.fields, false);
+  const clear = validateFulfillmentUpdate(input({ patch: { clearHandoffDate: true } }));
+  assert.equal(clear.ok, true);
+  if (!clear.ok) return;
+  assert.equal(clear.fields[FULFILLMENT_FIELDS.handoffDate], null);
+});

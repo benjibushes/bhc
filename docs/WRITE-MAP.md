@@ -158,8 +158,25 @@ W: first-touch-sla :240; referral-chasup :417; cleared by revive :82.
 R: referral-chasup :380 — throttle; lib/firstTouchSla.ts:16,42 — deliberately SHARED throttle between both crons (either alert suppresses the other).
 
 ### Fulfillment Status (singleSelect) + fulfillment tracker fields
-W: app/api/rancher/referrals/[id]/fulfillment/route.ts:91 via FULFILLMENT_FIELDS (lib/fulfillmentTracking.ts:50). Only writer.
-R: lib/fulfillmentChase.ts:118 — 'fulfilled' suppresses the chase cron (with Fulfillment Confirmed At :117).
+W: app/api/rancher/referrals/[id]/fulfillment/route.ts via FULFILLMENT_FIELDS (lib/fulfillmentTracking.ts). Only writer. Wave 2 (2026-07-29): a transition TO 'fulfilled' also rides the shared confirm rail (lib/fulfillmentConfirm.ts) — see Fulfillment Confirmed At below. Empty-string dates are NO-OPS server-side (data-wipe fix); deliberate clears require the explicit clearProcessingDate/clearHandoffDate body flags.
+R: lib/fulfillmentChase.ts — 'fulfilled' suppresses the chase cron (with Fulfillment Confirmed At).
+
+### Handoff Date (date — fldZpGyngRdeBq5y0) — buyer-facing pickup/delivery date
+W: app/api/rancher/referrals/[id]/fulfillment/route.ts (tracker save, via FULFILLMENT_FIELDS.handoffDate; validated not-past w/ 1-day UTC grace in lib/fulfillmentTracking.ts). Only writer. Set/changed (persisted-value compare) → sendBuyerHandoffScheduled email to the buyer; re-save of the same date never re-sends.
+R: lib/fulfillmentChase.ts — PREFERRED due-date source for the chase cron (Handoff Date > Processing Date > accept+14d); its absence (with no Processing Date) triggers the 'schedule' ("pick a date") chase kind. Projected to rancher dashboard as handoff_date.
+Sem: distinct from Processing Date (the abattoir date). This is WHEN THE BUYER GETS THEIR BEEF.
+
+### Fulfillment Confirmed At (dateTime)
+W: lib/fulfillmentConfirm.ts confirmFulfillmentForReferral — THE single stamp+side-effects rail (payment gate rail-per-referral, funnel event, buyer "beef received" email, Telegram). Two entry points: app/api/rancher/fulfillment/confirm/route.ts (binary confirm row, all rails — the tier_v2 UI gate was removed Wave 2) and app/api/rancher/referrals/[id]/fulfillment/route.ts (tracker transition to 'fulfilled', best-effort — a payment-gate 409 doesn't fail the tracker save).
+R: lib/fulfillmentChase.ts — suppresses every chase kind; rancher dashboard green pill; confirm rail idempotency (skip if set).
+
+### Fulfillment Chase Last Sent At (dateTime) + Fulfillment Chase Count (number)
+W: app/api/cron/fulfillment-chase/route.ts — claim-stamp BEFORE send, all kinds.
+R: lib/fulfillmentChase.ts — 48h cooldown + 3-lifetime cap + Count-as-ladder: confirm tiers fire only when tier > Count; 'schedule' kind only at Count 0; 'invoice' kind only while Count < 2 (its cap). Wave 2: the new kinds ('schedule' at accept+3d w/ no dates, 'invoice' at accept+7d w/ no Final Invoice Sent At/Final Paid At/Payment Confirmed At) share these stamps, skip 'rancher-added' rows (#511), and never email the buyer.
+
+### Buyer Fulfillment Pref / Buyer Window Pref / Buyer Cut Notes / Buyer Preferences Set At
+W: app/api/checkout/[refId]/preferences/route.ts via preferencesToReferralFields (lib/preferences.ts). Only writer. First submit posts the cut sheet to the buyer↔rancher thread + emails the rancher (sendRancherBuyerPreferences); Wave 2 (2026-07-29): a repeat submit whose VALUES CHANGED re-posts (marked UPDATED) + re-notifies; an identical re-submit stays silent.
+R: same route's GET (prefill + alreadyCaptured idempotency anchor); fulfillment route — Buyer Fulfillment Pref words the handoff email pickup-vs-delivery when Fulfillment Method is unset; rancher dashboard "Buyer's cut sheet" block (projected Wave 2 — previously stripped from every rancher projection).
 
 ### Referral Source (singleLineText — fldC5pUi90WDpBTsa) — My Leads provenance
 W: app/api/rancher/referrals/route.ts (POST create) via buildLeadReferralFields (lib/rancherLeads.ts) — the ONLY writer; value always 'rancher-added' (constant REFERRAL_SOURCE_RANCHER_ADDED).
