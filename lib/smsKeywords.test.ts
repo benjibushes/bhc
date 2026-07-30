@@ -83,16 +83,16 @@ test('only stop/start mutate consent state', () => {
 
 test('the same STOP text produces the same keyword + reply from every provider payload', () => {
   const payloads: Record<string, unknown> = {
-    twilio: { From: '+13125550001', To: '+17204917819', Body: 'STOP', MessageSid: 'SM1' },
+    twilio: { From: '+13125550001', To: '+17202401234', Body: 'STOP', MessageSid: 'SM1' },
     telnyx: {
       data: {
         event_type: 'message.received',
-        payload: { id: 't1', text: 'STOP', from: { phone_number: '+13125550001' }, to: [{ phone_number: '+17204917819' }] },
+        payload: { id: 't1', text: 'STOP', from: { phone_number: '+13125550001' }, to: [{ phone_number: '+17202401234' }] },
       },
     },
-    plivo: { From: '+13125550001', To: '+17204917819', Text: 'STOP', MessageUUID: 'p1' },
+    plivo: { From: '+13125550001', To: '+17202401234', Text: 'STOP', MessageUUID: 'p1' },
     bandwidth: [
-      { type: 'message-received', to: '+17204917819', message: { id: 'b1', from: '+13125550001', to: ['+17204917819'], text: 'STOP', direction: 'in' } },
+      { type: 'message-received', to: '+17202401234', message: { id: 'b1', from: '+13125550001', to: ['+17202401234'], text: 'STOP', direction: 'in' } },
     ],
   };
   for (const [name, raw] of Object.entries(payloads)) {

@@ -65,11 +65,14 @@ what "opt-in proof" means to a reviewer.
 
 ### The existing number
 
-**(720) 491-7819** is the current BuyHalfCow line. It is a Twilio number.
+The current BuyHalfCow line is a Twilio number, configured as
+`TWILIO_FROM_NUMBER` — read it from the env, never from a doc (this repo is
+public, so no live number is written down here).
+
 Numbers are portable between all four vendors, but porting takes days and
 requires the losing carrier's account details. For a first send it is usually
-faster to take a **new** number from the new vendor and keep 720-491-7819 where
-it is until the new rail is proven.
+faster to take a **new** number from the new vendor and leave the existing line
+where it is until the new rail is proven.
 
 ---
 
@@ -106,7 +109,7 @@ that block's credentials. Leave the other blocks unset.
 | --- | --- |
 | `TWILIO_ACCOUNT_SID` | Twilio Console → Account Info |
 | `TWILIO_AUTH_TOKEN` | Twilio Console → Account Info (API Key preferred in prod) |
-| `TWILIO_FROM_NUMBER` | Your Twilio number, E.164 (`+17204917819`) |
+| `TWILIO_FROM_NUMBER` | Your Twilio number, in E.164 format (`+1` + 10 digits) |
 
 ### `SMS_PROVIDER=telnyx`
 
