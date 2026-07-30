@@ -43,7 +43,7 @@ const stuck = (over: any = {}) => ({
   'Deposit Nudge Last Sent At': days(22),
   Rancher: ['recR'],
   Buyer: ['recB'],
-  'Buyer Name': 'Crystal',
+  'Buyer Name': 'Test Buyer',
   __payments: clean,
   ...over,
 });
