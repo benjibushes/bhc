@@ -71,10 +71,18 @@ export function fulfillmentLabel(f: Fulfillment): string {
  */
 export function formatPreferencesMessage(
   prefs: ValidPreferences,
-  opts: { buyerFirstName?: string } = {},
+  opts: { buyerFirstName?: string; updated?: boolean } = {},
 ): string {
   const who = (opts.buyerFirstName || '').trim();
-  const lead = who ? `Buyer preferences from ${who}:` : 'Buyer preferences:';
+  // Wave 2 (2026-07-29): corrections re-post to the thread marked as updated
+  // so the rancher can tell a revision from the original submission.
+  const lead = opts.updated
+    ? who
+      ? `Buyer preferences UPDATED by ${who} (replaces their earlier answers):`
+      : 'Buyer preferences UPDATED (replaces their earlier answers):'
+    : who
+      ? `Buyer preferences from ${who}:`
+      : 'Buyer preferences:';
   const lines = [
     lead,
     `• Fulfillment: ${fulfillmentLabel(prefs.fulfillment)}`,

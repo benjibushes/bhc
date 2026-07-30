@@ -31,6 +31,7 @@ import {
   validatePreferences,
   formatPreferencesMessage,
   preferencesToReferralFields,
+  fulfillmentLabel,
 } from '@/lib/preferences';
 
 export const dynamic = 'force-dynamic';
@@ -129,9 +130,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ refId: 
     return NextResponse.json({ error: 'No rancher assigned to this referral yet' }, { status: 409 });
   }
 
-  // Idempotency anchor: if preferences were already captured, update the stamped
-  // fields (buyer may have refined them) but skip the duplicate thread message.
+  // Idempotency anchor: if preferences were already captured, a repeat submit
+  // updates the stamped fields — and (Wave 2, 2026-07-29) when the VALUES
+  // actually changed, it also re-posts to the thread (marked updated) +
+  // re-notifies the rancher. Before this fix, corrections silently updated
+  // Airtable while the rancher kept cooking off the stale thread message.
   const alreadyCaptured = !!ref['Buyer Preferences Set At'];
+  const valuesChanged =
+    String(ref['Buyer Fulfillment Pref'] || '') !== fulfillmentLabel(prefs.fulfillment) ||
+    String(ref['Buyer Window Pref'] || '') !== prefs.window ||
+    String(ref['Buyer Cut Notes'] || '') !== prefs.cutNotes;
   const nowIso = new Date().toISOString();
 
   // 1) Stamp the Referral. Non-fatal individually but if this throws we surface
@@ -147,10 +155,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ refId: 
   }
 
   // 2) Seed the thread with the structured message so it mirrors to the rancher.
-  //    Skip on a repeat submit so we don't spam a duplicate into the thread.
+  //    First submit always posts; a repeat submit posts ONLY when the values
+  //    actually changed (marked as an update) — an identical re-submit stays
+  //    silent so the thread/rancher inbox never sees duplicates.
   let threadId: string | null = null;
   let messagePosted = false;
-  if (!alreadyCaptured) {
+  const isUpdate = alreadyCaptured && valuesChanged;
+  if (!alreadyCaptured || isUpdate) {
     try {
       const { id } = await getOrCreateThreadForReferral(refId, session.consumerId, rancherId);
       threadId = id;
@@ -159,7 +170,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ refId: 
       // personalizes the rancher-facing message.
       const nameForGreeting = String(session.name || ref['Buyer Name'] || '').trim();
       const firstName = nameForGreeting.split(/\s+/)[0] || '';
-      const messageBody = formatPreferencesMessage(prefs, { buyerFirstName: firstName });
+      const messageBody = formatPreferencesMessage(prefs, { buyerFirstName: firstName, updated: isUpdate });
       await postMessage({
         threadId: id,
         senderType: 'buyer',
@@ -179,9 +190,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ refId: 
           const safeBody = messageBody.replace(/</g, '&lt;').replace(/\n/g, '<br>');
           await sendEmail({
             to: rancherEmail,
-            subject: 'Buyer preferences — how they want their beef',
+            subject: isUpdate
+              ? 'Buyer preferences UPDATED — check before you cut'
+              : 'Buyer preferences — how they want their beef',
             html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:36px;border:1px solid #A7A29A;background:#fff;line-height:1.6;color:#0E0E0E">
-              <p style="margin:0 0 16px;color:#6B4F3F;font-size:14px;">Your buyer just shared how they'd like their order handled:</p>
+              <p style="margin:0 0 16px;color:#6B4F3F;font-size:14px;">${isUpdate ? 'Your buyer just REVISED how they\'d like their order handled — this replaces their earlier answers:' : 'Your buyer just shared how they\'d like their order handled:'}</p>
               <div style="background:#F4F1EC;padding:16px;border-left:3px solid #6B4F3F;margin:16px 0;">${safeBody}</div>
               <p style="margin-top:24px;font-size:12px;color:#A7A29A;">Reply to this email to respond — it lands in the BuyHalfCow thread for both of you.</p>
             </div>`,

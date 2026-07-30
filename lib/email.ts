@@ -1361,6 +1361,14 @@ export async function sendRancherFulfillmentNudge(data: {
   rancherId?: string; // for tagged Reply-To
   /** Tier-2 re-nudge — acknowledges the earlier email, slightly firmer ask. */
   isSecondNudge?: boolean;
+  /**
+   * Wave 2 (2026-07-29) — which ask this touch carries (lib/fulfillmentChase
+   * ChaseKind). 'confirm' (default) = the original "did the beef make it
+   * home?"; 'schedule' = accepted 3d+ with no Handoff/Processing Date, pick a
+   * date; 'invoice' = accepted 7d+ with no final invoice sent. Same
+   * templateName + stamps-before-send cadence for all three.
+   */
+  kind?: 'confirm' | 'schedule' | 'invoice';
 }): Promise<{ success: boolean; suppressed?: boolean; reason?: string }> {
   const rFirst = data.rancherFirstName || 'there';
   const buyer = esc(data.buyerFirstName || 'your buyer');
@@ -1371,13 +1379,48 @@ export async function sendRancherFulfillmentNudge(data: {
       ? procDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', timeZone: 'UTC' })
       : '';
   const dashUrl = `${SITE_URL}/rancher`;
+  const kind = data.kind || 'confirm';
 
-  const subject = data.isSecondNudge
-    ? `still showing unconfirmed — ${buyer}'s ${esc(cut)}`
-    : `quick check — how did ${buyer}'s processing go?`;
-  const leadIn = data.isSecondNudge
-    ? `Following up on my last note — ${buyer}'s ${esc(cut)}${procStr ? ` (processing was set for ${procStr})` : ''} still shows unconfirmed on our side. If it's been handed off, one tap closes the loop. If something's holding it up, just reply and we'll figure it out together.`
-    : `Hope processing week went smooth. ${buyer}'s ${esc(cut)}${procStr ? ` had a processing date of ${procStr}` : ''} and I don't see a delivery confirmation yet — no worries if it's done and the button just didn't get tapped. Ranch life is busy.`;
+  let subject: string;
+  let bodyHtml: string;
+  if (kind === 'schedule') {
+    // Gentle "pick a date" — the deal is accepted but has no Handoff Date and
+    // no Processing Date, so neither the buyer nor the chase clock has
+    // anything to hold on to.
+    subject = `when does ${buyer} get their ${esc(cut)}?`;
+    bodyHtml = `
+  <h1>One small thing, ${esc(rFirst)}.</h1>
+  <p>${buyer}'s ${esc(cut)} is locked in — deposit paid, slot accepted. The only thing missing is a date: there's no pickup/delivery date on the order yet, so ${buyer} doesn't know when to expect their beef.</p>
+  <p>Thirty seconds in your dashboard sets it — open the order and drop the date in the tracker. ${buyer} gets an automatic heads-up email the moment you do:</p>
+  <p><a class="cta" href="${dashUrl}">Set the date →</a></p>
+  <p>Date not settled with the processor yet? No problem — reply here and tell me roughly when, and I'll keep the buyer in the loop.</p>
+  <p style="font-size:13px;color:#6B4F3F;margin-top:24px;">Thanks for taking care of your buyers. — Ben, BuyHalfCow</p>`;
+  } else if (kind === 'invoice') {
+    // "Send the final invoice" — accepted 7d+ with no Final Invoice Sent At.
+    // This is the rancher's own money sitting uncollected.
+    subject = `time to send ${buyer}'s final invoice`;
+    bodyHtml = `
+  <h1>Don't leave money on the table, ${esc(rFirst)}.</h1>
+  <p>${buyer}'s ${esc(cut)} deposit is paid and the slot is locked — but the final balance hasn't been invoiced yet. That's your money sitting uncollected.</p>
+  <p>It's one button on your dashboard: open ${buyer}'s order and hit <strong>Send Final Invoice</strong>. The buyer gets a secure payment link and 100% of the balance goes straight to you:</p>
+  <p><a class="cta" href="${dashUrl}">Send the final invoice →</a></p>
+  <p>Waiting on hanging weight to price it? Totally fine — reply here and let me know, so I don't keep nudging.</p>
+  <p style="font-size:13px;color:#6B4F3F;margin-top:24px;">Thanks for taking care of your buyers. — Ben, BuyHalfCow</p>`;
+  } else {
+    subject = data.isSecondNudge
+      ? `still showing unconfirmed — ${buyer}'s ${esc(cut)}`
+      : `quick check — how did ${buyer}'s processing go?`;
+    const leadIn = data.isSecondNudge
+      ? `Following up on my last note — ${buyer}'s ${esc(cut)}${procStr ? ` (processing was set for ${procStr})` : ''} still shows unconfirmed on our side. If it's been handed off, one tap closes the loop. If something's holding it up, just reply and we'll figure it out together.`
+      : `Hope processing week went smooth. ${buyer}'s ${esc(cut)}${procStr ? ` had a processing date of ${procStr}` : ''} and I don't see a delivery confirmation yet — no worries if it's done and the button just didn't get tapped. Ranch life is busy.`;
+    bodyHtml = `
+  <h1>Quick check, ${esc(rFirst)}.</h1>
+  <p>${leadIn}</p>
+  <p>One tap in your dashboard marks it delivered — that's all it takes. It keeps ${buyer}'s order record straight and keeps us out of your hair:</p>
+  <p><a class="cta" href="${dashUrl}">Confirm fulfillment →</a></p>
+  <p>Processor running behind? Pickup rescheduled? Reply right here and I'll note it — no button needed.</p>
+  <p style="font-size:13px;color:#6B4F3F;margin-top:24px;">Thanks for taking care of your buyers. — Ben, BuyHalfCow</p>`;
+  }
 
   const r = await sendEmail({
     to: data.rancherEmail,
@@ -1386,13 +1429,7 @@ export async function sendRancherFulfillmentNudge(data: {
     _replyContext: data.rancherId ? { type: 'rnc', recordId: data.rancherId } : undefined,
     html: `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 18px}p{margin:14px 0;color:#2A2A2A}.cta{display:inline-block;background:#0E0E0E;color:#fff;text-decoration:none;padding:14px 28px;margin:8px 0;font-weight:700;text-transform:uppercase;letter-spacing:1px;font-size:14px}</style>
-</head><body><div class="container">
-  <h1>Quick check, ${esc(rFirst)}.</h1>
-  <p>${leadIn}</p>
-  <p>One tap in your dashboard marks it delivered — that's all it takes. It keeps ${buyer}'s order record straight and keeps us out of your hair:</p>
-  <p><a class="cta" href="${dashUrl}">Confirm fulfillment →</a></p>
-  <p>Processor running behind? Pickup rescheduled? Reply right here and I'll note it — no button needed.</p>
-  <p style="font-size:13px;color:#6B4F3F;margin-top:24px;">Thanks for taking care of your buyers. — Ben, BuyHalfCow</p>
+</head><body><div class="container">${bodyHtml}
 </div></body></html>`,
   });
   return { success: !!r.success, suppressed: r.suppressed, reason: r.reason };
@@ -5463,6 +5500,62 @@ export async function sendBuyerShippingNotification(data: {
   </ul>
   <p>You can check your order status anytime on <a href="${SITE_URL}/member" style="color:#0E0E0E;">your dashboard</a>.</p>
   <p>Questions about the shipment? Reply to this email. I read every reply.</p>
+  <p style="margin-top:32px;">— Ben</p>
+</div></body></html>`,
+    }),
+  });
+}
+
+// ── Wave 2 (2026-07-29): rancher set/changed the Handoff Date → buyer email ──
+// Fires from /api/rancher/referrals/[id]/fulfillment ONLY when the persisted
+// Handoff Date actually changed (the route compares prior vs saved value —
+// re-saves of the same date never re-send). This is the buyer-facing "your
+// beef has a date" moment: the #1 post-deposit anxiety after "where is my
+// money" is "when do I actually get it". `mode` words the email pickup vs
+// delivery off Fulfillment Method / Buyer Fulfillment Pref; null = generic.
+export async function sendBuyerHandoffScheduled(data: {
+  email: string;
+  firstName: string;
+  rancherName: string;
+  ranchName: string;
+  orderType: string;
+  handoffDate: string;             // raw Airtable value (ISO date)
+  mode: 'pickup' | 'delivery' | null;
+  /** True when a previously-set date moved — copy acknowledges the change. */
+  isReschedule?: boolean;
+}): Promise<{ success: boolean; suppressed?: boolean; reason?: string }> {
+  const first = data.firstName || 'there';
+  const parsed = new Date(String(data.handoffDate));
+  const dateStr = !isNaN(parsed.getTime())
+    ? parsed.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' })
+    : String(data.handoffDate);
+  const word = data.mode === 'pickup' ? 'pickup' : data.mode === 'delivery' ? 'delivery' : 'handoff';
+  const subject = data.isReschedule
+    ? `updated date — your ${word} is now ${dateStr}`
+    : `your ${word} is scheduled for ${dateStr}`;
+  const modeLine = data.mode === 'pickup'
+    ? `Bring a cooler (or a few) — vacuum-sealed packs travel fine for the drive home.`
+    : data.mode === 'delivery'
+      ? `Make sure someone's around to get the box into the freezer promptly.`
+      : `${esc(data.rancherName)} will confirm the pickup-vs-delivery details with you directly.`;
+  return guardedSend({
+    templateName: 'sendBuyerHandoffScheduled',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 18px}p{margin:14px 0;color:#2A2A2A}.box{background:#FAF8F4;border-left:3px solid #0E0E0E;padding:16px 20px;margin:18px 0}.footer{margin-top:36px;padding-top:18px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
+</head><body><div class="container">
+  <h1>${data.isReschedule ? `New date, ${esc(first)}.` : `It's on the calendar, ${esc(first)}.`}</h1>
+  <p>${esc(data.rancherName)} from ${esc(data.ranchName)} just ${data.isReschedule ? 'moved' : 'scheduled'} your ${esc(data.orderType || 'share')} ${esc(word)}${data.isReschedule ? ' to' : ' for'}:</p>
+  <div class="box"><p style="margin:0;font-family:Georgia,serif;font-size:20px;">${esc(dateStr)}</p></div>
+  <p>${modeLine}</p>
+  <p>Track your order anytime: <a href="${SITE_URL}/member" style="color:#0E0E0E;">buyhalfcow.com/member</a>.</p>
+  <p>Date doesn't work for you? Reply to this email and we'll sort it out with ${esc(data.rancherName)}.</p>
   <p style="margin-top:32px;">— Ben</p>
 </div></body></html>`,
     }),

@@ -73,8 +73,13 @@ function buildBody(type: SMSEventType, vars: SMSEventVars): string {
       return `${fn}, your call with Ben at BuyHalfCow starts in 1 hour. Check your email for the link. Reply STOP to opt out.`;
     case 'deposit_invoice':
       return `${fn}, your deposit invoice is ready. Check your email to lock your slot at ${vars.ranchName || 'your ranch'}. Reply STOP to opt out.`;
-    case 'slot_locked':
-      return `${fn}, slot locked at ${vars.ranchName || 'your ranch'}! Pickup ${vars.pickupDate || 'TBD'}. Reply STOP to opt out.`;
+    case 'slot_locked': {
+      // Wave 2 (2026-07-29): the accept route never passes pickupDate, so this
+      // printed a literal "Pickup TBD." to every buyer. Omit the pickup line
+      // entirely when no date is known.
+      const pickup = vars.pickupDate ? ` Pickup ${vars.pickupDate}.` : '';
+      return `${fn}, slot locked at ${vars.ranchName || 'your ranch'}!${pickup} Reply STOP to opt out.`;
+    }
     case 'refund':
       return `${fn}, your $${vars.amount || 0} deposit was refunded. It will land in 5-10 business days. Reply STOP to opt out.`;
     case 'fulfillment':

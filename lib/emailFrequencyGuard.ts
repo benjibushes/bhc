@@ -111,6 +111,12 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   // so whitelisting cannot cause volume. Suppressing it = buyer misses the
   // delivery window = thawed beef on a porch. D3, 2026-07-01.
   'sendBuyerShippingNotification',
+  // Wave 2 (2026-07-29): buyer "your pickup/delivery is scheduled for {date}"
+  // notice. Fires ONLY on a rancher schedule action — the fulfillment route
+  // compares the persisted Handoff Date before vs after the write and skips
+  // the send when the new date equals the stored date, so re-saves cannot
+  // create volume. Suppressing it = buyer never learns their handoff date.
+  'sendBuyerHandoffScheduled',
   // Customer-expected confirmation that partner application was received.
   'sendPartnerConfirmation',
   // Operator-expected internal alerts — capping these blinds the team.

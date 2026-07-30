@@ -49,6 +49,10 @@ export const FULFILLMENT_METHODS: readonly FulfillmentMethod[] = ['pickup', 'shi
 export const FULFILLMENT_FIELDS = {
   status: 'Fulfillment Status',          // singleSelect: scheduled|processing|ready|fulfilled
   processingDate: 'Processing Date',     // date — ALREADY EXISTS (set by send-final-invoice)
+  // Wave 2 (2026-07-29): the buyer-facing pickup/delivery date. Distinct from
+  // Processing Date (the abattoir date) — this is WHEN THE BUYER GETS THEIR
+  // BEEF. Field created live tonight (fldZpGyngRdeBq5y0, ISO date, Referrals).
+  handoffDate: 'Handoff Date',           // date
   cutSheetNote: 'Cut Sheet Note',        // long text
   method: 'Fulfillment Method',          // singleSelect: pickup|ship
   carrier: 'Shipping Carrier',           // single line text
@@ -117,6 +121,16 @@ export interface FulfillmentUpdateInput {
     carrier?: unknown;
     trackingNumber?: unknown;
     processingDate?: unknown;
+    handoffDate?: unknown;
+    /**
+     * Wave 2 (2026-07-29) data-wipe fix: an empty-string date NO LONGER nulls
+     * the stored value (the tracker UI used to state-init a free-text
+     * Processing Date to '' and silently delete the chase clock on every
+     * save). A deliberate clear must be explicit via these flags — wired to a
+     * dedicated "clear date" affordance in the UI, never to an empty input.
+     */
+    clearProcessingDate?: unknown;
+    clearHandoffDate?: unknown;
   };
   /** Now, injected for testability. */
   nowIso?: string;
@@ -216,15 +230,39 @@ export function validateFulfillmentUpdate(input: FulfillmentUpdateInput): Fulfil
     };
   }
 
-  // ── Processing date — loose parse, reject past + unparseable ──────────────
+  // ── Processing date — loose parse, reject unparseable ────────────────────
+  // Data-wipe fix (Wave 2, 2026-07-29): ''/null is a NO-OP, never a delete.
+  // The old `'' → null` branch let a blank input silently erase a non-empty
+  // Processing Date (and with it the fulfillment-chase due date). Deliberate
+  // clears go through the explicit clearProcessingDate flag only.
   if (patch.processingDate !== undefined && patch.processingDate !== '' && patch.processingDate !== null) {
     const parsed = new Date(String(patch.processingDate));
     if (isNaN(parsed.getTime())) {
       return { ok: false, status: 400, error: 'Processing date is not a recognizable date. Use YYYY-MM-DD.' };
     }
     fields[FULFILLMENT_FIELDS.processingDate] = String(patch.processingDate);
-  } else if (patch.processingDate === '' || patch.processingDate === null) {
+  } else if (patch.clearProcessingDate === true) {
     fields[FULFILLMENT_FIELDS.processingDate] = null;
+  }
+
+  // ── Handoff date — the buyer-facing pickup/delivery date ──────────────────
+  // Mirrors Processing Date handling (loose parse, explicit-clear-only) plus a
+  // not-past rule: scheduling a handoff in the past is almost certainly a
+  // typo. One-day UTC grace so a rancher picking "today" late in a US-evening
+  // (already tomorrow in UTC) isn't rejected.
+  if (patch.handoffDate !== undefined && patch.handoffDate !== '' && patch.handoffDate !== null) {
+    const parsed = new Date(String(patch.handoffDate));
+    if (isNaN(parsed.getTime())) {
+      return { ok: false, status: 400, error: 'Pickup/delivery date is not a recognizable date. Use YYYY-MM-DD.' };
+    }
+    const nowMs = new Date(now).getTime();
+    const startOfTodayUtc = Math.floor(nowMs / 86_400_000) * 86_400_000;
+    if (parsed.getTime() < startOfTodayUtc - 86_400_000) {
+      return { ok: false, status: 400, error: 'Pickup/delivery date is in the past — pick today or a future date.' };
+    }
+    fields[FULFILLMENT_FIELDS.handoffDate] = String(patch.handoffDate);
+  } else if (patch.clearHandoffDate === true) {
+    fields[FULFILLMENT_FIELDS.handoffDate] = null;
   }
 
   // Nothing to write at all (no recognized keys present)?

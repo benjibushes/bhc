@@ -191,6 +191,18 @@ export async function GET(request: Request) {
       shipping_carrier: r['Shipping Carrier'] || '',
       tracking_number: r['Tracking Number'] || '',
       fulfillment_updated_at: r['Fulfillment Updated At'] || '',
+      // Wave 2 (2026-07-29): buyer-facing pickup/delivery date — the tracker
+      // writes it (fldZpGyngRdeBq5y0); deal cards + the tracker prefill read
+      // it. Distinct from processing_date (the abattoir date).
+      handoff_date: r['Handoff Date'] || '',
+      // Wave 2 (2026-07-29): the buyer's cut sheet, stamped by
+      // /api/checkout/[refId]/preferences. Read-only display on the rancher
+      // dashboard ("Buyer's cut sheet" block near the tracker) — previously
+      // stripped from every rancher projection.
+      buyer_cut_notes: r['Buyer Cut Notes'] || '',
+      buyer_fulfillment_pref: r['Buyer Fulfillment Pref'] || '',
+      buyer_window_pref: r['Buyer Window Pref'] || '',
+      buyer_preferences_set_at: r['Buyer Preferences Set At'] || '',
       // FINAL-5 (2026-05-31) — deposit + final invoice tracking so the
       // "Send Final Invoice" button can render on Awaiting Payment rows
       // (tier_v2 Stripe Connect flow).

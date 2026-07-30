@@ -49,6 +49,15 @@ export const REFERRAL_DASHBOARD_FIELDS = [
   'Fulfillment Confirmed At', 'Fulfillment Status', 'Cut Sheet Note',
   'Fulfillment Method', 'Shipping Carrier', 'Tracking Number',
   'Fulfillment Updated At',
+  // Wave 2 (2026-07-29): buyer-facing pickup/delivery date (fldZpGyngRdeBq5y0)
+  // — distinct from Processing Date (the abattoir date).
+  'Handoff Date',
+  // Wave 2 (2026-07-29): the buyer's cut sheet. Stamped by
+  // /api/checkout/[refId]/preferences — these were stripped from every
+  // rancher projection, so the rancher dashboard could never show what the
+  // buyer asked for.
+  'Buyer Cut Notes', 'Buyer Fulfillment Pref', 'Buyer Window Pref',
+  'Buyer Preferences Set At',
   // deposit + final invoice rail
   'Deposit Paid At', 'Deposit Amount', 'Deposit Requested At', 'Deposit Link Opened At',
   'Final Invoice URL', 'Final Invoice Sent At', 'Final Invoice Amount',

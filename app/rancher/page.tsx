@@ -9,6 +9,7 @@ import StateMultiSelect from '../components/StateMultiSelect';
 import ImageUploader from '../components/ImageUploader';
 import Link from 'next/link';
 import { deriveLadder, deriveDeposit, checkWholePrice, MIN_TIER_PRICE } from '@/lib/pricing';
+import { FULFILLMENT_STATUSES, FULFILLMENT_STATUS_LABELS } from '@/lib/fulfillmentTracking';
 import { netEarningsFor, referralRail } from '@/lib/commission';
 import { gradeLead, gradeSortWeight } from '@/lib/leadGrade';
 import { selectUntouchedIntros } from '@/lib/untouchedIntros';
@@ -155,6 +156,16 @@ interface Referral {
   shipping_carrier?: string;
   tracking_number?: string;
   fulfillment_updated_at?: string;
+  // Wave 2 (2026-07-29): buyer-facing pickup/delivery date (Handoff Date).
+  // Distinct from processing_date (the abattoir date). Setting/changing it in
+  // the tracker emails the buyer their schedule.
+  handoff_date?: string;
+  // Wave 2 (2026-07-29): the buyer's cut sheet, captured post-deposit by
+  // /api/checkout/[refId]/preferences. Read-only display near the tracker.
+  buyer_cut_notes?: string;
+  buyer_fulfillment_pref?: string;
+  buyer_window_pref?: string;
+  buyer_preferences_set_at?: string;
   // Deposit + final invoice tracking (tier_v2 Stripe Connect flow).
   // Drives the "Send Final Invoice" button visibility on Awaiting Payment
   // referrals. deposit_paid_at present = buyer already paid deposit, rancher
@@ -3527,6 +3538,25 @@ export default function RancherDashboardPage() {
                               </button>
                             </div>
                           </div>
+                          {/* Wave 2 (2026-07-29) — un-gated tracker: the whole
+                              Slot Locked / Awaiting Payment window previously
+                              had ZERO fulfillment tooling (tracker + confirm
+                              only rendered on Closed Won). Any ACCEPTED
+                              non-terminal deal now gets the tracker — dates,
+                              cut sheet, ship info — right where the money
+                              collection happens. Closed Won rows keep their
+                              tracker in the closed-deals card (no double
+                              render). */}
+                          {!!ref.rancher_accepted_at && !isTerminal && (
+                            <FulfillmentTracker
+                              referral={ref}
+                              onSaved={(patch) => {
+                                setReferrals((prev) =>
+                                  prev.map((rr) => (rr.id === ref.id ? { ...rr, ...patch } : rr)),
+                                );
+                              }}
+                            />
+                          )}
                         </div>
                       );
                     })}
@@ -3586,9 +3616,15 @@ export default function RancherDashboardPage() {
                             }}
                           />
                         )}
-                        {/* Stage-3 Audit B4 — fulfillment confirm row. Gated on tier_v2 + Closed Won.
-                            Legacy ranchers use the post-close commission invoice flow, not fulfillment confirm. */}
-                        {ref.status === 'Closed Won' && rancherInfo.pricingModel === 'tier_v2' && (
+                        {/* Stage-3 Audit B4 — fulfillment confirm row, Closed Won only.
+                            Wave 2 (2026-07-29): the tier_v2 gate is GONE. The confirm
+                            endpoint's payment gate is already rail-per-referral
+                            (lib/fulfillmentConfirm): deposit-rail rows need a settled
+                            Payments row, legacy/off-rail rows accept Payment Confirmed
+                            At — so legacy ranchers can (and should) fire the buyer
+                            "beef received" email too. The old gate meant a legacy
+                            close could NEVER send it. */}
+                        {ref.status === 'Closed Won' && (
                           <FulfillmentConfirmRow
                             referral={ref}
                             onConfirmed={(when) => {
@@ -7222,20 +7258,78 @@ function AccountSettingsSection({
 
 // ── WAVE 3b — Per-order fulfillment tracker ───────────────────────────────
 // Richer than the binary FulfillmentConfirmRow: a delivery status
-// (scheduled → processing → ready → fulfilled), processing date, cut-sheet
-// note, pickup-vs-ship choice, carrier + tracking number. POSTs to the
-// rancher-scoped /api/rancher/referrals/[id]/fulfillment route.
+// (scheduled → processing → ready → fulfilled), processing date, buyer-facing
+// handoff date, cut-sheet note, pickup-vs-ship choice, carrier + tracking
+// number. POSTs to the rancher-scoped /api/rancher/referrals/[id]/fulfillment
+// route.
 //
 // GRACEFUL DEGRADATION: the backing Airtable fields are NEW. We can't detect
 // their existence from the client, so this always renders, but the write is
 // best-effort (the server strips unknown fields). The optimistic local update
 // + saved confirmation give the rancher feedback either way.
-const FULFILLMENT_STEPS: { value: string; label: string }[] = [
-  { value: 'scheduled', label: 'scheduled' },
-  { value: 'processing', label: 'at processor' },
-  { value: 'ready', label: 'ready' },
-  { value: 'fulfilled', label: 'delivered' },
-];
+//
+// Wave 2 (2026-07-29): steps derive from lib/fulfillmentTracking (the page
+// used to hardcode a drifted copy of FULFILLMENT_STATUS_LABELS), and save()
+// posts ONLY the keys the rancher actually changed. The old unconditional
+// post wiped data: a free-text Processing Date ("Wednesday, June 15")
+// state-initialized via slice(0,10) to a blank date input, then posted '' —
+// which the server nulled, silently deleting the chase clock; collapsed ship
+// inputs nulled Shipping Carrier/Tracking Number the same way. Deliberate
+// date clears go through the explicit ✕ affordance (clearProcessingDate /
+// clearHandoffDate flags) only.
+const FULFILLMENT_STEPS: { value: string; label: string }[] = FULFILLMENT_STATUSES.map((s) => ({
+  value: s,
+  label: FULFILLMENT_STATUS_LABELS[s],
+}));
+
+// Normalize a stored date (ISO or legacy free text) to a YYYY-MM-DD input
+// value. Unparseable → '' (the raw value is shown alongside so nothing is
+// silently hidden — and dirty-key tracking means an untouched blank input is
+// never posted, so the stored value survives).
+function toDateInputValue(raw?: string): string {
+  if (!raw) return '';
+  const s = String(raw);
+  const m = s.match(/^\d{4}-\d{2}-\d{2}/);
+  if (m) return m[0];
+  const t = new Date(s);
+  if (isNaN(t.getTime())) return '';
+  return t.toISOString().slice(0, 10);
+}
+
+// Wave 2 (2026-07-29): compact read-only "Buyer's cut sheet" block — what the
+// buyer asked for at /api/checkout/[refId]/preferences. Renders with the
+// tracker so the rancher sees the cut sheet exactly where they work the order.
+function BuyerCutSheet({ referral }: { referral: Referral }) {
+  const hasPrefs =
+    !!referral.buyer_preferences_set_at ||
+    !!referral.buyer_cut_notes ||
+    !!referral.buyer_fulfillment_pref ||
+    !!referral.buyer_window_pref;
+  return (
+    <div className="border border-dust bg-bone-warm/60 p-3 text-xs space-y-1">
+      <p className="uppercase tracking-widest text-saddle font-semibold text-[10px]">
+        Buyer&apos;s cut sheet
+      </p>
+      {hasPrefs ? (
+        <>
+          <p className="text-charcoal">
+            <span className="text-saddle">Wants:</span>{' '}
+            {referral.buyer_fulfillment_pref || 'no pickup/delivery preference yet'}
+            {referral.buyer_window_pref ? ` · ${referral.buyer_window_pref}` : ''}
+          </p>
+          <p className="text-charcoal whitespace-pre-wrap">
+            <span className="text-saddle">Cut notes:</span>{' '}
+            {referral.buyer_cut_notes || 'none — open to your standard cut sheet'}
+          </p>
+        </>
+      ) : (
+        <p className="text-saddle">
+          Not submitted yet — the buyer gets a preferences form after their deposit.
+        </p>
+      )}
+    </div>
+  );
+}
 
 function FulfillmentTracker({
   referral,
@@ -7245,14 +7339,26 @@ function FulfillmentTracker({
   onSaved: (patch: Partial<Referral>) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [status, setStatus] = useState(referral.fulfillment_status || 'scheduled');
-  const [method, setMethod] = useState(referral.fulfillment_method || '');
-  const [processingDate, setProcessingDate] = useState(
-    referral.processing_date ? String(referral.processing_date).slice(0, 10) : '',
-  );
-  const [cutSheetNote, setCutSheetNote] = useState(referral.cut_sheet_note || '');
-  const [carrier, setCarrier] = useState(referral.shipping_carrier || '');
-  const [trackingNumber, setTrackingNumber] = useState(referral.tracking_number || '');
+  // Initial values — the comparison baseline for dirty-key tracking.
+  const initial = {
+    status: referral.fulfillment_status || 'scheduled',
+    method: referral.fulfillment_method || '',
+    processingDate: toDateInputValue(referral.processing_date),
+    handoffDate: toDateInputValue(referral.handoff_date),
+    cutSheetNote: referral.cut_sheet_note || '',
+    carrier: referral.shipping_carrier || '',
+    trackingNumber: referral.tracking_number || '',
+  };
+  const [status, setStatus] = useState(initial.status);
+  const [method, setMethod] = useState(initial.method);
+  const [processingDate, setProcessingDate] = useState(initial.processingDate);
+  const [handoffDate, setHandoffDate] = useState(initial.handoffDate);
+  // Explicit-clear flags — set ONLY by the ✕ buttons, never by an empty input.
+  const [clearProcessing, setClearProcessing] = useState(false);
+  const [clearHandoff, setClearHandoff] = useState(false);
+  const [cutSheetNote, setCutSheetNote] = useState(initial.cutSheetNote);
+  const [carrier, setCarrier] = useState(initial.carrier);
+  const [trackingNumber, setTrackingNumber] = useState(initial.trackingNumber);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
@@ -7265,18 +7371,31 @@ function FulfillmentTracker({
     setError('');
     setSaved(false);
     try {
+      // Dirty-key tracking: post ONLY what the rancher changed. An absent key
+      // is a no-op server-side, so untouched fields can never be wiped.
+      const body: Record<string, unknown> = {};
+      if (status !== initial.status) body.status = status;
+      if (method !== initial.method) body.method = method || '';
+      if (cutSheetNote !== initial.cutSheetNote) body.cutSheetNote = cutSheetNote;
+      if (carrier !== initial.carrier) body.carrier = carrier;
+      if (trackingNumber !== initial.trackingNumber) body.trackingNumber = trackingNumber;
+      // Dates: post only a non-empty changed value. Emptying the input is NOT
+      // a delete — a deliberate clear rides the explicit flags below.
+      if (processingDate && processingDate !== initial.processingDate) body.processingDate = processingDate;
+      if (handoffDate && handoffDate !== initial.handoffDate) body.handoffDate = handoffDate;
+      if (clearProcessing && !processingDate) body.clearProcessingDate = true;
+      if (clearHandoff && !handoffDate) body.clearHandoffDate = true;
+
+      if (Object.keys(body).length === 0) {
+        setSaved(true);
+        return;
+      }
+
       const res = await fetch(`/api/rancher/referrals/${referral.id}/fulfillment`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({
-          status,
-          method: method || '',
-          processingDate: processingDate || '',
-          cutSheetNote,
-          carrier,
-          trackingNumber,
-        }),
+        body: JSON.stringify(body),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -7284,14 +7403,25 @@ function FulfillmentTracker({
         return;
       }
       setSaved(true);
-      onSaved({
-        fulfillment_status: status,
-        fulfillment_method: method,
-        processing_date: processingDate,
-        cut_sheet_note: cutSheetNote,
-        shipping_carrier: carrier,
-        tracking_number: trackingNumber,
-      });
+      setClearProcessing(false);
+      setClearHandoff(false);
+      // Optimistic patch mirrors ONLY the keys we actually posted.
+      const patch: Partial<Referral> = {};
+      if ('status' in body) patch.fulfillment_status = status;
+      if ('method' in body) patch.fulfillment_method = method;
+      if ('processingDate' in body) patch.processing_date = processingDate;
+      if ('clearProcessingDate' in body) patch.processing_date = '';
+      if ('handoffDate' in body) patch.handoff_date = handoffDate;
+      if ('clearHandoffDate' in body) patch.handoff_date = '';
+      if ('cutSheetNote' in body) patch.cut_sheet_note = cutSheetNote;
+      if ('carrier' in body) patch.shipping_carrier = carrier;
+      if ('trackingNumber' in body) patch.tracking_number = trackingNumber;
+      // Wave 2: a fulfilled transition rides the shared confirm rail
+      // server-side — mirror the stamp so the green pill renders immediately.
+      if (typeof data?.fulfillmentConfirmedAt === 'string' && data.fulfillmentConfirmedAt) {
+        patch.fulfillment_confirmed_at = data.fulfillmentConfirmedAt;
+      }
+      onSaved(patch);
     } catch {
       setError('Network error — try again in a moment.');
     } finally {
@@ -7313,7 +7443,19 @@ function FulfillmentTracker({
             {i <= stepIdx ? '✓ ' : ''}{s.label}
           </span>
         ))}
+        {referral.handoff_date && (
+          <span
+            className="px-2 py-1 text-xs font-medium bg-amber/15 text-amber-dark"
+            title="Buyer-facing pickup/delivery date"
+          >
+            📅 {toDateInputValue(referral.handoff_date) || referral.handoff_date}
+          </span>
+        )}
       </div>
+
+      {/* Wave 2: the buyer's cut sheet — read-only, right where the rancher
+          works the order. */}
+      <BuyerCutSheet referral={referral} />
 
       {!open ? (
         <button
@@ -7352,12 +7494,61 @@ function FulfillmentTracker({
             </div>
             <div>
               <label className="block text-xs font-medium uppercase tracking-wider mb-1 text-saddle">Processing date</label>
-              <input
-                type="date"
-                value={processingDate}
-                onChange={(e) => setProcessingDate(e.target.value)}
-                className="w-full px-3 py-2 min-h-[44px] border border-dust bg-white text-charcoal text-sm focus:outline-none focus:border-charcoal"
-              />
+              <div className="flex items-center gap-1">
+                <input
+                  type="date"
+                  value={processingDate}
+                  onChange={(e) => { setProcessingDate(e.target.value); if (e.target.value) setClearProcessing(false); }}
+                  className="w-full px-3 py-2 min-h-[44px] border border-dust bg-white text-charcoal text-sm focus:outline-none focus:border-charcoal"
+                />
+                {(processingDate || initial.processingDate) && (
+                  <button
+                    type="button"
+                    onClick={() => { setProcessingDate(''); setClearProcessing(true); }}
+                    title="Clear the processing date"
+                    aria-label="Clear the processing date"
+                    className="px-2 min-h-[44px] text-saddle hover:text-weathered text-lg leading-none"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+              {referral.processing_date && !initial.processingDate && (
+                <p className="mt-1 text-[11px] text-saddle">
+                  Currently: &ldquo;{referral.processing_date}&rdquo; — pick a real date to fix it.
+                </p>
+              )}
+              {clearProcessing && !processingDate && (
+                <p className="mt-1 text-[11px] text-weathered">Will clear on save.</p>
+              )}
+            </div>
+            <div>
+              <label className="block text-xs font-medium uppercase tracking-wider mb-1 text-saddle">Pickup / delivery date</label>
+              <div className="flex items-center gap-1">
+                <input
+                  type="date"
+                  value={handoffDate}
+                  onChange={(e) => { setHandoffDate(e.target.value); if (e.target.value) setClearHandoff(false); }}
+                  className="w-full px-3 py-2 min-h-[44px] border border-dust bg-white text-charcoal text-sm focus:outline-none focus:border-charcoal"
+                />
+                {(handoffDate || initial.handoffDate) && (
+                  <button
+                    type="button"
+                    onClick={() => { setHandoffDate(''); setClearHandoff(true); }}
+                    title="Clear the pickup/delivery date"
+                    aria-label="Clear the pickup/delivery date"
+                    className="px-2 min-h-[44px] text-saddle hover:text-weathered text-lg leading-none"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+              <p className="mt-1 text-[11px] text-saddle">
+                When the buyer gets their beef — they get an email when you set or change this.
+              </p>
+              {clearHandoff && !handoffDate && (
+                <p className="mt-1 text-[11px] text-weathered">Will clear on save.</p>
+              )}
             </div>
             {method === 'ship' && (
               <>
