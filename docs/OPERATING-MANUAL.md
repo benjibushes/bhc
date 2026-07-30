@@ -93,7 +93,8 @@ d21 long-haul). First report ~16:30 UTC daily; after one sane report say
 - Meta pixel ID + CAPI token (3 envs) → flip after the test buy.
 - `RESEND_INBOUND_WEBHOOK_SECRET` → from Resend dashboard.
 - Outreach `OUTREACH_FROM` → needs buyhalfcow.co + Google Workspace inbox
-  (cold email NEVER rides buyhalfcow.com). Phone is set: (720) 491-7819.
+  (cold email NEVER rides buyhalfcow.com). Phone is set — see the SMS env
+  (`TWILIO_FROM_NUMBER`); no live number is written down in this public repo.
   Engine drafts daily at dry-run; sends stay approval-gated regardless.
 
 ## 4. What Ben reads (the 10-minute daily loop)

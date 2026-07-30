@@ -70,7 +70,7 @@ test('scorer: storage — freezer 10, rancher-holds 8, need-space/cuts 6, unknow
 test('scorer: phone — 10-15 digits scores 10, junk scores 0', () => {
   const base = { tier: '', timing: '', budget: 'x' };
   assert.equal(computeFunnelIntentScore({ ...base, phone: '555-555-5555' }), 15);
-  assert.equal(computeFunnelIntentScore({ ...base, phone: '+1 (720) 491-7819' }), 15);
+  assert.equal(computeFunnelIntentScore({ ...base, phone: '+1 (720) 240-1234' }), 15);
   assert.equal(computeFunnelIntentScore({ ...base, phone: '12345' }), 5);
   assert.equal(computeFunnelIntentScore({ ...base, phone: '' }), 5);
   assert.equal(computeFunnelIntentScore({ ...base, phone: undefined }), 5);

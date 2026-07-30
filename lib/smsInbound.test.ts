@@ -14,7 +14,7 @@ import { parseInboundSms } from './smsInbound';
 test('twilio: From/To/Body/MessageSid form fields', () => {
   const got = parseInboundSms({
     From: '+13125550001',
-    To: '+17204917819',
+    To: '+17202401234',
     Body: 'STOP',
     MessageSid: 'SM1234567890abcdef',
     AccountSid: 'AC1',
@@ -22,7 +22,7 @@ test('twilio: From/To/Body/MessageSid form fields', () => {
   assert.deepEqual(got, {
     provider: 'twilio',
     from: '+13125550001',
-    to: '+17204917819',
+    to: '+17202401234',
     body: 'STOP',
     providerMessageId: 'SM1234567890abcdef',
   });
@@ -47,7 +47,7 @@ test('telnyx: data.payload shape from the receive-message docs', () => {
         id: '84cca175-9755-4859-b67f-4730d7f58aa3',
         record_type: 'message',
         text: 'STOP',
-        to: [{ carrier: 'Telnyx', phone_number: '+17204917819' }],
+        to: [{ carrier: 'Telnyx', phone_number: '+17202401234' }],
         type: 'SMS',
       },
       record_type: 'event',
@@ -57,7 +57,7 @@ test('telnyx: data.payload shape from the receive-message docs', () => {
   assert.deepEqual(got, {
     provider: 'telnyx',
     from: '+13125550001',
-    to: '+17204917819',
+    to: '+17202401234',
     body: 'STOP',
     providerMessageId: '84cca175-9755-4859-b67f-4730d7f58aa3',
   });
@@ -69,7 +69,7 @@ test('telnyx: a delivery receipt is NOT an inbound message', () => {
       event_type: 'message.finalized',
       payload: {
         direction: 'outbound',
-        from: { phone_number: '+17204917819' },
+        from: { phone_number: '+17202401234' },
         id: 'x',
         text: 'deposit ready',
         to: [{ phone_number: '+13125550001', status: 'delivered' }],
@@ -84,7 +84,7 @@ test('telnyx: a delivery receipt is NOT an inbound message', () => {
 test('plivo: From/To/Text form fields', () => {
   const got = parseInboundSms({
     From: '13125550001',
-    To: '17204917819',
+    To: '17202401234',
     Text: 'STOP',
     Type: 'sms',
     MessageUUID: 'db3ce55a-7f1d-11e1-8ea7-1231380bc196',
@@ -92,14 +92,14 @@ test('plivo: From/To/Text form fields', () => {
   assert.deepEqual(got, {
     provider: 'plivo',
     from: '13125550001',
-    to: '17204917819',
+    to: '17202401234',
     body: 'STOP',
     providerMessageId: 'db3ce55a-7f1d-11e1-8ea7-1231380bc196',
   });
 });
 
 test('plivo: MessageUUID is optional (docs only guarantee From/To/Text)', () => {
-  const got = parseInboundSms({ From: '13125550001', To: '17204917819', Text: 'help' });
+  const got = parseInboundSms({ From: '13125550001', To: '17202401234', Text: 'help' });
   assert.equal(got?.provider, 'plivo');
   assert.equal(got?.body, 'help');
   assert.equal(got?.providerMessageId, '');
@@ -117,15 +117,15 @@ test('bandwidth: message-received event inside a JSON array', () => {
     {
       time: '2025-01-06T15:43:35.502180Z',
       type: 'message-received',
-      to: '+17204917819',
+      to: '+17202401234',
       description: 'Incoming message received',
       message: {
         id: '14762070468292kw2fuqty55yp2b2',
-        owner: '+17204917819',
+        owner: '+17202401234',
         applicationId: '93de2206-9669-4e07-948d-329f4b722ee2',
         segmentCount: 1,
         direction: 'in',
-        to: ['+17204917819'],
+        to: ['+17202401234'],
         from: '+13125550001',
         text: 'STOP',
       },
@@ -134,7 +134,7 @@ test('bandwidth: message-received event inside a JSON array', () => {
   assert.deepEqual(got, {
     provider: 'bandwidth',
     from: '+13125550001',
-    to: '+17204917819',
+    to: '+17202401234',
     body: 'STOP',
     providerMessageId: '14762070468292kw2fuqty55yp2b2',
   });

@@ -14,20 +14,20 @@ import {
 
 // ── normalizePhoneE164 ──────────────────────────────────────────────────────
 test('normalizes common US formats to E.164', () => {
-  assert.equal(normalizePhoneE164('7204917819'), '+17204917819');
-  assert.equal(normalizePhoneE164('(720) 491-7819'), '+17204917819');
-  assert.equal(normalizePhoneE164('720-491-7819'), '+17204917819');
-  assert.equal(normalizePhoneE164('720.491.7819'), '+17204917819');
-  assert.equal(normalizePhoneE164('17204917819'), '+17204917819');
-  assert.equal(normalizePhoneE164('+1 720 491 7819'), '+17204917819');
+  assert.equal(normalizePhoneE164('7202401234'), '+17202401234');
+  assert.equal(normalizePhoneE164('(720) 240-1234'), '+17202401234');
+  assert.equal(normalizePhoneE164('720-240-1234'), '+17202401234');
+  assert.equal(normalizePhoneE164('720.240.1234'), '+17202401234');
+  assert.equal(normalizePhoneE164('17202401234'), '+17202401234');
+  assert.equal(normalizePhoneE164('+1 720 240 1234'), '+17202401234');
 });
 
 test('rejects non-NANP shapes', () => {
   assert.equal(normalizePhoneE164('123456789'), null); // 9 digits
   assert.equal(normalizePhoneE164('12345678901234'), null); // too many
-  assert.equal(normalizePhoneE164('0204917819'), null); // area code starts 0
-  assert.equal(normalizePhoneE164('1204917819'), null); // area code starts 1
-  assert.equal(normalizePhoneE164('7201917819'), null); // exchange starts 1
+  assert.equal(normalizePhoneE164('0202401234'), null); // area code starts 0
+  assert.equal(normalizePhoneE164('1202401234'), null); // area code starts 1
+  assert.equal(normalizePhoneE164('7201912345'), null); // exchange starts 1
   assert.equal(normalizePhoneE164(''), null);
   assert.equal(normalizePhoneE164(null), null);
   assert.equal(normalizePhoneE164(undefined), null);
@@ -49,8 +49,8 @@ test('isLikelyUsMobileShape mirrors normalization', () => {
 
 // ── formatPhonePretty ───────────────────────────────────────────────────────
 test('pretty format for normalizable numbers', () => {
-  assert.equal(formatPhonePretty('7204917819'), '(720) 491-7819');
-  assert.equal(formatPhonePretty('+17204917819'), '(720) 491-7819');
+  assert.equal(formatPhonePretty('7202401234'), '(720) 240-1234');
+  assert.equal(formatPhonePretty('+17202401234'), '(720) 240-1234');
 });
 
 test('pretty format falls back to trimmed input when unparseable', () => {
@@ -61,19 +61,19 @@ test('pretty format falls back to trimmed input when unparseable', () => {
 
 // ── smsHref / telHref ───────────────────────────────────────────────────────
 test('smsHref builds the cross-platform ?&body= link', () => {
-  const href = smsHref('(720) 491-7819', 'hi ben — quick question');
-  assert.equal(href, `sms:+17204917819?&body=${encodeURIComponent('hi ben — quick question')}`);
+  const href = smsHref('(720) 240-1234', 'hi ben — quick question');
+  assert.equal(href, `sms:+17202401234?&body=${encodeURIComponent('hi ben — quick question')}`);
 });
 
 test('smsHref with empty body is a bare sms: link', () => {
-  assert.equal(smsHref('7204917819', ''), 'sms:+17204917819');
+  assert.equal(smsHref('7202401234', ''), 'sms:+17202401234');
 });
 
 test('smsHref/telHref return null on a bad phone — never a broken link', () => {
   assert.equal(smsHref('5555555555', 'hello'), null);
   assert.equal(smsHref('', 'hello'), null);
   assert.equal(telHref('junk'), null);
-  assert.equal(telHref('7204917819'), 'tel:+17204917819');
+  assert.equal(telHref('7202401234'), 'tel:+17202401234');
 });
 
 // ── buyerIntroSmsBody ───────────────────────────────────────────────────────
@@ -105,14 +105,14 @@ test("intro sms body contract: callers pass RAW names, never HTML-escaped", () =
     "hi D'Arcy, just matched with you on buyhalfcow — i'm looking for a beef share. — J&L Cattle Co",
   );
   assert.ok(!body.includes('&#039;'));
-  const href = smsHref('7204917819', body);
+  const href = smsHref('7202401234', body);
   assert.ok(href!.includes(encodeURIComponent("D'Arcy")));
   assert.ok(!href!.includes('&#039;'));
 });
 
 // ── areaCodeState / phoneLooksOutOfState ────────────────────────────────────
 test('area code maps to state for known codes', () => {
-  assert.equal(areaCodeState('7204917819'), 'CO');
+  assert.equal(areaCodeState('7202401234'), 'CO');
   assert.equal(areaCodeState('(406) 240-1234'), 'MT');
   assert.equal(areaCodeState('2142401234'), 'TX');
 });
@@ -131,11 +131,11 @@ test('every table entry is a 3-digit code mapping to a 2-letter state', () => {
 });
 
 test('phoneLooksOutOfState fires only on a positive, known mismatch', () => {
-  assert.equal(phoneLooksOutOfState('7204917819', 'TX'), true); // CO code, TX buyer
-  assert.equal(phoneLooksOutOfState('7204917819', 'CO'), false); // matches
-  assert.equal(phoneLooksOutOfState('7204917819', 'Colorado'), false); // normalized match
+  assert.equal(phoneLooksOutOfState('7202401234', 'TX'), true); // CO code, TX buyer
+  assert.equal(phoneLooksOutOfState('7202401234', 'CO'), false); // matches
+  assert.equal(phoneLooksOutOfState('7202401234', 'Colorado'), false); // normalized match
   assert.equal(phoneLooksOutOfState('9072401234', 'TX'), false); // unknown code
   assert.equal(phoneLooksOutOfState('junk', 'TX'), false); // unparseable
-  assert.equal(phoneLooksOutOfState('7204917819', ''), false); // unknown buyer state
-  assert.equal(phoneLooksOutOfState('7204917819', 'Bogusland'), false);
+  assert.equal(phoneLooksOutOfState('7202401234', ''), false); // unknown buyer state
+  assert.equal(phoneLooksOutOfState('7202401234', 'Bogusland'), false);
 });

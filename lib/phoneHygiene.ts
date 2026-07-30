@@ -67,7 +67,7 @@ export function isLikelyUsMobileShape(raw: unknown): boolean {
 }
 
 /**
- * Pretty display form: '(720) 491-7819'. Falls back to the trimmed input
+ * Pretty display form: '(720) 240-1234'. Falls back to the trimmed input
  * when it doesn't normalize (never invents digits, never empties a value the
  * caller chose to show).
  */
