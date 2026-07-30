@@ -122,8 +122,11 @@ export async function POST(request: Request) {
       shippingCents,
       quantity,
       mode: wantEmbedded ? 'embedded' : 'hosted',
-      returnUrl: `${SITE_URL}/order/success`,
-      successUrl: `${SITE_URL}/order/success`,
+      // pid rides the success/return URL (mirrors PaymentForm's return_url) so
+      // /order/success can branch its copy — pickup vs ship vs deposit-style —
+      // instead of telling a pickup buyer "shipping it direct to you".
+      returnUrl: `${SITE_URL}/order/success?pid=${product.id}`,
+      successUrl: `${SITE_URL}/order/success?pid=${product.id}`,
       cancelUrl: `${SITE_URL}/order/cancelled?pid=${product.id}`,
     });
     // ── Meta Conversions API: server-side InitiateCheckout ──────────────

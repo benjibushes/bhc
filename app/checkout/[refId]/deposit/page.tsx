@@ -49,6 +49,8 @@ interface DepositInfo {
   fulfillment: {
     types: string[];
     pickupCity: string;
+    /** Street address for Local Pickup — buyer-visible once the rancher fills it. */
+    pickupAddress: string;
     deliveryRadiusMiles: number | null;
     shippingLeadTimeDays: number | null;
     costNotes: string;
@@ -461,8 +463,12 @@ function DepositPageContent() {
               ) : (
                 <p>
                   {info.fulfillment.types.join(' · ')}
-                  {info.fulfillment.types.includes('Local Pickup') && info.fulfillment.pickupCity && (
-                    <> · Pickup at <strong>{info.fulfillment.pickupCity}</strong></>
+                  {info.fulfillment.types.includes('Local Pickup') && (info.fulfillment.pickupAddress || info.fulfillment.pickupCity) && (
+                    // Pickup truth (2026-07-29): prefer the actual street
+                    // address over the city so the buyer knows where they'd
+                    // be driving BEFORE they pay. Address only — pickup
+                    // instructions arrive post-payment.
+                    <> · Pickup at <strong>{info.fulfillment.pickupAddress || info.fulfillment.pickupCity}</strong></>
                   )}
                   {info.fulfillment.types.includes('Local Delivery') && info.fulfillment.deliveryRadiusMiles && (
                     <> · Delivery within <strong>{info.fulfillment.deliveryRadiusMiles} mi</strong></>

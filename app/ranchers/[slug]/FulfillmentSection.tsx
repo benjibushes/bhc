@@ -19,6 +19,13 @@ import Card from '../../components/Card';
 export interface FulfillmentData {
   types: string[];
   pickupCity: string;
+  /**
+   * Street address for Local Pickup (2026-07-29). PUBLIC-page policy: the
+   * rancher opted in to showing it by filling the field — render the ADDRESS
+   * only. Pickup Instructions (gate codes, "call when close") never render
+   * here; they go to buyers post-deposit (receipt email / order success).
+   */
+  pickupAddress: string;
   deliveryRadiusMiles: number | null;
   shippingLeadTimeDays: number | null;
   costNotes: string;
@@ -34,6 +41,7 @@ export function parseFulfillment(rancher: any): FulfillmentData | null {
     ? rawTypes.map((t: any) => (t && typeof t === 'object' && 'name' in t ? String(t.name) : String(t))).filter(Boolean)
     : [];
   const pickupCity = String(rancher?.['Pickup City'] || '').trim();
+  const pickupAddress = String(rancher?.['Pickup Address'] || '').trim();
   const deliveryRadiusMiles = Number(rancher?.['Delivery Radius Miles']) || null;
   const shippingLeadTimeDays = Number(rancher?.['Shipping Lead Time Days']) || null;
   const costNotes = String(rancher?.['Fulfillment Cost Notes'] || '').trim();
@@ -41,12 +49,13 @@ export function parseFulfillment(rancher: any): FulfillmentData | null {
   const hasSignal =
     types.length > 0 ||
     !!pickupCity ||
+    !!pickupAddress ||
     !!deliveryRadiusMiles ||
     !!shippingLeadTimeDays ||
     !!costNotes;
   if (!hasSignal) return null;
 
-  return { types, pickupCity, deliveryRadiusMiles, shippingLeadTimeDays, costNotes };
+  return { types, pickupCity, pickupAddress, deliveryRadiusMiles, shippingLeadTimeDays, costNotes };
 }
 
 type Method = {
@@ -61,12 +70,17 @@ function buildMethods(f: FulfillmentData): Method[] {
   const methods: Method[] = [];
 
   if (has('Local Pickup')) {
+    // Address beats city when the rancher filled it (they opted in to showing
+    // buyers exactly where to go). Instructions never render on this public
+    // surface — see the FulfillmentData.pickupAddress doc comment.
     methods.push({
       key: 'pickup',
       title: 'Local pickup',
-      detail: f.pickupCity
-        ? `Collect your order in ${f.pickupCity} on processing day.`
-        : 'Collect your order at the ranch on processing day.',
+      detail: f.pickupAddress
+        ? `Collect your order at ${f.pickupAddress} on processing day.`
+        : f.pickupCity
+          ? `Collect your order in ${f.pickupCity} on processing day.`
+          : 'Collect your order at the ranch on processing day.',
       icon: 'pickup',
     });
   }
@@ -94,7 +108,9 @@ function buildMethods(f: FulfillmentData): Method[] {
   // If types is empty but a sub-field implies a method, infer one so we never
   // show a header with no methods.
   if (methods.length === 0) {
-    if (f.pickupCity) {
+    if (f.pickupAddress) {
+      methods.push({ key: 'pickup', title: 'Local pickup', detail: `Collect your order at ${f.pickupAddress}.`, icon: 'pickup' });
+    } else if (f.pickupCity) {
       methods.push({ key: 'pickup', title: 'Local pickup', detail: `Collect your order in ${f.pickupCity}.`, icon: 'pickup' });
     }
     if (f.deliveryRadiusMiles) {

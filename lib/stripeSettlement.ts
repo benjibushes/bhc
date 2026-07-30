@@ -64,6 +64,42 @@ export function resolveDepositCents(rawDepositCents: unknown, totalChargedCents:
   const resolved = Number.isFinite(parsed) ? parsed : totalChargedCents;
   return Math.min(resolved, totalChargedCents);
 }
+
+// Consumer patch for a buyer whose DEPOSIT just settled. Pure (unit-tested).
+// Two independent concerns, one Airtable write:
+//
+//   1. STAGE FLIP (#512): a direct-deposit buyer keeps a stale pre-payment
+//      stage → MATCHED + fresh denorm so routing/nurture pools drop them.
+//      Skipped when the stage is already MATCHED/CLOSED.
+//   2. STATUS BACKFILL (portal lockout, 2026-07-29): a rancher-added lead
+//      (My Leads CRM #511) is created with a deliberately BLANK 'Status' —
+//      but the member login allowlist rejects blank and mails "application
+//      still under review" to a buyer who just PAID. A paying buyer is
+//      definitionally approved, so backfill 'Approved' — but ONLY onto a
+//      blank Status; an existing value (Rejected, Pending, …) is a deliberate
+//      admin decision this webhook must never overwrite (cf. the same rule in
+//      lib/reserveDeposit.reserveConsumerStatusPatch).
+//
+// Returns {} when nothing needs writing (caller skips the update entirely).
+export function payingBuyerConsumerPatch(
+  buyerStage: unknown,
+  currentStatus: unknown,
+  nowIso: string,
+): Record<string, any> {
+  const patch: Record<string, any> = {};
+  const stage = String((buyerStage as any)?.name || buyerStage || '').trim();
+  if (stage !== 'MATCHED' && stage !== 'CLOSED') {
+    patch['Buyer Stage'] = 'MATCHED';
+    patch['Buyer Stage Updated At'] = nowIso;
+    patch['Referral Status'] = 'Awaiting Payment';
+  }
+  const status = String((currentStatus as any)?.name || currentStatus || '').trim();
+  if (status === '') {
+    patch['Status'] = 'Approved';
+    patch['Approved At'] = nowIso;
+  }
+  return patch;
+}
 import { sendPostPurchaseWelcome } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { markDepositSucceeded } from '@/lib/contracts/payments';
@@ -277,7 +313,7 @@ export async function settleBuyerDeposit(pi: any): Promise<void> {
         console.warn('[settleBuyerDeposit] buyer ZIP capture skipped (non-fatal):', zipErr?.message);
       }
 
-      // ── STAGE FLIP ON DEPOSIT (2026-07-28) ────────────────────────────────
+      // ── STAGE FLIP + STATUS BACKFILL ON DEPOSIT (2026-07-28 / 07-29) ─────
       // The final-invoice settle path flips Buyer Stage, but the DEPOSIT path
       // never did: a direct-deposit buyer (reserve/request-deposit rail —
       // never routed through matching) kept a stale pre-payment stage
@@ -286,18 +322,21 @@ export async function settleBuyerDeposit(pi: any): Promise<void> {
       // paying customer marketing nags (Dave, CV half, 2 nags post-payment).
       // MATCHED + the fresh denorm short-circuit to TERMINAL in
       // lib/routingSegment.ts and keep every routing/nurture pool off them.
-      // Own try/catch: a stage write must never interrupt welcome/CAPI below.
+      // The same write backfills Status='Approved' onto a BLANK Status (My
+      // Leads consumers, #511) so a paying buyer can actually log in to
+      // /member — see payingBuyerConsumerPatch for both rules.
+      // Own try/catch: this write must never interrupt welcome/CAPI below.
       try {
-        const stage = String(buyer['Buyer Stage'] || '');
-        if (stage !== 'MATCHED' && stage !== 'CLOSED') {
-          await updateRecord(TABLES.CONSUMERS, buyer.id, {
-            'Buyer Stage': 'MATCHED',
-            'Buyer Stage Updated At': new Date().toISOString(),
-            'Referral Status': 'Awaiting Payment',
-          });
+        const consumerPatch = payingBuyerConsumerPatch(
+          buyer['Buyer Stage'],
+          buyer['Status'],
+          new Date().toISOString(),
+        );
+        if (Object.keys(consumerPatch).length > 0) {
+          await updateRecord(TABLES.CONSUMERS, buyer.id, consumerPatch);
         }
       } catch (stageErr: any) {
-        console.warn('[settleBuyerDeposit] buyer stage flip skipped (non-fatal):', stageErr?.message);
+        console.warn('[settleBuyerDeposit] buyer stage/status patch skipped (non-fatal):', stageErr?.message);
       }
     }
 

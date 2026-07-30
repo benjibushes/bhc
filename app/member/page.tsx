@@ -121,6 +121,12 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
   // need to know their click WORKED, not wonder if they're being asked to
   // sign up again.
   const [warmupCelebration, setWarmupCelebration] = useState(false);
+  // Detect ?invoice=paid|canceled — the Stripe final-invoice success/cancel
+  // URLs (send-final-invoice + /r/f durable links) land HERE after the LARGEST
+  // payment of the relationship. Until 2026-07-29 these params were dead: the
+  // buyer who just wired ~$2k saw a generic dashboard with zero acknowledgment.
+  // paid → prominent success banner; canceled → gentle "balance still open".
+  const [invoiceOutcome, setInvoiceOutcome] = useState<'paid' | 'canceled' | null>(null);
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
@@ -129,6 +135,14 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
       // Strip the param so a refresh doesn't re-trigger the banner
       const url = new URL(window.location.href);
       url.searchParams.delete('warmup');
+      window.history.replaceState({}, '', url.toString());
+    }
+    const invoice = params.get('invoice');
+    if (invoice === 'paid' || invoice === 'canceled') {
+      setInvoiceOutcome(invoice);
+      // Strip the param so a refresh doesn't re-trigger the banner
+      const url = new URL(window.location.href);
+      url.searchParams.delete('invoice');
       window.history.replaceState({}, '', url.toString());
     }
   }, []);
@@ -245,6 +259,50 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                 </div>
                 <button
                   onClick={() => setWarmupCelebration(false)}
+                  className="text-dust hover:text-charcoal text-sm"
+                  aria-label="Dismiss"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Final-invoice outcome — the buyer just came back from the Stripe
+              checkout for their balance (the largest payment they'll make).
+              paid: confirm it landed + set the next expectation. canceled:
+              honest note that nothing was charged and the balance stays open.
+              Mirrors the warmup banner pattern above (strip-param + dismiss). */}
+          {invoiceOutcome === 'paid' && (
+            <div className="border-2 border-sage-dark bg-bone p-6 space-y-2">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="font-serif text-2xl">Final payment received — you&apos;re all set.</p>
+                  <p className="text-saddle mt-2">
+                    Your balance is paid in full and your beef is officially yours. Your rancher will coordinate delivery or pickup with you directly — watch your email (and your order status below) for the details.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setInvoiceOutcome(null)}
+                  className="text-dust hover:text-charcoal text-sm"
+                  aria-label="Dismiss"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+          )}
+          {invoiceOutcome === 'canceled' && (
+            <div className="border border-dust bg-bone p-6 space-y-2">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="font-serif text-xl">Payment canceled — nothing was charged.</p>
+                  <p className="text-saddle mt-2">
+                    Your balance is still open. The payment link in your email keeps working whenever you&apos;re ready — or just reply to it if something looks off and we&apos;ll sort it out.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setInvoiceOutcome(null)}
                   className="text-dust hover:text-charcoal text-sm"
                   aria-label="Dismiss"
                 >

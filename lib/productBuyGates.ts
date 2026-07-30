@@ -11,7 +11,8 @@
 //   explicitly false → in stock → price/base sane (0 < base <= display) →
 //   quantity clamped 1-5 (deposit-style forced 1) + qty <= Orders Left →
 //   rancher exists + Connect status 'active' + account id present → buyer ZIP
-//   inside the rancher's exclusive service area (if any).
+//   inside the rancher's exclusive service area (if any) → short-TTL Redis
+//   stock hold (oversell prevention, 2026-07-29 — lib/productStockHold).
 //
 // Returns a discriminated union — routes map {status,error} straight into
 // NextResponse.json. Buyer-facing error strings live HERE so both routes
@@ -21,6 +22,7 @@ import { getRecordById, TABLES } from '@/lib/airtable';
 import { hasStock } from '@/lib/marketplaceProducts';
 import { buyerZipServedBy } from '@/lib/exclusiveZip';
 import { ZIP_OUT_OF_AREA_MESSAGE } from '@/lib/buyerZip';
+import { stockIsTracked, acquireStockHold } from '@/lib/productStockHold';
 
 export interface ResolvedProductPurchase {
   ok: true;
@@ -138,6 +140,29 @@ export async function resolveProductPurchase(input: {
   // quiz rather than a dead end.
   if (!buyerZipServedBy(input.buyerZip, rancher)) {
     return { ok: false, status: 409, error: ZIP_OUT_OF_AREA_MESSAGE, fallback: true };
+  }
+
+  // ── OVERSELL HOLD (2026-07-29) ───────────────────────────────────────────
+  // The Orders Left check above is check-then-mint: two simultaneous buyers of
+  // the LAST unit both pass, both charge, and the settlement clamp fires an
+  // OVERSOLD alert after the money moved. Close the window with a short-TTL
+  // Redis hold taken HERE — the last gate, so a refused purchase never left a
+  // phantom hold behind. available = Orders Left − active holds, judged
+  // atomically inside acquireStockHold (INCRBY, then the loser rolls back).
+  // Degrades OPEN on any Redis absence/error (lib/productStockHold) — a Redis
+  // outage reverts to today's alert-only behavior, never a blocked sale.
+  // Settlement releases the hold as it decrements Orders Left.
+  // Copy is honest about WHY: held stock isn't sold stock. A buyer who
+  // refreshes a last-unit checkout shadows themselves with their own earlier
+  // hold — "try again in a few minutes" is true (TTL/settlement frees it);
+  // "sold out" would be a lie that kills the exact conversion this protects.
+  if (stockIsTracked(leftRaw)) {
+    const hold = await acquireStockHold(productId, quantity, Number(leftRaw));
+    if (!hold.ok) {
+      return hold.available <= 0
+        ? { ok: false, status: 409, error: "someone's checking out the last of this batch right now — if their order doesn't complete, it frees up in a few minutes." }
+        : { ok: false, status: 409, error: `only ${hold.available} left from this batch — lower the quantity.` };
+    }
   }
 
   return {

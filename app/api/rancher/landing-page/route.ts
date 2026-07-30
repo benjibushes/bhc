@@ -75,6 +75,11 @@ export async function GET(request: Request) {
         ? ft.map((t: any) => (t && typeof t === 'object' ? t.name : String(t)))
         : [],
       'Pickup City': rancher['Pickup City'] || '',
+      // Pickup truth (2026-07-29): WHERE the buyer actually goes. Address is
+      // buyer-visible on the public page once filled (opt-in by filling it);
+      // instructions only surface post-deposit (receipt email / success page).
+      'Pickup Address': rancher['Pickup Address'] || '',
+      'Pickup Instructions': rancher['Pickup Instructions'] || '',
       'Delivery Radius Miles': rancher['Delivery Radius Miles'] ?? '',
       'Shipping Lead Time Days': rancher['Shipping Lead Time Days'] ?? '',
       'Fulfillment Cost Notes': rancher['Fulfillment Cost Notes'] || '',
@@ -152,6 +157,11 @@ export async function PATCH(request: Request) {
       'Refund Policy',
       'Fulfillment Types',
       'Pickup City',
+      // Pickup truth (2026-07-29): the actual WHERE. Address renders on the
+      // public page + checkout surfaces (opt-in by filling it); instructions
+      // render only on post-deposit surfaces (receipt email / order success).
+      'Pickup Address',
+      'Pickup Instructions',
       'Delivery Radius Miles',
       'Shipping Lead Time Days',
       'Fulfillment Cost Notes',
@@ -640,6 +650,17 @@ export async function PATCH(request: Request) {
         : String(raw).split(',').map((s) => s.trim());
       const clean = arr.filter((v) => FULFILLMENT_TYPE_VALUES.includes(v));
       fields['Fulfillment Types'] = clean.length ? clean : null;
+    }
+
+    // ── Pickup Address / Instructions — trim + clamp ─────────────────────
+    // Buyers see these verbatim (address on the public page + checkout,
+    // instructions on post-deposit surfaces). Mirror the setup route's
+    // Pickup City discipline: trimmed, length-clamped, blank → null (cleared).
+    if (typeof fields['Pickup Address'] === 'string') {
+      fields['Pickup Address'] = fields['Pickup Address'].trim().slice(0, 200) || null;
+    }
+    if (typeof fields['Pickup Instructions'] === 'string') {
+      fields['Pickup Instructions'] = fields['Pickup Instructions'].trim().slice(0, 1000) || null;
     }
 
     // ── Fulfillment numerics ─────────────────────────────────────────────

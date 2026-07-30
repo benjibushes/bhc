@@ -13,6 +13,7 @@ import { getRecordById, getAllRecords, updateRecord, TABLES, escapeAirtableValue
 import { hasStock } from '@/lib/marketplaceProducts';
 import { createProductCheckout } from '@/lib/productCheckout';
 import { ensureStripePrice } from '@/lib/productStripeSync';
+import { stockIsTracked, acquireStockHold } from '@/lib/productStockHold';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -67,6 +68,20 @@ export async function POST(request: Request) {
   // INVENTORY (Phase 11): operator links respect stock too.
   if (!hasStock(product)) {
     return NextResponse.json({ error: 'Sold out — Orders Left is 0 on this product.' }, { status: 409 });
+  }
+  // OVERSELL HOLD (2026-07-29): symmetric with the public buy/intent mints
+  // (lib/productBuyGates) — EVERY session-mint takes a hold, because
+  // settlement releases one unconditionally; an unheld operator mint would
+  // let its release swallow some storefront buyer's active hold. Quantity is
+  // always 1 on this route. Degrades OPEN on Redis absence/error.
+  if (stockIsTracked(product['Orders Left'])) {
+    const hold = await acquireStockHold(product.id, 1, Number(product['Orders Left']));
+    if (!hold.ok) {
+      return NextResponse.json(
+        { error: 'Sold out — every remaining unit is held by an in-flight checkout. Try again in a few minutes.' },
+        { status: 409 },
+      );
+    }
   }
   // Shipping passthrough (same rule as the public buy route): buyer pays it,
   // rancher keeps 100%. Deposit-style always 0 — shipping settles with the
@@ -133,7 +148,9 @@ export async function POST(request: Request) {
       depositStyle: product['Deposit Style'] === true,
       localOnly,
       shippingCents,
-      successUrl: `${SITE_URL}/order/success`,
+      // pid on the success URL so /order/success branches pickup/ship/deposit
+      // copy (mirrors the public buy route + PaymentForm return_url).
+      successUrl: `${SITE_URL}/order/success?pid=${product.id}`,
       cancelUrl: `${SITE_URL}/order/cancelled?pid=${product.id}`,
     });
     return NextResponse.json({
