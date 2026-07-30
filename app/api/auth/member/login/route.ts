@@ -1,10 +1,15 @@
 import { NextResponse } from 'next/server';
-import { getAllRecords, escapeAirtableValue } from '@/lib/airtable';
+import { getAllRecords, updateRecord, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import jwt from 'jsonwebtoken';
 import { sendEmail, sendMagicLink } from '@/lib/email';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 import { safeNextPath } from '@/lib/safeNextPath';
+import {
+  isLoginAllowedStatus,
+  shouldCheckPaidReferralFallback,
+  hasPaidDepositReferral,
+} from '@/lib/memberLoginGate';
 
 export const maxDuration = 60;
 
@@ -60,12 +65,44 @@ export async function POST(request: Request) {
     const consumer = consumers[0] as any;
 
     const status = (consumer['Status'] || '').toLowerCase();
-    const LOGIN_ALLOWED = ['approved', 'active', 'waitlisted'];
+
+    let allowed = isLoginAllowedStatus(consumer['Status']);
+
+    // PORTAL LOCKOUT BELT (2026-07-29): a rancher-added lead (My Leads CRM
+    // #511) is created with a deliberately BLANK Status — but once they PAY a
+    // deposit they are a customer, and mailing them "application still under
+    // review" is a lockout (the 48h deposit-grant cookie is their only other
+    // door). Blank-Status logins get ONE extra Referrals lookup: any referral
+    // for this email with 'Deposit Paid At' → allowed. Runs ONLY on the
+    // blank-Status path so the normal login stays a single Airtable query.
+    // The settlement webhook now backfills Status='Approved' at deposit-paid
+    // (payingBuyerConsumerPatch), so this belt mainly covers buyers who paid
+    // before that fix shipped — and self-heals them below.
+    if (!allowed && shouldCheckPaidReferralFallback(consumer['Status'])) {
+      try {
+        const paidRefs = await getAllRecords(
+          TABLES.REFERRALS,
+          `AND(LOWER({Buyer Email}) = "${escapeAirtableValue(normalizedEmail)}", NOT({Deposit Paid At} = BLANK()))`,
+        );
+        if (hasPaidDepositReferral(paidRefs as any[])) {
+          allowed = true;
+          // Self-heal the blank Status so the NEXT login skips this lookup.
+          // Fire-and-forget — a failed write must never block the magic link.
+          updateRecord(TABLES.CONSUMERS, consumer.id, {
+            'Status': 'Approved',
+            'Approved At': new Date().toISOString(),
+          }).catch(() => {});
+        }
+      } catch (e: any) {
+        // Lookup failure → fall through to the under-review email (status quo).
+        console.warn('[member login] paid-referral fallback lookup failed:', e?.message);
+      }
+    }
 
     // If account exists but isn't in an allowed login state (blank/pending/rejected),
     // send a status-aware email so the user isn't left in silent-fail purgatory.
     // Pending/blank → "still reviewing". Rejected → generic "contact us" (no reveal).
-    if (!LOGIN_ALLOWED.includes(status)) {
+    if (!allowed) {
       try {
         if (status === 'pending' || status === '') {
           await sendEmail({

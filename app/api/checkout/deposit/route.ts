@@ -721,6 +721,10 @@ export async function GET(req: Request) {
     fulfillment: {
       types: (rancher['Fulfillment Types'] || []).map((t: any) => typeof t === 'object' ? t.name : t),
       pickupCity: String(rancher['Pickup City'] || ''),
+      // Pickup truth (2026-07-29): the actual address, shown pre-payment so
+      // the buyer knows where they'd be driving. ADDRESS only — Pickup
+      // Instructions stay on post-deposit surfaces (receipt email).
+      pickupAddress: String(rancher['Pickup Address'] || ''),
       deliveryRadiusMiles: Number(rancher['Delivery Radius Miles']) || null,
       shippingLeadTimeDays: Number(rancher['Shipping Lead Time Days']) || null,
       costNotes: String(rancher['Fulfillment Cost Notes'] || ''),

@@ -239,6 +239,51 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
     dedupeKey: `product-sold:${pi.id}`,
   }).catch(() => {});
 
+  // Rancher row — fetched ONCE and reused by the buyer receipt (contact block
+  // + pickup address, 2026-07-29) and the rancher order notification below.
+  // Best-effort: a failed read degrades to the metadata rancherName and the
+  // receipt simply omits the contact/pickup details.
+  let rancherRow: any = null;
+  try {
+    rancherRow = rancherId ? await getRecordById(TABLES.RANCHERS, rancherId).catch(() => null) : null;
+  } catch { rancherRow = null; }
+
+  // ── RANCHER CONTACT (middle-journey audit 2026-07-29) ─────────────────────
+  // The receipt previously gave the buyer NO way to reach the ranch — replies
+  // dead-ended at Ben. Pickup + deposit-style orders NEED direct contact (the
+  // rancher must coordinate before anything moves); shipped orders get a
+  // contact line too so "where's my box?" goes to the person who packed it.
+  const rancherContactEmail = String(rancherRow?.['Email'] || '').trim();
+  const rancherContactPhone = String(rancherRow?.['Phone'] || '').trim();
+  const rancherContactBlock = rancherContactEmail
+    ? `<div style="background:#fff;border:1px solid #A7A29A;padding:14px 16px;margin:16px 0;font-size:14px">` +
+      `<div style="text-transform:uppercase;letter-spacing:1px;font-size:11px;color:#A7A29A;margin-bottom:6px">your rancher</div>` +
+      `<strong>${escapeHtml(rancherName)}</strong><br>` +
+      `<a href="mailto:${escapeHtml(rancherContactEmail)}" style="color:#0E0E0E">${escapeHtml(rancherContactEmail)}</a>` +
+      `${rancherContactPhone ? `<br>${escapeHtml(rancherContactPhone)}` : ''}` +
+      `</div>`
+    : '';
+  const rancherContactLine = rancherContactEmail
+    ? `<p style="font-size:13px;color:#5A5752">questions about your order? reach ${escapeHtml(rancherName)} directly at ` +
+      `<a href="mailto:${escapeHtml(rancherContactEmail)}" style="color:#0E0E0E">${escapeHtml(rancherContactEmail)}</a>` +
+      `${rancherContactPhone ? ` or ${escapeHtml(rancherContactPhone)}` : ''}.</p>`
+    : '';
+
+  // ── PICKUP TRUTH (P0, 2026-07-29) ─────────────────────────────────────────
+  // A pickup buyer previously never learned WHERE to go. If the rancher filled
+  // Pickup Address / Pickup Instructions, the receipt says so; when unset the
+  // copy stays honest ("the ranch will reach out to set up your pickup").
+  const pickupAddress = String(rancherRow?.['Pickup Address'] || '').trim();
+  const pickupInstructions = String(rancherRow?.['Pickup Instructions'] || '').trim();
+  const pickupWhereBlock = isPickup && (pickupAddress || pickupInstructions)
+    ? `<div style="background:#fff;border:1px solid #A7A29A;padding:14px 16px;margin:16px 0;font-size:14px">` +
+      `<div style="text-transform:uppercase;letter-spacing:1px;font-size:11px;color:#A7A29A;margin-bottom:6px">pickup details</div>` +
+      `${pickupAddress ? `<strong>${escapeHtml(pickupAddress)}</strong>` : ''}` +
+      `${pickupAddress && pickupInstructions ? '<br>' : ''}` +
+      `${pickupInstructions ? `<span style="color:#5A5752">${escapeHtml(pickupInstructions).replace(/\n/g, '<br>')}</span>` : ''}` +
+      `</div>`
+    : '';
+
   // Buyer receipt (brand voice). All interpolated strings HTML-escaped.
   // Deposit-style receipt matches the storefront promise exactly: deposit
   // counts toward the total, rancher reaches out BEFORE anything ships.
@@ -266,6 +311,7 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
         <p>hey ${buyerFirst},</p>
         <p>your deposit's in — <strong>${escapeHtml(rancherName)}</strong> has your <strong>${escapeHtml(productName)}</strong> reservation and will reach out to confirm the size you want + the balance <em>before anything ships</em>.</p>
         <p style="font-size:14px;color:#5A5752">deposit paid: $${dollars(displayCents)} — it counts toward your total. nothing ships until you've confirmed the details together.</p>
+        ${rancherContactBlock}
         ${shareLadderPs}
         <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow</p>
       </div>`
@@ -273,7 +319,9 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
         <p>hey ${buyerFirst},</p>
         <p>you're all set — <strong>${escapeHtml(rancherName)}</strong> got your order for <strong>${quantity > 1 ? `${quantity}× ` : 'a '}${escapeHtml(productName)}</strong>${isPickup ? ' and will reach out to set up your pickup at the ranch.' : ' and will ship it direct to you.'}</p>
         <p style="font-size:14px;color:#5A5752">paid: $${dollars(paidCents)}${quantity > 1 || shippingCents > 0 ? ` (${quantity > 1 ? `${quantity} × $${dollars(displayCents)}` : `$${dollars(displayCents)}`}${shippingCents > 0 ? ` + $${dollars(shippingCents)} shipping` : ''})` : ''}. ${isPickup ? 'local pickup — no shipping charged; the ranch will confirm the time and place with you.' : "you'll get tracking as soon as it's on the way."}</p>
-        ${shipTo ? `<p style="font-size:13px;color:#5A5752">shipping to:<br>${escapeHtml(shipTo).replace(/\n/g, '<br>')}<br><span style="color:#A7A29A">typo in the address? just reply to this email and we'll fix it before it ships.</span></p>` : ''}
+        ${isPickup ? pickupWhereBlock + rancherContactBlock : ''}
+        ${!isPickup && shipTo ? `<p style="font-size:13px;color:#5A5752">shipping to:<br>${escapeHtml(shipTo).replace(/\n/g, '<br>')}<br><span style="color:#A7A29A">typo in the address? just reply to this email and we'll fix it before it ships.</span></p>` : ''}
+        ${!isPickup ? rancherContactLine : ''}
         ${shareLadderPs}
         <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow</p>
       </div>`,
@@ -303,9 +351,9 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
   // Rancher notification (operational — clear, not marketing). Deposit-style
   // flips the instruction from "pack it, ship it" to "CONFIRM FIRST" — the
   // rancher must never ship a $95–355 range box against a deposit-only payout.
+  // Reuses the rancherRow fetched above (one Airtable read, not two).
   try {
-    const rancher: any = rancherId ? await getRecordById(TABLES.RANCHERS, rancherId).catch(() => null) : null;
-    const rancherEmail = String(rancher?.['Email'] || '').trim();
+    const rancherEmail = rancherContactEmail;
     if (rancherEmail) {
       await sendEmail({
         to: rancherEmail,
@@ -384,6 +432,12 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
         }
         const next = Math.max(0, Number(left) - quantity);
         await updateRecord(TABLES.RANCHER_PRODUCTS, productId, { 'Orders Left': next });
+        // Release this order's mint-time stock hold (oversell prevention,
+        // 2026-07-29): the units now live in the Orders Left truth above, so
+        // the hold's shadow must lift or the gate double-counts them against
+        // the next buyer. Best-effort — TTL expires it anyway.
+        const { releaseStockHold } = await import('@/lib/productStockHold');
+        await releaseStockHold(productId, quantity);
         try {
           const { revalidatePath } = await import('next/cache');
           revalidatePath('/shop');

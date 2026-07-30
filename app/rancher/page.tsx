@@ -692,6 +692,8 @@ export default function RancherDashboardPage() {
         'Instagram URL': '',
         'Processing Facility': '',
         'Pickup City': '',
+        'Pickup Address': '',
+        'Pickup Instructions': '',
         'Delivery Radius Miles': '',
         'Shipping Lead Time Days': '',
         'Fulfillment Cost Notes': '',
@@ -749,6 +751,8 @@ export default function RancherDashboardPage() {
             'Instagram URL': lp['Instagram URL'] || '',
             'Processing Facility': lp['Processing Facility'] || '',
             'Pickup City': lp['Pickup City'] || '',
+            'Pickup Address': lp['Pickup Address'] || '',
+            'Pickup Instructions': lp['Pickup Instructions'] || '',
             'Delivery Radius Miles': lp['Delivery Radius Miles'] !== '' && lp['Delivery Radius Miles'] != null ? String(lp['Delivery Radius Miles']) : '',
             'Shipping Lead Time Days': lp['Shipping Lead Time Days'] !== '' && lp['Shipping Lead Time Days'] != null ? String(lp['Shipping Lead Time Days']) : '',
             'Fulfillment Cost Notes': lp['Fulfillment Cost Notes'] || '',
@@ -1634,7 +1638,8 @@ export default function RancherDashboardPage() {
       if (!parityHydratedRef.current) {
         for (const parityKey of [
           'Refund Policy', 'Google Reviews URL', 'Facebook URL', 'Instagram URL',
-          'Processing Facility', 'Pickup City', 'Delivery Radius Miles',
+          'Processing Facility', 'Pickup City', 'Pickup Address',
+          'Pickup Instructions', 'Delivery Radius Miles',
           'Shipping Lead Time Days', 'Fulfillment Cost Notes',
           'Fulfillment Types', 'FAQ',
         ]) {
@@ -4952,6 +4957,36 @@ export default function RancherDashboardPage() {
                     </div>
                   )}
                 </div>
+
+                {/* Pickup truth (2026-07-29): the actual WHERE. Address shows
+                    on your public page + checkout once filled (leave blank to
+                    keep it private until after a deposit is impossible — the
+                    buyer simply won't see one). Instructions only go to buyers
+                    AFTER they pay. */}
+                {fulfillmentTypes.includes('Local Pickup') && (
+                  <>
+                    <div className="space-y-1">
+                      <label className="block text-sm font-medium">Pickup Address <span className="text-dust font-normal">(optional — shown to buyers so they know where to go)</span></label>
+                      <input
+                        type="text"
+                        value={pageForm['Pickup Address'] || ''}
+                        onChange={e => setPageForm(p => ({ ...p, 'Pickup Address': e.target.value }))}
+                        placeholder="4250 Ranch Rd, Bozeman, MT 59715"
+                        className="w-full px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="block text-sm font-medium">Pickup Instructions <span className="text-dust font-normal">(optional — sent to buyers after they pay)</span></label>
+                      <textarea
+                        rows={2}
+                        value={pageForm['Pickup Instructions'] || ''}
+                        onChange={e => setPageForm(p => ({ ...p, 'Pickup Instructions': e.target.value }))}
+                        placeholder="e.g. Come around to the barn on the left, bring coolers. Call/text when you're 15 min out."
+                        className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
+                      />
+                    </div>
+                  </>
+                )}
 
                 <div className="space-y-1">
                   <label className="block text-sm font-medium">Fulfillment Cost Notes <span className="text-dust font-normal">(optional)</span></label>
