@@ -1,14 +1,22 @@
 // lib/twilio.ts
-// Twilio SMS helper. Graceful no-op when env vars missing.
+// SMS helper. Graceful no-op when env vars missing.
 //
-// Required env vars:
+// NAME IS HISTORICAL — this file is no longer Twilio-specific. The actual wire
+// moved to lib/smsTransport.ts (2026-07-30) so the channel is not hostage to
+// one vendor's signup queue; the Twilio path is now one of four adapters under
+// lib/smsProviders/ and stays the DEFAULT when SMS_PROVIDER is unset. The file
+// keeps its name + exports because ten callers import from '@/lib/twilio' and
+// none of them should have to care which vendor is on the other end.
+//
+// Env (default twilio adapter — see docs/SMS-PROVIDER-SETUP.md for the others):
 //   TWILIO_ACCOUNT_SID    — from Twilio Console
 //   TWILIO_AUTH_TOKEN     — from Twilio Console (or use API Key for production)
 //   TWILIO_FROM_NUMBER    — Twilio phone number in E.164 (+1XXXXXXXXXX)
 //
 // If any missing, sendSMS() warns + returns false. Never block request paths.
 //
-// TCPA / opt-in posture:
+// TCPA / opt-in posture (UNCHANGED by the transport swap — the provider sits
+// strictly BELOW every gate below):
 //   - `sendSMS()` is the raw bottom-half — normalizes phone to E.164 + fires.
 //     ONLY safe to call for one-off admin/test sends to known-consenting numbers.
 //   - `sendSMSToConsumer()` is the consumer-facing top-half — gates on the
@@ -16,43 +24,26 @@
 //     then delegates to sendSMS(). EVERY consumer-facing SMS must go through
 //     this helper so the gate can't be bypassed by a future careless caller.
 
-import twilio from 'twilio';
 // DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
 // lib/demo/demoMode.ts. Pure import, no side effect when the flag is off.
 import { isDemoMode } from '@/lib/demo/demoMode';
+import { sendViaProvider } from '@/lib/smsTransport';
 
-const ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
-const AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
-const FROM_NUMBER = process.env.TWILIO_FROM_NUMBER;
-
-const client = ACCOUNT_SID && AUTH_TOKEN ? twilio(ACCOUNT_SID, AUTH_TOKEN) : null;
-
-/**
- * Normalize phone to E.164 format (+1XXXXXXXXXX for US).
- * Returns null if input can't be coerced to a valid E.164.
- */
-export function normalizeToE164(phone: string | null | undefined): string | null {
-  if (!phone) return null;
-  const digits = String(phone).replace(/\D/g, '');
-  if (digits.length === 10) return `+1${digits}`;
-  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`;
-  if (digits.length >= 11 && digits.length <= 15) return `+${digits}`;
-  return null;
-}
+// Re-exported from lib/phoneE164.ts (moved there so the transport + adapters can
+// normalize without importing this module, which imports the transport). Every
+// existing `import { normalizeToE164 } from '@/lib/twilio'` keeps working.
+export { normalizeToE164 } from '@/lib/phoneE164';
+import { normalizeToE164 } from '@/lib/phoneE164';
 
 export async function sendSMS(input: {
   to: string;
   body: string;
 }): Promise<boolean> {
   // DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
-  // lib/demo/demoMode.ts. Report success without calling Twilio.
+  // lib/demo/demoMode.ts. Report success without calling the provider.
   if (isDemoMode()) {
     console.log(`[twilio] DEMO MODE — skipping SMS to ${input.to}`);
     return true;
-  }
-  if (!client || !FROM_NUMBER) {
-    console.warn('[twilio] account SID/auth token/from number missing — skip send');
-    return false;
   }
 
   const to = normalizeToE164(input.to);
@@ -61,18 +52,12 @@ export async function sendSMS(input: {
     return false;
   }
 
-  try {
-    const result = await client.messages.create({
-      body: input.body,
-      from: FROM_NUMBER,
-      to,
-    });
-    console.log(`[twilio] sent SID ${result.sid} to ${to}`);
-    return true;
-  } catch (e: any) {
-    console.error(`[twilio] send failed to ${to}:`, e?.message || e);
-    return false;
-  }
+  // Transport dispatch. Credential checks, the vendor HTTP call, error shaping
+  // and logging all live in the adapter; a missing credential still warns and
+  // returns false exactly as before. Result is collapsed to a boolean so every
+  // existing caller's contract is untouched.
+  const result = await sendViaProvider({ to, body: input.body });
+  return result.ok;
 }
 
 /**
