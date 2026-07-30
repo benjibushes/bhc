@@ -3,7 +3,7 @@
 > Auto-generated from a full code sweep 2026-07-14. THE reference for "what env vars do I need."
 > ⚠️ = load-bearing: silent absence breaks money or comms. The email-canary/watchdog rails monitor these.
 
-**176 variables · 26 load-bearing** (+8 prod-set orphans documented in the last section — set in Vercel but read by no code). Owner legend: **ben-flips** = a business switch you toggle deliberately · **set-once** = key/secret, set correctly and forget (watchdog guards it) · **code-default** = safe fallback exists.
+**177 variables · 26 load-bearing** (+8 prod-set orphans documented in the last section — set in Vercel but read by no code). Owner legend: **ben-flips** = a business switch you toggle deliberately · **set-once** = key/secret, set correctly and forget (watchdog guards it) · **code-default** = safe fallback exists.
 
 
 ## 💰 Money-critical
@@ -96,6 +96,7 @@
 | `CAL_NATIVE_BOOKER` | 'true' → /book/[refId] renders native Cal embed instead of link-out | fail-open | ben-flips |
 | `CAMPAIGN_LIVE` | 'true' → campaign sends real emails/SMS (vs dry-run) | fail-silent | ben-flips |
 | `CAMPAIGN_ROUTER_ENABLED` | 'true' → demand-router campaign cron active | fail-silent | ben-flips |
+| `DEAL_RELEASE_ENABLED` | Gates ONLY the two new no-dead-end tiers of referral-stale-expiry (2026-07-30): 'Pending Approval' expiry + unpaid-deposit release. Anything but 'true' = DRY (both tiers are selected and reported in the daily Telegram + Cron Runs note, zero writes — the LOSS_RECOVERY precedent), so Ben reads one report before ~12 real records are touched. 'true' → they write. Tier 1 (stale capacity holds) is completely unaffected by this flag and keeps riding `STALE_HOLD_EXPIRY_ENABLED` alone. Note the AND: with `STALE_HOLD_EXPIRY_ENABLED` unset the whole cron skips and this flag does nothing | fail-silent | ben-flips |
 | `EMAIL_SEQUENCES_ALLOW` | Allowlist scoping which sequences may send when the cron is on | fail-silent | ben-flips |
 | ⚠️ `EMAIL_SEQUENCES_ENABLED` | Master gate for the email-sequences cron; ≠'true' → cron returns before withCronRun (invisible even to cron introspection) | fail-silent | ben-flips |
 | ⚠️ `ENABLE_SMS` | Platform-wide SMS master gate ('1' or 'true' via smsEnabled()); unset → whole SMS channel off by design. Sits ABOVE `SMS_PROVIDER` — swapping vendors cannot light the channel | fail-silent | ben-flips |
@@ -118,7 +119,7 @@
 | `REPLENISHMENT_ENABLED` | Tri-state replenishment (reorder) email cron; unset=off | fail-silent | ben-flips |
 | `REQUIRE_PRODUCT_APPROVAL` | 'true' → rancher-created products need admin approval before listing; unset → auto-list | fail-open | ben-flips |
 | `ROUTING_ADJACENCY_ENFORCE` | Enforce state-adjacency in nationwide routing | fail-open | ben-flips |
-| ⚠️ `STALE_HOLD_EXPIRY_ENABLED` | Tri-state stale referral-hold expiry (frees rancher capacity); unset → holds never expire, capacity silently starves | fail-silent | ben-flips |
+| ⚠️ `STALE_HOLD_EXPIRY_ENABLED` | Tri-state MASTER gate for referral-stale-expiry, now a 3-tier no-dead-end sweep; unset → nothing expires: capacity silently starves AND buyers freeze in Pending Approval / unpaid deposits forever. Tiers 2+3 need `DEAL_RELEASE_ENABLED=true` on top of this | fail-silent | ben-flips |
 | `STRIPE_CONSENT_COLLECTION` | 'true' → Connect checkout collects ToS consent | fail-open | ben-flips |
 | `WAITING_ACTIVATION_ENABLED` | Tri-state WAITING-lead activation rail (currently dry-run); unset=off | fail-silent | ben-flips |
 
