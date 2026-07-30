@@ -369,6 +369,11 @@ W: consumers :239,695; contact :150 (80); orders :~247 (90); lib/reserveDeposit.
 R: lib/qualification.ts:65 (signup-time ≥60 floor — nurture vs route, signup only); lib/demandRouter.ts:323 (warm tier for re-warm emails), :1009,1326 (sort only). NOT read by the matching gate.
 Sem: prioritization/telemetry. Never a routing pass by itself.
 
+### Order Type (singleSelect — the buyer's cut)
+W: funnel consumers :237 (`tierQ`) + :685, :1016 ('Not specified'); lib/qualifyUpdates.ts:102 (quiz tier, mirrored to the early write qualify :279); lib/reserveDeposit.ts:152 (reserve rail, CUT_LABELS shape).
+R: app/api/qualify/route.ts:181,341 (tier resume when the quiz answer is absent); **lib/requalifyCampaign.ts:orderTypeToCut → decideRequalifyCta** — the campaign 1-tap gate: this field is what pre-selects the cut on a /r/d deposit link (app/api/campaign/requalify-send).
+Sem: TWO value shapes in the wild — quiz writes 'Quarter'|'Half'|'Whole'|'Not Sure', the reserve rail writes CUT_LABELS ('Half Cow'). Anything that doesn't start quarter/half/whole (incl. 'Not Sure', 'Not specified', blank) maps to NO cut and the campaign falls back to the quiz link. Never infer a cut from Budget/Intent Score — a wrong cut is a wrong charge.
+
 ### Referral Status (singleSelect — denormalized mirror of Referrals)
 W: consumers :697 ('Unmatched' at create); lib/bulkRoute.ts:298,400; suggest :1118,1266 ('Waitlisted'), :1455,1627; referrals/[id] :173,227; rancher/referrals/[id] :202,462,606; telegram :1066,1341,3660; contracts/rancher.ts:468; resend-warmup :112; maintenance-resurrect-orphans :91.
 R: lib/routingSegment.ts:88-90 (Awaiting Payment/Slot Locked/Closed Won → TERMINAL); lib/demandRouter.ts:233; lib/goLiveRancher.ts:166; lib/bulkRoute.ts:160; batch-approve :493.
@@ -381,8 +386,8 @@ Sem: documented-unreliable intent proxy; never routes on its own (qualification.
 
 ### Email (identity/dedupe key)
 W: creation paths only; funnel + contact lowercase, others as-typed.
-R: dedupe = per-path `LOWER({Email})` lookups (consumers :201,543; guide :75; sell-links :89; orders :208; contact :121; manychat :646; stripe wh :1142; productSettlement :462; reserve :204). Suppression list keyed on lowercased email (lib/email.ts:161,171 → every send :343-346).
-Sem: NO unique constraint — dedupe fails OPEN to create. The 33 duplicate pairs came from lookup failures/races, not casing.
+R: dedupe = per-path `LOWER({Email})` lookups (consumers :201,543; guide :75; sell-links :89; orders :208; contact :121; manychat :646; stripe wh :1142; productSettlement :462; reserve :204). Suppression list keyed on lowercased email (lib/email.ts:161,171 → every send :343-346). BATCHED (chunks of 20, never N+1): campaign/requalify-send `readByEmail` resolves the recipient batch against Consumers.Email AND Referrals.'Buyer Email' to pick each recipient's CTA.
+Sem: NO unique constraint — dedupe fails OPEN to create. The 33 duplicate pairs came from lookup failures/races, not casing. CONSEQUENCE for money links: an email can resolve to SEVERAL rows, so lib/requalifyCampaign.ts:pickCanonicalConsumer takes the most-recently-active row (the `_pickCanonical` doctrine from lib/airtable.ts) and treats a TIE as ambiguous → quiz fallback. Never guess an identity into a payment link.
 
 ### Zip (singleLineText)
 W: consumers :236,683; orders create; fill-if-blank `buyerZipPatch` backfills: orders :226, contact :137, waitlist :91, reserve :214,290, lib/stripeSettlement.ts:264, lib/productSettlement.ts:471.
