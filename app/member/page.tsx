@@ -12,6 +12,17 @@ import { trackEvent } from '@/lib/analytics';
 import { normalizeImageUrl } from '@/lib/imageUrl';
 import { isRancherOnConnect } from '@/lib/rancherEligibility';
 import { carrierTrackingUrl } from '@/lib/trackingLink';
+import {
+  buildBuyerDealLadder,
+  formatMoney,
+  handoffWord,
+  nextStepGuidance,
+  resolveHandoffMode,
+  shouldShowDealLadder,
+  type BuyerDealFields,
+  type BuyerDealStep,
+} from '@/lib/buyerDealStage';
+import { FULFILLMENT_STATUS_LABELS, isFulfillmentStatus } from '@/lib/fulfillmentTracking';
 
 interface Rancher {
   id: string;
@@ -72,6 +83,7 @@ interface MemberReferral {
   rancher_email?: string;
   rancher_phone?: string;
   rancher_slug?: string;
+  ranch_name?: string;
   order_type?: string;
   sale_amount?: number;
   closed_at?: string;
@@ -79,6 +91,7 @@ interface MemberReferral {
   // F16 — engagement loop expansion
   deposit_amount?: number;
   deposit_paid_at?: string;
+  deposit_requested_at?: string;
   rancher_accepted_at?: string;
   final_invoice_url?: string;
   final_paid_at?: string;
@@ -91,6 +104,65 @@ interface MemberReferral {
   shipping_carrier?: string;
   tracking_number?: string;
   fulfillment_updated_at?: string;
+  // WAVE 3 — the facts the buyer paid for and could not see
+  handoff_date?: string;
+  final_invoice_amount?: number;
+  final_invoice_sent_at?: string;
+  total_sale_amount?: number;
+  buyer_cut_notes?: string;
+  buyer_window_pref?: string;
+  buyer_fulfillment_pref?: string;
+  buyer_preferences_set_at?: string;
+  rancher_pickup_address?: string;
+  rancher_pickup_instructions?: string;
+}
+
+// WAVE 3 — one adapter, so every consumer of the stage model reads the SAME
+// referral shape. Airtable field names stay in the route; camelCase stays in
+// lib/buyerDealStage; this is the only bridge.
+function toDealFields(ref: MemberReferral): BuyerDealFields {
+  return {
+    status: ref.status,
+    depositPaidAt: ref.deposit_paid_at,
+    depositRequestedAt: ref.deposit_requested_at,
+    depositAmount: ref.deposit_amount,
+    rancherAcceptedAt: ref.rancher_accepted_at,
+    handoffDate: ref.handoff_date,
+    processingDate: ref.processing_date,
+    fulfillmentStatus: ref.fulfillment_status,
+    fulfillmentMethod: ref.fulfillment_method,
+    buyerFulfillmentPref: ref.buyer_fulfillment_pref,
+    finalInvoiceSentAt: ref.final_invoice_sent_at,
+    finalInvoiceAmount: ref.final_invoice_amount,
+    finalPaidAt: ref.final_paid_at,
+    fulfillmentConfirmedAt: ref.fulfillment_confirmed_at,
+    rancherName: ref.rancher_name,
+  };
+}
+
+/** A deal that is live and already has the buyer's money in it. */
+function isPaidActiveDeal(ref: MemberReferral): boolean {
+  return (
+    !!ref.deposit_paid_at &&
+    ref.status !== 'Closed Lost' &&
+    ref.status !== 'Refunded' &&
+    ref.status !== 'Rejected'
+  );
+}
+
+function formatDate(value?: string): string {
+  if (!value) return '';
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return String(value);
+  // Date-only Airtable values ('2026-08-14') parse as UTC midnight — render
+  // them in UTC so a US-evening viewer isn't shown the day before.
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(String(value).trim());
+  return d.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    ...(dateOnly ? { timeZone: 'UTC' } : {}),
+  });
 }
 
 type Tab = 'dashboard' | 'ranchers' | 'land' | 'brands';
@@ -98,7 +170,10 @@ type Tab = 'dashboard' | 'ranchers' | 'land' | 'brands';
 const statusLabels: Record<string, { label: string; style: string }> = {
   // Buyer-facing labels — plain language, not CRM jargon. A buyer never
   // "referred" anyone; these describe THEIR order.
-  'Pending Approval': { label: 'finding your rancher', style: 'bg-amber/20 text-amber-dark' },
+  // WAVE 3 honesty pass: 'Pending Approval' and 'Rejected' both used to render
+  // as "finding your rancher" — an open-ended promise on a request that may
+  // never move, and a flat lie on one we already declined.
+  'Pending Approval': { label: 'awaiting review', style: 'bg-amber/20 text-amber-dark' },
   'Waitlisted': { label: 'finding a rancher near you', style: 'bg-rust/10 text-rust-dark' },
   'Intro Sent': { label: 'meet your rancher', style: 'bg-charcoal/10 text-charcoal' },
   'In Progress': { label: 'in progress', style: 'bg-charcoal/10 text-charcoal' },
@@ -106,7 +181,7 @@ const statusLabels: Record<string, { label: string; style: string }> = {
   'Slot Locked': { label: 'reserved', style: 'bg-sage/15 text-sage-dark' },
   'Closed Won': { label: 'beef delivered', style: 'bg-sage/15 text-sage-dark' },
   'Closed Lost': { label: 'closed', style: 'bg-dust/20 text-saddle' },
-  'Rejected': { label: 'finding your rancher', style: 'bg-weathered/10 text-weathered' },
+  'Rejected': { label: 'not matched', style: 'bg-weathered/10 text-weathered' },
 };
 
 function MemberDashboard({ member }: { member: { id: string; name: string; email: string; state: string } }) {
@@ -332,21 +407,6 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
 
           <Divider />
 
-          {/* Merch banner — drives traffic to Shopify /shop from highest-engagement surface */}
-          <a
-            href="https://www.buyhalfcow.com/shop"
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={() => trackEvent('shop_click', { surface: 'member' })}
-            className="block my-6 border border-dust p-4 bg-bone hover:bg-divider transition flex items-center justify-between"
-          >
-            <div>
-              <div className="font-serif text-lg text-charcoal">rep the rebuild</div>
-              <p className="text-saddle text-sm mt-1">patches · hats · shirts</p>
-            </div>
-            <span className="text-charcoal font-semibold uppercase tracking-wider text-xs">shop →</span>
-          </a>
-
           {/* Tabs */}
           <div className="flex flex-wrap gap-2">
             {tabs.map((tab) => (
@@ -382,8 +442,12 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                 );
               })()}
 
-              {/* Ready-to-buy signal — visible to ALL approved buyers, matched or not */}
-              {data?.memberSegment === 'Beef Buyer' && (() => {
+              {/* Ready-to-buy signal — visible to approved buyers who have NOT
+                  already put money down. WAVE 3: it used to render for
+                  everyone, so a buyer whose deposit had cleared was still being
+                  asked "ready to buy this month?" above their own paid order. */}
+              {data?.memberSegment === 'Beef Buyer' &&
+                !(data?.memberReferrals || []).some(isPaidActiveDeal) && (() => {
                 const hasActive = !!data?.memberReferrals?.find(
                   r => r.status !== 'Closed Won' && r.status !== 'Closed Lost' && r.rancher_id
                 );
@@ -428,11 +492,38 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                     // settlement stamps Deposit Paid At and keeps the status
                     // until the rancher accepts (→ Slot Locked). The badge
                     // must not say "ready to reserve" to a buyer who paid.
+                    //
+                    // WAVE 3 narrowing: 'Awaiting Payment' is written a THIRD
+                    // time — send-final-invoice flips the status back to it
+                    // when the rancher bills the balance. The old flag caught
+                    // that row too, so a buyer holding an unpaid final invoice
+                    // was told "waiting for your rancher to accept your slot"
+                    // (they already had) with no way to pay. Both later stamps
+                    // now disqualify the accept-wait branch.
                     const depositPaidAwaitingAccept =
-                      ref.status === 'Awaiting Payment' && !!ref.deposit_paid_at;
+                      ref.status === 'Awaiting Payment' &&
+                      !!ref.deposit_paid_at &&
+                      !ref.rancher_accepted_at &&
+                      !ref.final_invoice_sent_at;
                     const statusInfo = depositPaidAwaitingAccept
                       ? { label: 'deposit paid', style: 'bg-sage/15 text-sage-dark' }
                       : statusLabels[ref.status] || { label: ref.status, style: 'bg-dust/20 text-saddle' };
+                    const dealFields = toDealFields(ref);
+                    const showLadder = shouldShowDealLadder(dealFields);
+                    const handoffMode = resolveHandoffMode({
+                      method: ref.fulfillment_method,
+                      buyerPref: ref.buyer_fulfillment_pref,
+                    });
+                    // The final balance is owed the moment the rancher sends
+                    // the invoice — independent of which status the row is
+                    // parked in.
+                    const balanceDue = !!ref.final_invoice_url && !ref.final_paid_at && !!ref.deposit_paid_at;
+                    // Rancher-typed tracker status, worded by the SHARED label
+                    // map (lib/fulfillmentTracking) so buyer and rancher read
+                    // the same word for the same state.
+                    const fulfillmentLabel = isFulfillmentStatus(ref.fulfillment_status)
+                      ? FULFILLMENT_STATUS_LABELS[ref.fulfillment_status]
+                      : '';
                     return (
                       <div key={ref.id} className="p-6 border border-dust bg-white">
                         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
@@ -442,6 +533,7 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                             </span>
                             {ref.rancher_name && (
                               <p className="mt-2 text-sm text-saddle">
+                                {ref.order_type ? `${ref.order_type} · ` : ''}
                                 Matched with: <strong className="text-charcoal">{ref.rancher_name}</strong>
                               </p>
                             )}
@@ -451,9 +543,33 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                           </p>
                         </div>
 
+                        {/* WAVE 3 FIX 1 — the deal ladder. Six ordered steps at
+                            the TOP of the card, replacing the disjoint
+                            status-prose paragraphs that used to be scattered
+                            below it. The honest wording of each of those
+                            paragraphs now lives as the current step's detail
+                            (lib/buyerDealStage), so it stays accurate as the
+                            deal moves instead of being frozen per-status. */}
+                        {showLadder && <DealStepper ladder={buildBuyerDealLadder(dealFields)} />}
+
+                        {/* WAVE 3 FIX 2 — the money. Paid X, balance Y, total Z. */}
+                        {showLadder && <OrderMoneySummary deal={ref} />}
+
+                        {/* WAVE 3 FIX 2 — the date, and (for a pickup) WHERE. */}
+                        {showLadder && <HandoffBlock deal={ref} mode={handoffMode} />}
+
                         {ref.status === 'Pending Approval' && (
                           <p className="mt-3 text-sm text-saddle">
-                            We&apos;re finding the best rancher match for you. You&apos;ll receive an email introduction soon.
+                            We&apos;re reviewing your request and looking for a rancher who can take it.
+                            If you haven&apos;t heard from us in a few days, that means something stalled on our
+                            end, not yours — reach out and we&apos;ll tell you exactly where it sits.
+                          </p>
+                        )}
+                        {ref.status === 'Rejected' && (
+                          <p className="mt-3 text-sm text-saddle">
+                            We couldn&apos;t match this request to a rancher, and nothing was charged.
+                            That is usually about coverage or timing rather than anything you did — ask us
+                            and we&apos;ll tell you why, and what your options are.
                           </p>
                         )}
                         {ref.status === 'Waitlisted' && (
@@ -462,50 +578,19 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                           </p>
                         )}
                         {ref.status === 'Intro Sent' && (
-                          <div className="mt-3 space-y-2 text-sm text-saddle">
-                            <p>Your rancher has been introduced. Reach out to them directly to discuss timing and pickup:</p>
-                            {(ref.rancher_email || ref.rancher_phone) && (
-                              <div className="bg-bone border border-dust p-4 mt-2 space-y-1">
-                                <p className="font-semibold text-charcoal">{ref.rancher_name}</p>
-                                {ref.rancher_email && (
-                                  <p>
-                                    <span className="text-dust">Email:</span>{' '}
-                                    <a href={`mailto:${ref.rancher_email}`} className="text-charcoal underline">{ref.rancher_email}</a>
-                                  </p>
-                                )}
-                                {ref.rancher_phone && (
-                                  <p>
-                                    <span className="text-dust">Phone:</span>{' '}
-                                    <a href={`tel:${ref.rancher_phone}`} className="text-charcoal underline">{ref.rancher_phone}</a>
-                                  </p>
-                                )}
-                                {ref.rancher_slug && (
-                                  <p className="pt-1">
-                                    <Link href={`/ranchers/${ref.rancher_slug}`} className="text-charcoal underline text-xs uppercase tracking-wider">View their page →</Link>
-                                  </p>
-                                )}
-                              </div>
-                            )}
-                          </div>
+                          <p className="mt-3 text-sm text-saddle">
+                            Your rancher has been introduced. Reach out to them directly to discuss timing and pickup.
+                          </p>
                         )}
 
                         {/* F16 — engagement branches: Awaiting Payment / Slot Locked / Closed Won */}
 
-                        {/* BLOCKER-1 FIX (2026-07-01): the deposit-paid branch
-                            MUST sit above the pay-CTA branch. Before it, every
-                            buyer who paid saw "your deposit invoice is ready"
-                            plus a live Pay-deposit button — a double-charge
-                            invitation on the happy path. */}
-                        {depositPaidAwaitingAccept && (
-                          <div className="mt-3 space-y-2 text-sm text-saddle">
-                            <p className="text-charcoal font-medium">
-                              ✓ Deposit paid — waiting for {ref.rancher_name || 'your rancher'} to accept your slot.
-                            </p>
-                            <p className="text-xs text-dust">
-                              You&apos;ll get an email the moment it locks.
-                            </p>
-                          </div>
-                        )}
+                        {/* WAVE 3: the old "✓ Deposit paid — waiting for X to
+                            accept your slot / you'll get an email the moment it
+                            locks" paragraph is not deleted, it MOVED. It is now
+                            the `accepted` step's current-state detail in
+                            lib/buyerDealStage, where it renders in position on
+                            the ladder instead of floating under it. */}
 
                         {ref.status === 'Awaiting Payment' && !ref.deposit_paid_at && (
                           <div className="mt-3 space-y-3 text-sm text-saddle">
@@ -530,39 +615,51 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                           </div>
                         )}
 
-                        {ref.status === 'Slot Locked' && (
-                          <div className="mt-3 space-y-2 text-sm text-saddle">
-                            <p className="text-charcoal font-medium">
-                              🔒 Slot locked at {ref.rancher_name}.
+                        {/* Slot Locked: the ladder now carries the accept date
+                            and the processing date. All that is left here is
+                            the promise the buyer actually bought. */}
+                        {ref.status === 'Slot Locked' && ref.rancher_accepted_at && (
+                          <p className="mt-3 text-xs text-dust">
+                            {ref.rancher_name || 'Your rancher'} accepted on {formatDate(ref.rancher_accepted_at)}.
+                            Per the BHC promise, your deposit is now locked toward this slot.
+                          </p>
+                        )}
+
+                        {/* WAVE 3 FIX 2 — the final-balance CTA, hoisted out of
+                            the Slot Locked branch and priced.
+                            THE BUG IT FIXES: send-final-invoice flips Status to
+                            'Awaiting Payment' when it bills the balance, so the
+                            `status === 'Slot Locked'` gate this button used to
+                            sit behind was FALSE for every buyer who actually
+                            had an invoice. The one payment the buyer most needs
+                            to make was structurally unreachable from their own
+                            dashboard. It now gates on the invoice itself. */}
+                        {balanceDue && (
+                          <div className="mt-4 border-2 border-charcoal bg-bone p-4 space-y-3">
+                            <p className="text-sm text-charcoal font-medium">
+                              {ref.final_invoice_amount
+                                ? `Your final balance of ${formatMoney(ref.final_invoice_amount)} is due.`
+                                : 'Your final balance is due.'}
                             </p>
-                            {ref.processing_date ? (
-                              <p>
-                                <span className="text-dust">Processing date:</span>{' '}
-                                <strong className="text-charcoal">
-                                  {new Date(ref.processing_date).toLocaleDateString()}
-                                </strong>
-                              </p>
-                            ) : (
-                              <p>Your rancher will confirm the processing date soon.</p>
-                            )}
-                            {ref.rancher_accepted_at && (
-                              <p className="text-xs text-dust">
-                                Rancher accepted {new Date(ref.rancher_accepted_at).toLocaleDateString()}.
-                                Per BHC promise, your deposit is now locked toward this slot.
-                              </p>
-                            )}
-                            {ref.final_invoice_url && !ref.final_paid_at && (
-                              <p className="pt-2">
-                                <a
-                                  href={ref.final_invoice_url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-block px-5 py-2 bg-charcoal text-bone hover:bg-saddle text-xs uppercase tracking-widest font-semibold"
-                                >
-                                  Pay final invoice →
-                                </a>
-                              </p>
-                            )}
+                            <a
+                              href={ref.final_invoice_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-block px-5 py-3 bg-charcoal text-bone hover:bg-saddle text-xs uppercase tracking-widest font-semibold"
+                            >
+                              Pay final balance
+                              {ref.final_invoice_amount ? ` · ${formatMoney(ref.final_invoice_amount)}` : ''} →
+                            </a>
+                            <p className="text-xs text-dust">
+                              Every cent of the balance goes to {ref.rancher_name || 'your rancher'}.
+                              {' '}
+                              <Link
+                                href={`/support?email=${encodeURIComponent(member.email)}&ref=${encodeURIComponent(ref.id)}`}
+                                className="underline hover:text-charcoal"
+                              >
+                                Something look wrong?
+                              </Link>
+                            </p>
                           </div>
                         )}
 
@@ -571,11 +668,9 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                             <p className="text-charcoal font-medium">
                               ✓ Your beef has been delivered.
                             </p>
-                            {ref.sale_amount ? (
-                              <p className="text-saddle text-xs">
-                                Final amount: <strong>${ref.sale_amount.toLocaleString()}</strong>
-                              </p>
-                            ) : null}
+                            {/* The dollar figure moved into the money summary
+                                above, where it sits next to the deposit and the
+                                balance instead of alone at the bottom. */}
                             <div className="flex flex-wrap gap-2 pt-1">
                               <Link
                                 href="/access"
@@ -592,6 +687,29 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                                 </Link>
                               )}
                             </div>
+                          </div>
+                        )}
+
+                        {/* WAVE 3 FIX 3 — the rancher's fulfillment status,
+                            UNGATED from the tracking number.
+                            THE BUG IT FIXES: the whole scheduled → processing →
+                            ready → fulfilled ladder used to live INSIDE the
+                            `ref.tracking_number` branch below. A pickup buyer
+                            never has a tracking number, so the single most
+                            important word in their entire flow — "ready for
+                            pickup" — was unreachable by construction. The
+                            shipment card below stays gated on a tracking
+                            number, which is the only thing it is actually
+                            about. */}
+                        {fulfillmentLabel && (
+                          <div className="mt-4 bg-bone border border-dust p-4 space-y-1 text-sm text-saddle">
+                            <p className="text-xs uppercase tracking-widest text-saddle">Fulfillment</p>
+                            <p className="text-charcoal font-medium">{fulfillmentLabel}</p>
+                            {ref.fulfillment_updated_at && (
+                              <p className="text-xs text-dust">
+                                Updated {formatDate(ref.fulfillment_updated_at)} by {ref.rancher_name || 'your rancher'}.
+                              </p>
+                            )}
                           </div>
                         )}
 
@@ -664,24 +782,40 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                           </p>
                         )}
 
-                        {/* E5 — entry point into the buyer↔rancher thread at
-                            /checkout/<refId>/ask. Without this the thread is only
-                            reachable from the campaign link, whose 48h deposit-grant
-                            cookie expires; the member session (bhc-member-auth) is
-                            accepted by both thread APIs (ownership-checked against
-                            the referral's Buyer link), so the dashboard is the
-                            durable way back into the conversation. Rendered only
-                            for active referrals with a rancher assigned — the
-                            thread API 409s when no rancher is linked. */}
-                        {ref.rancher_id && ref.status !== 'Closed Won' && ref.status !== 'Closed Lost' && (
-                          <p className="mt-4">
-                            <Link
-                              href={`/checkout/${ref.id}/ask`}
-                              className="inline-block px-4 py-2 border border-charcoal text-charcoal hover:bg-bone-warm text-xs uppercase tracking-widest font-semibold"
-                            >
-                              Message your rancher →
-                            </Link>
-                          </p>
+                        {/* WAVE 3 FIX 5 — the buyer's own cut sheet, readable
+                            at last. They fill it in once at
+                            /checkout/<refId>/preferences and, until now, never
+                            saw it again — write-only from their point of view,
+                            with no link back to change it. */}
+                        {showLadder && <CutSheetSummary deal={ref} />}
+
+                        {/* WAVE 3 FIX 4 — rancher contact in EVERY active
+                            post-deposit state. These lines used to render only
+                            inside the `Intro Sent` branch, so the rancher's
+                            email and phone vanished from the buyer's screen the
+                            instant they paid. That is exactly backwards: the
+                            money is down, the questions start now.
+                            E5 — the thread link at /checkout/<refId>/ask rides
+                            in the same block. The member session is accepted by
+                            both thread APIs (ownership-checked against the
+                            referral's Buyer link), so the dashboard is the
+                            durable way back into the conversation; the thread
+                            API 409s with no rancher linked, hence the gate. */}
+                        {ref.rancher_id &&
+                          !['Closed Lost', 'Refunded', 'Rejected'].includes(ref.status) && (
+                          <RancherContactBlock deal={ref} />
+                        )}
+
+                        {/* WAVE 3 FIX 6 — "what happens next", keyed off the
+                            CURRENT step. The honest Today / This week / When
+                            ready block on the deposit-success page is the best
+                            artifact in the flow and a buyer sees it exactly
+                            once. This is the same block, except it moves with
+                            the deal instead of freezing at day one. */}
+                        {showLadder && (
+                          <WhatHappensNext
+                            lines={nextStepGuidance(dealFields, { rancherName: ref.rancher_name })}
+                          />
                         )}
                       </div>
                     );
@@ -952,7 +1086,45 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
             </div>
           )}
 
+          {/* Merch banner — drives traffic to Shopify /shop from the
+              highest-engagement surface. WAVE 3: moved BELOW the order status.
+              It used to sit between the welcome header and "Your order", so the
+              first thing a buyer waiting on $2,000 of beef saw was a hat ad. */}
+          <a
+            href="https://www.buyhalfcow.com/shop"
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => trackEvent('shop_click', { surface: 'member' })}
+            className="block my-6 border border-dust p-4 bg-bone hover:bg-divider transition flex items-center justify-between"
+          >
+            <div>
+              <div className="font-serif text-lg text-charcoal">rep the rebuild</div>
+              <p className="text-saddle text-sm mt-1">patches · hats · shirts</p>
+            </div>
+            <span className="text-charcoal font-semibold uppercase tracking-wider text-xs">shop →</span>
+          </a>
+
           <Divider />
+
+          {/* WAVE 3 — the persistent help door. Before this, /support and
+              hello@buyhalfcow.com appeared ONLY inside two failure branches
+              (a reorder error and a ready-to-buy error), so a buyer with a
+              normal question had nowhere to go from their own dashboard.
+              Prefilled the same way the deposit-success page does it. */}
+          <div className="text-center text-sm text-saddle">
+            Something not right, or just want a human?{' '}
+            <Link
+              href={`/support?email=${encodeURIComponent(member.email)}`}
+              className="underline hover:text-charcoal"
+            >
+              Get help
+            </Link>{' '}
+            or email{' '}
+            <a href="mailto:hello@buyhalfcow.com" className="underline hover:text-charcoal">
+              hello@buyhalfcow.com
+            </a>
+            .
+          </div>
 
           <div className="text-center">
             <Link href="/" className="text-saddle hover:text-charcoal transition-colors text-sm">
@@ -962,6 +1134,293 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
         </div>
       </Container>
     </main>
+  );
+}
+
+// ── WAVE 3 buyer-portal blocks ──────────────────────────────────────────────
+//
+// All six are dumb renderers over lib/buyerDealStage + the referral row. No
+// fetching, no writes: pref edits keep going through the EXISTING
+// /checkout/<refId>/preferences page, and /api/member/preferences stays the
+// one deliberate boolean it was built to be.
+
+// The deal ladder. Compact vertical stepper, mobile-first: a one-column rail
+// of dots and connectors with the label + date + honest detail beside it.
+function DealStepper({ ladder }: { ladder: BuyerDealStep[] }) {
+  return (
+    <ol className="mt-4 pt-4 border-t border-divider">
+      {ladder.map((step, i) => {
+        const isLast = i === ladder.length - 1;
+        const done = step.state === 'done';
+        const current = step.state === 'current';
+        return (
+          <li
+            key={step.key}
+            className="flex gap-3"
+            aria-current={current ? 'step' : undefined}
+          >
+            <div className="flex flex-col items-center flex-shrink-0" aria-hidden="true">
+              <span
+                className={`flex items-center justify-center w-5 h-5 rounded-full text-[10px] leading-none border ${
+                  done
+                    ? 'bg-charcoal border-charcoal text-bone'
+                    : current
+                      ? 'bg-bone border-2 border-charcoal text-charcoal'
+                      : 'bg-bone border-dust text-dust'
+                }`}
+              >
+                {done ? '✓' : ''}
+              </span>
+              {!isLast && (
+                <span className={`w-px flex-1 min-h-[16px] ${done ? 'bg-charcoal' : 'bg-dust'}`} />
+              )}
+            </div>
+            <div className={`min-w-0 flex-1 ${isLast ? '' : 'pb-4'}`}>
+              <p
+                className={`text-sm leading-tight ${
+                  current ? 'text-charcoal font-semibold' : done ? 'text-charcoal' : 'text-dust'
+                }`}
+              >
+                {step.label}
+                {step.date && (
+                  <span className="text-dust font-normal"> · {formatDate(step.date)}</span>
+                )}
+              </p>
+              {step.detail && step.state !== 'upcoming' && (
+                <p className="mt-1 text-xs text-saddle leading-relaxed">{step.detail}</p>
+              )}
+            </div>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+// Paid X, balance Y, total Z. Until Wave 3 the buyer could see none of the
+// three: the deposit figure rendered only BEFORE they paid it, and the final
+// balance had no figure anywhere on the page at all.
+function OrderMoneySummary({ deal }: { deal: MemberReferral }) {
+  const total = Number(deal.total_sale_amount || deal.sale_amount || 0);
+  const deposit = deal.deposit_paid_at ? Number(deal.deposit_amount || 0) : 0;
+  const balance = Number(deal.final_invoice_amount || 0);
+  const balancePaid = !!deal.final_paid_at;
+  if (!total && !deposit && !balance) return null;
+
+  const rows: { label: string; value: string; strong?: boolean }[] = [];
+  if (total) rows.push({ label: 'Total for your share', value: formatMoney(total) });
+  if (deposit) rows.push({ label: 'Deposit paid', value: `− ${formatMoney(deposit)}` });
+  if (balance) {
+    rows.push({
+      label: balancePaid ? 'Balance paid' : 'Balance still owed',
+      value: balancePaid ? `− ${formatMoney(balance)}` : formatMoney(balance),
+      strong: !balancePaid,
+    });
+  }
+
+  return (
+    <div className="mt-4 border border-dust bg-bone p-4">
+      <p className="text-xs uppercase tracking-widest text-saddle mb-2">Your money</p>
+      <dl className="space-y-1 text-sm">
+        {rows.map((row) => (
+          <div key={row.label} className="flex justify-between gap-4">
+            <dt className="text-saddle">{row.label}</dt>
+            <dd className={row.strong ? 'text-charcoal font-semibold' : 'text-charcoal'}>
+              {row.value}
+            </dd>
+          </div>
+        ))}
+      </dl>
+      {balancePaid && (
+        <p className="mt-2 text-xs text-dust">Paid in full. Nothing else is owed.</p>
+      )}
+    </div>
+  );
+}
+
+// The date, and — for a pickup — WHERE. Handoff Date is the Wave 2 field
+// (fldZpGyngRdeBq5y0): the buyer-facing pickup/delivery day, distinct from
+// Processing Date (the abattoir day). Wave 2 emailed it once and the portal
+// never showed it. Pickup Address / Instructions are the Wave 1 Ranchers
+// fields; they already ride the product receipt (lib/productSettlement) and
+// this is the share-buyer half of that same fix.
+function HandoffBlock({ deal, mode }: { deal: MemberReferral; mode: 'pickup' | 'delivery' | null }) {
+  const word = handoffWord(mode);
+  const scheduled = formatDate(deal.handoff_date);
+  const isPickup = mode === 'pickup';
+  const address = isPickup ? (deal.rancher_pickup_address || '').trim() : '';
+  const instructions = isPickup ? (deal.rancher_pickup_instructions || '').trim() : '';
+  if (!scheduled && !address && !instructions) return null;
+
+  return (
+    <div className="mt-4 border border-dust bg-bone p-4 space-y-2 text-sm">
+      <p className="text-xs uppercase tracking-widest text-saddle">
+        {word === 'handoff' ? 'Handoff' : word}
+      </p>
+      {scheduled ? (
+        <p className="text-charcoal">
+          {word === 'pickup' ? 'Pickup' : word === 'delivery' ? 'Delivery' : 'Handoff'} scheduled:{' '}
+          <strong>{scheduled}</strong>
+        </p>
+      ) : (
+        <p className="text-saddle">
+          No {word} date set yet. {deal.rancher_name || 'Your rancher'} sets it, and you get an
+          email the moment they do.
+        </p>
+      )}
+      {(address || instructions) && (
+        <div className="pt-1 border-t border-divider space-y-1">
+          <p className="text-xs uppercase tracking-widest text-saddle pt-2">Where to go</p>
+          {address && <p className="text-charcoal font-medium">{address}</p>}
+          {instructions && (
+            <p className="text-saddle text-xs whitespace-pre-wrap leading-relaxed">{instructions}</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The buyer's own cut sheet. They answer these three questions once, at
+// /checkout/<refId>/preferences, and — until Wave 3 — never see the answers
+// again. Read-only here by design: the edit path is that same existing page,
+// which already re-notifies the rancher on a correction (Wave 2).
+function CutSheetSummary({ deal }: { deal: MemberReferral }) {
+  const fulfillment = (deal.buyer_fulfillment_pref || '').trim();
+  const windowPref = (deal.buyer_window_pref || '').trim();
+  const cutNotes = (deal.buyer_cut_notes || '').trim();
+  const anySet = !!(deal.buyer_preferences_set_at || fulfillment || windowPref || cutNotes);
+  const rancherFirst = (deal.rancher_name || 'your rancher').split(' ')[0];
+
+  if (!anySet) {
+    return (
+      <div className="mt-4 border-2 border-charcoal bg-white p-4 space-y-2">
+        <p className="text-sm text-charcoal font-medium">
+          Tell {rancherFirst} how you want it cut.
+        </p>
+        <p className="text-xs text-saddle leading-relaxed">
+          Delivery or pickup, roughly when you want it, and anything for the cut sheet — steak
+          thickness, roast sizes, how much ground. Thirty seconds, and {rancherFirst} has it before
+          they book your processing slot.
+        </p>
+        <Link
+          href={`/checkout/${deal.id}/preferences`}
+          className="inline-block px-5 py-2 bg-charcoal text-bone hover:bg-saddle text-xs uppercase tracking-widest font-semibold"
+        >
+          Set your cut sheet →
+        </Link>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-4 border border-dust bg-bone p-4 space-y-2 text-sm">
+      <p className="text-xs uppercase tracking-widest text-saddle">Your cut sheet</p>
+      <dl className="space-y-1">
+        <div className="flex gap-2">
+          <dt className="text-dust flex-shrink-0">Fulfillment:</dt>
+          <dd className="text-charcoal">{fulfillment || 'not set'}</dd>
+        </div>
+        <div className="flex gap-2">
+          <dt className="text-dust flex-shrink-0">Target window:</dt>
+          <dd className="text-charcoal">{windowPref || 'flexible'}</dd>
+        </div>
+        <div className="flex gap-2">
+          <dt className="text-dust flex-shrink-0">Cut notes:</dt>
+          <dd className="text-charcoal whitespace-pre-wrap">
+            {cutNotes || `none — ${rancherFirst} uses their standard cut sheet`}
+          </dd>
+        </div>
+      </dl>
+      <p className="pt-1">
+        <Link
+          href={`/checkout/${deal.id}/preferences`}
+          className="text-charcoal underline text-xs uppercase tracking-wider hover:text-saddle"
+        >
+          Change your cut sheet →
+        </Link>
+      </p>
+      <p className="text-xs text-dust">
+        Changes go straight to {rancherFirst}. Worth doing before your processing date.
+      </p>
+    </div>
+  );
+}
+
+// Rancher contact, in EVERY active state. Before Wave 3 these lines lived
+// only inside the `Intro Sent` branch — the buyer's rancher disappeared from
+// their screen the moment they paid.
+function RancherContactBlock({ deal }: { deal: MemberReferral }) {
+  const hasContact = !!(deal.rancher_email || deal.rancher_phone);
+  const isClosed = deal.status === 'Closed Won';
+  return (
+    <div className="mt-4 border border-dust bg-bone p-4 space-y-2 text-sm">
+      <p className="text-xs uppercase tracking-widest text-saddle">Your rancher</p>
+      <p className="font-semibold text-charcoal">
+        {deal.rancher_name || 'Your rancher'}
+        {deal.ranch_name && deal.ranch_name !== deal.rancher_name ? ` · ${deal.ranch_name}` : ''}
+      </p>
+      {deal.rancher_email && (
+        <p className="text-saddle">
+          <span className="text-dust">Email:</span>{' '}
+          <a href={`mailto:${deal.rancher_email}`} className="text-charcoal underline break-all">
+            {deal.rancher_email}
+          </a>
+        </p>
+      )}
+      {deal.rancher_phone && (
+        <p className="text-saddle">
+          <span className="text-dust">Phone:</span>{' '}
+          <a href={`tel:${deal.rancher_phone}`} className="text-charcoal underline">
+            {deal.rancher_phone}
+          </a>
+        </p>
+      )}
+      {!hasContact && (
+        <p className="text-xs text-dust">
+          We don&apos;t have direct contact details on file for them yet. Use the message thread
+          below — it reaches them by email either way.
+        </p>
+      )}
+      <div className="flex flex-wrap gap-2 pt-2">
+        {!isClosed && (
+          <Link
+            href={`/checkout/${deal.id}/ask`}
+            className="inline-block px-4 py-2 border border-charcoal text-charcoal hover:bg-bone-warm text-xs uppercase tracking-widest font-semibold"
+          >
+            Message your rancher →
+          </Link>
+        )}
+        {deal.rancher_slug && (
+          <Link
+            href={`/ranchers/${deal.rancher_slug}`}
+            className="inline-block px-4 py-2 border border-dust text-charcoal hover:bg-bone-warm text-xs uppercase tracking-widest font-semibold"
+          >
+            View their page →
+          </Link>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// "What happens next" — the deposit-success page's honest Today / This week /
+// When ready block, made permanent and keyed off the CURRENT ladder step so it
+// stays true as the deal moves.
+function WhatHappensNext({ lines }: { lines: { when: string; text: string }[] }) {
+  if (lines.length === 0) return null;
+  return (
+    <div className="mt-4 border border-dust bg-white p-4">
+      <p className="text-xs uppercase tracking-widest text-saddle mb-3">What happens next</p>
+      <ol className="space-y-3 text-sm">
+        {lines.map((line) => (
+          <li key={line.when} className="flex flex-col sm:flex-row sm:gap-3">
+            <span className="text-saddle font-medium sm:flex-shrink-0 sm:w-40">{line.when}:</span>
+            <span className="text-charcoal leading-relaxed">{line.text}</span>
+          </li>
+        ))}
+      </ol>
+    </div>
   );
 }
 
