@@ -16,6 +16,10 @@ import { smsHref, formatPhonePretty, buyerIntroSmsBody } from './phoneHygiene';
 // DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
 // lib/demo/demoMode.ts. Pure import, no side effect when the flag is off.
 import { isDemoMode } from './demo/demoMode';
+// Wave 3 (2026-07-30): the pickup/delivery noun is now ONE source, shared with
+// the buyer's /member view. This email used to own an inline ternary; the
+// portal needed the identical word, and two copies of a wording rule drift.
+import { handoffWord } from './buyerDealStage';
 
 // DOMPurify allowlist for /admin/broadcast HTML mode. P0 audit fix (C-5)
 // hardened in P4-F: operator-supplied HTML was forwarded raw to Resend — a
@@ -5529,7 +5533,7 @@ export async function sendBuyerHandoffScheduled(data: {
   const dateStr = !isNaN(parsed.getTime())
     ? parsed.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' })
     : String(data.handoffDate);
-  const word = data.mode === 'pickup' ? 'pickup' : data.mode === 'delivery' ? 'delivery' : 'handoff';
+  const word = handoffWord(data.mode);
   const subject = data.isReschedule
     ? `updated date — your ${word} is now ${dateStr}`
     : `your ${word} is scheduled for ${dateStr}`;

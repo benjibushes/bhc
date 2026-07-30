@@ -56,12 +56,12 @@ Sem: the REALIZED close amount, stamped at close. Guard: rancher PATCH :690-700 
 
 ### Total Sale Amount (currency)
 W: request-deposit :218; send-deposit-invoice :143,160; send-final-invoice :359 (refreshed).
-R: lib/stripeSettlement.ts:485 — settleFinalInvoice computes closeSaleAmount = Total Sale Amount || (deposit + final) → becomes Sale Amount at Closed Won; final-invoice-dunning :307; deposit-link-refresh :76.
+R: lib/stripeSettlement.ts:485 — settleFinalInvoice computes closeSaleAmount = Total Sale Amount || (deposit + final) → becomes Sale Amount at Closed Won; final-invoice-dunning :307; deposit-link-refresh :76; app/api/member/content — projected as total_sale_amount for the buyer's "Your money" summary (Wave 3, display only).
 Sem: LANDMINE vs Sale Amount — this is the QUOTED full price stamped at deposit-request time; Sale Amount is the realized close amount. They differ when price changes mid-deal, and Total Sale Amount exists on never-closed rows.
 
 ### Deposit Amount (currency)
 W: request-deposit :217; send-deposit-invoice :142,159; lib/stripeSettlement.ts:146 — re-stamped with actual paid deposit at settle; orphan-checkout-reaper :581 — heal from ledger.
-R: checkout/deposit :268 (durable pay page quote); lib/staleHolds.ts:109 (>0 blocks release); send-final-invoice :165 (balance math).
+R: checkout/deposit :268 (durable pay page quote); lib/staleHolds.ts:109 (>0 blocks release); send-final-invoice :165 (balance math); app/api/member/content — deposit_amount; Wave 3 renders it AFTER payment too (it used to appear only on the pre-pay CTA).
 
 ### Deposit Paid At (dateTime) — THE rail discriminator
 W: lib/stripeSettlement.ts:147 — settleBuyerDeposit on payment_intent.succeeded (both webhooks); orphan-checkout-reaper :580 — daily auto-restamp from Payments ledger; lib/refundLifecycle.ts:44 — nulled on full refund.
@@ -70,7 +70,7 @@ Sem: money-truth stamp; blank genuinely = no Stripe deposit ever settled (reaper
 
 ### Deposit Requested At (dateTime) — LOAD-BEARING
 W: request-deposit :220; send-deposit-invoice :144,161. NOT nulled on refund.
-R: lib/confirmPaymentGuard.ts:30-33 — flips depositPaidState to PAYABLE + blocks manual confirm; lib/depositWatchdog.ts:64-68 — watchdog age anchor; lib/depositRequestNudge.ts:69,103,138; lib/staleHolds.ts:108.
+R: lib/confirmPaymentGuard.ts:30-33 — flips depositPaidState to PAYABLE + blocks manual confirm; lib/depositWatchdog.ts:64-68 — watchdog age anchor; lib/depositRequestNudge.ts:69,103,138; lib/staleHolds.ts:108; app/api/member/content — projected as deposit_requested_at so lib/buyerDealStage can run the SAME isDepositAlreadyPaid disambiguator on the buyer's own ladder (Wave 3).
 Sem: a Status='Awaiting Payment' row WITHOUT it reads as already-paid to the deposit page — a pre-payment writer that skips it bricks the buyer (send-deposit-invoice :127-133).
 
 ### Deposit Checkout URL (url)
@@ -80,11 +80,12 @@ Sem: must NEVER stay a raw Stripe URL (24h expiry); the cron is the self-heal. N
 
 ### Final Invoice Amount / Final Invoice Sent At / Final Invoice URL
 W: send-final-invoice :353/:352 (+ URL alongside). Only writer.
-R: app/r/f/[token]/route.ts:83 — durable link re-mints checkout at this amount, :72 blocks re-pay when Final Paid At set; final-invoice-dunning :125-135 isDunningEligible (Sent At = age origin, live URL + Status='Awaiting Payment' required), :306,486.
+R: app/r/f/[token]/route.ts:83 — durable link re-mints checkout at this amount, :72 blocks re-pay when Final Paid At set; final-invoice-dunning :125-135 isDunningEligible (Sent At = age origin, live URL + Status='Awaiting Payment' required), :306,486; app/api/member/content — all three projected (final_invoice_amount / final_invoice_sent_at / final_invoice_url) for the buyer's priced Pay-final-balance CTA (Wave 3).
+Sem (Wave 3): send-final-invoice ALSO flips Status back to 'Awaiting Payment' (:362). /member used to gate its Pay-final-invoice button on `Status === 'Slot Locked'`, which that flip makes false for every billed row — the button was unreachable for exactly the buyers who needed it. Gate on the invoice fields, never on Status.
 
 ### Final Paid At / Final Paid Amount
 W: lib/stripeSettlement.ts:495/:496 — settleFinalInvoice (webhooks stripe :335, stripe-connect :496). Only writers.
-R: Final Paid At — /r/f :72 (re-pay block). Final Paid Amount — NO production reader (audit trail only; also missing from the dashboard projection).
+R: Final Paid At — /r/f :72 (re-pay block); lib/buyerDealStage.ts (balance step done) via app/api/member/content final_paid_at. Final Paid Amount — NO production reader (audit trail only; also missing from the dashboard projection).
 
 ### Commission Due (currency) — legacy-rail-only (mostly)
 W: admin close app/api/referrals/[id]/route.ts:101 — RAIL-GATED by shouldWriteLegacyCommissionDue (:100; lib/commission.ts:247-249); rancher dashboard close :709,711 — NOT rail-gated (writes even on tier_v2; neutralized by the cron stamp; invoice fire skips tier_v2 :844); quick-action :263; confirm-payment :134,149; telegram :3625; adjust-commission :40; lib/refundLifecycle.ts:39 — nulled on refund.
@@ -159,16 +160,17 @@ R: referral-chasup :380 — throttle; lib/firstTouchSla.ts:16,42 — deliberatel
 
 ### Fulfillment Status (singleSelect) + fulfillment tracker fields
 W: app/api/rancher/referrals/[id]/fulfillment/route.ts via FULFILLMENT_FIELDS (lib/fulfillmentTracking.ts). Only writer. Wave 2 (2026-07-29): a transition TO 'fulfilled' also rides the shared confirm rail (lib/fulfillmentConfirm.ts) — see Fulfillment Confirmed At below. Empty-string dates are NO-OPS server-side (data-wipe fix); deliberate clears require the explicit clearProcessingDate/clearHandoffDate body flags.
-R: lib/fulfillmentChase.ts — 'fulfilled' suppresses the chase cron (with Fulfillment Confirmed At).
+R: lib/fulfillmentChase.ts — 'fulfilled' suppresses the chase cron (with Fulfillment Confirmed At); lib/buyerDealStage.ts (scheduled/ready/delivered step truth) + app/member "Fulfillment" line via FULFILLMENT_STATUS_LABELS.
+Sem (Wave 3): the buyer's view of this ladder used to render INSIDE the `tracking_number` branch, so a pickup buyer — who never gets a tracking number — could not see 'ready for pickup/ship' at all. Status is now ungated; only the carrier/tracking card stays gated on a tracking number.
 
 ### Handoff Date (date — fldZpGyngRdeBq5y0) — buyer-facing pickup/delivery date
 W: app/api/rancher/referrals/[id]/fulfillment/route.ts (tracker save, via FULFILLMENT_FIELDS.handoffDate; validated not-past w/ 1-day UTC grace in lib/fulfillmentTracking.ts). Only writer. Set/changed (persisted-value compare) → sendBuyerHandoffScheduled email to the buyer; re-save of the same date never re-sends.
-R: lib/fulfillmentChase.ts — PREFERRED due-date source for the chase cron (Handoff Date > Processing Date > accept+14d); its absence (with no Processing Date) triggers the 'schedule' ("pick a date") chase kind. Projected to rancher dashboard as handoff_date.
+R: lib/fulfillmentChase.ts — PREFERRED due-date source for the chase cron (Handoff Date > Processing Date > accept+14d); its absence (with no Processing Date) triggers the 'schedule' ("pick a date") chase kind. Projected to rancher dashboard as handoff_date, and (Wave 3) to app/api/member/content as handoff_date — the buyer's "Pickup/Delivery scheduled: {date}" line + the `scheduled` ladder step. Pickup-vs-delivery wording comes from lib/buyerDealStage resolveHandoffMode/handoffWord, the SAME helper sendBuyerHandoffScheduled now imports (lib/email.ts) — one rule, two surfaces.
 Sem: distinct from Processing Date (the abattoir date). This is WHEN THE BUYER GETS THEIR BEEF.
 
 ### Fulfillment Confirmed At (dateTime)
 W: lib/fulfillmentConfirm.ts confirmFulfillmentForReferral — THE single stamp+side-effects rail (payment gate rail-per-referral, funnel event, buyer "beef received" email, Telegram). Two entry points: app/api/rancher/fulfillment/confirm/route.ts (binary confirm row, all rails — the tier_v2 UI gate was removed Wave 2) and app/api/rancher/referrals/[id]/fulfillment/route.ts (tracker transition to 'fulfilled', best-effort — a payment-gate 409 doesn't fail the tracker save).
-R: lib/fulfillmentChase.ts — suppresses every chase kind; rancher dashboard green pill; confirm rail idempotency (skip if set).
+R: lib/fulfillmentChase.ts — suppresses every chase kind; rancher dashboard green pill; confirm rail idempotency (skip if set); lib/buyerDealStage.ts — closes the buyer's `delivered` step (app/api/member/content fulfillment_confirmed_at).
 
 ### Fulfillment Chase Last Sent At (dateTime) + Fulfillment Chase Count (number)
 W: app/api/cron/fulfillment-chase/route.ts — claim-stamp BEFORE send, all kinds.
@@ -176,7 +178,8 @@ R: lib/fulfillmentChase.ts — 48h cooldown + 3-lifetime cap + Count-as-ladder: 
 
 ### Buyer Fulfillment Pref / Buyer Window Pref / Buyer Cut Notes / Buyer Preferences Set At
 W: app/api/checkout/[refId]/preferences/route.ts via preferencesToReferralFields (lib/preferences.ts). Only writer. First submit posts the cut sheet to the buyer↔rancher thread + emails the rancher (sendRancherBuyerPreferences); Wave 2 (2026-07-29): a repeat submit whose VALUES CHANGED re-posts (marked UPDATED) + re-notifies; an identical re-submit stays silent.
-R: same route's GET (prefill + alreadyCaptured idempotency anchor); fulfillment route — Buyer Fulfillment Pref words the handoff email pickup-vs-delivery when Fulfillment Method is unset; rancher dashboard "Buyer's cut sheet" block (projected Wave 2 — previously stripped from every rancher projection).
+R: same route's GET (prefill + alreadyCaptured idempotency anchor); fulfillment route — Buyer Fulfillment Pref words the handoff email pickup-vs-delivery when Fulfillment Method is unset; rancher dashboard "Buyer's cut sheet" block (projected Wave 2 — previously stripped from every rancher projection); app/api/member/content (Wave 3) — all four projected for the buyer's own "Your cut sheet" block, plus Buyer Fulfillment Pref feeding lib/buyerDealStage resolveHandoffMode.
+Sem (Wave 3): these were WRITE-ONLY from the buyer's point of view — they answered the three questions once at /checkout/[refId]/preferences and never saw the answers again. /member now renders them read-only and links back to that same page to edit (no new buyer write surface; /api/member/preferences stays the one deliberate boolean).
 
 ### Referral Source (singleLineText — fldC5pUi90WDpBTsa) — My Leads provenance
 W: app/api/rancher/referrals/route.ts (POST create) via buildLeadReferralFields (lib/rancherLeads.ts) — the ONLY writer; value always 'rancher-added' (constant REFERRAL_SOURCE_RANCHER_ADDED).
@@ -203,6 +206,11 @@ W(pause): app/api/admin/ranchers/[id]/pause/route.ts:39; app/api/rancher/remove/
 W(capacity): app/api/ranchers/capacity-check/route.ts:31,40 — Active↔At Capacity off the mirror count; app/api/rancher/landing-page/route.ts:215,217,446; app/api/admin/ranchers/[id]/resume/route.ts:29; lib/pauseReversal.ts:115; lib/connectResync.ts:248 (paused_overdue auto-resume). Generic: app/api/admin/ranchers/[id]/route.ts:45.
 R: lib/rancherEligibility.ts:88-89 — hard ='Active' routing gate; lib/goLiveGates.ts:74; app/api/cron/migration-deadline/route.ts:116 (skips Paused); app/api/ranchers/capacity-check/route.ts:27; lib/connectResync.ts:157,223; lib/capacityLiberator.ts:158.
 Sem: THE routing kill-switch. Many paths pause; ONLY the migration-deadline `paused_overdue` pause ever auto-resumes (lib/connectResync.ts:162-203). Every other Paused needs a human. NEVER batch-flip without Ben's per-rancher OK.
+
+### Pickup Address (singleLineText — fldGTVzd7zCZIkKJf) + Pickup Instructions (long text — fldVwKoWIlPqC69GC)
+W: app/api/rancher/landing-page/route.ts:655-663 — rancher self-serve, allowlisted + trimmed/clamped (address 200, instructions 1000, empty → null); admin PATCH app/api/admin/ranchers/[id]/route.ts.
+R: lib/productSettlement.ts:276-277 — the pickup block on the product receipt (Wave 1 "pickup truth": a pickup buyer never learned WHERE to go); app/order/success/page.tsx:47; app/api/checkout/deposit/route.ts:727; app/api/member/content (Wave 3) — projected onto the buyer's referral as rancher_pickup_address / rancher_pickup_instructions and rendered on /member for a PICKUP deal after the deposit lands (the share-buyer half of the same fix).
+Sem: rendered ONLY when the deal is pickup (resolveHandoffMode → 'pickup'); blank stays honest ("the ranch will reach out to set up your pickup") rather than showing an empty box.
 
 ### Onboarding Status (singleSelect)
 W: app/api/ranchers/sign-agreement/route.ts:183 ('Agreement Signed') / :212 ('Verification Complete', pre-vetted tier_v2); app/api/rancher/setup/request-agreement/route.ts:76 + app/api/ranchers/[id]/send-onboarding/route.ts:201 ('Docs Sent'); app/api/webhooks/cal/route.ts:258,270,626,711,756,799 — Cal book/cancel; app/api/webhooks/telegram/route.ts:2634,2694 — one-tap verify; app/api/cron/auto-verify-stale/route.ts:44; app/api/rancher/activate/route.ts:280,342; GO_LIVE_FIELDS writers set 'Live'; admin PATCH :44.
