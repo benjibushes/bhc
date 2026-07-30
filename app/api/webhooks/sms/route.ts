@@ -44,35 +44,49 @@ export const maxDuration = 30;
 const json = (body: unknown, status = 200) =>
   NextResponse.json(body as any, { status });
 
+function parseForm(text: string): Record<string, string> | null {
+  try {
+    const out: Record<string, string> = {};
+    for (const [k, v] of new URLSearchParams(text).entries()) out[k] = v;
+    return Object.keys(out).length > 0 ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Decode the request body into a plain object regardless of encoding.
  * JSON providers (telnyx, bandwidth) send application/json; form providers
  * (twilio, plivo) send application/x-www-form-urlencoded. Plivo can also be
  * configured to GET, in which case the params ride the query string.
+ *
+ * The body is read ONCE as text and parsed from that string — a Request body
+ * is a single-use stream, so trying req.formData() and then falling back to
+ * req.json() would fail on the second read. Content-Type picks the first
+ * attempt; the other is the fallback, because vendors do post JSON without the
+ * header.
  */
 async function decodeBody(req: Request): Promise<unknown> {
-  const ct = (req.headers.get('content-type') || '').toLowerCase();
-  if (ct.includes('application/json')) {
-    try {
-      return await req.json();
-    } catch {
-      return null;
-    }
-  }
+  let text = '';
   try {
-    const form = await req.formData();
-    const out: Record<string, string> = {};
-    for (const [k, v] of form.entries()) out[k] = typeof v === 'string' ? v : '';
-    return out;
+    text = await req.text();
   } catch {
-    // Some vendors post JSON without the header. Last resort: try text→JSON.
-    try {
-      const text = await req.text();
-      return text ? JSON.parse(text) : null;
-    } catch {
-      return null;
-    }
+    return null;
   }
+  if (!text) return null;
+  const ct = (req.headers.get('content-type') || '').toLowerCase();
+  if (ct.includes('form-urlencoded')) {
+    return parseForm(text) ?? parseJson(text);
+  }
+  return parseJson(text) ?? parseForm(text);
 }
 
 /** Query params as a plain object — the Plivo-GET path. */
