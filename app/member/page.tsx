@@ -23,6 +23,8 @@ import {
   type BuyerDealStep,
 } from '@/lib/buyerDealStage';
 import { FULFILLMENT_STATUS_LABELS, isFulfillmentStatus } from '@/lib/fulfillmentTracking';
+import CallbackRequest from '../components/CallbackRequest';
+import { isPaidLiveDeal, resolveMemberCallbackReason } from '@/lib/callbackRail';
 
 interface Rancher {
   id: string;
@@ -140,14 +142,16 @@ function toDealFields(ref: MemberReferral): BuyerDealFields {
   };
 }
 
-/** A deal that is live and already has the buyer's money in it. */
+/**
+ * A deal that is live and already has the buyer's money in it.
+ *
+ * Delegates to lib/callbackRail so "has this buyer actually paid" has ONE
+ * definition — the same one that decides whether they have earned a phone call.
+ * Two copies of this rule drifting apart is how a paying customer ends up
+ * being asked "ready to buy?" above their own paid order.
+ */
 function isPaidActiveDeal(ref: MemberReferral): boolean {
-  return (
-    !!ref.deposit_paid_at &&
-    ref.status !== 'Closed Lost' &&
-    ref.status !== 'Refunded' &&
-    ref.status !== 'Rejected'
-  );
+  return isPaidLiveDeal({ status: ref.status, depositPaidAt: ref.deposit_paid_at });
 }
 
 function formatDate(value?: string): string {
@@ -831,6 +835,34 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                   </p>
                 </div>
               )}
+
+              {/* A PAYING CUSTOMER DESERVES A HUMAN. Gated on a live, PAID
+                  deal — never on merely having an account, because a browsing
+                  visitor with a phone number is the tire-kicker call this rail
+                  exists to replace.
+
+                  The copy sharpens when a deal has gone quiet on the rancher's
+                  side (paid, accepted, and then nothing for a week — see
+                  lib/callbackRail.isStalledOnRancher). That is the single
+                  biggest deal-killer in the business and the buyer is usually
+                  the last to be told, so on those rows the offer changes from
+                  "we're here" to "let's chase it". The signal is free: every
+                  field it reads is already on this page.
+
+                  Renders NOTHING while CALLBACK_RAIL_ENABLED is off. */}
+              {(() => {
+                const reason = resolveMemberCallbackReason(
+                  (data?.memberReferrals || []).map(toDealFields),
+                  Date.now(),
+                );
+                if (!reason) return null;
+                return (
+                  <CallbackRequest
+                    variant={reason === 'stalled-on-rancher' ? 'member-stalled' : 'member'}
+                    className="py-2"
+                  />
+                );
+              })()}
 
               {/* F17 — Affiliate code surface for Closed Won buyers (auto-enrolled per I-9) */}
               {data?.affiliateCode && (

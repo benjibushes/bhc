@@ -464,6 +464,54 @@ export async function sendTelegramInvoiceFailed(data: {
   return sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, message, keyboard);
 }
 
+// INBOUND CALLBACK — a buyer raised their own hand and asked to be called.
+//
+// This is the loudest signal the business produces. Every other alert is us
+// guessing that someone is warm; this one is the buyer saying so, usually while
+// standing at a real price on the deposit page. It outranks every cold dial on
+// the desk, so the message carries everything needed to make the call without
+// opening a single other tab: who, where, what they were looking at, which
+// rancher, and their own words.
+export async function sendTelegramCallbackRequest(data: {
+  consumerId: string;
+  firstName: string;
+  state?: string;
+  phone?: string;
+  email?: string;
+  /** Cut + price, when a referral was in context ('Half · $1,850'). */
+  dealLine?: string;
+  rancherName?: string;
+  note?: string;
+  /** True when this buyer has asked before and been called. */
+  repeatAsk?: boolean;
+}) {
+  const phoneLine = data.phone
+    ? `📞 <b>${escapeHtml(data.phone)}</b>`
+    : '📞 <i>No phone on file — reply by email</i>';
+  const message =
+    `📞📞📞 <b>ASKED FOR A CALL</b> 📞📞📞\n\n` +
+    `They raised their hand. This outranks every cold dial on the desk.\n\n` +
+    `👤 <b>${escapeHtml(data.firstName)}</b>${data.state ? ` · ${escapeHtml(data.state)}` : ''}\n` +
+    `${phoneLine}\n` +
+    (data.email ? `📧 <code>${escapeHtml(data.email)}</code>\n` : '') +
+    (data.dealLine ? `🥩 ${escapeHtml(data.dealLine)}\n` : '') +
+    (data.rancherName ? `🤠 ${escapeHtml(data.rancherName)}\n` : '') +
+    (data.repeatAsk ? `\n🔁 <i>They have asked before.</i>\n` : '') +
+    `\n📝 <i>${data.note ? escapeHtml(data.note) : 'No note — just asked for a call.'}</i>`;
+
+  const keyboard = {
+    inline_keyboard: [
+      [
+        ...(data.phone ? [{ text: '📞 Call now', url: `tel:${data.phone}` }] : []),
+        ...(data.email ? [{ text: '✉️ Email', url: `mailto:${data.email}` }] : []),
+      ],
+      [{ text: '👁 Full Details', callback_data: `cdetails_${data.consumerId}` }],
+    ].filter((r) => r.length > 0),
+  };
+
+  return sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, message, keyboard);
+}
+
 // Telegram HTML mode escapes — only `<`, `>`, `&` need escaping.
 function escapeHtml(s: string): string {
   return String(s || '')

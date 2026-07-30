@@ -9,9 +9,31 @@ import { getAllRecords, TABLES, escapeAirtableValue } from '@/lib/airtable';
 import { requireAdmin } from '@/lib/adminAuth';
 import { computeLeadScore } from '@/lib/leadScore';
 import { computeNBA } from '@/lib/nextBestAction';
+import { orderTypeToCut } from '@/lib/requalifyCampaign';
+import {
+  hasOpenCallbackRequest,
+  rankDialQueue,
+  type DialCandidate,
+} from '@/lib/callbackQueue';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
+
+// ── INBOUND CALLBACK RAIL ──────────────────────────────────────────────────
+//
+// Consumers field names, verified against the live schema (tblAbjQDnLrOtjpoE)
+// 2026-07-30 — see docs/WRITE-MAP.md.
+const F_CALLBACK_REQUESTED_AT = 'Callback Requested At';
+const F_CALLBACK_NOTE = 'Callback Note';
+const F_CALLBACK_HANDLED_AT = 'Callback Handled At';
+
+// Open = asked, and not called SINCE. The OR() is not decoration: both stamps
+// are single-value dateTime fields, so a buyer who asks a second time
+// overwrites Requested At while Handled At still holds the first call. Without
+// the IS_BEFORE arm that re-ask would be invisible to the desk forever.
+// lib/callbackQueue.hasOpenCallbackRequest re-checks the same rule in JS below,
+// so the desk and the endpoint's duplicate guard can never disagree.
+const OPEN_CALLBACK_FORMULA = `AND(NOT({${F_CALLBACK_REQUESTED_AT}}=''),OR({${F_CALLBACK_HANDLED_AT}}='',IS_BEFORE({${F_CALLBACK_HANDLED_AT}},{${F_CALLBACK_REQUESTED_AT}})))`;
 
 export async function GET(req: Request) {
   const a = await requireAdmin(req);
@@ -48,7 +70,7 @@ export async function GET(req: Request) {
     ),
   ];
 
-  const [quizComplete, depositPending, slotsLocked, closedToday, waitlisted, ranchersActive, wholesaleInquiries, callDoneNoInvoice, callBuyers] =
+  const [quizComplete, depositPending, slotsLocked, closedToday, waitlisted, ranchersActive, wholesaleInquiries, callDoneNoInvoice, callBuyers, callbackRows] =
     await Promise.all([
       getAllRecords(
         TABLES.CONSUMERS,
@@ -92,6 +114,10 @@ export async function GET(req: Request) {
             `OR(${callEmails.map((e) => `LOWER({Email})="${escapeAirtableValue(e)}"`).join(',')})`,
           ).catch(() => [])
         : Promise.resolve([] as any[]),
+      // Inbound callback rail — buyers who ASKED to be called. Not gated on
+      // CALLBACK_RAIL_ENABLED: the desk must already work the instant the flag
+      // flips, and with the rail dark this simply returns nothing.
+      getAllRecords(TABLES.CONSUMERS, OPEN_CALLBACK_FORMULA).catch(() => []),
     ]);
 
   // F4 — composite lead score + sort quiz-complete by hottest first
@@ -113,6 +139,29 @@ export async function GET(req: Request) {
 
   const wholesaleFormatted = (wholesaleInquiries as any[]).map(formatWholesale);
 
+  // ── INBOUND: buyers who asked for a call ────────────────────────────────
+  // Re-filtered in JS through the SAME predicate the endpoint's duplicate
+  // guard uses, so an Airtable formula quirk can never let the two drift.
+  // Sorted OLDEST FIRST: a callback request is a debt, and the person who has
+  // waited longest is closest to giving up on us.
+  const callbackRequests = (callbackRows as any[])
+    .filter((c) =>
+      hasOpenCallbackRequest({
+        callbackRequestedAt: c[F_CALLBACK_REQUESTED_AT],
+        callbackHandledAt: c[F_CALLBACK_HANDLED_AT],
+      }),
+    )
+    .map(formatCallbackRequest)
+    .sort((a, b) => String(a.requestedAt).localeCompare(String(b.requestedAt)));
+
+  // "Who do I dial right now?" — ONE ranking across every source, so the desk
+  // stops making Ben eyeball five buckets and guess. Ordering + the reasoning
+  // behind it live in lib/callbackQueue.
+  const dialQueue = rankDialQueue(
+    buildDialCandidates(callbackRows as any[], depositPending as any[], quizComplete as any[]),
+    { now: Date.now() },
+  );
+
   // F6 — Next Best Action
   const nba = computeNBA({
     calls: callsFormatted,
@@ -123,6 +172,8 @@ export async function GET(req: Request) {
   });
 
   return NextResponse.json({
+    callbackRequests,
+    dialQueue,
     calls: callsFormatted,
     quizComplete: quizFormatted,
     depositPending: depositPendingFormatted,
@@ -135,6 +186,109 @@ export async function GET(req: Request) {
     pipeline: computePipelineValue(quizComplete, depositPending, slotsLocked, closedToday),
     nba,
   });
+}
+
+// ── INBOUND CALLBACK RAIL — shaping ────────────────────────────────────────
+
+/** One buyer who asked to be called, as the desk card needs them. */
+function formatCallbackRequest(c: any) {
+  const requestedAt = String(c[F_CALLBACK_REQUESTED_AT] || '');
+  const t = Date.parse(requestedAt);
+  return {
+    id: c.id,
+    name: String(c['Full Name'] || '').trim() || '(no name)',
+    email: String(c['Email'] || '').trim(),
+    phone: String(c['Phone'] || '').trim(),
+    state: String(c['State'] || '').trim(),
+    note: String(c[F_CALLBACK_NOTE] || '').trim(),
+    orderType: String(c['Order Type'] || '').trim(),
+    requestedAt,
+    /** Hours waiting. The number Ben should feel guilty about. */
+    hoursWaiting: Number.isNaN(t) ? null : Math.max(0, Math.floor((Date.now() - t) / 3_600_000)),
+    /** They have been called before and came back. Worth knowing pre-dial. */
+    repeatAsk: String(c[F_CALLBACK_HANDLED_AT] || '').trim().length > 0,
+  };
+}
+
+/**
+ * Fold every source the desk already holds into ONE list of callable buyers.
+ *
+ * Merged by consumer id, not concatenated — a buyer who asked for a call AND
+ * has an unpaid checkout open is one person and must appear once, in the
+ * higher tier. Costs no extra Airtable read: all three inputs were already
+ * fetched for other panels.
+ */
+function buildDialCandidates(
+  callbackRows: any[],
+  depositPending: any[],
+  quizComplete: any[],
+): DialCandidate[] {
+  const byId = new Map<string, DialCandidate>();
+  const merge = (id: string, patch: Partial<DialCandidate>) => {
+    if (!id) return;
+    // First writer wins per field, and sources are merged highest-signal
+    // first, so a callback row's identity is never clobbered by a colder one.
+    const prev = byId.get(id) || { id };
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === undefined || v === '' || v === null) continue;
+      if ((prev as any)[k] === undefined || (prev as any)[k] === '') (prev as any)[k] = v;
+    }
+    byId.set(id, prev);
+  };
+
+  // 1. asked for a call — the top tier.
+  for (const c of callbackRows) {
+    merge(c.id, {
+      id: c.id,
+      name: String(c['Full Name'] || '').trim(),
+      state: String(c['State'] || '').trim(),
+      phone: String(c['Phone'] || '').trim(),
+      email: String(c['Email'] || '').trim(),
+      callbackRequestedAt: String(c[F_CALLBACK_REQUESTED_AT] || ''),
+      callbackHandledAt: String(c[F_CALLBACK_HANDLED_AT] || ''),
+      callbackNote: String(c[F_CALLBACK_NOTE] || '').trim(),
+      qualifiedAt: String(c['Qualified At'] || ''),
+      hasCutOnFile: !!orderTypeToCut(c['Order Type']),
+    });
+  }
+
+  // 2. opened a deposit page and never paid. Keyed on the referral's Buyer
+  //    link so it merges with the same person's callback row; falls back to
+  //    the referral id so a link-less row is still listed rather than dropped.
+  for (const r of depositPending) {
+    const buyerLink = Array.isArray(r['Buyer']) ? String(r['Buyer'][0] || '') : '';
+    merge(buyerLink || r.id, {
+      id: buyerLink || r.id,
+      name: String(r['Buyer Name'] || '').trim(),
+      state: String(r['Buyer State'] || '').trim(),
+      phone: String(r['Buyer Phone'] || '').trim(),
+      email: String(r['Buyer Email'] || '').trim(),
+      depositLinkOpenedAt: String(r['Deposit Link Opened At'] || ''),
+      depositPaidAt: String(r['Deposit Paid At'] || ''),
+      referralId: r.id,
+      rancherName: String(r['Rancher Name'] || r['Suggested Rancher Name'] || '').trim(),
+      cutLabel: String(r['Order Type'] || '').trim(),
+      dealAmount: Number(r['Total Sale Amount'] || r['Sale Amount'] || 0) || undefined,
+      hasLiveDeal: true,
+    });
+  }
+
+  // 3. qualified, a real cut on file, nothing live. Buyer Stage='READY' is
+  //    already the "not in a deal" state (MATCHED is the in-deal one), so
+  //    these rows carry no live-deal flag unless a referral above set it.
+  for (const c of quizComplete) {
+    merge(c.id, {
+      id: c.id,
+      name: String(c['Full Name'] || '').trim(),
+      state: String(c['State'] || '').trim(),
+      phone: String(c['Phone'] || '').trim(),
+      email: String(c['Email'] || '').trim(),
+      qualifiedAt: String(c['Qualified At'] || ''),
+      hasCutOnFile: !!orderTypeToCut(c['Order Type']),
+    });
+  }
+
+  return [...byId.values()];
 }
 
 // F15 — wholesale inquiries surface on v2 desk.

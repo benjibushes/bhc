@@ -11,6 +11,7 @@ import { trackEvent, metaEventId } from '@/lib/analytics';
 import { CutBreakdown, type Tier } from '@/app/components/CutBreakdown';
 import DepositCheckoutMount, { depositEmbeddedAvailable } from './DepositCheckoutMount';
 import ProofStripClient from '@/app/components/ProofStripClient';
+import CallbackRequest from '@/app/components/CallbackRequest';
 import { BEN_SALES_CAL_URL } from '@/lib/salesContact';
 import { REFUND_POLICY_SHORT } from '@/lib/refundPolicy';
 import { closedReferralUiState } from '@/lib/referralClosedState';
@@ -674,6 +675,22 @@ function DepositPageContent() {
           </p>
         </div>
         )}
+
+        {/* THE HOTTEST SURFACE IN THE BUSINESS gets the only human affordance.
+            Someone is looking at a real dollar amount and stopped; a phone
+            call unblocks that in ninety seconds where an email never will.
+            Until tonight the support link here rendered ONLY inside the error
+            branches above — the happy path, the one every paying buyer takes,
+            had no way to reach a person at all.
+
+            Sits directly under the pay affordance in BOTH states (hosted CTA
+            and the embedded Stripe form), because the question that stops a
+            deposit arrives at exactly that moment. Deliberately outside the
+            sticky block so it can never grow the mobile thumb zone and push
+            the pay button off screen.
+
+            Renders NOTHING while CALLBACK_RAIL_ENABLED is off. */}
+        <CallbackRequest refId={refId} variant="checkout" className="mt-4" />
 
         <div className="mt-8 pt-6 border-t border-divider text-center">
           <Link href={`/checkout/${refId}/ask`} className="text-saddle text-sm hover:underline">

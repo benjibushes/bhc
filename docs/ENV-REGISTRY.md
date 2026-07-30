@@ -93,6 +93,7 @@
 
 | Var | Purpose | Fails | Owner |
 |---|---|---|---|
+| ⚠️ `CALLBACK_RAIL_ENABLED` | Master switch for the BUYER-facing inbound callback rail (lib/callbackRail.ts). Unset/anything but 1\|true\|yes\|on\|enabled → the CallbackRequest component renders nothing on the deposit page and /member, and GET+POST `/api/callback-request` both 404 as though the route does not exist. The DESK side ("📞 Asked for a call", the dial queue, mark-handled) is deliberately NOT gated, so it works the instant this flips. Independent of `CALLBACK_PHONE` — on with no phone set is a supported state (the "have ben call me" request needs no number) | fail-silent | ben-flips |
 | `CAL_NATIVE_BOOKER` | 'true' → /book/[refId] renders native Cal embed instead of link-out | fail-open | ben-flips |
 | `CAMPAIGN_LIVE` | 'true' → campaign sends real emails/SMS (vs dry-run) | fail-silent | ben-flips |
 | `CAMPAIGN_ROUTER_ENABLED` | 'true' → demand-router campaign cron active | fail-silent | ben-flips |
@@ -130,6 +131,7 @@
 | `ADMIN_EMAIL` | Default operator email for internal notifications; defaults admin@buyhalfcow.com | fail-open | set-once |
 | `ADMIN_EMAIL_FOR_FORWARD` | Where unclassifiable inbound replies forward; falls back to ADMIN_EMAIL, both '' → forwards silently skipped | fail-silent | set-once |
 | `ADMIN_PASSWORD` | Operator admin UI gate; missing → secrets.ts throws, admin routes 500 | fail-loud | set-once |
+| `CALLBACK_PHONE` | The line buyers may call/text, any parseable format (server-only, read per request — never NEXT_PUBLIC_, so changing it needs no redeploy). UNSET BY DEFAULT and there is deliberately NO fallback: with no value, the call/text links render nothing — no placeholder, no number anywhere in this repo. Unparseable → also nothing (fail closed; a dead tel: link is worse than none). Independent of `CALLBACK_RAIL_ENABLED`; setting this alone shows nobody anything | fail-silent | ben-flips |
 | `ADS_PARTNER_PASSWORD` | Optional ads-partner login role; unset → role disabled | fail-open | set-once |
 | `AIRTABLE_TIMEOUT_MS` | Per-request Airtable timeout knob | fail-open | code-default |
 | `BACKFILL_LINK_EXPIRY_DAYS` | Expiry for backfill campaign magic links | fail-open | code-default |

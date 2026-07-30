@@ -111,7 +111,24 @@ interface DeskWholesale {
   daysSinceActivity: number | null;
 }
 
+// INBOUND — a buyer who asked to be called. The only row on this desk that
+// the buyer themselves put there.
+interface DeskCallbackRequest {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  state: string;
+  note: string;
+  orderType: string;
+  requestedAt: string;
+  hoursWaiting: number | null;
+  repeatAsk: boolean;
+}
+
 interface DeskData {
+  // Ranked above every other bucket — see the section comment below.
+  callbackRequests?: DeskCallbackRequest[];
   calls: DeskCall[];
   quizComplete: DeskBuyer[];
   depositPending: DeskReferral[];
@@ -303,6 +320,33 @@ export default function DeskClient() {
           <div className="border border-sage bg-bone-warm p-3 mb-4 text-sm text-sage-dark">
             ✓ {flash}
           </div>
+        )}
+
+        {/* ── 📞 ASKED FOR A CALL ─────────────────────────────────────────
+            THE TOP OF THE DESK, above Next Best Action and every bucket below
+            it. Everything else on this page is us guessing who is warm. This
+            is the buyer telling us — usually while standing at a real price on
+            the deposit page — and an inbound ask converts on a different
+            planet from a cold dial.
+
+            Oldest first, because a callback request is a debt with a clock on
+            it: the person who has waited longest is the one closest to
+            deciding we don't care. */}
+        {(desk.callbackRequests?.length ?? 0) > 0 && (
+          <section className="mb-5 border-2 border-charcoal bg-bone-warm p-4 md:p-5">
+            <h2 className="font-serif text-lg text-charcoal mb-1">
+              📞 Asked for a call
+              <span className="text-xs text-saddle ml-2">({desk.callbackRequests!.length})</span>
+            </h2>
+            <p className="text-xs text-saddle mb-3">
+              They raised their hand. Call these before anything else on this page.
+            </p>
+            <ul className="space-y-2">
+              {desk.callbackRequests!.map((c) => (
+                <CallbackRequestRow key={c.id} req={c} onHandled={tick} />
+              ))}
+            </ul>
+          </section>
         )}
 
         {/* F6 — Next Best Action */}
@@ -924,6 +968,113 @@ function Tile({
 
 // Every referral-backed row links into its deal cockpit
 // (/admin/desk/[referralId]) — the rows used to be dead ends.
+// One inbound callback request: who, how to reach them, what they asked, and
+// the one action that clears it. Phone is a tel: link so a tap on a phone or a
+// Mac dials straight out — the whole point is that this call happens NOW.
+function CallbackRequestRow({
+  req,
+  onHandled,
+}: {
+  req: DeskCallbackRequest;
+  onHandled: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+
+  async function markHandled() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/admin/callbacks/${req.id}/handled`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({}),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (res.ok && j?.ok) {
+        toast.success(j.alreadyHandled ? 'Already closed out' : 'Marked handled');
+        onHandled();
+      } else {
+        toast.error('Mark handled failed', j?.error || `HTTP ${res.status}`);
+      }
+    } catch (e: any) {
+      toast.error('Mark handled failed', e?.message || 'network error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const waited =
+    req.hoursWaiting == null
+      ? ''
+      : req.hoursWaiting < 1
+        ? 'just now'
+        : req.hoursWaiting < 24
+          ? `${req.hoursWaiting}h ago`
+          : `${Math.floor(req.hoursWaiting / 24)}d ago`;
+  // Past a day of silence on an inbound ask, the row starts shouting.
+  const overdue = (req.hoursWaiting ?? 0) >= 24;
+
+  return (
+    <li className="border border-divider bg-white p-3 text-sm">
+      <div className="flex flex-wrap justify-between items-start gap-2">
+        <div className="min-w-0">
+          <strong className="text-charcoal">{req.name}</strong>
+          {req.state ? <span className="text-saddle"> · {req.state}</span> : null}
+          {req.orderType ? <span className="text-saddle"> · {req.orderType}</span> : null}
+          {req.repeatAsk && (
+            <span className="ml-2 text-[10px] uppercase tracking-widest text-rust">
+              asked again
+            </span>
+          )}
+          <div className="mt-0.5">
+            {req.phone ? (
+              <a
+                href={`tel:${req.phone}`}
+                className="text-charcoal font-medium underline underline-offset-2"
+              >
+                {req.phone}
+              </a>
+            ) : (
+              <span className="text-rust text-xs">no phone on file</span>
+            )}
+            {req.email ? (
+              <a href={`mailto:${req.email}`} className="text-saddle text-xs ml-2 underline">
+                {req.email}
+              </a>
+            ) : null}
+          </div>
+        </div>
+        <div className="flex items-center gap-3 shrink-0">
+          {waited && (
+            <span
+              className={`text-[10px] uppercase tracking-widest ${
+                overdue ? 'text-rust font-bold' : 'text-saddle'
+              }`}
+            >
+              {waited}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={markHandled}
+            disabled={busy}
+            title="Stamp Callback Handled At and clear this from the queue"
+            className="px-3 py-2 bg-charcoal text-bone text-[11px] uppercase tracking-widest hover:bg-divider transition-base whitespace-nowrap disabled:opacity-40"
+          >
+            {busy ? '…' : 'Mark handled'}
+          </button>
+        </div>
+      </div>
+      {req.note && (
+        <p className="mt-2 pt-2 border-t border-divider text-saddle italic">
+          &ldquo;{req.note}&rdquo;
+        </p>
+      )}
+    </li>
+  );
+}
+
 function DealLink({ id }: { id: string }) {
   return (
     <a
