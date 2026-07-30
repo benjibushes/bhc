@@ -50,6 +50,11 @@
 | Var | Purpose | Fails | Owner |
 |---|---|---|---|
 | `ANTHROPIC_API_KEY` | Claude calls: Telegram bot brain, inbound-reply classification, AI scraper; lib/ai falls back Groq→Ollama, aiSearch throws if no provider at all | fail-open | set-once |
+| `BANDWIDTH_ACCOUNT_ID` | SMS adapter (only when `SMS_PROVIDER=bandwidth`) — {accountId} path segment; any Bandwidth var missing → adapter warns + returns ok:false, send skipped | fail-silent | set-once |
+| `BANDWIDTH_API_SECRET` | Bandwidth Basic-auth password (legacy scheme — see docs/SMS-PROVIDER-SETUP.md OAuth caveat) | fail-silent | set-once |
+| `BANDWIDTH_API_TOKEN` | Bandwidth Basic-auth username | fail-silent | set-once |
+| `BANDWIDTH_APPLICATION_ID` | Bandwidth messaging application bound to the from number; required in every send body | fail-silent | set-once |
+| `BANDWIDTH_FROM` | Bandwidth sending number (E.164) | fail-silent | set-once |
 | `BLOB_READ_WRITE_TOKEN` | Vercel Blob token for rancher photo uploads; unset → upload route 500s with clear detail | fail-loud | set-once |
 | `CAL_API_KEY` | Cal.com booking resolution + event-type setup; unset → booking falls back to /contact page (degraded but not broken) | fail-open | set-once |
 | `CAL_OAUTH_CLIENT_ID` | Cal managed-user OAuth (rancher calendars) | unknown | set-once |
@@ -61,9 +66,13 @@
 | ⚠️ `MANYCHAT_WEBHOOK_SECRET` | IG DM funnel webhook auth; unset in prod → fail-CLOSED, all ManyChat requests refused with only a console.error — IG funnel dead silently | fail-silent | set-once |
 | ⚠️ `META_CAPI_ACCESS_TOKEN` | Meta CAPI auth; same silent skip | fail-silent | set-once |
 | ⚠️ `META_PIXEL_ID` | Server-side Meta CAPI events (Purchase attribution); missing → fireCapi warns+returns, ad attribution silently dead while ad spend runs | fail-silent | set-once |
+| `PLIVO_AUTH_ID` | SMS adapter (only when `SMS_PROVIDER=plivo`) — Basic-auth username AND the {auth_id} URL segment; missing → adapter warns + returns ok:false | fail-silent | set-once |
+| `PLIVO_AUTH_TOKEN` | Plivo Basic-auth password | fail-silent | set-once |
+| `PLIVO_FROM` | Plivo sending number (E.164), sent as `src` | fail-silent | set-once |
 | ⚠️ `RESEND_API_KEY` | All outbound email; unset → placeholder key, SDK returns error object, guardedSend still logs status='sent' — every email silently dropped while audit log shows success | fail-silent | set-once |
 | ⚠️ `RESEND_INBOUND_WEBHOOK_SECRET` | Inbound reply webhook (Svix) auth; unset in prod → replies refused (fail-closed) but fires a deduped operator alarm every 6h — alarm itself depends on Telegram/Twilio being alive | fail-loud | set-once |
 | `RESEND_WEBHOOK_SECRET` | Email event tracking (opens/clicks/bounces); unset → events webhook off, admin surfaces show null metrics (gated on presence, so honest) | fail-open | set-once |
+| ⚠️ `SMS_INBOUND_SECRET` | Shared-secret query token on the provider-neutral inbound SMS webhook (`/api/webhooks/sms?token=…`), constant-time compared; **unset in prod → 503, ALL non-Twilio inbound refused** (fail-closed: this endpoint flips Unsubscribed / SMS Opt-In). Twilio's own route is unaffected (it uses X-Twilio-Signature) | fail-loud | set-once |
 | ⚠️ `SUPABASE_ANON_KEY` | Supabase client key for rancher login; the historical landmine was this var EXISTING but blank — login silently broken | fail-silent | set-once |
 | `SUPABASE_SERVICE_ROLE_KEY` | Admin-side Supabase user management (create/reset rancher logins); unset → those admin ops fail | fail-loud | set-once |
 | ⚠️ `SUPABASE_URL` | Rancher password auth backend (falls back to NEXT_PUBLIC_SUPABASE_URL); both empty → rancher login dead | fail-silent | set-once |
@@ -71,7 +80,9 @@
 | ⚠️ `TELEGRAM_ADMIN_CHAT_ID` | Destination chat for every ops alert; unset → same silent early-return as missing token | fail-silent | set-once |
 | ⚠️ `TELEGRAM_BOT_TOKEN` | THE ops alert channel (cron alarms, operator signals, deposit pings, Telegram command bot); unset → alertTelegram/sendTelegram return early, all alerting goes dark | fail-silent | set-once |
 | `TELEGRAM_WEBHOOK_SECRET` | Auth for inbound Telegram bot webhook; unset → bot command handling refused/unverified | unknown | set-once |
-| ⚠️ `TWILIO_ACCOUNT_SID` | SMS sends + call-recording fetch; missing → client=null, sendSMS warns+returns false — with ENABLE_SMS on, every SMS silently no-ops | fail-silent | set-once |
+| `TELNYX_API_KEY` | SMS adapter (only when `SMS_PROVIDER=telnyx`) — Bearer key; missing → adapter warns + returns ok:false, send skipped | fail-silent | set-once |
+| `TELNYX_FROM` | Telnyx sending number (E.164) | fail-silent | set-once |
+| ⚠️ `TWILIO_ACCOUNT_SID` | SMS sends (default adapter, `SMS_PROVIDER` unset) + call-recording fetch; missing → adapter warns+returns ok:false so sendSMS returns false — with ENABLE_SMS on, every SMS silently no-ops. Inbound `/api/webhooks/twilio-sms` also fails CLOSED in prod without the auth token | fail-silent | set-once |
 | ⚠️ `TWILIO_AUTH_TOKEN` | Twilio auth pair; same silent no-op | fail-silent | set-once |
 | ⚠️ `TWILIO_FROM_NUMBER` | Sending number (E.164); missing → sendSMS returns false silently | fail-silent | set-once |
 | `UPSTASH_REDIS_REST_TOKEN` | Redis auth pair; same fail-open | fail-open | set-once |
@@ -87,7 +98,8 @@
 | `CAMPAIGN_ROUTER_ENABLED` | 'true' → demand-router campaign cron active | fail-silent | ben-flips |
 | `EMAIL_SEQUENCES_ALLOW` | Allowlist scoping which sequences may send when the cron is on | fail-silent | ben-flips |
 | ⚠️ `EMAIL_SEQUENCES_ENABLED` | Master gate for the email-sequences cron; ≠'true' → cron returns before withCronRun (invisible even to cron introspection) | fail-silent | ben-flips |
-| ⚠️ `ENABLE_SMS` | Platform-wide SMS master gate ('1' or 'true' via smsEnabled()); unset → whole SMS channel off by design | fail-silent | ben-flips |
+| ⚠️ `ENABLE_SMS` | Platform-wide SMS master gate ('1' or 'true' via smsEnabled()); unset → whole SMS channel off by design. Sits ABOVE `SMS_PROVIDER` — swapping vendors cannot light the channel | fail-silent | ben-flips |
+| `SMS_PROVIDER` | Which vendor the SMS transport sends through: `twilio` (default) \| `telnyx` \| `plivo` \| `bandwidth`. **Unset ⇒ twilio ⇒ byte-identical to pre-2026-07-30 behavior.** An UNKNOWN value warns and falls back to twilio rather than silently dropping every send. Runbook: docs/SMS-PROVIDER-SETUP.md | fail-open | ben-flips |
 | `LOG_RETENTION_ENABLED` | Tri-state log-purge cron; unset → logs accumulate (Airtable row bloat) | fail-silent | ben-flips |
 | `MAINTENANCE_MODE` | 'true' → platform-wide pause (crons skip, go-live blocked); unset=normal | fail-open | ben-flips |
 | ⚠️ `MATCHING_ENABLED` | Routing kill switch with INVERTED semantics — default ON, only explicit 'false' pauses matching/intros platform-wide | fail-open | ben-flips |

@@ -395,14 +395,14 @@ R: matching/suggest :589 buyerZipServedBy (FAILS CLOSED), :763 (direct-pin), :79
 Sem: exclusivity + real-miles key.
 
 ### Unsubscribed / Bounced / Complained (+ Unsubscribed At)
-W: unsubscribe route :85-96; resubscribe :64-104; app/api/webhooks/resend/route.ts:110-117 (bounce/complaint ⇒ Unsubscribed:true + flag + cache invalidate); twilio-sms webhook :147-155 (STOP/START).
-R: lib/email.ts:161,171 — suppression formula `OR({Unsubscribed},{Bounced},{Complained})` short-circuits EVERY send (:343-346; guardedSend returns {success,suppressed}); lib/twilio.ts:111; lib/qualification.ts:95-97 — suppressed = unroutable; lib/routingSegment.ts:92-97; lib/demandRouter.ts:454-456; per-cron trio checks.
+W: unsubscribe route :85-96; resubscribe :64-104; app/api/webhooks/resend/route.ts:110-117 (bounce/complaint ⇒ Unsubscribed:true + flag + cache invalidate); **lib/smsInboundHandler.ts:70,76 applyInboundKeyword (STOP/START)** — 2026-07-30 the SMS consent writer MOVED out of the twilio-sms route so both inbound webhooks share it; called from app/api/webhooks/twilio-sms (Twilio, signature-verified) AND app/api/webhooks/sms (telnyx/plivo/bandwidth, SMS_INBOUND_SECRET token).
+R: lib/email.ts:161,171 — suppression formula `OR({Unsubscribed},{Bounced},{Complained})` short-circuits EVERY send (:343-346; guardedSend returns {success,suppressed}); lib/twilio.ts (sendSMSToConsumer suppression mirror); lib/qualification.ts:95-97 — suppressed = unroutable; lib/routingSegment.ts:92-97; lib/demandRouter.ts:454-456; per-cron trio checks.
 Sem: Unsubscribed = soft/reversible; Bounced/Complained = hard. LANDMINE: suppression cache is in-memory TTL (email.ts:139) — webhook invalidates it, scripts don't.
 
 ### SMS Opt-In (checkbox) + SMS Opt-In At
-W: consumers :284-287 (true+stamp on tick; seed false; never silently revokes), :663; guide :82,109; contact :133,154; orders :220,250; reserve :225,283; inquiries :139; twilio-sms webhook :148,155 (authoritative STOP/START).
-R: lib/twilio.ts:117 — THE TCPA gate on every SMS; lib/waitingActivation.ts:349; qualified-no-action :242; deposit-request-nudge :229; lib/demandRouter.ts:995,1312,1787.
-Sem: forms only flip false→true; only the Twilio webhook turns it off. Opt-In At = TCPA evidence.
+W: consumers :284-287 (true+stamp on tick; seed false; never silently revokes), :663; guide :82,109; contact :133,154; orders :220,250; reserve :225,283; inquiries :139; **lib/smsInboundHandler.ts:70,76 applyInboundKeyword** (authoritative STOP/START — 2026-07-30 moved out of the twilio-sms route; both app/api/webhooks/twilio-sms and the provider-neutral app/api/webhooks/sms call it, so keyword handling is identical on twilio/telnyx/plivo/bandwidth).
+R: lib/twilio.ts sendSMSToConsumer — THE TCPA gate on every SMS (unchanged by the 2026-07-30 transport swap: the provider adapter sits BELOW it); lib/waitingActivation.ts:349; qualified-no-action :242; deposit-request-nudge :229; lib/demandRouter.ts:995,1312,1787.
+Sem: forms only flip false→true; only an inbound STOP turns it off. Opt-In At = TCPA evidence.
 
 ### Sequence Stage (+ Sequence Sent At)
 W: cron/email-sequences :169, :492-797 (stage machine, each paired w/ Sent At); batch-approve :289,297; reroute writers referrals/[id] :228, rancher/referrals :203,607, referral-chasup :233; clears at consumers :764, referrals/[id] :174, contracts/payments.ts:882.
