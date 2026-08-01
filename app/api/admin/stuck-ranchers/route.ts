@@ -21,6 +21,7 @@
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/adminAuth';
 import { getAllRecords, TABLES } from '@/lib/airtable';
+import { excludeBrokerRanchers } from '@/lib/brokerRail';
 import { getOperationalServedStates } from '@/lib/rancherEligibility';
 import { cacheGet, cacheSet } from '@/lib/sharedCache';
 import type { StuckRancherRow } from '@/lib/stuckRancherQueue';
@@ -127,7 +128,10 @@ export async function GET(request: Request) {
     ]);
 
     const { demand, cached } = demandResult;
-    const rows = (ranchers || [])
+    // BROKER RAIL: a represented rancher is never "stuck" — having no Connect
+    // account and no live page is their designed end state, not a blocked
+    // onboarding. Keep them out of the operator's call queue.
+    const rows = excludeBrokerRanchers(ranchers || [])
       .filter((r: any) => !!r['Stuck Escalated At'])
       .map((r: any) => toStuckRow(r, demand));
 

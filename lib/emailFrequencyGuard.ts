@@ -361,6 +361,26 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   // rails), so the campaign engine — not the frequency guard — owns cadence.
   'sendWaitingActivationNudge',
   'sendReadyChaseNudge',
+  // BROKER RAIL settlement pair (2026-07-31, docs/BUSINESS-MODEL.md model 3).
+  // Both are ONE-SHOT PER ORDER by construction, not by a best-effort stamp:
+  // lib/brokerSettlement sends them strictly AFTER the markDepositSucceeded
+  // idempotency anchor, which no-ops once the Payments row is 'succeeded'. A
+  // Stripe redelivery therefore returns before either send is reached, so
+  // whitelisting cannot create volume no matter how many times Stripe retries.
+  //
+  // Why they must not be capped: on this rail the rancher is OFF-PLATFORM —
+  // no login, no dashboard, no app. `broker_rancher_order` is the ONLY place
+  // the order exists for him (buyer contact details, the cut, and the exact
+  // balance to collect). Suppressing it means a paid buyer is never contacted
+  // and the rancher never collects. `broker_buyer_receipt` is the buyer's only
+  // proof of payment and the only statement of what they still owe the ranch —
+  // the "did my payment go through?" email, on a charge with no other paper.
+  'broker_rancher_order',
+  'broker_buyer_receipt',
+  // Signup confirmation restating the commission agreement the rancher just
+  // accepted on /partner/represent. One per signup (the route dedupes by
+  // email), and it is the rancher's only written copy of the money terms.
+  'broker_represent_confirmation',
 ]);
 
 // T1 (2026-06-10): dynamic-name templates whose names contain a stage

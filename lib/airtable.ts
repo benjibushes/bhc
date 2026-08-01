@@ -743,8 +743,15 @@ export async function getActiveRancherPages() {
           // Mirror getRancherOrProspectBySlug's visibility gates: a hidden or
           // removed rancher must not appear in the directory/map only to
           // soft-404 when clicked (au-beef asymmetry).
+          // BROKER RAIL (2026-07-31): a REPRESENTED rancher never gets a public
+          // page. They never signed up, never agreed to be listed, and have no
+          // slug — excluding them here covers generateStaticParams, the
+          // sitemap, /ranchers, /api/public/ranchers, /start and /wholesale in
+          // one place. (Page Live is already false for them; this is the
+          // explicit belt so a future flip can't publish them.)
           filterByFormula:
-            'AND({Page Live} = 1, NOT({Public Map Hidden} = 1), {Verification Status} != "Removed")',
+            'AND({Page Live} = 1, NOT({Public Map Hidden} = 1), {Verification Status} != "Removed", ' +
+            'NOT({Broker Rail} = 1))',
         })
         .all(),
       TABLES.RANCHERS,
@@ -768,7 +775,13 @@ export async function getRancherBySlug(slug: string) {
     const safeSlug = escapeAirtableValue(slug);
     const records = await withTimeout(
       base(TABLES.RANCHERS)
-        .select({ filterByFormula: `AND({Slug} = "${safeSlug}", {Page Live} = 1)`, maxRecords: 1 })
+        // BROKER RAIL: represented ranchers are never resolvable by public slug.
+        // The broker sell-link addresses them by RECORD ID instead (they have
+        // no slug and no public page) — see lib/campaignReserve broker token.
+        .select({
+          filterByFormula: `AND({Slug} = "${safeSlug}", {Page Live} = 1, NOT({Broker Rail} = 1))`,
+          maxRecords: 1,
+        })
         .all(),
       resolveAirtableTimeoutMs(),
       TABLES.RANCHERS,
@@ -803,7 +816,7 @@ export async function getRancherByPreviousSlug(slug: string) {
         .select({
           filterByFormula:
             `AND({Page Live} = 1, NOT({Public Map Hidden} = 1), ` +
-            `{Verification Status} != "Removed", ` +
+            `{Verification Status} != "Removed", NOT({Broker Rail} = 1), ` +
             `FIND(", " & "${safeSlug}" & ",", ", " & LOWER({Previous Slugs} & "") & ","))`,
           maxRecords: 1,
         })
@@ -1024,7 +1037,7 @@ export async function getRancherOrProspectBySlug(slug: string) {
         .select({
           filterByFormula:
             `AND({Slug} = "${safeSlug}", NOT({Public Map Hidden} = 1), ` +
-            `{Verification Status} != "Removed", ` +
+            `{Verification Status} != "Removed", NOT({Broker Rail} = 1), ` +
             `OR({Page Live} = 1, {Verification Status} = "Prospect"))`,
           maxRecords: 1,
         })

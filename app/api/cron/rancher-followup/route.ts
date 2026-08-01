@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord } from '@/lib/airtable';
 import { sendRancherLeadNudge, sendEmail } from '@/lib/email';
 import { TABLES } from '@/lib/airtable';
+import { excludeBrokerRanchers } from '@/lib/brokerRail';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
@@ -48,7 +49,12 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
   const isMonday = today.getUTCDay() === 1;
   const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
-  const ranchers = await getAllRecords(TABLES.RANCHERS);
+  // BROKER RAIL: never chase a REPRESENTED rancher through onboarding. They
+  // never applied — Ben recruited them by phone and sells for them. Their
+  // Active Status and Onboarding Status are both BLANK, which passes this
+  // cron's skip-lists and would classify them as a stalled "New Applicant"
+  // and email them onboarding nags for a signup they never started.
+  const ranchers = excludeBrokerRanchers(await getAllRecords(TABLES.RANCHERS));
     // P4c: a silently-broken read that returns 0 ranchers must NOT log a green
     // 'success' with nothing chased — prod always has ~80 ranchers, so 0 = a
     // degraded/empty read. Report 'partial' so withCronRun alerts. (A throwing

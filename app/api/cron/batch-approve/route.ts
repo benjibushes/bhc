@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord, isInvalidFilterFormulaError } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
+import { excludeBrokerRanchers } from '@/lib/brokerRail';
 import { heldReferralsFormula } from '@/lib/cronReadFilters';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendConsumerApproval, sendWaitlistEmail, sendBackfillEmail, sendRancherGoLiveEmail } from '@/lib/email';
@@ -315,7 +316,13 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     // ── Auto-go-live for verified ranchers with complete pages ──────────────
     let ranchersGoLive = 0;
     try {
-      const allRanchers = await getAllRecords(TABLES.RANCHERS) as any[];
+      // BROKER RAIL: this is the SECOND auto-go-live path (the other is
+      // rancher-go-live-sync) and it uses a different onboarding-status set, so
+      // the exclusion has to be repeated here. A represented rancher must never
+      // get Page Live flipped — they never signed an agreement and have no
+      // public page. (The Agreement Signed gate below already stops them; this
+      // is the explicit belt.)
+      const allRanchers = excludeBrokerRanchers(await getAllRecords(TABLES.RANCHERS) as any[]);
       const readyToGoLive = allRanchers.filter((r: any) => {
         if (r['Onboarding Status'] !== 'Verification Complete') return false;
         if (r['Page Live'] === true) return false;

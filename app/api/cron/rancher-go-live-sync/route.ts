@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
+import { excludeBrokerRanchers } from '@/lib/brokerRail';
 import { sendRancherGoLiveEmail } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
@@ -47,7 +48,11 @@ export const maxDuration = 120;
 async function realHandler(
   _request: Request,
 ): Promise<{ status: 'success' | 'partial'; recordsTouched: number; notes: string }> {
-  const ranchers = (await getAllRecords(TABLES.RANCHERS)) as any[];
+  // BROKER RAIL: a represented rancher must never be taken live. This cron is
+  // the main auto-go-live path (it flips Page Live + Active Status), so an
+  // exclusion here is load-bearing: going live would publish a public page for
+  // a rancher who never signed an agreement and never asked to be listed.
+  const ranchers = excludeBrokerRanchers((await getAllRecords(TABLES.RANCHERS)) as any[]);
 
   // ── CONNECT STATUS SELF-HEAL (2026-06-20) ─────────────────────────────────
   // The candidates filter below intentionally EXCLUDES Active / Paused /

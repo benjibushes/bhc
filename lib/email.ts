@@ -20,6 +20,15 @@ import { isDemoMode } from './demo/demoMode';
 // the buyer's /member view. This email used to own an inline ternary; the
 // portal needed the identical word, and two copies of a wording rule drift.
 import { handoffWord } from './buyerDealStage';
+// BROKER RAIL (2026-07-31): the settlement email BODIES are pure + unit-tested
+// in lib/brokerNotify (the money lines on that rail are the whole product), so
+// this module only wraps them in guardedSend. See the broker section at the
+// bottom of this file.
+import {
+  buildBrokerRancherEmail,
+  buildBrokerBuyerReceipt,
+  type BrokerOrderFacts,
+} from './brokerNotify';
 
 // DOMPurify allowlist for /admin/broadcast HTML mode. P0 audit fix (C-5)
 // hardened in P4-F: operator-supplied HTML was forwarded raw to Resend — a
@@ -6004,6 +6013,110 @@ export async function sendLossRecoveryDownsell(data: {
         ctaHref: `${SITE_URL}/shop`,
         ctaLabel: 'see the smaller options',
       }),
+    }),
+  });
+}
+
+// =====================================================
+// BROKER RAIL — represented (off-platform) ranchers
+// =====================================================
+//
+// The THIRD money model (docs/BUSINESS-MODEL.md): BHC brokers a sale for a
+// rancher who is on nothing, and the buyer's deposit — collected on BHC's OWN
+// Stripe account — IS the whole commission. Two settlement emails carry a
+// deliberately asymmetric truth:
+//
+//   • the RANCHER is told plainly that the deposit was BHC's commission and
+//     that he nets price − deposit. He agreed to exactly this at signup
+//     (/partner/represent), so it is never a surprise here.
+//   • the BUYER sees "deposit toward your share, balance paid to the ranch".
+//     Their total is identical to buying direct, so the split is not their
+//     transaction and BHC keeping it is never mentioned.
+//
+// Bodies are built by PURE functions in lib/brokerNotify.ts so the money lines
+// are unit-tested. This layer only sends.
+
+export async function sendBrokerRancherOrder(facts: BrokerOrderFacts) {
+  const built = buildBrokerRancherEmail(facts);
+  return guardedSend({
+    templateName: 'broker_rancher_order',
+    recipientEmail: facts.rancherEmail,
+    subject: built.subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: facts.rancherEmail,
+      subject: built.subject,
+      headers: getUnsubscribeHeaders(facts.rancherEmail),
+      text: built.text,
+      html: built.html,
+    }),
+  });
+}
+
+export async function sendBrokerBuyerReceipt(facts: BrokerOrderFacts) {
+  const built = buildBrokerBuyerReceipt(facts);
+  return guardedSend({
+    templateName: 'broker_buyer_receipt',
+    recipientEmail: facts.buyerEmail,
+    subject: built.subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: facts.buyerEmail,
+      subject: built.subject,
+      headers: getUnsubscribeHeaders(facts.buyerEmail),
+      text: built.text,
+      html: built.html,
+    }),
+  });
+}
+
+/**
+ * Signup confirmation for a rancher who has just agreed to be represented.
+ * Restates the commission math in the same words the page showed before submit
+ * — the agreement has to live in his inbox, not only on a page he closed.
+ */
+export async function sendBrokerRepresentConfirmation(data: {
+  ranchName: string;
+  contactName: string;
+  email: string;
+  balanceNote: string;
+}) {
+  const subject = `You're set up with BuyHalfCow — ${data.ranchName}`;
+  return guardedSend({
+    templateName: 'broker_represent_confirmation',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html>
+<html><head><style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height:1.6; color:#0E0E0E; background:#F4F1EC; margin:0; padding:20px; }
+  .container { max-width:600px; margin:0 auto; background:#fff; padding:40px; border:1px solid #A7A29A; }
+  h1 { font-family:Georgia, serif; font-size:26px; margin:0 0 8px; }
+  h2 { font-family:Georgia, serif; font-size:18px; margin:28px 0 10px; }
+  p { margin:14px 0; color:#3A3A3A; }
+  .box { background:#F4F1EC; border:1px solid #E5E2DC; padding:20px; margin:20px 0; }
+  .muted { color:#6B4F3F; font-size:14px; }
+</style></head>
+<body><div class="container">
+  <h1>You're set up, ${esc(data.contactName)}</h1>
+  <p>${esc(data.ranchName)} is now represented by BuyHalfCow. There is nothing to install, no account to create, and no dashboard to check.</p>
+
+  <h2>How you get paid</h2>
+  <div class="box">
+    <p style="margin:0 0 10px;"><strong>You set the full price of a share.</strong> When we sell one, the buyer pays a deposit to BuyHalfCow. That deposit is our commission — it is the only thing we ever charge, and we never invoice you.</p>
+    <p style="margin:0;"><strong>You collect the rest directly from the buyer.</strong> Your net on every share is the full price minus that deposit.</p>
+  </div>
+  <p class="muted">You told us buyers will pay you their balance like this: ${esc(data.balanceNote)}</p>
+
+  <h2>What happens next</h2>
+  <p>We sell. When a share sells you get one email with the buyer's name, phone, email, what they bought, the exact amount to collect from them, and your net. Then you fulfill and collect. That is the whole job.</p>
+
+  <p class="muted">Questions, or want to change your prices? Just reply to this email.</p>
+</div></body></html>`,
     }),
   });
 }

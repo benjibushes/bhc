@@ -132,6 +132,86 @@ export function verifyCampaignReserveToken(token: string | null | undefined): Ve
 }
 
 // ---------------------------------------------------------------------------
+// BROKER-RESERVE token — the same shape as campaign-reserve, addressed by
+// RANCHER RECORD ID instead of slug.
+// ---------------------------------------------------------------------------
+//
+// Ben sells a represented ranch by phone and texts a link. That ranch is on the
+// BROKER rail (docs/BUSINESS-MODEL.md model 3): it has no public page and no
+// slug, precisely because it is not on the platform — so the campaign-reserve
+// token's `rancherSlug` has nothing to name. It carries `rancherId` instead.
+//
+// A SEPARATE PURPOSE, deliberately. Reusing 'campaign-reserve' would let a
+// broker link be redeemed by /r/d (the Connect deposit path) and vice versa —
+// a confused-deputy bug where a buyer could land on the wrong rail's checkout
+// and be charged under the wrong money model. verifyCampaignReserveToken
+// rejects this purpose and verifyBrokerReserveToken rejects that one, so the
+// two rails' links can never cross.
+export const BROKER_RESERVE_PURPOSE = 'broker-reserve' as const;
+
+const BROKER_RESERVE_TTL = '30d';
+
+export interface BrokerReserveClaims {
+  consumerId: string;
+  /** Ranchers record id — broker ranchers have no slug by design. */
+  rancherId: string;
+  cut: Cut;
+}
+
+export interface BrokerReservePayload extends BrokerReserveClaims {
+  purpose: typeof BROKER_RESERVE_PURPOSE;
+  iat?: number;
+  exp?: number;
+}
+
+/** Mint the per-buyer broker deposit link token (`${SITE_URL}/r/b/${token}`). */
+export function mintBrokerReserveToken(claims: BrokerReserveClaims): string {
+  const consumerId = String(claims.consumerId || '').trim();
+  const rancherId = String(claims.rancherId || '').trim();
+  const cut = String(claims.cut || '').trim().toLowerCase() as Cut;
+  if (!consumerId) throw new Error('mintBrokerReserveToken: consumerId required');
+  if (!rancherId) throw new Error('mintBrokerReserveToken: rancherId required');
+  if (!CUT_LABELS[cut]) throw new Error('mintBrokerReserveToken: cut must be quarter|half|whole');
+  return signJwt(
+    { purpose: BROKER_RESERVE_PURPOSE, consumerId, rancherId, cut },
+    { expiresIn: BROKER_RESERVE_TTL },
+  );
+}
+
+/**
+ * Verify a broker-reserve token. Discriminated result (never throws) so the
+ * /r/b route can always fall back rather than 500. A campaign-reserve token
+ * presented here is 'wrong-purpose' — the rails do not interoperate.
+ */
+export function verifyBrokerReserveToken(
+  token: string | null | undefined,
+): VerifyResult<BrokerReservePayload> {
+  if (!token || typeof token !== 'string') return { ok: false, reason: 'missing' };
+  if (token.length > 4096) return { ok: false, reason: 'invalid' };
+  let decoded: any;
+  try {
+    decoded = verifyJwtWithFallback<any>(token);
+  } catch {
+    return { ok: false, reason: 'invalid' };
+  }
+  if (!decoded || decoded.purpose !== BROKER_RESERVE_PURPOSE) {
+    return { ok: false, reason: 'wrong-purpose' };
+  }
+  const consumerId = String(decoded.consumerId || '').trim();
+  const rancherId = String(decoded.rancherId || '').trim();
+  const cut = String(decoded.cut || '').trim().toLowerCase() as Cut;
+  if (!consumerId || !rancherId || !CUT_LABELS[cut]) {
+    return { ok: false, reason: 'invalid' };
+  }
+  return { ok: true, payload: { purpose: BROKER_RESERVE_PURPOSE, consumerId, rancherId, cut } };
+}
+
+/** Broker checkout page path for a resolved referral + cut. */
+export function brokerDepositPathFor(referralId: string, cut: Cut): string {
+  return `/checkout/${referralId}/broker?cut=${cut}`;
+}
+
+// ---------------------------------------------------------------------------
 // Deposit-grant token (the scoped capability cookie value).
 // ---------------------------------------------------------------------------
 

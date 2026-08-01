@@ -20,6 +20,7 @@
 
 import { NextResponse } from 'next/server';
 import { getAllRecords, getRecordsByIds, TABLES } from '@/lib/airtable';
+import { excludeBrokerRanchers } from '@/lib/brokerRail';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
@@ -85,7 +86,13 @@ async function realHandler(_request: Request): Promise<CronResult> {
   let activeRanchers = 0;
   let rancherNames = '';
   try {
-    const ranchers = (await getAllRecords(TABLES.RANCHERS)) as any[];
+    // BROKER RAIL: represented ranchers are NOT payable ranchers. The
+    // north-star metric counts ranchers who can take money on the platform;
+    // a broker ranch takes no money at all (BHC collects the whole deposit and
+    // the rancher is paid by the buyer direct), so counting one would inflate
+    // the only number Ben steers by. The Connect-active filter below already
+    // excludes them — this is the explicit belt.
+    const ranchers = excludeBrokerRanchers((await getAllRecords(TABLES.RANCHERS)) as any[]);
     const active = ranchers.filter((r) => String(r['Stripe Connect Status'] || '') === 'active');
     activeRanchers = active.length;
     rancherNames = active.map((r) => String(r['Ranch Name'] || '').trim()).filter(Boolean).slice(0, 8).join(', ');

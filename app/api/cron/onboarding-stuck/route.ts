@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
+import { excludeBrokerRanchers } from '@/lib/brokerRail';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendEmail } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
@@ -86,7 +87,11 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
   }
 
-  const all = (await getAllRecords(TABLES.RANCHERS)) as any[];
+  // BROKER RAIL: a represented rancher has no onboarding to be stuck in. Their
+  // blank Onboarding Status / unsigned agreement / absent Connect account is
+  // the DESIGNED end state, not a stall — without this they'd be bucketed as
+  // stuck forever and escalated into the operator's call queue.
+  const all = excludeBrokerRanchers((await getAllRecords(TABLES.RANCHERS)) as any[]);
   // P4c: 0 ranchers from a table that always holds ~80 = a degraded/empty read.
   // Return 'partial' (not a green 'success' with nothing nudged) so withCronRun
   // alerts on a silently-broken chase. A throwing read already surfaces 'error'.

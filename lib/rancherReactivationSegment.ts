@@ -14,7 +14,9 @@
 //     (Active Status = Active AND Onboarding Status = Live).
 //   Tier B (cold): Pricing Model = legacy AND Onboarding Status empty/blank.
 //
-// Always excluded: tier_v2, the hardcoded EXCLUDE_RANCHER_IDS allowlist
+// Always excluded: BROKER RAIL ranchers (represented, never onboarded — there
+//   is nothing to reactivate, and their blank Onboarding Status would otherwise
+//   read as the hottest Tier B target), tier_v2, the hardcoded EXCLUDE_RANCHER_IDS allowlist
 //   (Wave-1 closers + manual hold-outs + active-live + Left Hand + dup
 //   Renick), suppression flags (Unsubscribed/Bounced/Complained), and the
 //   named test rows.
@@ -26,6 +28,11 @@
 //   - +10d silent, Touch Count >= 2, no booking → mark dormant
 //   - a booking (Migration Status=call_scheduled OR a Cal booking stamp)
 //     drops the rancher out of every bucket — they self-served, leave alone.
+
+// Broker-rail exclusion (2026-07-31). lib/brokerRail is hermetic (it imports
+// only lib/pricing, which imports nothing), so this module stays unit-testable
+// without prod env.
+import { isBrokerRancher } from './brokerRail';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const REMINDER_AFTER_DAYS = 5;
@@ -212,6 +219,15 @@ export function segmentRanchers(allRanchers: any[], now: Date = new Date()): Seg
     if (TEST_RANCH_NAMES.has(ranchLc) || TEST_RANCH_NAMES.has(opLc)) {
       continue;
     }
+
+    // ── Hard exclude: BROKER RAIL (represented, off-platform) ─────────
+    // A represented rancher has never been "active", so there is nothing to
+    // reactivate. Every downstream gate would WAVE THEM THROUGH: their
+    // Pricing Model isn't tier_v2, they have an email, and their blank
+    // Onboarding Status is exactly the Tier B ("never onboarded") signal this
+    // segmenter treats as the hottest reactivation target. Without this they
+    // would be the top of Ben's win-back list every single run.
+    if (isBrokerRancher(r)) continue;
 
     // ── Only legacy ranchers are in scope ─────────────────────────────
     const pricingModel = String(r['Pricing Model'] || '').trim().toLowerCase();

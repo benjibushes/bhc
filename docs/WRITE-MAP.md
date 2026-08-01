@@ -65,9 +65,15 @@ W: request-deposit :217; send-deposit-invoice :142,159; lib/stripeSettlement.ts:
 R: checkout/deposit :268 (durable pay page quote); lib/staleHolds.ts:109 (>0 blocks release); send-final-invoice :165 (balance math); app/api/member/content — deposit_amount; Wave 3 renders it AFTER payment too (it used to appear only on the pre-pay CTA).
 
 ### Deposit Paid At (dateTime) — THE rail discriminator
-W: lib/stripeSettlement.ts:147 — settleBuyerDeposit on payment_intent.succeeded (both webhooks); orphan-checkout-reaper :580 — daily auto-restamp from Payments ledger; lib/refundLifecycle.ts:44 — nulled on full refund.
+W: lib/stripeSettlement.ts:147 — settleBuyerDeposit on payment_intent.succeeded (both webhooks); **lib/brokerSettlement.ts settleBrokerDeposit — BROKER rail, platform webhook only**; orphan-checkout-reaper :580 — daily auto-restamp from Payments ledger; lib/refundLifecycle.ts:44 — nulled on full refund.
+Sem (BROKER, 2026-07-31): `referralRail()` reads a stamped value as 'tier_v2' (Connect). A broker row is stamped too, so it is ALSO classified tier_v2 — which is the CORRECT outcome for the two things that classification drives: `partitionUnpaidByRail` must NOT raise a legacy commission invoice against a represented rancher (BHC already holds 100% of its fee), and `netEarningsFor` must not deduct a commission from him. Do not "fix" this into a third branch without re-reading both call sites.
 R: lib/commission.ts:191-195 referralRail() — stamped ⇒ Connect, blank ⇒ legacy; lib/depositPaidState.ts:43; lib/confirmPaymentGuard.ts:31 (blocks manual confirm while pending); lib/refundLifecycle.ts:86 canSendFinalInvoice (gates send-final-invoice :158 + /r/f :79); accept :111 (accept requires it); lib/capacityLiberator.ts:110; lib/staleHolds.ts:108; lib/reserveRecovery.ts:111; lib/depositWatchdog.ts:84; lib/depositRequestNudge.ts:71,141; lib/noActionNudge.ts:62; lib/fulfillmentChase.ts:112; resend-inbound :783 (NRD-6 auto-accept).
 Sem: money-truth stamp; blank genuinely = no Stripe deposit ever settled (reaper is the belt). A failed write fires a LOUD operator signal (stripeSettlement.ts:151-190).
+
+### BHC Fee Cents (number) + Fee Captured At (dateTime) — referral-level fee truth
+W: lib/stripeSettlement.ts:191-192 — settleBuyerDeposit stamps the Connect `application_fee` captured at deposit (the ONLY Connect writer; the final invoice takes 0 fee by design). **lib/brokerSettlement.ts — BROKER rail stamps the ENTIRE deposit here.**
+R: revenue/scorecard reporting.
+Sem: **THE broker-rail money marker.** On Connect these are a slice of the charge (10% on top of the deposit). On the BROKER rail BHC keeps 100% of the charge, so `BHC Fee Cents === Deposit Amount × 100` — that equality IS the persisted signal that the money is BHC's and that NOTHING is owed onward to the rancher. 0 is a valid Connect value (missing metadata / legacy sessions); on a broker row it would be a bug.
 
 ### Deposit Requested At (dateTime) — LOAD-BEARING
 W: request-deposit :220; send-deposit-invoice :144,161. NOT nulled on refund.
@@ -138,9 +144,9 @@ R: suggest :350 — blocks re-pairing buyer↔rancher; lib/lossRecovery.ts:81 �
 Sem: presence **on a Closed Lost row** = genuine rancher-initiated loss — and that invariant still holds, because all three readers are scoped to `{Status}="Closed Lost"`. That scoping is exactly WHY the deposit release uses Dormant: a Closed Lost + "Couldn't reach buyer" auto-release would (a) blame ranchers in the weekly loss table for buyer silence, (b) hand loss-recovery a 'reengage' action against a buyer who just ignored three emails, and (c) risk tripping that cron's mass-edit guard. Any future change that widens a Loss Reason reader beyond Closed Lost MUST re-check lib/depositRelease. Bulk-backfilling it would poison the loss-recovery cron's day-window guard (loss-recovery :86).
 
 ### Match Type (singleSelect)
-W: suggest :1301 (Local/Nationwide/Direct); orders/request :267 + contact :168 ('Direct (Rancher Page)'); lib/reserveDeposit.ts:214 ('Direct (Rancher Page) — Deposit' — typecast); lib/bulkRoute.ts:244,283; telegram :838; warmup :117; manual-create :54 ('Manual' — typecast); send-deposit-invoice :158.
-R: lib/campaignReferral.ts:160 — reuse only deposit-intent referrals (substring 'Deposit'); lib/reserveRecovery.ts:61-62 isDepositIntent.
-Sem: the deposit-intent discriminator is a SUBSTRING match on 'Deposit'.
+W: suggest :1301 (Local/Nationwide/Direct); orders/request :267 + contact :168 ('Direct (Rancher Page)'); lib/reserveDeposit.ts:214 ('Direct (Rancher Page) — Deposit' — typecast); lib/bulkRoute.ts:244,283; telegram :838; warmup :117; manual-create :54 ('Manual' — typecast); send-deposit-invoice :158; **lib/brokerReferral.ts (create) + lib/brokerSettlement.ts (re-stamped at settle) — 'Broker — Deposit' (typecast, `BROKER_MATCH_TYPE`)**.
+R: lib/campaignReferral.ts:160 — reuse only deposit-intent referrals (substring 'Deposit'); lib/reserveRecovery.ts:61-62 isDepositIntent; lib/brokerReferral.ts — broker reuse requires an EXACT 'Broker — Deposit' match (never recycles a Connect deposit referral, so the rails can't cross).
+Sem: the deposit-intent discriminator is a SUBSTRING match on 'Deposit' — which is exactly why the broker value CONTAINS 'Deposit'. It is a REPORTING label only: the authoritative rail signal is the rancher's `Broker Rail` checkbox at mint time and `metadata.rail==='broker'` (Stripe-held) at settle, so a typecast strip costs a label, never money.
 
 ### Rancher Record Id / Suggested Rancher Record Id (singleLineText denorms)
 W: lib/airtable.ts:238 createReferral via stampRancherRecordIds (lib/referralRecordId.ts:40-47) on EVERY create; referral-record-id-backfill cron :56 (repair + clear, lib/referralRecordId.ts:58-70). Reassign/approve/telegram link changes do NOT restamp — the cron is the belt.
@@ -200,6 +206,12 @@ AND (tier_v2 only) Stripe Connect Status = 'active'. Canonical go-live write =
 app/api/admin/ranchers/[id]/route.ts:28-93 (~30 fields). The two rancher self-serve
 surfaces are allowlist-fenced: app/api/rancher/setup/route.ts (~:104) and
 app/api/rancher/landing-page/route.ts (:105-160).
+
+### Broker Rail (checkbox) + Broker Balance Note (multilineText) — added 2026-07-31
+W: app/api/partner/represent/route.ts — the ONLY writer. Sets `Broker Rail`=true at notify-only signup and leaves `Active Status`, `Onboarding Status`, `Slug`, `Page Live`, `Agreement Signed`, `Self-Submitted At`, `Latitude`/`Longitude` ALL UNSET (each omission is deliberate — see the route header).
+R (the rail): lib/brokerRail.ts `isBrokerRancher` — read by assertBrokerEligible (the checkout gates), referralRailForRancher (fail-closed rail choice), lib/brokerReferral (link redemption), lib/brokerSettlement. `Broker Balance Note` → brokerBalanceNote(), rendered on BOTH settlement emails.
+R (the guardrails — a broker rancher is INVISIBLE to the platform): lib/rancherEligibility.ts `isRancherOperationalForBuyers` (FIRST gate, covers ~25 routing call sites) + `getOperationalServedStates` (returns [] — it does NOT call the predicate, so it needs its own check); the four public-lookup formulas in lib/airtable.ts (`getActiveRancherPages`, `getRancherBySlug`, `getRancherOrProspectBySlug`, `getRancherByPreviousSlug` — these cover sitemap, generateStaticParams, /ranchers, /api/public/ranchers, /start, /wholesale); app/map/page.tsx formula; app/access/[state] + app/half-a-cow/[state]; lib/stateSupply.ts; lib/marketplaceProducts.ts; lib/rancherReactivationSegment.ts; crons rancher-followup, onboarding-stuck, rancher-onboarding-drip, rancher-go-live-sync, batch-approve (auto-go-live), stripe-reconcile, send-scheduled, weekly-scorecard (payable count); app/api/admin/stuck-ranchers.
+Sem: THE third-money-model flag (docs/BUSINESS-MODEL.md ⭐ MONEY MODEL 3). A represented rancher is sold BY Ben, is never routed, listed, mapped, chased, or counted as payable supply, and has NO Stripe Connect — the broker checkout REFUSES any rancher with a Connect footprint (double-billing risk). Airtable formula fragment: `NOT({Broker Rail} = 1)` (`BROKER_RAIL_EXCLUSION_FORMULA`); JS helper: `excludeBrokerRanchers(rows)`. `Active Status` empty already blocks routing, but the explicit flag check is what survives a future Active flip.
 
 ### Active Status (singleSelect: Active|At Capacity|Paused|Pending Onboarding|Non-Compliant)
 W(go-live via GO_LIVE_FIELDS lib/goLiveGates.ts:40): app/api/ranchers/sign-agreement/route.ts:159,207 — signing w/ content-ready page; app/api/cron/batch-approve/route.ts:357 — 2-hourly flip of Verification Complete; app/api/webhooks/stripe-connect/route.ts:863 — Connect goes active; app/api/rancher/activate/route.ts:341 — legacy activation link.
@@ -453,10 +465,21 @@ Sem: never write reverse-link fields directly; decision readers operate on the O
 
 ## Payments (`tblPfESJ4lxwtGThy`) — money ledger
 
-**The single live row-creator** is `recordDeposit` (lib/contracts/payments.ts:241-378;
-create :344, reuse-update :337), called from exactly ONE place: app/api/checkout/deposit/route.ts:398
-— the buyer's pay-click POST, after the Stripe session is minted (:362), before redirect.
-Webhooks never create Payments rows; they only mutate them.
+**The live row-creators are TWO** (2026-07-31), one per charge rail:
+1. `recordDeposit` (lib/contracts/payments.ts:241-378; create :344, reuse-update :337), called
+from exactly ONE place: app/api/checkout/deposit/route.ts — the buyer's pay-click POST, after
+the Stripe session is minted, before redirect. CONNECT rail.
+2. `recordBrokerDeposit` (same file), called from exactly ONE place:
+app/api/checkout/broker/route.ts. **BROKER rail** — writes `Platform Fee Cents` ===
+`Amount Cents` (BHC keeps 100% of the charge; recording a 0 fee would under-count broker
+revenue by its entire value), `Type`='broker_deposit', **no `Tier`** (a represented rancher
+has no subscription tier and the singleSelect has no truthful choice — writing one would
+corrupt tier-sliced reporting), and **no `Stripe Connect Account Id`** (there is no connected
+account; the charge is on BHC's own platform account). Its dedup query is SCOPED TO THE
+REFERRAL when the PI id is empty, deliberately avoiding the table-wide empty-PI match
+documented under `Stripe Payment Intent Id` below.
+Webhooks never create Payments rows; they only mutate them. Both rails settle through the
+same `markDepositSucceeded` anchor.
 **Historical second writer (REMOVED 2026-07-14, #369 commit 3c2fcd3)**: request-TIME
 creators in app/api/rancher/referrals/[id]/request-deposit (added #154) and
 app/api/admin/send-deposit-invoice (added desk-v3) wrote a different shape —

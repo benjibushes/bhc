@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
+import { excludeBrokerRanchers } from '@/lib/brokerRail';
 import {
   sendRancherOnboardingDripDay2,
   sendRancherOnboardingDripDay5,
@@ -44,7 +45,9 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
     // Pull only self-submitted prospects whose drip stage is still active.
     // Filtering in code (not formula) — ranchers table is small and
     // formula-side date math against Self-Submitted At is fiddly.
-    const ranchers = (await getAllRecords(TABLES.RANCHERS)) as any[];
+    // BROKER RAIL: represented ranchers get no onboarding drip — there is no
+    // onboarding for them to complete.
+    const ranchers = excludeBrokerRanchers((await getAllRecords(TABLES.RANCHERS)) as any[]);
 
     const now = Date.now();
     const DAY_MS = 86_400_000;
