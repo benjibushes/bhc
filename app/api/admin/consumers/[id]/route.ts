@@ -4,6 +4,7 @@ import { TABLES } from '@/lib/airtable';
 import { sendConsumerApproval } from '@/lib/email';
 import jwt from 'jsonwebtoken';
 import { requireAdmin } from '@/lib/adminAuth';
+import { validateFollowUpDate, operatorToday } from '@/lib/followUpQueue';
 
 import { JWT_SECRET } from '@/lib/secrets';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
@@ -39,6 +40,7 @@ export async function GET(
       referral_status: record['Referral Status'] || 'Unmatched',
       admin_notes: record['Admin Notes'] || '',
       last_contacted: record['Last Contacted'] || '',
+      next_follow_up_at: record['Next Follow Up At'] || '',
       backfill_email_sent: !!record['Backfill Emails Sent'],
       backfill_email_sent_at: record['Backfill Emails Sent At'] || '',
       referred_by: record['Referred By'] || '',
@@ -78,6 +80,23 @@ export async function PATCH(
     if (body.membership) fields['Membership'] = body.membership;
     if (body.admin_notes !== undefined) fields['Admin Notes'] = body.admin_notes;
     if (body.last_contacted !== undefined) fields['Last Contacted'] = body.last_contacted;
+
+    // Promised follow-up. VALIDATED, never passed through raw: a garbage or
+    // wrong-year date here is invisible until the day it fails to come due,
+    // and a past date pins the buyer to the top of the desk forever. An
+    // explicit blank clears the promise (the "never mind" case).
+    if (body.next_follow_up_at !== undefined) {
+      const raw = body.next_follow_up_at;
+      if (raw === null || String(raw).trim() === '') {
+        fields['Next Follow Up At'] = null;
+      } else {
+        const v = validateFollowUpDate(raw, operatorToday());
+        if (!v.ok) {
+          return NextResponse.json({ error: v.error }, { status: 400 });
+        }
+        fields['Next Follow Up At'] = v.value;
+      }
+    }
 
     // Check if this is an approval — need current record to detect status change
     let shouldSendApproval = false;

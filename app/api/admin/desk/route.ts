@@ -15,6 +15,7 @@ import {
   rankDialQueue,
   type DialCandidate,
 } from '@/lib/callbackQueue';
+import { selectDueFollowUps, operatorToday } from '@/lib/followUpQueue';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -34,6 +35,20 @@ const F_CALLBACK_HANDLED_AT = 'Callback Handled At';
 // lib/callbackQueue.hasOpenCallbackRequest re-checks the same rule in JS below,
 // so the desk and the endpoint's duplicate guard can never disagree.
 const OPEN_CALLBACK_FORMULA = `AND(NOT({${F_CALLBACK_REQUESTED_AT}}=''),OR({${F_CALLBACK_HANDLED_AT}}='',IS_BEFORE({${F_CALLBACK_HANDLED_AT}},{${F_CALLBACK_REQUESTED_AT}})))`;
+
+// ── PROMISED FOLLOW-UPS ────────────────────────────────────────────────────
+//
+// Consumers.'Next Follow Up At' (fldLpCco9KGJf1LxN) is a DATE field. The
+// Airtable side deliberately filters ONLY on "is it set" and leaves the
+// due/not-due call entirely to lib/followUpQueue.selectDueFollowUps, which the
+// digest cron uses too. The set is small by construction — an operator types
+// these one at a time on a phone call — so there is nothing to win by pushing
+// a date comparison into a formula, and plenty to lose: Airtable's date
+// comparison would have to agree with the JS one about what "today" means, and
+// they do not (Airtable compares in UTC, Ben lives in Denver). One definition
+// of due, in one place.
+const F_NEXT_FOLLOW_UP_AT = 'Next Follow Up At';
+const HAS_FOLLOW_UP_FORMULA = `NOT({${F_NEXT_FOLLOW_UP_AT}}='')`;
 
 export async function GET(req: Request) {
   const a = await requireAdmin(req);
@@ -70,7 +85,7 @@ export async function GET(req: Request) {
     ),
   ];
 
-  const [quizComplete, depositPending, slotsLocked, closedToday, waitlisted, ranchersActive, wholesaleInquiries, callDoneNoInvoice, callBuyers, callbackRows] =
+  const [quizComplete, depositPending, slotsLocked, closedToday, waitlisted, ranchersActive, wholesaleInquiries, callDoneNoInvoice, callBuyers, callbackRows, followUpRows] =
     await Promise.all([
       getAllRecords(
         TABLES.CONSUMERS,
@@ -118,6 +133,9 @@ export async function GET(req: Request) {
       // CALLBACK_RAIL_ENABLED: the desk must already work the instant the flag
       // flips, and with the rail dark this simply returns nothing.
       getAllRecords(TABLES.CONSUMERS, OPEN_CALLBACK_FORMULA).catch(() => []),
+      // Promised follow-ups — every buyer with a date on file. Filtered to
+      // "due" in JS below.
+      getAllRecords(TABLES.CONSUMERS, HAS_FOLLOW_UP_FORMULA).catch(() => []),
     ]);
 
   // F4 — composite lead score + sort quiz-complete by hottest first
@@ -154,6 +172,13 @@ export async function GET(req: Request) {
     .map(formatCallbackRequest)
     .sort((a, b) => String(a.requestedAt).localeCompare(String(b.requestedAt)));
 
+  // ── PROMISED: follow-ups Ben committed to, coming due ───────────────────
+  // Ranked BELOW the callback bucket and ABOVE everything else: a promise you
+  // made outranks a cold dial, but not a buyer asking for you right now.
+  // `today` is BEN's calendar day (America/Denver) — a UTC day would surface
+  // tomorrow's promises every evening after 6pm local.
+  const followUpsDue = selectDueFollowUps(followUpRows as any[], operatorToday());
+
   // "Who do I dial right now?" — ONE ranking across every source, so the desk
   // stops making Ben eyeball five buckets and guess. Ordering + the reasoning
   // behind it live in lib/callbackQueue.
@@ -173,6 +198,7 @@ export async function GET(req: Request) {
 
   return NextResponse.json({
     callbackRequests,
+    followUpsDue,
     dialQueue,
     calls: callsFormatted,
     quizComplete: quizFormatted,
