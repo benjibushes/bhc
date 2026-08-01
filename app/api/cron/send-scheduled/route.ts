@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord, escapeAirtableValue, isInvalidFilterFormulaError } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
+import { excludeBrokerRanchers } from '@/lib/brokerRail';
 import { mailableConsumersFormula } from '@/lib/cronReadFilters';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendBroadcastEmail, getSuppressionList, didSuppressionListBuildFail } from '@/lib/email';
@@ -95,7 +96,11 @@ async function getRecipients(audienceType: string, _selectedStates?: string[]) {
       name: c['Full Name'] || 'Member',
     })).filter((r) => r.email);
   } else if (audienceType === 'ranchers') {
-    const ranchers = (await getAllRecords(TABLES.RANCHERS)).filter(isMailable);
+    // BROKER RAIL: represented ranchers are excluded from rancher broadcasts.
+    // They are a private commercial arrangement, not platform members — they
+    // never opted into product news, and blasting them would leak the platform
+    // narrative to someone who deliberately isn't on the platform.
+    const ranchers = excludeBrokerRanchers(await getAllRecords(TABLES.RANCHERS)).filter(isMailable);
     recipients = ranchers.map((r: any) => ({
       email: (r['Email'] || '').trim().toLowerCase(),
       name: r['Operator Name'] || 'Rancher',

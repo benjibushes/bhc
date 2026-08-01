@@ -18,6 +18,7 @@
 
 import { getAllRecords, getRecordById, TABLES } from '@/lib/airtable';
 import { normalizeState, normalizeStates } from '@/lib/states';
+import { isBrokerRancher } from '@/lib/brokerRail';
 
 export interface MarketplaceProduct {
   id: string;
@@ -173,10 +174,17 @@ export async function loadMarketplaceProducts(
   const servesByRancher: Record<string, string[]> = {};
   const slugByRancher: Record<string, string> = {};
   const photoByRancher: Record<string, string> = {};
+  // BROKER RAIL (2026-07-31): ids of REPRESENTED ranchers. They never signed up
+  // and have no marketplace presence, so any product row that somehow points at
+  // one is dropped from every listing surface below. Only populated when the
+  // rancher join runs; when it doesn't, no product can be attributed to a
+  // rancher at all on the surfaces that matter, and the buy route re-gates.
+  const brokerRancherIds = new Set<string>();
   let joined = false;
   if (opts?.withStates === true) {
     try {
       for (const r of (await getAllRecords(TABLES.RANCHERS)) as any[]) {
+        if (isBrokerRancher(r)) brokerRancherIds.add(r.id);
         const home = normalizeState(r['State']) || '';
         stateByRancher[r.id] = home;
         connectActiveByRancher[r.id] = String(r['Stripe Connect Status'] || '') === 'active';
@@ -206,6 +214,11 @@ export async function loadMarketplaceProducts(
   }
   return rows
     .filter((r) => isSellableRow(r) || (opts?.includeLocal === true && isLocalPickupRow(r)))
+    // BROKER RAIL: never list a represented rancher's product. They are sold by
+    // phone on the broker rail only — a marketplace listing would expose a
+    // rancher who never agreed to be listed and would route the money through
+    // the wrong (Connect) checkout.
+    .filter((r) => !brokerRancherIds.has(String(r['Rancher Record ID'] || '').trim()))
     .map((r) => ({
       id: r.id,
       name: String(r['Product Name'] || ''),

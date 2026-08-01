@@ -21,6 +21,8 @@ import { fireCapi, buildUserData } from '@/lib/metaCapi';
 import { metaEventId } from '@/lib/analytics';
 import { logAuditEntry } from '@/lib/auditLog';
 import { settleBuyerDeposit, settleFinalInvoice, isPermanentSettlementError } from '@/lib/stripeSettlement';
+import { settleBrokerDeposit } from '@/lib/brokerSettlement';
+import { isBrokerRailMetadata } from '@/lib/brokerRail';
 
 // Heaviest events (deposit/final-invoice settlement) do many sequential
 // Airtable reads + writes plus a Stripe invoice call; the default function
@@ -194,6 +196,34 @@ export async function POST(request: Request) {
         break;
       }
 
+      // ── BROKER RAIL (the THIRD money model) ──────────────────────────────
+      // Stripe delivers BOTH checkout.session.completed and
+      // payment_intent.succeeded for the same broker charge. Handling both is
+      // deliberate belt-and-suspenders — under the Clover apiVersion the PI is
+      // created at pay time, so the session event can arrive first (or alone,
+      // if the PI event is dropped). Double-settling is impossible: both paths
+      // converge on markDepositSucceeded(pi.id), which no-ops once the Payments
+      // row is 'succeeded', and every email/Telegram sits behind that anchor.
+      if (isBrokerRailMetadata(session?.metadata)) {
+        try {
+          // Normalize the session into the PaymentIntent shape settlement
+          // expects. amount_total is the charged total (the whole deposit).
+          await settleBrokerDeposit({
+            id: session.payment_intent ? String(session.payment_intent) : String(session.id || ''),
+            amount: Number(session.amount_total || 0),
+            metadata: session.metadata,
+          });
+        } catch (err: any) {
+          console.error('[stripe webhook] broker checkout.session.completed failed:', err?.message);
+          await flipStripeEventFailed(event.id, err?.message);
+          if (isPermanentSettlementError(err)) {
+            return NextResponse.json({ received: true, permanent: true });
+          }
+          return NextResponse.json({ error: 'settlement_retry' }, { status: 500 });
+        }
+        break;
+      }
+
       // Unknown metadata.type — accept the webhook but no-op.
       break;
     }
@@ -341,6 +371,29 @@ export async function POST(request: Request) {
           // idempotent (Referral.Status==='Closed Won' short-circuits, and it
           // fails-closed on an unreadable referral). Only a PERMANENT failure
           // (malformed metadata) returns 200 to stop pointless 3-day redelivery.
+          if (isPermanentSettlementError(e)) {
+            return NextResponse.json({ received: true, permanent: true });
+          }
+          return NextResponse.json({ error: 'settlement_retry' }, { status: 500 });
+        }
+        break;
+      }
+
+      // ── BROKER RAIL settlement (the THIRD money model) ───────────────────
+      // A plain charge on BHC's OWN account for a rancher who is represented,
+      // not onboarded: no Connect, no application_fee, no payout. The whole
+      // deposit is BHC's commission. Branch on the tamper-proof, Stripe-held
+      // `rail` metadata (exact match) — NOT on metaType alone, so this can
+      // never swallow a Connect deposit. See docs/BUSINESS-MODEL.md.
+      if (isBrokerRailMetadata(pi?.metadata)) {
+        try {
+          await settleBrokerDeposit(pi);
+        } catch (e: any) {
+          console.error('[stripe webhook] payment_intent.succeeded (broker) failed:', e);
+          await flipStripeEventFailed(event.id, e?.message || 'unknown');
+          // Same retry contract as the other two rails: redeliver transient
+          // failures (settleBrokerDeposit is idempotent at markDepositSucceeded),
+          // stop redelivering permanent metadata faults.
           if (isPermanentSettlementError(e)) {
             return NextResponse.json({ received: true, permanent: true });
           }

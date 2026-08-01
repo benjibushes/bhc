@@ -39,6 +39,9 @@
 // not "can they take one more right now?"
 
 import { normalizeState, normalizeStates } from './states';
+// lib/brokerRail is deliberately hermetic (imports only lib/pricing) so this
+// import cannot close a cycle back through lib/reserveDeposit.
+import { isBrokerRancher } from './brokerRail';
 
 export type RancherFields = Record<string, unknown> & {
   'Active Status'?: unknown;
@@ -78,6 +81,20 @@ function readEnumOrString(v: unknown): string {
  *     active → buyer dead-ends at deposit time).
  */
 export function isRancherOperationalForBuyers(rancher: RancherFields): boolean {
+  // BROKER RAIL (2026-07-31) — a REPRESENTED rancher is never routable.
+  //
+  // They never signed up: no Connect, no agreement, no onboarding, no public
+  // page. Ben sells their beef himself by phone and sends a broker deposit
+  // link (/api/checkout/broker). They must never enter the matching pool, be
+  // suggested to a buyer, counted as supply in a state, or reached by any
+  // buyer-facing rail.
+  //
+  // Their `Active Status` is left EMPTY at signup, which already fails the
+  // gate below — but that is ONE careless admin flip away from exposing a
+  // rancher who never agreed to be exposed. This check is FIRST and explicit
+  // so no future Active-Status change can accidentally publish them.
+  if (isBrokerRancher(rancher)) return false;
+
   // Wave C (2026-07-14) — defense in depth for CLOSED accounts. Self-serve
   // closure sets Verification Status='Removed' + Active Status='Paused';
   // the Active gate below already excludes them, but a one-click Resume (or
@@ -135,6 +152,12 @@ export function isRancherOperationalForBuyers(rancher: RancherFields): boolean {
  * the signup-time "rancher available in your state?" check stays consistent.
  */
 export function getOperationalServedStates(rancher: RancherFields): string[] {
+  // BROKER RAIL — a represented rancher serves NO states for routing purposes.
+  // This helper is the supply-coverage answer used by state counts, campaign
+  // targeting, and the reserve gate, and it deliberately does NOT call
+  // isRancherOperationalForBuyers — so the exclusion has to be repeated here or
+  // a represented ranch would silently show up as coverage in their state.
+  if (isBrokerRancher(rancher)) return [];
   const out = new Set<string>();
   const primary = normalizeState(rancher['State']);
   if (primary) out.add(primary);

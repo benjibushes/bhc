@@ -90,8 +90,10 @@ async function fetchStateData(stateCode: string, stateName: string): Promise<{
     const records = await base(TABLES.RANCHERS)
       .select({
         filterByFormula:
+          // NOT({Broker Rail} = 1): a represented rancher is not public supply
+          // in this state — they have no page for a visitor to land on.
           `AND({Page Live} = 1, NOT({Public Map Hidden} = 1), ` +
-          `{Verification Status} != "Removed", ` +
+          `{Verification Status} != "Removed", NOT({Broker Rail} = 1), ` +
           `OR(UPPER({State}) = "${safeCode}", UPPER({State}) = "${safeName.toUpperCase()}"))`,
         maxRecords: 50,
       })

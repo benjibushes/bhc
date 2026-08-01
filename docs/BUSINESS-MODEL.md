@@ -14,6 +14,13 @@ monthly, or a "90/10 split," THIS section wins — those are the pre-2026-07
 legacy framing. Code, copy, and every new feature conform to this. If a
 surface disagrees with this section, the surface is the bug.*
 
+> **ONE EXCEPTION, added 2026-07-31: the BROKER RAIL.** Represented
+> (off-platform) ranchers run on a **different money model** — the buyer's
+> deposit goes 100% to BHC's own Stripe account and is the entire commission,
+> with no Connect and no fee on top. It is documented in full in
+> **⭐ MONEY MODEL 3 — THE BROKER RAIL** below and is NOT a violation of this
+> section. Do not "fix" it into the Connect rail.
+
 ### One line
 **A marketplace service fee.** The rancher sets their price and keeps **100%**
 of it. BHC's commission is added **on top**, paid by the **buyer** — like a
@@ -46,6 +53,117 @@ automatically at deposit time via Stripe Connect.
 | **Total** | **$3,298.90** | **$2,999** (full price) | **$299.90** (the 10%) |
 
 Rancher keeps every dollar of their $2,999. Buyer paid a $299.90 service fee.
+
+---
+
+## ⭐ MONEY MODEL 3 — THE BROKER RAIL (added 2026-07-31)
+
+*A THIRD money model, alongside buyer-pays-on-top (above) and the product
+markup (rail #3 below). It is **deliberately different from both**. Read this
+before "fixing" anything in `lib/brokerRail.ts`, `lib/brokerCheckout.ts`, or
+`app/api/checkout/broker` — every Connect-shaped instinct is wrong here.*
+
+### One line
+Ben **represents** a rancher who is on **nothing** — no Stripe Connect, no
+marketplace listing, no onboarding, no wizard, no login — and sells that
+rancher's beef himself. **The buyer's deposit goes 100% to BHC's own Stripe
+account and IS Ben's entire commission.**
+
+### The mechanic
+- A **plain Checkout Session on BHC's own platform account.**
+  **No `stripeAccount` header. No `application_fee_amount`. No `transfer_data`.
+  No split of any kind.** (`lib/brokerCheckout.ts` — the file header lists
+  every Connect parameter it deliberately omits.)
+- The rancher has **no Stripe account**, receives **no payout**, and is
+  **never invoiced**. BHC's checkout **refuses outright** any rancher with a
+  Connect footprint (account id, non-empty status, or `Pricing Model=tier_v2`)
+  — that rancher belongs on the Connect rail and charging them here would bill
+  a commission twice.
+- The deposit is **never derived**. On the Connect rail a missing deposit falls
+  back to `deriveDeposit` (25%); here the deposit **is** the fee, so deriving
+  one would invent Ben's commission and silently change the rancher's net. Ben
+  sets `Quarter/Half/Whole Deposit` per cut, or that cut cannot be sold.
+- **Deposit must be strictly less than price.** A deposit ≥ price is refused as
+  a configuration error, not clamped.
+
+### The money — and why the two sides are told different true things
+```
+buyer total      = the rancher's full share price     (UNCHANGED vs buying direct)
+buyer pays BHC   = deposit                            (BHC keeps 100%)
+buyer pays ranch = price − deposit                    (direct, outside BHC)
+rancher nets     = price − deposit
+```
+The rancher **funds the commission out of his own price**. This is Ben's
+deliberate choice, not an accident of framing.
+
+**Worked example — $1,800 half, $400 deposit:**
+
+| | Buyer pays | Rancher nets | BHC keeps |
+|---|---|---|---|
+| Deposit (to BHC) | **$400** | $0 | **$400** |
+| Balance (to the ranch, direct) | **$1,400** | **$1,400** | $0 |
+| **Total** | **$1,800** (same as buying direct) | **$1,400** | **$400** |
+
+**The rancher email states this plainly** — that the deposit was BHC's
+commission and that he nets price − deposit. He agreed to exactly that at
+`/partner/represent` **before** submitting, and the confirmation email restates
+it. It is never a surprise when an order lands. **The buyer receipt never
+mentions BHC keeping anything**: the buyer's total is identical either way, so
+the split is not their transaction. Both statements are true; they are pinned
+by tests in `lib/brokerNotify.test.ts` (including one asserting the buyer
+receipt contains no "commission"/"fee"/"we keep" language).
+
+### Contrast — do not confuse the three rails
+| | share deposit (Connect) | product (Connect) | **BROKER** |
+|---|---|---|---|
+| charge lands on | rancher's connected acct | rancher's connected acct | **BHC's own acct** |
+| BHC's cut | `application_fee` 10% **on top** | the markup | **the whole deposit** |
+| buyer total | price + 10% | marked-up price | **price** (unchanged) |
+| rancher nets | 100% of price | base price | **price − deposit** |
+| rancher needs Connect | yes | yes | **no — refused if they have it** |
+| routable / listed / mapped | yes | yes | **never** |
+
+### Guardrails — a broker rancher is INVISIBLE to the platform
+`Active Status` is left **EMPTY** at signup (never routable), but that is one
+admin flip from exposure, so an **explicit `Broker Rail` exclusion** is added
+everywhere: `isRancherOperationalForBuyers` + `getOperationalServedStates`
+(routing chokepoint, ~25 call sites), the four public-lookup formulas in
+`lib/airtable.ts` (sitemap / static params / `/ranchers` / state pages),
+`/map`, `lib/stateSupply`, `lib/marketplaceProducts`, the onboarding chase
+crons (`rancher-followup`, `onboarding-stuck`, `rancher-onboarding-drip`),
+both auto-go-live paths (`rancher-go-live-sync`, `batch-approve`),
+`stripe-reconcile`, `rancher-reactivation` (via `segmentRanchers`),
+`send-scheduled` broadcasts, the stuck-rancher call queue, and the
+payable-rancher count in `weekly-scorecard`. Tests: `lib/brokerGuardrails.test.ts`.
+
+**A represented rancher is NOT a payable rancher** and must never be counted in
+the north-star metric — they take no money on the platform at all.
+
+### Rail identification — FAIL CLOSED
+- At checkout: `referralRailForRancher(rancher)` → `broker` | `connect` |
+  **`ambiguous`**. Ambiguous (flagged broker AND carrying Connect, or an
+  unreadable record) **refuses the charge**.
+- At settlement: `metadata.rail === 'broker'`, **exact match**, held by Stripe
+  and un-editable by the buyer. A broker PI never reaches `settleBuyerDeposit`
+  (its `type` is `broker_deposit`, not `buyer_deposit`).
+- Link tokens: the broker link (`/r/b/<token>`, purpose `broker-reserve`,
+  addressed by rancher **record id** since a represented ranch has no slug) and
+  the Connect campaign link (`/r/d/<token>`, purpose `campaign-reserve`) reject
+  each other's tokens, so a link can never redeem on the wrong money model.
+
+### Where it lives
+| concern | file |
+|---|---|
+| pure decision logic + gates + money identity | `lib/brokerRail.ts` |
+| Stripe session (BHC's own account) | `lib/brokerCheckout.ts` |
+| checkout route + gates | `app/api/checkout/broker/route.ts` |
+| settlement, stamps, notifications | `lib/brokerSettlement.ts` |
+| email bodies (pure, tested) | `lib/brokerNotify.ts` |
+| ledger row | `recordBrokerDeposit` in `lib/contracts/payments.ts` |
+| rancher signup (notify-only) | `app/partner/represent` + `app/api/partner/represent` |
+| Ben's sell link | `POST /api/admin/sell-links` with `rancherId` → `/r/b/<token>` |
+
+---
 
 ### The five revenue rails
 1. **Commission — THE core.** 10% buyer-paid service fee on closed beef deals,

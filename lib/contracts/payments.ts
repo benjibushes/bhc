@@ -377,6 +377,102 @@ export async function recordDeposit(input: CreateDepositInput): Promise<{ id: st
   return { id: created.id };
 }
 
+// ---------------------------------------------------------------------------
+// BROKER RAIL ledger row
+// ---------------------------------------------------------------------------
+
+export interface CreateBrokerDepositInput {
+  referralId: string;
+  buyerId: string;
+  rancherId: string;
+  /** Collected by BHC and KEPT IN FULL. Both the deposit and the commission. */
+  depositCents: number;
+  stripePaymentIntentId: string;
+  stripeCheckoutSessionId?: string;
+  buyerEmail?: string;
+}
+
+/**
+ * Ledger row for a BROKER-rail deposit (docs/BUSINESS-MODEL.md → money model 3).
+ *
+ * Differs from recordDeposit in exactly the ways the rail differs:
+ *   • 'Platform Fee Cents' === 'Amount Cents'. On this rail BHC keeps 100% of
+ *     the charge — the whole deposit is the commission. Recording a 0 fee here
+ *     would make every revenue report under-count broker income by its entire
+ *     value.
+ *   • No 'Tier'. A represented rancher has no subscription tier, and the
+ *     Payments.Tier singleSelect has no truthful choice for one — writing a
+ *     wrong tier would corrupt tier-sliced reporting. Left unset.
+ *   • No 'Stripe Connect Account Id'. There is no connected account. The charge
+ *     is on BHC's own platform account.
+ *   • 'Type' = 'broker_deposit' — the ledger-side rail marker, so a report can
+ *     tell broker income from Connect application_fee income without joining
+ *     back to the rancher.
+ *
+ * Dedup mirrors recordDeposit: reuse a pending row only on an EXACT PI match,
+ * otherwise create — never recycle a row belonging to a different live PI.
+ */
+export async function recordBrokerDeposit(
+  input: CreateBrokerDepositInput,
+): Promise<{ id: string }> {
+  const fields: Record<string, any> = {
+    'Referral': [input.referralId],
+    [REFERRAL_ID_TEXT_FIELD]: input.referralId,
+    'Buyer': [input.buyerId],
+    'Rancher': [input.rancherId],
+    'Amount Cents': input.depositCents,
+    // Same number, deliberately. See the doc comment above.
+    'Platform Fee Cents': input.depositCents,
+    'Type': 'broker_deposit',
+    'Stripe Payment Intent Id': input.stripePaymentIntentId,
+    'Status': 'pending',
+    'Created At': new Date().toISOString(),
+  };
+  if (input.stripeCheckoutSessionId) {
+    fields[CHECKOUT_SESSION_ID_FIELD] = input.stripeCheckoutSessionId;
+  }
+  if (input.buyerEmail) fields['Buyer Email'] = input.buyerEmail;
+
+  try {
+    const pi = String(input.stripePaymentIntentId || '');
+    // CLOVER LANDMINE (documented in docs/WRITE-MAP.md, Payments → Stripe
+    // Payment Intent Id): the PaymentIntent does not exist at session-create,
+    // so `pi` is ''. Querying `{Stripe Payment Intent Id} = ""` would match
+    // EVERY empty-PI pending row in the whole table, dragging other referrals'
+    // rows into the candidate set. Scope the query to THIS referral when we
+    // have no PI id — narrower than the Connect rail's equivalent, and it
+    // cannot surface a foreign row at all.
+    const formula = pi
+      ? `OR({Stripe Payment Intent Id} = "${pi.replace(/"/g, '\\"')}", AND(${paymentsByReferralFormula(input.referralId)}, {Status} = "pending"))`
+      : `AND(${paymentsByReferralFormula(input.referralId)}, {Status} = "pending")`;
+    const existing: any[] = await getAllRecords(PAYMENTS_TABLE, formula);
+    // Reuse requires an EXACT PI match, so with an empty PI nothing is reused
+    // and a fresh row is created per session — each live PI keeps its own
+    // settle-able row (never orphan an older PI by overwriting it).
+    const reusable = selectReusablePaymentRow(existing, input.stripePaymentIntentId);
+    if (reusable) {
+      const reuseFields: Record<string, any> = {
+        'Amount Cents': input.depositCents,
+        'Platform Fee Cents': input.depositCents,
+        'Type': 'broker_deposit',
+        'Stripe Payment Intent Id': input.stripePaymentIntentId,
+        'Status': 'pending',
+        [REFERRAL_ID_TEXT_FIELD]: input.referralId,
+      };
+      if (input.stripeCheckoutSessionId) {
+        reuseFields[CHECKOUT_SESSION_ID_FIELD] = input.stripeCheckoutSessionId;
+      }
+      await updateRecord(PAYMENTS_TABLE, reusable.id, reuseFields);
+      return { id: reusable.id };
+    }
+  } catch (e: any) {
+    console.warn('[recordBrokerDeposit] dedup lookup failed — creating new row:', e?.message);
+  }
+
+  const created: any = await createRecord(PAYMENTS_TABLE, fields);
+  return { id: created.id };
+}
+
 /**
  * Row-id variant of markDepositAbandoned — MONEY-TRUTH TAIL finding 3.
  * Clover-era rows can be certainly-dead with NO PaymentIntent id at all

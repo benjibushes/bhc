@@ -54,6 +54,7 @@
 // wave, before the 13:00-18:00 ops crons that read these fields.
 
 import { getAllRecords, updateRecord, escapeAirtableValue, TABLES } from '@/lib/airtable';
+import { excludeBrokerRanchers } from '@/lib/brokerRail';
 import { getStripeClient, getConnectAccountStatus } from '@/lib/stripeConnect';
 import {
   computeConnectResync,
@@ -203,7 +204,10 @@ function realHandlerFor(policy: ReconcileWritePolicy) {
     const stripe = getStripeClient();
     const nowISO = new Date().toISOString();
 
-    const rancherRows = (await getAllRecords(TABLES.RANCHERS)) as any[];
+    // BROKER RAIL: represented ranchers have no Stripe subscription and no
+    // Connect account to reconcile — they are off Stripe entirely on their
+    // side. Exclude so they never appear in Connect/subscription drift lines.
+    const rancherRows = excludeBrokerRanchers((await getAllRecords(TABLES.RANCHERS)) as any[]);
     const ranchers = rancherRows.map(toRancherLite).filter((r) => r.id);
 
     let subsHealed = 0;

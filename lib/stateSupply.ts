@@ -24,6 +24,7 @@
 
 import { getAllRecords, TABLES, withTimeout, resolveAirtableTimeoutMs } from './airtable';
 import { normalizeState } from './states';
+import { isBrokerRancher } from './brokerRail';
 
 /**
  * Pure aggregation (exported for tests): live share-ranch count per
@@ -39,6 +40,10 @@ export function countLiveShareRanchesByState(
     if (!row?.['Page Live']) continue;
     if (row?.['Public Map Hidden']) continue;
     if (String(row?.['Verification Status'] || '') === 'Removed') continue;
+    // BROKER RAIL: a represented rancher is not public supply. They have no
+    // listing for a visitor to reach, so counting them would advertise depth
+    // in a state that the /shop surface cannot actually show.
+    if (isBrokerRancher(row)) continue;
     const st = normalizeState(row?.['State']);
     if (!st) continue;
     counts[st] = (counts[st] || 0) + 1;

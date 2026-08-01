@@ -104,8 +104,11 @@ async function fetchStateCounts(s: SeoState): Promise<StateCounts> {
       base(TABLES.RANCHERS)
         .select({
           filterByFormula:
+            // NOT({Broker Rail} = 1): keep this count identical to
+            // lib/stateSupply.countLiveShareRanchesByState, which also excludes
+            // represented ranchers — the two surfaces must never disagree.
             `AND({Page Live} = 1, NOT({Public Map Hidden} = 1), ` +
-            `{Verification Status} != "Removed", ${stateMatch})`,
+            `{Verification Status} != "Removed", NOT({Broker Rail} = 1), ${stateMatch})`,
           fields: ['Slug'],
           maxRecords: 100,
         })

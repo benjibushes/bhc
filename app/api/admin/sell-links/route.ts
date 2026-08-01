@@ -15,12 +15,23 @@
 //
 // Product checkout links are NOT minted here — the console calls the existing
 // admin-gated POST /api/checkout/product for those. Admin-gated.
+//
+// TWO RAILS (2026-07-31). The caller picks exactly one:
+//   • `rancherSlug` → CONNECT rail. Mints /r/d/<campaign-reserve token>. The
+//     buyer pays deposit + BHC's fee on top; the rancher keeps 100% of price.
+//   • `rancherId`   → BROKER rail. Mints /r/b/<broker-reserve token> for a
+//     REPRESENTED ranch (no Connect, no page, no slug — hence the record id).
+//     The buyer's deposit goes 100% to BHC and IS the commission; the rancher
+//     collects price − deposit direct. See docs/BUSINESS-MODEL.md model 3.
+// Passing both is refused rather than resolved — they are different money
+// models and guessing which one Ben meant is not a decision code should make.
 
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/adminAuth';
-import { getAllRecords, createRecord, getRancherBySlug, escapeAirtableValue, TABLES } from '@/lib/airtable';
+import { getAllRecords, createRecord, getRancherBySlug, getRecordById, escapeAirtableValue, TABLES } from '@/lib/airtable';
 import { isRancherOnConnect, isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
-import { mintCampaignReserveToken } from '@/lib/campaignReserve';
+import { mintCampaignReserveToken, mintBrokerReserveToken } from '@/lib/campaignReserve';
+import { assertBrokerEligible } from '@/lib/brokerRail';
 import { deriveDeposit, MIN_TIER_PRICE } from '@/lib/pricing';
 import { CUT_LABELS, type Cut } from '@/lib/reserveDeposit';
 
@@ -47,40 +58,84 @@ export async function POST(request: Request) {
   }
 
   const rancherSlug = String(body?.rancherSlug || '').trim().toLowerCase();
+  // BROKER RAIL (2026-07-31): a REPRESENTED ranch is addressed by RECORD ID,
+  // not slug — it has no public page and no slug by design. Passing
+  // `rancherId` selects the broker branch below.
+  const brokerRancherId = String(body?.rancherId || '').trim();
   const cut = String(body?.cut || '').trim().toLowerCase() as Cut;
   const buyerEmail = String(body?.buyerEmail || '').trim().toLowerCase();
   const buyerName = String(body?.buyerName || '').trim();
   const buyerState = String(body?.buyerState || '').trim().toUpperCase();
 
-  if (!rancherSlug || !CUT_LABELS[cut] || !buyerEmail.includes('@')) {
+  if (!CUT_LABELS[cut] || !buyerEmail.includes('@')) {
     return NextResponse.json(
-      { error: 'rancherSlug, a valid cut (quarter/half/whole), and buyerEmail are required' },
+      { error: 'a valid cut (quarter/half/whole) and buyerEmail are required' },
+      { status: 400 },
+    );
+  }
+  if (!rancherSlug && !brokerRancherId) {
+    return NextResponse.json(
+      { error: 'rancherSlug (Connect rail) or rancherId (broker rail) is required' },
+      { status: 400 },
+    );
+  }
+  if (rancherSlug && brokerRancherId) {
+    // Refuse rather than pick — the two names select DIFFERENT money models.
+    return NextResponse.json(
+      { error: 'pass rancherSlug OR rancherId, never both — they select different rails' },
       { status: 400 },
     );
   }
 
-  // Rancher must be deposit-capable RIGHT NOW — same gates the buyer-facing
-  // reserve path enforces, checked at mint time so Ben never texts a link
-  // that bounces to a fallback page.
-  const rancher: any = await getRancherBySlug(rancherSlug).catch(() => null);
-  if (!rancher) return NextResponse.json({ error: 'Rancher not found' }, { status: 404 });
-  if (!isRancherOnConnect(rancher) || !isRancherOperationalForBuyers(rancher)) {
-    return NextResponse.json(
-      { error: `${rancher['Ranch Name'] || 'This rancher'} cannot take a deposit right now (Connect/operational gate).` },
-      { status: 409 },
-    );
-  }
-  // GTM-hardening F1: the mint gate must MATCH the redemption gate.
-  // /r/d → assertReserveEligible rejects price < MIN_TIER_PRICE, so minting
-  // below the floor produces a link that bounces on tap (and deriveDeposit on
-  // a mis-keyed $50 yields a nonsense $0 deposit). `>=` is NaN-safe: a
-  // non-numeric Airtable value fails the comparison and 409s here.
-  const tierPrice = Number(rancher[TIER_FIELD[cut]] || 0);
-  if (!(tierPrice >= MIN_TIER_PRICE)) {
-    return NextResponse.json(
-      { error: `${rancher['Ranch Name']} has no valid ${cut} price (must be at least $${MIN_TIER_PRICE} — check the Airtable field).` },
-      { status: 409 },
-    );
+  // ── Resolve the rancher + gate the mint, per rail ────────────────────────
+  // In BOTH rails the mint gate must MATCH the redemption gate exactly, so Ben
+  // never texts a link that bounces when the buyer taps it.
+  let rancher: any = null;
+  let tierPrice = 0;
+  let deposit = 0;
+  let rail: 'connect' | 'broker' = 'connect';
+
+  if (brokerRancherId) {
+    // ── BROKER RAIL ────────────────────────────────────────────────────────
+    // The deposit here is the WHOLE commission and goes 100% to BHC's own
+    // Stripe account. It is never derived — assertBrokerEligible requires an
+    // explicit per-cut deposit, because deriving one would invent Ben's fee
+    // and silently change what the rancher nets.
+    rail = 'broker';
+    rancher = await getRecordById(TABLES.RANCHERS, brokerRancherId).catch(() => null);
+    if (!rancher) return NextResponse.json({ error: 'Rancher not found' }, { status: 404 });
+    // Same gate lib/brokerReferral re-runs at tap time.
+    const gate = assertBrokerEligible(rancher, cut);
+    if (!gate.ok) {
+      return NextResponse.json(
+        { error: `${rancher['Ranch Name'] || 'This ranch'}: ${gate.error}` },
+        { status: gate.status },
+      );
+    }
+    tierPrice = gate.quote.priceCents / 100;
+    deposit = gate.quote.depositCents / 100;
+  } else {
+    // ── CONNECT RAIL (unchanged) ───────────────────────────────────────────
+    rancher = await getRancherBySlug(rancherSlug).catch(() => null);
+    if (!rancher) return NextResponse.json({ error: 'Rancher not found' }, { status: 404 });
+    if (!isRancherOnConnect(rancher) || !isRancherOperationalForBuyers(rancher)) {
+      return NextResponse.json(
+        { error: `${rancher['Ranch Name'] || 'This rancher'} cannot take a deposit right now (Connect/operational gate).` },
+        { status: 409 },
+      );
+    }
+    // GTM-hardening F1: /r/d → assertReserveEligible rejects price <
+    // MIN_TIER_PRICE, so minting below the floor produces a link that bounces
+    // on tap (and deriveDeposit on a mis-keyed $50 yields a nonsense $0
+    // deposit). `>=` is NaN-safe: a non-numeric Airtable value fails here.
+    tierPrice = Number(rancher[TIER_FIELD[cut]] || 0);
+    if (!(tierPrice >= MIN_TIER_PRICE)) {
+      return NextResponse.json(
+        { error: `${rancher['Ranch Name']} has no valid ${cut} price (must be at least $${MIN_TIER_PRICE} — check the Airtable field).` },
+        { status: 409 },
+      );
+    }
+    deposit = deriveDeposit(tierPrice);
   }
 
   // Find-or-create the Consumer (mirrors app/api/orders/request).
@@ -109,16 +164,25 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'could not resolve the buyer record' }, { status: 502 });
   }
 
-  const token = mintCampaignReserveToken({ consumerId, rancherSlug, cut });
-  const url = `${SITE_URL}/r/d/${token}`;
-  const deposit = deriveDeposit(tierPrice);
+  // Separate token PURPOSES and separate redemption paths — a link for one
+  // rail can never redeem on the other (see lib/campaignReserve).
+  const url =
+    rail === 'broker'
+      ? `${SITE_URL}/r/b/${mintBrokerReserveToken({ consumerId, rancherId: brokerRancherId, cut })}`
+      : `${SITE_URL}/r/d/${mintCampaignReserveToken({ consumerId, rancherSlug, cut })}`;
 
   return NextResponse.json({
     url,
-    rancher: String(rancher['Ranch Name'] || rancherSlug),
+    rail,
+    rancher: String(rancher['Ranch Name'] || rancherSlug || brokerRancherId),
     cut,
     cutLabel: CUT_LABELS[cut],
     tierPrice,
     deposit,
+    // On the broker rail the deposit IS the commission; on Connect the fee is
+    // added on top of the deposit at checkout. Surfaced so the sell console
+    // can state Ben's take honestly without re-deriving it.
+    bhcTake: rail === 'broker' ? deposit : null,
+    rancherNets: rail === 'broker' ? tierPrice - deposit : null,
   });
 }

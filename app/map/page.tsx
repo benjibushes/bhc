@@ -95,9 +95,17 @@ async function fetchPins(): Promise<MapPin[]> {
   // not hidden, not paused/non-compliant, has lat/lng. Onboarding-stage
   // ranchers join the discovery surface so visitors see the network is
   // alive + filling out, not just "verified or nothing".
+  //
+  // BROKER RAIL (2026-07-31): represented ranchers are EXCLUDED. This is the
+  // loosest public surface in the app — it has no {Page Live} gate and no
+  // operational gate, so prospects and mid-onboarding rows are plotted. That
+  // makes it the one place a rancher who never signed up for anything could
+  // otherwise appear on a public map. Their `Active Status` is blank, which
+  // passes both != checks below, so nothing else here would stop them.
   const formula = `AND(
     {Verification Status} != "Removed",
     NOT({Public Map Hidden} = 1),
+    NOT({Broker Rail} = 1),
     {Active Status} != "Paused",
     {Active Status} != "Non-Compliant",
     {Latitude} != BLANK(),
