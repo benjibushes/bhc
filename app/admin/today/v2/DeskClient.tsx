@@ -126,9 +126,27 @@ interface DeskCallbackRequest {
   repeatAsk: boolean;
 }
 
+// PROMISED — a follow-up Ben committed to on a call. The buyer is not asking
+// right now; we said we would call, and today is the day.
+interface DeskFollowUp {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  state: string;
+  /** Consumers.'Admin Notes' — why we promised to call back. */
+  notes: string;
+  /** 'YYYY-MM-DD' — the promised day. */
+  dueAt: string;
+  /** Whole calendar days late. 0 = promised for today. */
+  daysOverdue: number;
+}
+
 interface DeskData {
   // Ranked above every other bucket — see the section comment below.
   callbackRequests?: DeskCallbackRequest[];
+  // Ranked directly below callbacks — see the section comment below.
+  followUpsDue?: DeskFollowUp[];
   calls: DeskCall[];
   quizComplete: DeskBuyer[];
   depositPending: DeskReferral[];
@@ -344,6 +362,32 @@ export default function DeskClient() {
             <ul className="space-y-2">
               {desk.callbackRequests!.map((c) => (
                 <CallbackRequestRow key={c.id} req={c} onHandled={tick} />
+              ))}
+            </ul>
+          </section>
+        )}
+
+        {/* ── ⏰ FOLLOW UP TODAY ───────────────────────────────────────────
+            Directly BELOW "asked for a call" and ABOVE everything else, and
+            the order encodes the rule: a promise YOU made outranks a cold
+            dial, because breaking it spends trust you already earned — but it
+            does not outrank a buyer raising their hand right now.
+
+            These used to live only in a free-text note nothing read, which
+            meant "I'll call you in two weeks" was a promise kept entirely in
+            one person's head. Most-overdue first. */}
+        {(desk.followUpsDue?.length ?? 0) > 0 && (
+          <section className="mb-5 border-2 border-saddle bg-bone-warm p-4 md:p-5">
+            <h2 className="font-serif text-lg text-charcoal mb-1">
+              ⏰ Follow up today
+              <span className="text-xs text-saddle ml-2">({desk.followUpsDue!.length})</span>
+            </h2>
+            <p className="text-xs text-saddle mb-3">
+              You promised these buyers a call. Today is the day.
+            </p>
+            <ul className="space-y-2">
+              {desk.followUpsDue!.map((f) => (
+                <FollowUpRow key={f.id} row={f} onChanged={tick} />
               ))}
             </ul>
           </section>
@@ -1069,6 +1113,121 @@ function CallbackRequestRow({
       {req.note && (
         <p className="mt-2 pt-2 border-t border-divider text-saddle italic">
           &ldquo;{req.note}&rdquo;
+        </p>
+      )}
+    </li>
+  );
+}
+
+// One promised follow-up: who, how to reach them, the note that explains why
+// we promised, and the two actions that resolve it. Phone is a tel: link so a
+// tap dials straight out — same as the callback rail above.
+function FollowUpRow({
+  row,
+  onChanged,
+}: {
+  row: DeskFollowUp;
+  onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+
+  async function act(body: Record<string, unknown>, okMsg: string) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/admin/follow-ups/${row.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(body),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (res.ok && j?.ok) {
+        toast.success(j.alreadyDone ? 'Already cleared' : okMsg);
+        onChanged();
+      } else {
+        toast.error('Follow-up update failed', j?.error || `HTTP ${res.status}`);
+      }
+    } catch (e: any) {
+      toast.error('Follow-up update failed', e?.message || 'network error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const overdue = row.daysOverdue > 0;
+  const late =
+    row.daysOverdue === 0
+      ? 'due today'
+      : row.daysOverdue === 1
+        ? '1 day late'
+        : `${row.daysOverdue} days late`;
+
+  return (
+    <li className="border border-divider bg-white p-3 text-sm">
+      <div className="flex flex-wrap justify-between items-start gap-2">
+        <div className="min-w-0">
+          <strong className="text-charcoal">{row.name}</strong>
+          {row.state ? <span className="text-saddle"> · {row.state}</span> : null}
+          <div className="mt-0.5">
+            {row.phone ? (
+              <a
+                href={`tel:${row.phone}`}
+                className="text-charcoal font-medium underline underline-offset-2"
+              >
+                {row.phone}
+              </a>
+            ) : (
+              <span className="text-rust text-xs">no phone on file</span>
+            )}
+            {row.email ? (
+              <a href={`mailto:${row.email}`} className="text-saddle text-xs ml-2 underline">
+                {row.email}
+              </a>
+            ) : null}
+          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <span
+            className={`text-[10px] uppercase tracking-widest ${
+              overdue ? 'text-rust font-bold' : 'text-saddle'
+            }`}
+            title={`Promised for ${row.dueAt}`}
+          >
+            {late}
+          </span>
+          <button
+            type="button"
+            onClick={() => act({ action: 'done' }, 'Marked done')}
+            disabled={busy}
+            title="Clear the follow-up and stamp Last Contacted"
+            className="px-3 py-2 bg-charcoal text-bone text-[11px] uppercase tracking-widest hover:bg-divider transition-base whitespace-nowrap disabled:opacity-40"
+          >
+            {busy ? '…' : 'Done'}
+          </button>
+          <button
+            type="button"
+            onClick={() => act({ action: 'snooze', days: 3 }, 'Snoozed 3 days')}
+            disabled={busy}
+            title="Push this follow-up out 3 days from today"
+            className="px-2 py-2 border border-divider text-saddle text-[11px] uppercase tracking-widest hover:text-charcoal transition-base whitespace-nowrap disabled:opacity-40"
+          >
+            +3d
+          </button>
+          <button
+            type="button"
+            onClick={() => act({ action: 'snooze', days: 7 }, 'Snoozed 1 week')}
+            disabled={busy}
+            title="Push this follow-up out 1 week from today"
+            className="px-2 py-2 border border-divider text-saddle text-[11px] uppercase tracking-widest hover:text-charcoal transition-base whitespace-nowrap disabled:opacity-40"
+          >
+            +1w
+          </button>
+        </div>
+      </div>
+      {row.notes && (
+        <p className="mt-2 pt-2 border-t border-divider text-saddle whitespace-pre-wrap">
+          {row.notes}
         </p>
       )}
     </li>

@@ -8,8 +8,19 @@ import { callClaude } from '@/lib/ai';
 import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
+import {
+  selectDueFollowUps,
+  operatorToday,
+  followUpContextLine,
+  FOLLOW_UP_DIGEST_MAX_LINES,
+} from '@/lib/followUpQueue';
 
 export const maxDuration = 60;
+
+/** Telegram parse_mode=HTML. Buyer-supplied text must not be able to break it. */
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 
 const BHC_SYSTEM_PROMPT = `You are Ben's AI business assistant for BuyHalfCow (BHC). BHC is a private beef brokerage connecting verified consumers with American ranchers. Ben earns 10% commission on every sale. Be concise and direct — Ben reads this on his phone.`;
 
@@ -96,8 +107,37 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
       return (Date.now() - new Date(lastActivity).getTime()) >= 5 * 24 * 60 * 60 * 1000;
     }).length;
 
+    // ── PROMISED FOLLOW-UPS ─────────────────────────────────────────────
+    // Ben tells buyers "I'll call you in two weeks" on the phone. Until this
+    // block, the only record was a free-text note nothing read. Reuses the
+    // Consumers read above — zero extra Airtable calls.
+    //
+    // SILENT WHEN EMPTY, deliberately: this section renders as '' on a day
+    // with nothing due, adding not one line of noise. A digest that reports
+    // "0 follow-ups" every morning teaches Ben to skim past the whole message,
+    // and a skimmed digest is a rail that no longer exists.
+    //
+    // OPERATOR-ONLY. This tells BEN to make a call. It never emails or texts
+    // the buyer — his follow-ups are phone calls.
+    const followUpsDue = selectDueFollowUps(consumers as any[], operatorToday());
+    const shownFollowUps = followUpsDue.slice(0, FOLLOW_UP_DIGEST_MAX_LINES);
+    const followUpBlock = followUpsDue.length === 0
+      ? ''
+      : `\n\n<b>⏰ Follow up today (${followUpsDue.length})</b>\n${shownFollowUps
+          .map((f) => {
+            const late = f.daysOverdue > 0 ? ` <i>(${f.daysOverdue}d late)</i>` : '';
+            const phone = f.phone ? ` · ${escapeHtml(f.phone)}` : ' · no phone';
+            const ctx = followUpContextLine(f.notes);
+            return `• ${escapeHtml(f.name)}${phone}${late}${ctx ? `\n   ${escapeHtml(ctx)}` : ''}`;
+          })
+          .join('\n')}${
+          followUpsDue.length > shownFollowUps.length
+            ? `\n<i>+${followUpsDue.length - shownFollowUps.length} more on the desk</i>`
+            : ''
+        }`;
+
     const msg = `☀️ <b>Good Morning — Daily Digest</b>
-${now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
+${now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}${followUpBlock}
 
 <b>Last 24 Hours</b>
 👤 New signups: ${recentSignups.length} (🥩 ${beefSignups} beef, 🏷️ ${communitySignups} community)
@@ -128,6 +168,7 @@ ${now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numer
 - Consumers pending review: ${pendingConsumers}
 - Referrals pending approval: ${pendingReferrals}
 - Stalled referrals (5+ days no update): ${stalledReferrals}
+- Promised follow-ups due today (Ben said he'd call): ${followUpsDue.length}
 - Near-capacity ranchers: ${capacityWarnings}
 - Synced products pending /approvestore (off /shop until approved): ${pendingSyncApproval ?? 'unknown'}
 - Deals closed this month: ${monthWins.length}, commission: $${monthCommission.toLocaleString()}
@@ -178,7 +219,7 @@ SUGGESTED ACTIONS:
   return {
     status: 'success',
     recordsTouched: recentSignups.length + recentIntros + monthWins.length,
-    notes: `signups=${recentSignups.length} intros=${recentIntros} pending=${pendingConsumers} stalled=${stalledReferrals} closed=${monthWins.length} syncPendingApproval=${pendingSyncApproval ?? 'n/a'}`,
+    notes: `signups=${recentSignups.length} intros=${recentIntros} pending=${pendingConsumers} stalled=${stalledReferrals} closed=${monthWins.length} syncPendingApproval=${pendingSyncApproval ?? 'n/a'} followUpsDue=${followUpsDue.length}`,
   };
 }
 
