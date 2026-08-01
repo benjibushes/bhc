@@ -2,15 +2,28 @@
 //
 // FULFILLMENT SLA CHASE (backlog #112 / checkout audit 2026-07-14): a PAID
 // product order stuck in Status='New' now gets chased instead of silently
-// aging. Day 3+: nudge the rancher (one email ever, stamped 'SLA Nudged At').
-// Day 6+: escalate to the operator (Telegram, re-screams every 48h via
-// dedupe window until someone acts). Selection logic is pure + tested in
+// aging. Nudge the rancher (one email ever, stamped 'SLA Nudged At'), then
+// escalate to the operator (Telegram, re-screams every 48h via dedupe window
+// until someone acts). Selection logic is pure + tested in
 // lib/productFulfillmentSla.ts.
+//
+// SHOP-CHAIN AUDIT (2026-08-01), two changes:
+//   1. the windows ride the ranch's OWN 'Ships In Days' promise when it has
+//      one (flat 3/6 only as the fallback) — a 1-day promise is chased on
+//      day 2, a 14-day promise is left alone until day 15;
+//   2. at the escalate threshold the BUYER finally gets told. Their money was
+//      the only thing standing still and we were mailing everyone but them.
+//      One note per order ever, claim-before-send with read-back verify.
 
 import { getAllRecords, getRecordById, updateRecord, TABLES } from '@/lib/airtable';
-import { slaDecisions, NUDGE_DAYS, ESCALATE_DAYS, SLOW_NUDGE_DAYS, SLOW_ESCALATE_DAYS } from '@/lib/productFulfillmentSla';
+// The day-thresholds are no longer quoted from constants here: slaWindowFor
+// returns the windows this specific order was judged against (which now ride
+// the ranch's own 'Ships In Days' promise when it has one).
+import { slaDecisions, slaWindowFor } from '@/lib/productFulfillmentSla';
 import { selectStalePushedOrders, PUSHED_STALE_HOURS } from '@/lib/fulfillmentWebhookHealth';
 import { sendEmail } from '@/lib/email';
+import { sendBuyerOrderDelayNotice } from '@/lib/emailMinimal';
+import { orderStatusUrlFor } from '@/lib/orderStatusLink';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
@@ -86,6 +99,39 @@ async function alertStalePushedOrders(newOrders: any[]): Promise<{ alerted: numb
   }
 }
 
+// ── THE RANCHER'S OWN SHIP PROMISE (shop-chain audit 2026-08-01) ────────────
+// 'Ships In Days' lives on the PRODUCT, not the order, so the cron has to go
+// get it. Bounded on purpose: an order younger than the tightest possible
+// window (a 1-day promise + 1 grace day = 2) can never fire under ANY window,
+// so only orders at least that old need a lookup — which in practice is the
+// handful of genuinely-aging orders, not every open order on the platform.
+// Any miss degrades to the flat 3/6 rail, exactly as before this change.
+const PROMISE_LOOKUP_MIN_AGE_DAYS = 2;
+const PROMISE_LOOKUP_CAP = 60;
+
+async function loadShipPromises(orders: any[], nowMs: number): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  try {
+    const ids = new Set<string>();
+    for (const o of orders) {
+      const ordered = Date.parse(String(o['Ordered At'] || ''));
+      if (Number.isNaN(ordered)) continue;
+      if ((nowMs - ordered) / 86400000 < PROMISE_LOOKUP_MIN_AGE_DAYS) continue;
+      const pid = String(o['Product Record ID'] || '').trim();
+      if (pid) ids.add(pid);
+      if (ids.size >= PROMISE_LOOKUP_CAP) break;
+    }
+    for (const pid of ids) {
+      const prod: any = await getRecordById(TABLES.RANCHER_PRODUCTS, pid).catch(() => null);
+      const days = Number(prod?.['Ships In Days']);
+      if (Number.isFinite(days) && days > 0) map.set(pid, days);
+    }
+  } catch (e: any) {
+    console.warn('[product-fulfillment-sla] ship-promise lookup skipped (flat windows):', e?.message);
+  }
+  return map;
+}
+
 async function realHandler(_request: Request): Promise<SlaResult> {
   const newOrders = await getAllRecords(TABLES.RANCHER_ORDERS, `{Status} = 'New'`);
   // Connector-pushed orders are Shopify's to fulfill (GTM audit 2026-07-21):
@@ -100,6 +146,8 @@ async function realHandler(_request: Request): Promise<SlaResult> {
   // (no extra query). Isolated + non-fatal — must run regardless of whether the
   // rancher-facing SLA chase has any work below (hence before the early return).
   const health = await alertStalePushedOrders(newOrders as any[]);
+  const nowIso = new Date().toISOString();
+  const promises = unpushed.length > 0 ? await loadShipPromises(unpushed, Date.parse(nowIso)) : new Map();
   const decisions = slaDecisions(
     unpushed.map((o) => ({
       id: o.id,
@@ -109,8 +157,12 @@ async function realHandler(_request: Request): Promise<SlaResult> {
       // Wave C: the DEPOSIT/PICKUP markers live only in Order Ref — without
       // it the cron told ranchers to SHIP deposit-style orders on day 3.
       orderRef: String(o['Order Ref'] || ''),
+      // The promise the buyer was quoted at checkout; absent ⇒ flat windows.
+      promisedShipDays: promises.get(String(o['Product Record ID'] || '').trim()) ?? null,
+      // One buyer "we're on it" note per order, ever.
+      buyerNotifiedAt: String(o['Buyer Delay Notified At'] || ''),
     })),
-    new Date().toISOString(),
+    nowIso,
   );
 
   if (decisions.length === 0) {
@@ -120,6 +172,7 @@ async function realHandler(_request: Request): Promise<SlaResult> {
   const byId = new Map((newOrders as any[]).map((o) => [o.id, o]));
   let nudged = 0;
   let escalated = 0;
+  let buyersTold = 0;
   const errors: string[] = [];
 
   for (const d of decisions) {
@@ -187,6 +240,13 @@ async function realHandler(_request: Request): Promise<SlaResult> {
       // forming" — those orders dwell in New by design and crying wolf
       // trains ops to ignore the one alarm that matters.
       try {
+        // Quote the windows this order was ACTUALLY judged against — a flat
+        // "escalate @6d" on an order riding a 14-day promise reads like a bug.
+        const w = slaWindowFor(
+          d.kind,
+          promises.get(String(order['Product Record ID'] || '').trim()) ?? null,
+        );
+        const windowNote = `SLA: nudge @${w.nudgeDays}d, escalate @${w.escalateDays}d${w.fromPromise ? ' (from the ranch’s own Ships In Days promise)' : ''}`;
         const summary =
           d.kind === 'deposit'
             ? `STALLED DEPOSIT ${d.ageDays}d: ${product} (${rancherName})`
@@ -196,12 +256,12 @@ async function realHandler(_request: Request): Promise<SlaResult> {
         const detail =
           d.kind === 'deposit'
             ? `${buyer} put a deposit on ${product} ${d.ageDays} days ago and the size/balance confirm still hasn't happened ` +
-              `(deposit SLA: nudge @${SLOW_NUDGE_DAYS}d, escalate @${SLOW_ESCALATE_DAYS}d). Nudge the rancher to call the buyer.`
+              `(${windowNote}). Nudge the rancher to call the buyer.`
             : d.kind === 'pickup'
               ? `${buyer} paid for ${product} ${d.ageDays} days ago and the pickup still isn't done/scheduled ` +
-                `(pickup SLA: nudge @${SLOW_NUDGE_DAYS}d, escalate @${SLOW_ESCALATE_DAYS}d). Nudge the rancher to set a pickup time.`
+                `(${windowNote}). Nudge the rancher to set a pickup time.`
               : `${buyer} paid for ${product} ${d.ageDays} days ago; ${rancherName} still hasn't marked it Shipped ` +
-                `(SLA: nudge @${NUDGE_DAYS}d, escalate @${ESCALATE_DAYS}d). Call the rancher or refund the buyer — ` +
+                `(${windowNote}). Call the rancher or refund the buyer — ` +
                 `a paid order this old is a chargeback forming.`;
         await sendOperatorSignal({
           urgency: 'loud',
@@ -215,16 +275,55 @@ async function realHandler(_request: Request): Promise<SlaResult> {
       } catch (e: any) {
         errors.push(`${d.id}: escalate failed (${e?.message || 'unknown'})`);
       }
+
+      // ── TELL THE BUYER (shop-chain audit 2026-08-01) ─────────────────────
+      // Until now this whole loop nudged the rancher and rang the operator
+      // while the person whose money was sitting still heard nothing.
+      //
+      // CLAIM-BEFORE-SEND WITH READ-BACK (same rail as product-review-ask):
+      // stamp 'Buyer Delay Notified At', re-read the row, and only send if
+      // the stamp actually persisted. This is what makes the template safe on
+      // the transactional whitelist — a failed write, or the field not
+      // existing yet, yields ZERO mails rather than one every single run.
+      // Isolated try/catch: this can never break the escalation above.
+      if (d.notifyBuyer) {
+        const buyerEmail = String(order['Buyer Email'] || '').trim();
+        if (buyerEmail) {
+          try {
+            const stampedAt = new Date().toISOString();
+            await updateRecord(TABLES.RANCHER_ORDERS, d.id, { 'Buyer Delay Notified At': stampedAt });
+            const readBack: any = await getRecordById(TABLES.RANCHER_ORDERS, d.id).catch(() => null);
+            if (!readBack || !String(readBack['Buyer Delay Notified At'] || '').trim()) {
+              // Could not prove the one-shot throttle persisted → do NOT send.
+              console.warn('[product-fulfillment-sla] buyer delay stamp did not persist — mail suppressed:', d.id);
+              errors.push(`${d.id}: buyer-notice suppressed (stamp unverified)`);
+            } else {
+              await sendBuyerOrderDelayNotice({
+                buyerEmail,
+                buyerName: String(order['Buyer Name'] || ''),
+                productName: product,
+                rancherName,
+                ageDays: d.ageDays,
+                kind: d.kind,
+                orderStatusUrl: orderStatusUrlFor(d.id),
+              });
+              buyersTold += 1;
+            }
+          } catch (e: any) {
+            errors.push(`${d.id}: buyer notice failed (${e?.message || 'unknown'})`);
+          }
+        }
+      }
     }
   }
 
   const notes =
-    `${newOrders.length} New, ${decisions.length} stale → ${nudged} nudged, ${escalated} escalated` +
+    `${newOrders.length} New, ${decisions.length} stale → ${nudged} nudged, ${escalated} escalated, ${buyersTold} buyers told` +
     health.note +
     (errors.length ? `; ${errors.length} errors: ${errors.slice(0, 3).join(' | ')}` : '');
   return {
     status: errors.length > 0 ? 'partial' : 'success',
-    recordsTouched: nudged,
+    recordsTouched: nudged + buyersTold,
     notes,
   };
 }

@@ -85,7 +85,34 @@ function toClientProduct(r: any) {
     packaging: String(r['Packaging'] || ''),
     feeds: String(r['Feeds'] || ''),
     shippingCost: Number(r['Shipping Cost']) > 0 ? Number(r['Shipping Cost']) : null,
+    // The rancher's recorded shipping answer (shop-chain audit 2026-08-01).
+    // 'included' | 'charged' | '' where '' = this listing predates the
+    // question and the form must ask. An explicit 0 in 'Shipping Cost' is the
+    // durable "included" marker; 'Shipping Included' is the human-readable
+    // twin and reads undefined until Ben adds it.
+    shippingChoice:
+      r['Shipping Included'] === true
+        ? 'included'
+        : Number(r['Shipping Cost']) > 0
+          ? 'charged'
+          : r['Shipping Cost'] === 0
+            ? 'included'
+            : '',
   };
+}
+
+// 'Shipping Included' is a NEW Rancher Products field. It is ALWAYS written in
+// its own patch, never folded into the create/update above: an unknown field
+// name 422s the entire write in Airtable, which would take the whole listing
+// rail down until the field exists. The answer also lives in 'Shipping Cost'
+// (0 = included), so a no-op here loses nothing but readability.
+async function stampShippingIncluded(productId: string, shippingIncluded: boolean | null) {
+  if (shippingIncluded === null) return; // local pickup — question not asked
+  await updateRecord(TABLES.RANCHER_PRODUCTS, productId, {
+    'Shipping Included': shippingIncluded,
+  }).catch((e: any) => {
+    console.warn('[rancher/products] Shipping Included not persisted (field may not exist yet):', e?.message);
+  });
 }
 
 function revalidateShop(id?: string) {
@@ -176,6 +203,7 @@ export async function POST(request: Request) {
   if (!created?.id) {
     return NextResponse.json({ error: 'could not save the product — try again.' }, { status: 500 });
   }
+  await stampShippingIncluded(created.id, v.shippingIncluded);
 
   // Pre-mint the Stripe Product + Price on the rancher's connected account so
   // the first checkout is instant. Best-effort: checkout mints lazily + falls
@@ -276,7 +304,7 @@ export async function PATCH(request: Request) {
   // here to do exactly that), including deposit-style rows, without touching
   // the hand-set Base/price. Content keys drive the deposit fence; a
   // stock-only PATCH takes the dedicated path below.
-  const CONTENT_KEYS = ['name', 'displayPrice', 'category', 'description', 'weight', 'imageUrl', 'shipsNationwide', 'shelfStable', 'whatsIncluded', 'shipsInDays', 'packaging', 'feeds', 'shippingCost'];
+  const CONTENT_KEYS = ['name', 'displayPrice', 'category', 'description', 'weight', 'imageUrl', 'shipsNationwide', 'shelfStable', 'whatsIncluded', 'shipsInDays', 'packaging', 'feeds', 'shippingCost', 'shippingChoice'];
   const editing = CONTENT_KEYS.some((k) => k in body);
   const stockOnly = 'ordersLeft' in body && !editing;
 
@@ -332,6 +360,7 @@ export async function PATCH(request: Request) {
   }
 
   // Content edits ride the same validator as create (all-or-nothing).
+  let shippingIncludedToStamp: boolean | null = null;
   if (editing) {
     const merged = {
       name: body.name ?? String(product['Product Name'] || ''),
@@ -352,10 +381,21 @@ export async function PATCH(request: Request) {
       // content edit re-validated without it and silently CLEARED the row's
       // 'Shipping Cost' (validator writes null when absent).
       shippingCost: 'shippingCost' in body ? body.shippingCost : (product['Shipping Cost'] ?? null),
+      // Shop-chain audit 2026-08-01: thread the STORED answer so editing an
+      // already-answered listing never re-asks. A row that predates the
+      // question (blank Shipping Cost, no flag) resolves to '' and the
+      // validator refuses until the rancher picks — which is the point.
+      shippingChoice:
+        'shippingChoice' in body
+          ? body.shippingChoice
+          : product['Shipping Included'] === true || product['Shipping Cost'] === 0
+            ? 'included'
+            : undefined,
     };
     const v = validateProductInput(merged);
     if (!v.ok) return NextResponse.json({ error: v.error }, { status: 400 });
     Object.assign(patch, v.fields);
+    shippingIncludedToStamp = v.shippingIncluded;
     // Any price change re-derives the net so Base can never drift from the
     // margin policy. Stripe price sync self-heals on next checkout.
     const pricing = deriveProductPricing({
@@ -370,6 +410,7 @@ export async function PATCH(request: Request) {
   }
 
   await updateRecord(TABLES.RANCHER_PRODUCTS, productId, patch);
+  await stampShippingIncluded(productId, shippingIncludedToStamp);
   revalidateShop(productId);
 
   // Audit fix C-2g: a re-show held by approval mode must never strand silently

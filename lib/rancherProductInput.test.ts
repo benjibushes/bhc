@@ -13,6 +13,8 @@ import {
   MARGIN_BY_CATEGORY,
   PRODUCT_CATEGORIES,
   MIN_PRODUCT_PRICE_CENTS,
+  resolveShippingChoice,
+  SHIPPING_CHOICE_PROMPT,
 } from './rancherProductInput';
 
 // ── deriveProductPricing ──────────────────────────────────────────────────────
@@ -58,6 +60,11 @@ test('sellability invariant holds at awkward cent values', () => {
 
 // ── validateProductInput ──────────────────────────────────────────────────────
 
+// Shop-chain audit 2026-08-01: a nationwide listing must now answer BOTH
+// "how long until it ships" and "who pays shipping" — so the shared fixture
+// answers them. The gates themselves are tested at the bottom of this file.
+const ANSWERED = { shipsInDays: 3, shippingChoice: 'included' as const };
+
 const GOOD = {
   name: 'Peppered Beef Jerky',
   displayPrice: 19.99,
@@ -67,6 +74,7 @@ const GOOD = {
   imageUrl: 'https://blob.vercel-storage.com/ranchers/rec123/x-photo.jpg',
   shipsNationwide: true,
   shelfStable: true,
+  ...ANSWERED,
 };
 
 test('a valid input normalizes into Airtable-ready fields', () => {
@@ -145,21 +153,23 @@ test('ordersLeft: blank = unlimited (null field), integers pass, junk rejected',
   assert.equal(validateProductInput({ ...GOOD, ordersLeft: -1 as any }).ok, false);
 });
 
-test('shippingCost: blank/0 clears the field (shipping included); values pass; junk + out-of-range rejected', () => {
-  const base = { name: 'Jerky', displayPrice: 25, category: 'Jerky' };
-  const blank = validateProductInput({ ...base });
-  assert.ok(blank.ok && blank.fields['Shipping Cost'] === null);
+test('shippingCost: 0 records "price includes it", values pass, junk + out-of-range rejected', () => {
+  const base = { name: 'Jerky', displayPrice: 25, category: 'Jerky', ...ANSWERED };
+  // 0 is now an EXPLICIT answer that persists, not a cleared field — blank is
+  // reserved for "this listing predates the question".
   const zero = validateProductInput({ ...base, shippingCost: 0 });
-  assert.ok(zero.ok && zero.fields['Shipping Cost'] === null);
+  assert.ok(zero.ok && zero.fields['Shipping Cost'] === 0);
+  assert.ok(zero.ok && zero.shippingIncluded === true);
   const set = validateProductInput({ ...base, shippingCost: 12.5 });
   assert.ok(set.ok && set.fields['Shipping Cost'] === 12.5);
+  assert.ok(set.ok && set.shippingIncluded === false);
   assert.equal(validateProductInput({ ...base, shippingCost: -3 }).ok, false);
   assert.equal(validateProductInput({ ...base, shippingCost: 250 }).ok, false);
   assert.equal(validateProductInput({ ...base, shippingCost: Number('junk') }).ok, false);
 });
 
 test('price ceiling: fat-fingered 1999-instead-of-19.99 is rejected; $2,000 exactly passes', () => {
-  const base = { name: 'Jerky', category: 'Jerky' };
+  const base = { name: 'Jerky', category: 'Jerky', ...ANSWERED };
   assert.equal(validateProductInput({ ...base, displayPrice: 1999 }).ok, true); // $1,999 valid
   assert.equal(validateProductInput({ ...base, displayPrice: 2000 }).ok, true); // boundary
   assert.equal(validateProductInput({ ...base, displayPrice: 2000.01 }).ok, false);
@@ -167,7 +177,7 @@ test('price ceiling: fat-fingered 1999-instead-of-19.99 is rejected; $2,000 exac
 });
 
 test('SHARE FENCE: whole/half/quarter share names are rejected; boxes + eighth share + half-pound pass', () => {
-  const base = { displayPrice: 1900, category: 'Bundle' };
+  const base = { displayPrice: 1900, category: 'Bundle', ...ANSWERED };
   assert.equal(validateProductInput({ ...base, name: 'Half Beef Share' }).ok, false);
   assert.equal(validateProductInput({ ...base, name: 'half cow deposit' }).ok, false);
   assert.equal(validateProductInput({ ...base, name: 'QUARTER-BEEF bundle' }).ok, false);
@@ -182,6 +192,106 @@ test('SHARE FENCE: whole/half/quarter share names are rejected; boxes + eighth s
 test('PATCH merge regression: shippingCost survives an unrelated content edit', () => {
   // Direct validator check of the fix's contract: absent shippingCost clears,
   // present value persists — the route now always threads the existing value.
-  const withShip = validateProductInput({ name: 'Jerky', displayPrice: 25, category: 'Jerky', shippingCost: 8.5 });
+  const withShip = validateProductInput({ name: 'Jerky', displayPrice: 25, category: 'Jerky', shippingCost: 8.5, ...ANSWERED });
   assert.ok(withShip.ok && withShip.fields['Shipping Cost'] === 8.5);
+});
+
+// ── SHIPPING IS A DELIBERATE CHOICE (shop-chain audit 2026-08-01) ───────────
+// The old form's default outcome was: nationwide checked, shipping blank,
+// rancher silently eats the cold-chain cost. Now they have to say which.
+
+test('resolveShippingChoice: an amount IS the answer; 0 IS the answer; blank refuses', () => {
+  const nationwide = { shipsNationwide: true };
+  assert.deepEqual(resolveShippingChoice({ ...nationwide, shippingCost: 65 }), {
+    ok: true,
+    shippingCostField: 65,
+    shippingIncluded: false,
+  });
+  assert.deepEqual(resolveShippingChoice({ ...nationwide, shippingCost: 0 }), {
+    ok: true,
+    shippingCostField: 0,
+    shippingIncluded: true,
+  });
+  assert.deepEqual(resolveShippingChoice({ ...nationwide, shippingChoice: 'included' }), {
+    ok: true,
+    shippingCostField: 0,
+    shippingIncluded: true,
+  });
+  // No amount and no answer → refuse, with the plain-words guidance.
+  const blank = resolveShippingChoice(nationwide);
+  assert.equal(blank.ok, false);
+  if (!blank.ok) {
+    assert.equal(blank.error, SHIPPING_CHOICE_PROMPT);
+    assert.match(blank.error, /\$40 to \$90/);
+  }
+  // "buyer pays" with no number is an unfinished answer, not an answer.
+  const charged = resolveShippingChoice({ ...nationwide, shippingChoice: 'charged' });
+  assert.equal(charged.ok, false);
+});
+
+test('resolveShippingChoice: local pickup is never asked and never charged', () => {
+  assert.deepEqual(resolveShippingChoice({ shipsNationwide: false }), {
+    ok: true,
+    shippingCostField: null,
+    shippingIncluded: null,
+  });
+  // Even a stray amount on a pickup row resolves to no charge.
+  assert.deepEqual(resolveShippingChoice({ shipsNationwide: false, shippingCost: 40 }), {
+    ok: true,
+    shippingCostField: null,
+    shippingIncluded: null,
+  });
+});
+
+test('a nationwide product cannot be listed without answering shipping', () => {
+  const noAnswer = validateProductInput({ name: 'Jerky', displayPrice: 25, category: 'Jerky', shipsInDays: 3 });
+  assert.equal(noAnswer.ok, false);
+  if (!noAnswer.ok) assert.match(noAnswer.error, /shipping/i);
+});
+
+test('NON-BREAKING: a local-pickup product still lists with neither answer', () => {
+  const pickup = validateProductInput({
+    name: 'Ground Box',
+    displayPrice: 180,
+    category: 'Ground Box',
+    shipsNationwide: false,
+  });
+  assert.equal(pickup.ok, true);
+  if (pickup.ok) {
+    assert.equal(pickup.fields['Shipping Cost'], null);
+    assert.equal(pickup.fields['Ships In Days'], null);
+    assert.equal(pickup.shippingIncluded, null);
+  }
+});
+
+// ── SHIPS IN DAYS NOW MEANS SOMETHING ──────────────────────────────────────
+
+test('a shippable product must promise a ship window (it drives the SLA)', () => {
+  const blank = validateProductInput({
+    name: 'Jerky',
+    displayPrice: 25,
+    category: 'Jerky',
+    shippingChoice: 'included',
+  });
+  assert.equal(blank.ok, false);
+  if (!blank.ok) assert.match(blank.error, /days/i);
+
+  const ok = validateProductInput({
+    name: 'Jerky',
+    displayPrice: 25,
+    category: 'Jerky',
+    shippingChoice: 'included',
+    shipsInDays: 2,
+  });
+  assert.equal(ok.ok, true);
+  if (ok.ok) assert.equal(ok.fields['Ships In Days'], 2);
+});
+
+test('ship window stays a sane whole number of days', () => {
+  const base = { name: 'Jerky', displayPrice: 25, category: 'Jerky', shippingChoice: 'included' };
+  assert.equal(validateProductInput({ ...base, shipsInDays: 0 }).ok, false);
+  assert.equal(validateProductInput({ ...base, shipsInDays: 61 }).ok, false);
+  assert.equal(validateProductInput({ ...base, shipsInDays: 2.5 as any }).ok, false);
+  assert.equal(validateProductInput({ ...base, shipsInDays: 60 }).ok, true);
+  assert.equal(validateProductInput({ ...base, shipsInDays: 1 }).ok, true);
 });

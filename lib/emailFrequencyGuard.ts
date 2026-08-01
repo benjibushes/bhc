@@ -200,6 +200,25 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   // 'SLA Nudged At' before a second could fire) — whitelisting cannot create
   // volume, and capping it would silently strand a paid unshipped order.
   'product_sla_nudge',
+  // Buyer-side twin of product_sla_nudge (shop-chain audit 2026-08-01): the
+  // SLA cron chased the rancher and rang the operator on a stale paid order
+  // but never told the BUYER, whose money was the one sitting still. Silence
+  // at day 6 is how a paid order becomes a chargeback.
+  //
+  // WHY THIS CANNOT CREATE VOLUME — the bar this whitelist sets (cf. the
+  // still_looking_reconfirm note above, which is deliberately NOT whitelisted
+  // because its throttle is a best-effort stamp):
+  //   • throttle is DB STATE, not a counter: Rancher Orders 'Buyer Delay
+  //     Notified At', one per order forever (slaDecisions sets notifyBuyer
+  //     false the instant the stamp is non-blank);
+  //   • it is CLAIM-BEFORE-SEND WITH READ-BACK: the cron writes the stamp,
+  //     re-reads the row, and only sends if the stamp actually persisted. A
+  //     failed write — or the field not existing yet — means ZERO mails, not
+  //     one per run. That is the exact failure mode that disqualified
+  //     still_looking_reconfirm, inverted;
+  //   • the order leaves the eligible set as soon as it ships/refunds
+  //     (Status='New' is a hard filter upstream).
+  'buyer_order_delay',
   // Sales-floor pivot 2026-06-09: 4 new minimal-pipeline templates. All
   // are 1:1 transactional triggered by buyer state changes (signup, quiz
   // complete, sales-call close, rancher accept). Capping any of these

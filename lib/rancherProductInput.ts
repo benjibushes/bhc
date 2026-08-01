@@ -57,6 +57,86 @@ export interface ProductPricing {
   marginRate: number;
 }
 
+// ── SHIPPING MUST BE A DELIBERATE CHOICE (shop-chain audit 2026-08-01) ───────
+//
+// The form asked for a "shipping charge (optional)" next to a nationwide
+// checkbox that defaults ON, with no guidance whatsoever. So the DEFAULT
+// outcome for a new rancher was: ships nationwide, shipping blank, rancher
+// silently eats the cold-chain cost on every order — and nobody finds out
+// until the first dry-ice invoice lands. (The one live order is fine: that
+// ranch's price genuinely includes shipping. It just wasn't RECORDED as a
+// choice, which is the part that doesn't survive a second rancher.)
+//
+// Now a nationwide product must say WHICH it is, and the answer is persisted:
+//   'included' → Shipping Cost 0   (explicit zero, distinguishable from blank)
+//   'charged'  → Shipping Cost > 0
+// Blank Shipping Cost now means ONLY "this listing predates the question" —
+// which is what makes the change non-breaking: existing rows keep working
+// untouched and are asked once, the next time they're edited.
+export type ShippingChoice = 'included' | 'charged';
+
+/** Plain-words guidance the form shows. Real frozen cross-country rates. */
+export const FROZEN_SHIPPING_LOW_DOLLARS = 40;
+export const FROZEN_SHIPPING_HIGH_DOLLARS = 90;
+
+export const SHIPPING_CHOICE_PROMPT =
+  'how does shipping work on this one? either your price already covers it, or the buyer pays a shipping charge on top. ' +
+  `shipping frozen beef cross-country usually runs $${FROZEN_SHIPPING_LOW_DOLLARS} to $${FROZEN_SHIPPING_HIGH_DOLLARS} a box — ` +
+  'if your price does not cover that, you are paying it out of your own cut on every order.';
+
+export type ShippingResolution =
+  | { ok: true; shippingCostField: number | null; shippingIncluded: boolean | null }
+  | { ok: false; error: string };
+
+/**
+ * Decide what a product's shipping fields should be, or refuse until the
+ * rancher answers. Pure.
+ *
+ *  - LOCAL PICKUP (shipsNationwide false): shipping is never charged and the
+ *    question is not asked — nothing to be ambiguous about.
+ *  - An amount > 0 IS the answer ("buyer pays it"), no separate flag needed.
+ *  - An explicit 0 IS the answer ("my price covers it").
+ *  - Blank + an explicit 'included' choice ⇒ 0.
+ *  - Blank + 'charged' ⇒ refuse: they picked "buyer pays" and typed no number.
+ *  - Blank + no choice ⇒ refuse with SHIPPING_CHOICE_PROMPT.
+ */
+export function resolveShippingChoice(input: {
+  shipsNationwide?: boolean;
+  shippingCost?: number | '' | null;
+  shippingChoice?: string | null;
+}): ShippingResolution {
+  const nationwide = input.shipsNationwide !== false;
+  if (!nationwide) {
+    return { ok: true, shippingCostField: null, shippingIncluded: null };
+  }
+
+  const raw = input.shippingCost;
+  const blank = raw === undefined || raw === null || raw === '';
+  if (!blank) {
+    const s = Number(raw);
+    if (!Number.isFinite(s) || s < 0 || s > 200) {
+      return {
+        ok: false,
+        error: 'shipping charge must be between $0 and $200 (enter 0 if your price already covers shipping).',
+      };
+    }
+    const rounded = s > 0 ? Math.round(s * 100) / 100 : 0;
+    return { ok: true, shippingCostField: rounded, shippingIncluded: rounded === 0 };
+  }
+
+  const choice = String(input.shippingChoice || '').trim().toLowerCase();
+  if (choice === 'included') {
+    return { ok: true, shippingCostField: 0, shippingIncluded: true };
+  }
+  if (choice === 'charged') {
+    return {
+      ok: false,
+      error: `enter the shipping amount the buyer pays (frozen usually runs $${FROZEN_SHIPPING_LOW_DOLLARS} to $${FROZEN_SHIPPING_HIGH_DOLLARS} cross-country), or switch to "my price already includes shipping".`,
+    };
+  }
+  return { ok: false, error: SHIPPING_CHOICE_PROMPT };
+}
+
 /**
  * Derive the rancher's net from the retail price via the category margin.
  * Base is rounded (not floored) then clamped so the sellability invariant
@@ -124,11 +204,16 @@ export interface ProductInput {
   shipsInDays?: number | '' | null;
   packaging?: string;
   feeds?: string;
-  // Shipping (2026-07-07): optional per-order shipping charge in DOLLARS.
-  // Blank/0 = shipping included in the retail price (the default). When set,
-  // the buyer pays it at checkout as a separate shipping line and the rancher
+  // Shipping (2026-07-07): per-order shipping charge in DOLLARS. When > 0 the
+  // buyer pays it at checkout as a separate shipping line and the rancher
   // keeps 100% of it — BHC's margin never touches shipping.
+  //
+  // 2026-08-01: 0 now means "my price already covers shipping" (a deliberate
+  // answer), and BLANK means "this listing predates the question". See
+  // resolveShippingChoice.
   shippingCost?: number | '' | null;
+  /** The explicit answer when no amount is entered. See ShippingChoice. */
+  shippingChoice?: ShippingChoice | string | null;
 }
 
 export type ValidatedProduct =
@@ -139,6 +224,17 @@ export type ValidatedProduct =
        *  with the margin math). null clears a field (unlimited inventory). */
       fields: Record<string, string | number | boolean | null>;
       displayCents: number;
+      /**
+       * The rancher's shipping answer, deliberately kept OUT of `fields`:
+       * 'Shipping Included' is a NEW Rancher Products field, and an unknown
+       * field name 422s the whole create/update in Airtable. The route writes
+       * it in its own best-effort patch so the listing rail cannot break
+       * before Ben adds the field. null = local pickup (question not asked).
+       *
+       * The answer is ALSO encoded in 'Shipping Cost' (0 = included, >0 =
+       * charged, blank = never asked), so it survives regardless.
+       */
+      shippingIncluded: boolean | null;
     }
   | { ok: false; error: string };
 
@@ -213,27 +309,43 @@ export function validateProductInput(body: ProductInput): ValidatedProduct {
   if (packaging.length > 200) return { ok: false, error: 'packaging is too long (200 max).' };
   const feeds = String(body.feeds || '').trim();
   if (feeds.length > 200) return { ok: false, error: 'feeds is too long (200 max).' };
+  // SHIPS IN DAYS — REQUIRED for a shippable product (shop-chain audit
+  // 2026-08-01). It is quoted to the buyer at checkout ("ships from the ranch
+  // within ~N days") and it now drives the fulfillment-SLA windows
+  // (lib/productFulfillmentSla.slaWindowFor), so a blank one means the buyer
+  // gets a vague promise AND the rancher gets chased on someone else's
+  // schedule. Local-pickup products never ship, so it stays optional there.
+  //
+  // Non-breaking: this only runs through validateProductInput, i.e. on create
+  // and on a content edit. Existing rows keep selling untouched until someone
+  // edits them.
+  const nationwide = body.shipsNationwide !== false;
   let shipsInDaysField: number | null = null;
   const rawDays = body.shipsInDays;
-  if (!(rawDays === undefined || rawDays === null || rawDays === '')) {
+  const daysBlank = rawDays === undefined || rawDays === null || rawDays === '';
+  if (!daysBlank) {
     const d = Number(rawDays);
     if (!Number.isInteger(d) || d < 1 || d > 60) {
-      return { ok: false, error: 'ships-in days must be a whole number of days (1–60), or blank.' };
+      return { ok: false, error: 'ships-in days must be a whole number of days (1–60).' };
     }
     shipsInDaysField = d;
+  } else if (nationwide) {
+    return {
+      ok: false,
+      error:
+        'how many days until this ships? buyers see it at checkout, and it is what we hold the order to — a real number you can hit beats an optimistic one.',
+    };
   }
 
-  // Shipping cost: blank or 0 → cleared (shipping included). Capped at $200 —
-  // above that it's a typo, not a shipping rate for a beef box.
-  let shippingCostField: number | null = null;
-  const rawShip = body.shippingCost;
-  if (!(rawShip === undefined || rawShip === null || rawShip === '')) {
-    const s = Number(rawShip);
-    if (!Number.isFinite(s) || s < 0 || s > 200) {
-      return { ok: false, error: 'shipping charge must be between $0 and $200 (leave blank if shipping is built into your price).' };
-    }
-    shippingCostField = s > 0 ? Math.round(s * 100) / 100 : null;
-  }
+  // Shipping: an explicit choice, not a blank that quietly costs the rancher
+  // money on every order. See resolveShippingChoice.
+  const shipping = resolveShippingChoice({
+    shipsNationwide: body.shipsNationwide,
+    shippingCost: body.shippingCost,
+    shippingChoice: body.shippingChoice,
+  });
+  if (!shipping.ok) return { ok: false, error: shipping.error };
+  const shippingCostField = shipping.shippingCostField;
 
   // External checkout URL (BYOC): optional; when present must be a real
   // http(s) URL — anything else is rejected so /go can trust the record.
@@ -256,7 +368,7 @@ export function validateProductInput(body: ProductInput): ValidatedProduct {
     Description: description,
     'Weight / Size': weight,
     'Image URL': imageUrl,
-    'Ships Nationwide': body.shipsNationwide === false ? false : true,
+    'Ships Nationwide': nationwide,
     'External Checkout URL': externalUrl,
     'Shelf Stable': !!body.shelfStable,
     'Orders Left': ordersLeftField,
@@ -267,5 +379,5 @@ export function validateProductInput(body: ProductInput): ValidatedProduct {
     'Shipping Cost': shippingCostField,
   };
 
-  return { ok: true, fields, displayCents };
+  return { ok: true, fields, displayCents, shippingIncluded: shipping.shippingIncluded };
 }

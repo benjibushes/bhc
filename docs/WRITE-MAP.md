@@ -574,6 +574,15 @@ R: Received At — 60-day TTL purge only (log-retention cron :37). Others: ops/f
 
 ## Rancher Orders (`tblcr5HVycBm2b2ld`) — low-ticket product rail
 
+> **BUYER-FACING READER (new 2026-08-01)**: `app/order/[id]/page.tsx` — until then the
+> ONLY non-admin/non-rancher/non-cron reader of this table was the reviews query, i.e.
+> the buyer had no order surface at all. The `[id]` segment is a SIGNED token
+> (lib/orderStatusLink.ts, `purpose:'order-status'`, 180d, read-only, order-scoped) —
+> a raw record id in that slot fails verification. The view model is pure +
+> tested in lib/orderStatusView.ts. Minted into: the product receipt
+> (lib/productSettlement.ts), the shipped/picked-up mail (app/api/rancher/orders),
+> `buyer_refund_notice` and `buyer_order_delay` (lib/emailMinimal.ts).
+
 Single row-creator for the whole table: lib/productSettlement.ts:175 (`settleProductPurchase`,
 fired from the stripe-connect webhook on `payment_intent.succeeded` w/ metadata.type=
 'product_purchase'; re-driven by app/api/cron/product-settlement-net/route.ts:110 which
@@ -589,10 +598,11 @@ W: lib/productSettlement.ts:192.
 R: lib/productSettlement.ts:142-149 — redelivery dedup (THROWS on lookup error ⇒ webhook 5xx, never silent dup) + post-create race guard :205-211 (lowest record id wins); :502-510 refund reconcile lookup; app/api/cron/product-settlement-net/route.ts:98 (lib/productSettlementNet.ts:33-44).
 Sem: THE idempotency key of the product rail.
 
-### Status (singleSelect New|Shipped|Delivered|Refunded)
-W: lib/productSettlement.ts:193 ('New' at settle); app/api/rancher/orders/route.ts:145 ('Shipped', rancher POST); app/api/webhooks/shopify/route.ts:366 via lib/shopifyWebhookGuards.ts:94-96 ('Shipped' on fulfillment webhook when current='New'); lib/productSettlement.ts:558 ('Refunded' on full refund/dispute — ALL rows for the PI :555-561).
-R: app/api/rancher/orders/route.ts:123-127 — 409 on Refunded ("refund never ships") / already-Shipped; lib/fulfillmentPush.ts:21 — push requires 'New'; app/api/cron/fulfillment-push-net/route.ts:88; lib/fulfillmentPushRunner.ts:81 (Refunded/Cancelled after push ⇒ cancel external), :150; lib/shopifyCatalogSync.ts:139,157-158 (terminal drops M4 obligation); app/api/cron/product-review-ask/route.ts:58; lib/productSettlement.ts:513.
-Sem: the rail's state machine. "Refund never ships" enforced three-deep: dashboard 409, push gate, post-push re-read cancel.
+### Status (singleSelect New|Shipped|Delivered|Refunded|**Cancelled** ⚠️ NEW OPTION)
+W: lib/productSettlement.ts ('New' at settle); app/api/rancher/orders/route.ts ('Shipped', rancher POST); app/api/webhooks/shopify/route.ts:366 via lib/shopifyWebhookGuards.ts:94-96 ('Shipped' on fulfillment webhook when current='New'); lib/productSettlement.ts `reconcileProductOrderRefund` (terminal status on full refund/dispute — ALL rows for the PI; `opts.terminalStatus` selects 'Refunded' or 'Cancelled', default 'Refunded'); **app/api/rancher/orders/refund/route.ts (NEW 2026-08-01) — flips the terminal status BEFORE the Stripe refund as its fail-closed gate, and reverts to 'New' if the refund fails.**
+R: app/api/rancher/orders/route.ts — 409 on Refunded **and Cancelled** ("refund never ships") / already-Shipped; lib/productOrderTermination.ts `decideTermination` (TERMINAL_STATUSES / SHIPPED_STATUSES); lib/fulfillmentPush.ts:21 — push requires 'New'; app/api/cron/fulfillment-push-net/route.ts:88; lib/fulfillmentPushRunner.ts:81 (Refunded/Cancelled after push ⇒ cancel external), :150; lib/shopifyCatalogSync.ts:139,157-158 (terminal drops M4 obligation); lib/fulfillmentWebhookHealth.ts:25 (RESOLVED_STATUSES); app/api/cron/product-review-ask/route.ts:58; lib/orderStatusView.ts `orderStateFromStatus` (buyer page).
+Sem: the rail's state machine. "Refund never ships" enforced FOUR-deep: `decideTermination` refusal, dashboard 409 (now covering Cancelled), push gate, post-push re-read cancel.
+⚠️ **BEN: 'Cancelled' must be added to the single-select.** Until then the refund route's step-1 write 422s → it refuses BEFORE moving any money and rings Telegram (fail closed, correct). The webhook path degrades differently on purpose: `reconcileProductOrderRefund` falls back to 'Refunded' rather than leave a refunded order in 'New'. 'Canceled' (one L) is tolerated on READ only — imported data.
 
 ### Buyer Paid / Rancher Payout / BHC Margin (currency trio)
 W: lib/productSettlement.ts:188-190 — settlement only; `computeSettlementMoney` :63-82: paid = display×qty + shipping; payout = base×qty + shipping; margin = metadata.marginCents (whole-order application fee) else legacy (display−base)×qty. Upstream: metadata minted lib/productCheckout.ts:181 (applicationFeeCents = gross margin − absorbed Stripe fee, `absorbStripeFee` :89-95); charged as application_fee_amount at lib/productCheckout.ts:290 + lib/productPaymentIntent.ts:73 (shipping never skimmed).
@@ -604,9 +614,20 @@ W: lib/productSettlement.ts:194 — always at settle.
 R: lib/fulfillmentPushSelect.ts:116-117,143-147 — oldest-first + 3-day sweep window + aged backstop; :156-159 stale-'pushing' fallback clock; product-fulfillment-sla :107; weekly-scorecard :79.
 Sem: the rail's monotonic clock.
 
-### Shipped At / Refunded At
-W: Shipped At — orders route :146 + shopify webhook flip (:366 via guards :96). Refunded At — lib/productSettlement.ts:559 only.
-R: product-review-ask :58,67-71 — 3-45d review window off Shipped At.
+### Shipped At / Refunded At / Cancelled At (⚠️ Cancelled At is NEW)
+W: Shipped At — orders route + shopify webhook flip (:366 via guards :96). Refunded At — `reconcileProductOrderRefund` (written for BOTH terminal statuses). Cancelled At — `reconcileProductOrderRefund` (cancel branch) + app/api/rancher/orders/refund/route.ts, each in its OWN best-effort patch.
+R: product-review-ask :58,67-71 — 3-45d review window off Shipped At; lib/productOrderTermination.ts — a 'Shipped At' stamp ALONE refuses a cancel even if Status still says New; lib/orderStatusView.ts — Cancelled At wins over Refunded At on the buyer page.
+Sem: Cancelled At is never folded into the Status patch — an unknown field name 422s a whole Airtable patch, and that patch is the ship-rail gate.
+
+### Tracking Number / Shipping Carrier (⚠️ Shipping Carrier is NEW)
+W: Tracking Number — app/api/rancher/orders/route.ts POST (skipped on pickup orders); shopify fulfillment webhook. Shipping Carrier — the SAME POST, in a SEPARATE best-effort patch (never folded into the mark-shipped write: a 422 there would take the whole ship rail down until the field exists).
+R: lib/trackingLink.ts `carrierTrackingUrl` — buyer shipped email, the rancher order card, and lib/orderStatusView.ts. Unknown/blank carrier ⇒ a Google search URL (always useful); an unusable number ⇒ null ⇒ render NOTHING.
+Sem: before 2026-08-01 the product rail had no carrier at all and emailed a bare number in bold — the SHARE rail has had clickable tracking since D3.
+
+### Buyer Delay Notified At (⚠️ NEW)
+W: app/api/cron/product-fulfillment-sla/route.ts — CLAIM-BEFORE-SEND WITH READ-BACK: stamp, re-read the row, and only send `buyer_order_delay` if the stamp actually persisted.
+R: lib/productFulfillmentSla.ts `slaDecisions` — non-blank ⇒ `notifyBuyer:false` forever.
+Sem: this is the throttle that lets `buyer_order_delay` sit on the TRANSACTIONAL_WHITELIST (lib/emailFrequencyGuard.ts). A failed write — or the field not existing yet — yields ZERO mails, not one per cron run. That fail-closed direction is the whole argument; do not "simplify" it to a fire-and-forget stamp.
 
 ### Quantity (number)
 W: lib/productSettlement.ts:191 (clamped ≥1).
@@ -698,10 +719,20 @@ W: products route :183-187 (pre-mint, best-effort); checkout/product :110-114 + 
 R: lib/productStripeSync.ts:14 — Price Cents is the reuse guard (price unchanged ⇒ reuse Price object).
 Sem: cache of connected-account Stripe objects; a failed sync never blocks a sale (inline price_data fallback).
 
-### Shipping Cost (currency)
-W: lib/rancherProductInput.ts:267 ($0-200, blank/0 clears); products route :344-347 explicitly preserves it on content edits (old bug silently cleared it).
-R: lib/productBuyGates.ts:99 — added to the charge (pickup ⇒ 0); lib/productCheckout.ts:200,246.
-Sem: passes 100% to the rancher (payout math lib/productSettlement.ts:77); NEVER part of the application fee.
+### Shipping Cost (currency) — ⚠️ 0 ≠ blank as of 2026-08-01
+W: lib/rancherProductInput.ts `resolveShippingChoice` via validateProductInput ($0-200); products route explicitly preserves + threads it on content edits (old bug silently cleared it).
+R: lib/productBuyGates.ts:99 — added to the charge (pickup ⇒ 0); lib/productCheckout.ts:200,246; lib/storefrontGates.ts `chargedShippingDollars`; products route `toClientProduct` → `shippingChoice`.
+Sem: passes 100% to the rancher (payout math lib/productSettlement.ts); NEVER part of the application fee. **Tri-state now: `>0` = buyer pays it · `0` = the rancher answered "my price already includes shipping" · BLANK = this listing predates the question and the form must ask.** Every consumer coerces `Number(x || 0)` so 0 and blank charge identically — the distinction is a RECORD of the rancher's answer, not a money change.
+
+### Shipping Included (checkbox) — ⚠️ NEW
+W: app/api/rancher/products/route.ts `stampShippingIncluded` — ALWAYS its own best-effort patch, never inside the create/update payload (an unknown field name 422s the whole write and would take the listing rail down until the field exists). Not written for local-pickup rows (question not asked).
+R: products route `toClientProduct` → `shippingChoice`, and the PATCH merge (so an already-answered listing is never re-asked).
+Sem: the human-readable twin of `Shipping Cost === 0`. The answer survives without it; this field is what makes it legible in Airtable.
+
+### Ships In Days (number) — REQUIRED for shippable rows as of 2026-08-01
+W: lib/rancherProductInput.ts via validateProductInput — 1-60, and now REQUIRED when Ships Nationwide (optional on local-pickup rows). Sync-managed rows are written by the catalog cron and never pass through the validator.
+R: app/shop/checkout/[id]/page.tsx:172 + app/shop/[id]/page.tsx — the promise the buyer is quoted; **app/api/cron/product-fulfillment-sla/route.ts `loadShipPromises` → lib/productFulfillmentSla.ts `slaWindowFor`** — the SLA windows now ride it (nudge @ promise+1, escalate @ promise+4; flat 3/6 only when absent); lib/orderStatusView.ts `promisedShipByIso` (buyer page "expected to ship by" + runningLate).
+Sem: was quoted to buyers and compared against nothing — a 1-day promise wasn't chased until day 3, a 14-day promise was nudged on day 3. Non-breaking: existing rows keep selling and are asked on their next edit.
 
 ### Deposit Style (checkbox)
 W: no code writer — ops-set in Airtable only.
@@ -721,7 +752,7 @@ Sem: attribution only; no settlement rides this rail.
 ## Cross-table invariants (pin these before touching any writer)
 
 1. **No-double-ship**: unique `BHC-oid:<rowid>` tag (lib/shopifyConnector.ts:35) + Idempotency-Key (:44-45) + decidePushDisposition (lib/fulfillmentPushRunner.ts:41-47) + durable 'pushing' pre-stamp (:140-142).
-2. **Refund-never-ships**: orders route 409 (:123) + push gate Status='New' (lib/fulfillmentPush.ts:21) + fail-CLOSED post-push verify (runner :73-85) + belt-stamp 'cancelled' on blank-id refunds (lib/productSettlement.ts:602-612).
+2. **Refund-never-ships**: `decideTermination` refusal (lib/productOrderTermination.ts) + orders route 409 on Refunded AND Cancelled + push gate Status='New' (lib/fulfillmentPush.ts:21) + fail-CLOSED post-push verify (runner :73-85) + belt-stamp 'cancelled' on blank-id refunds (lib/productSettlement.ts). The rancher/admin-initiated path flips Status BEFORE calling Stripe, so the ship rail closes before the money moves — and reverts to 'New' if Stripe refuses.
 3. **Inventory coherence**: settle-decrement (:386) ↔ refund-restore (:576) guarded by Stock Restored At; M4 obligation `push ∉ {pushed,cancelled}` (lib/shopifyCatalogSync.ts:156-161) keeps the 6h sync from re-shelving sold units.
 4. **No-silent-fail**: every terminal push failure stamps a status AND alerts with recovery instructions (runner :120-130,285-293,316-325); product-settlement-net re-derives lost rows from Stripe truth (lib/productSettlementNet.ts:7-14).
 5. **Money-truth gets persisted, not logged** (repo rule #2): every send/open/paid outcome stamps the record; pre-payment writers of Status='Awaiting Payment' MUST stamp Deposit Requested At.

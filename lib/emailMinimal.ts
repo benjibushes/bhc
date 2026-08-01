@@ -353,19 +353,29 @@ export async function sendRancherStopShip(opts: {
   rancherFirstName?: string;
   productName: string;
   buyerName: string;
-  kind: 'refund' | 'dispute';
+  // 'cancel' (shop-chain audit 2026-08-01): an order cancelled + refunded in
+  // full by the buyer/operator, distinct from a bare refund. The stop-ship
+  // urgency is identical — the money already moved back either way.
+  kind: 'refund' | 'dispute' | 'cancel';
 }) {
   const first = (opts.rancherFirstName || '').trim() || 'there';
-  const what = opts.kind === 'dispute' ? 'charged back by the buyer’s bank' : 'refunded';
+  const what =
+    opts.kind === 'dispute'
+      ? 'charged back by the buyer’s bank'
+      : opts.kind === 'cancel'
+        ? 'cancelled and refunded in full'
+        : 'refunded';
+  const headlineWord =
+    opts.kind === 'dispute' ? 'charged back' : opts.kind === 'cancel' ? 'cancelled' : 'refunded';
   return sendEmail({
     to: opts.rancherEmail,
-    subject: `🛑 DO NOT SHIP — ${opts.productName} order was ${opts.kind === 'dispute' ? 'charged back' : 'refunded'}`,
+    subject: `🛑 DO NOT SHIP — ${opts.productName} order was ${headlineWord}`,
     templateName: 'sendRancherStopShip',
     html: `
       <div style="font-family:Georgia,serif;max-width:560px;margin:0 auto;color:#26251E;">
         <p style="font-size:20px;">hey ${escape(first)} — <strong>do not ship this order.</strong></p>
         <p style="font-size:15px;line-height:1.6;">The <strong>${escape(opts.productName)}</strong> order for ${escape(opts.buyerName || 'the buyer')} was just ${what}. The money has already moved back — if you ship it now, you're out the meat and the shipping.</p>
-        <p style="font-size:15px;line-height:1.6;">It's already marked <strong>Refunded</strong> in your dashboard, and if the box hasn't left yet there's nothing else you need to do. If it HAS already shipped, reply to this email right away and we'll sort it out together.</p>
+        <p style="font-size:15px;line-height:1.6;">It's already marked <strong>${opts.kind === 'cancel' ? 'Cancelled' : 'Refunded'}</strong> in your dashboard, and if the box hasn't left yet there's nothing else you need to do. If it HAS already shipped, reply to this email right away and we'll sort it out together.</p>
         <p style="font-size:15px;line-height:1.6;"><a href="${SITE_URL}/rancher#products" style="color:#26251E;">See the order in your dashboard &rarr;</a></p>
         <p style="font-size:15px;">&mdash; Ben, BuyHalfCow</p>
       </div>`,
@@ -383,24 +393,97 @@ export async function sendBuyerRefundNotice(opts: {
   productName: string;
   rancherName: string;
   amountCents?: number;
-  kind: 'refund' | 'dispute';
+  // 'cancel' (shop-chain audit 2026-08-01): the order was cancelled outright,
+  // not just refunded. Saying "refund" for a cancel reads like something went
+  // wrong with a live order; saying "cancelled" is the truth.
+  kind: 'refund' | 'dispute' | 'cancel';
+  /** Signed /order/<token> link — omitted when it can't be minted. */
+  orderStatusUrl?: string;
 }) {
   const first = (opts.buyerName || '').trim().split(/\s+/)[0] || 'there';
   const amt = opts.amountCents ? `$${(opts.amountCents / 100).toFixed(2)}` : 'your payment';
-  const headline = opts.kind === 'dispute' ? 'your dispute has been processed' : 'your refund is on its way';
+  const headline =
+    opts.kind === 'dispute'
+      ? 'your dispute has been processed'
+      : opts.kind === 'cancel'
+        ? 'your order is cancelled'
+        : 'your refund is on its way';
   const body =
     opts.kind === 'dispute'
       ? `Your bank has processed the dispute for your <strong>${escape(opts.productName)}</strong> order from ${escape(opts.rancherName)}. The order has been cancelled on our side — nothing further is needed from you.`
-      : `We've refunded <strong>${amt}</strong> for your <strong>${escape(opts.productName)}</strong> order from ${escape(opts.rancherName)}. Refunds usually land back on your card within 5–10 business days, depending on your bank.`;
+      : opts.kind === 'cancel'
+        ? `Your <strong>${escape(opts.productName)}</strong> order from ${escape(opts.rancherName)} has been cancelled and refunded in full (${amt}). Nothing is shipping. Refunds usually land back on your card within 5–10 business days, depending on your bank.`
+        : `We've refunded <strong>${amt}</strong> for your <strong>${escape(opts.productName)}</strong> order from ${escape(opts.rancherName)}. Refunds usually land back on your card within 5–10 business days, depending on your bank.`;
+  const statusLink = String(opts.orderStatusUrl || '').trim();
   return sendEmail({
     to: opts.buyerEmail,
-    subject: opts.kind === 'dispute' ? 'Your BuyHalfCow order — dispute processed' : `Your BuyHalfCow refund — ${escape(opts.productName)}`,
+    subject:
+      opts.kind === 'dispute'
+        ? 'Your BuyHalfCow order — dispute processed'
+        : opts.kind === 'cancel'
+          ? `Your BuyHalfCow order is cancelled — ${escape(opts.productName)}`
+          : `Your BuyHalfCow refund — ${escape(opts.productName)}`,
     templateName: 'buyer_refund_notice',
     html: `
       <div style="font-family:Georgia,serif;max-width:560px;margin:0 auto;color:#26251E;">
         <p style="font-size:20px;">hey ${escape(first)} — ${headline}.</p>
         <p style="font-size:15px;line-height:1.6;">${body}</p>
+        ${statusLink ? `<p style="font-size:15px;line-height:1.6;"><a href="${statusLink}" style="color:#26251E;">See your order &rarr;</a></p>` : ''}
         <p style="font-size:15px;line-height:1.6;">If anything about this looks wrong, just reply to this email — a real person reads it.</p>
+        <p style="font-size:15px;">&mdash; Ben, BuyHalfCow</p>
+      </div>`,
+  });
+}
+
+// ── Buyer "your order is running late" notice (shop-chain audit 2026-08-01) ──
+//
+// app/api/cron/product-fulfillment-sla already detected a stale paid order,
+// nudged the rancher, and escalated to the operator — and never once told the
+// BUYER, the only person whose money was sitting still. Silence at day 6 (or
+// day 14 on the slow rail) is how a paid order becomes a chargeback.
+//
+// ONE honest note per order, forever. The cron stamps 'Buyer Delay Notified
+// At' and READS IT BACK before sending, so a failed or not-yet-created stamp
+// suppresses the mail instead of repeating it every run — which is precisely
+// why this template is safe on the transactional whitelist (see
+// lib/emailFrequencyGuard.ts).
+//
+// Copy rules: no excuses, no blaming the ranch, no promise we can't keep. Say
+// what we know, say what we're doing, and offer the way out (a refund) up
+// front rather than making them ask twice.
+export async function sendBuyerOrderDelayNotice(opts: {
+  buyerEmail: string;
+  buyerName: string;
+  productName: string;
+  rancherName: string;
+  ageDays: number;
+  /** 'ship' | 'pickup' | 'deposit' — what was promised differs per kind. */
+  kind: 'ship' | 'pickup' | 'deposit';
+  /** Signed /order/<token> link — omitted when it can't be minted. */
+  orderStatusUrl?: string;
+}) {
+  const first = (opts.buyerName || '').trim().split(/\s+/)[0] || 'there';
+  const ranch = escape(opts.rancherName || 'the ranch');
+  const what = escape(opts.productName || 'your order');
+  const days = Math.max(1, Math.round(Number(opts.ageDays) || 1));
+  const middle =
+    opts.kind === 'pickup'
+      ? `Your <strong>${what}</strong> from ${ranch} is paid and waiting, but the pickup still hasn't been arranged ${days} days on. That's longer than it should take.`
+      : opts.kind === 'deposit'
+        ? `You put a deposit down on <strong>${what}</strong> with ${ranch} ${days} days ago and they haven't come back to confirm the details yet. That's longer than it should take.`
+        : `Your <strong>${what}</strong> from ${ranch} hasn't shipped yet — it's been ${days} days. That's longer than it should take, and you shouldn't have to chase it.`;
+  const statusLink = String(opts.orderStatusUrl || '').trim();
+  return sendEmail({
+    to: opts.buyerEmail,
+    subject: `about your ${opts.productName} order`,
+    templateName: 'buyer_order_delay',
+    html: `
+      <div style="font-family:Georgia,serif;max-width:560px;margin:0 auto;color:#26251E;">
+        <p style="font-size:20px;">hey ${escape(first)} — we're on this.</p>
+        <p style="font-size:15px;line-height:1.6;">${middle}</p>
+        <p style="font-size:15px;line-height:1.6;">We've gone straight to ${ranch} about it and someone here is watching it. You don't need to do anything — we'll email you the moment it moves.</p>
+        ${statusLink ? `<p style="font-size:15px;line-height:1.6;"><a href="${statusLink}" style="color:#26251E;">See your order &rarr;</a></p>` : ''}
+        <p style="font-size:15px;line-height:1.6;">If you'd rather just have your money back, reply to this email and say so — we'll refund you, no argument and no forms.</p>
         <p style="font-size:15px;">&mdash; Ben, BuyHalfCow</p>
       </div>`,
   });
