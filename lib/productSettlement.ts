@@ -27,6 +27,7 @@ import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { sendEmail } from '@/lib/email';
 import { fireCapi, buildUserData, productPurchaseEnabled } from '@/lib/metaCapi';
 import { zipFromStripePayment, buyerZipPatch } from '@/lib/buyerZip';
+import { orderStatusUrlFor } from '@/lib/orderStatusLink';
 
 function escapeHtml(s: string): string {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -294,6 +295,16 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
   // product, offered to the single most qualified audience there is (someone
   // who already bought beef from a BHC ranch). One P.S., no new infrastructure.
   const SITE = process.env.SITE_URL || process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
+  // ── ORDER-STATUS LINK (shop-chain audit 2026-08-01) ───────────────────────
+  // Until now the buyer's ONLY state model was this inbox — the product rail
+  // had no buyer-facing order surface at all. Every receipt now carries the
+  // signed, read-only /order/<token> link (lib/orderStatusLink). Returns ''
+  // on any mint failure (no JWT secret, bad id) so a broken link is never
+  // emailed — the receipt just reads as it did before.
+  const orderStatusUrl = orderStatusUrlFor(String(created?.id || ''), SITE);
+  const orderStatusHtml = orderStatusUrl
+    ? `<p style="font-size:14px"><a href="${orderStatusUrl}" style="color:#0E0E0E">see your order &rarr;</a></p>`
+    : '';
   const shareLadderPs =
     `<p style="font-size:13px;color:#5A5752;border-top:1px solid #A7A29A;padding-top:14px;margin-top:22px">` +
     `p.s. if it's good and you'd rather stop buying beef by the box, a quarter or half from a ranch like this one runs about $5.50 to $9.50 a pound and fills a freezer for the year. ` +
@@ -312,6 +323,7 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
         <p>your deposit's in — <strong>${escapeHtml(rancherName)}</strong> has your <strong>${escapeHtml(productName)}</strong> reservation and will reach out to confirm the size you want + the balance <em>before anything ships</em>.</p>
         <p style="font-size:14px;color:#5A5752">deposit paid: $${dollars(displayCents)} — it counts toward your total. nothing ships until you've confirmed the details together.</p>
         ${rancherContactBlock}
+        ${orderStatusHtml}
         ${shareLadderPs}
         <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow</p>
       </div>`
@@ -322,6 +334,7 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
         ${isPickup ? pickupWhereBlock + rancherContactBlock : ''}
         ${!isPickup && shipTo ? `<p style="font-size:13px;color:#5A5752">shipping to:<br>${escapeHtml(shipTo).replace(/\n/g, '<br>')}<br><span style="color:#A7A29A">typo in the address? just reply to this email and we'll fix it before it ships.</span></p>` : ''}
         ${!isPickup ? rancherContactLine : ''}
+        ${orderStatusHtml}
         ${shareLadderPs}
         <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow</p>
       </div>`,
@@ -546,11 +559,49 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
 // rancher could ship a refunded box. This flips the order + alerts loudly.
 // Returns true if a product order was found + reconciled (so the webhook can
 // tell it apart from a deposit refund).
+//
+// CANCEL (shop-chain audit 2026-08-01): 'Cancelled' was READ by three modules
+// (fulfillmentPushRunner, fulfillmentWebhookHealth, shopifyCatalogSync) and
+// WRITTEN by nobody — a buyer who changed their mind ten minutes after paying
+// had no path but a support ticket. `opts.terminalStatus` lets the operator/
+// rancher-initiated path record a cancel as a state distinct from a refund
+// while reusing this one reconcile (stock restore, external-order cancel,
+// notifications, idempotency). Both statuses are terminal here, so a webhook
+// redelivery of the resulting charge.refunded can never downgrade a Cancelled
+// order to Refunded.
+export const TERMINAL_PRODUCT_ORDER_STATUSES: ReadonlySet<string> = new Set([
+  'Refunded',
+  'Cancelled',
+  // Imported/US spelling — lib/shopifyCatalogSync already treats it terminal.
+  'Canceled',
+]);
+
 export async function reconcileProductOrderRefund(
   piId: string,
-  opts: { kind: 'refund' | 'dispute'; amountCents?: number; partial?: boolean },
+  opts: {
+    kind: 'refund' | 'dispute';
+    amountCents?: number;
+    partial?: boolean;
+    /** Status to record. Default 'Refunded'; 'Cancelled' for a real cancel. */
+    terminalStatus?: 'Refunded' | 'Cancelled';
+    /**
+     * Skip the already-terminal early return. ONLY for the initiating path,
+     * which flipped Status itself as its fail-closed gate BEFORE moving money
+     * and still needs the side effects to run. Safe: each side effect has its
+     * own durable guard ('Stock Restored At', External Push Status), and the
+     * caller holds a claimOnce lock.
+     */
+    force?: boolean;
+    /**
+     * false when the RANCHER is the one cancelling — mailing them a
+     * "🛑 DO NOT SHIP" alarm about their own click is noise, not safety.
+     */
+    notifyRancher?: boolean;
+  },
 ): Promise<boolean> {
   if (!piId) return false;
+  const terminalStatus = opts.terminalStatus || 'Refunded';
+  const cancelled = terminalStatus === 'Cancelled';
   let rows: any[];
   try {
     rows = (await getAllRecords(
@@ -564,7 +615,10 @@ export async function reconcileProductOrderRefund(
   if (!Array.isArray(rows) || rows.length === 0) return false; // not a product order
 
   const order = rows[0];
-  if (String(order['Status'] || '') === 'Refunded') return true; // already reconciled
+  // Already terminal (Refunded OR Cancelled) ⇒ nothing left to do. `force`
+  // is the one exception: the initiating path flipped Status itself and the
+  // side effects below still have to run.
+  if (!opts.force && TERMINAL_PRODUCT_ORDER_STATUSES.has(String(order['Status'] || ''))) return true;
 
   // PARTIAL refund (audit 2026-07-07): a $10-of-$170 goodwill refund must NOT
   // flip the order to Refunded, restore stock, or stop the ship — the buyer
@@ -607,10 +661,29 @@ export async function reconcileProductOrderRefund(
   // race guard can leave a rare duplicate row, and a 'New' twin would sit on
   // the rancher's ship list after the refund.
   for (const row of rows) {
-    if (String(row['Status'] || '') === 'Refunded') continue;
+    if (TERMINAL_PRODUCT_ORDER_STATUSES.has(String(row['Status'] || ''))) continue;
     await updateRecord(TABLES.RANCHER_ORDERS, row.id, {
-      'Status': 'Refunded',
+      'Status': terminalStatus,
       'Refunded At': new Date().toISOString(),
+    }).catch(async (e: any) => {
+      // A 'Cancelled' option that doesn't exist yet on the singleSelect would
+      // 422 the whole patch and leave a refunded order sitting in 'New' — the
+      // one state that can still ship. Fall back to 'Refunded' (money-true,
+      // semantically coarser) rather than leave the ship rail open.
+      console.warn('[productSettlement] terminal status write failed, falling back to Refunded:', e?.message);
+      if (cancelled) {
+        await updateRecord(TABLES.RANCHER_ORDERS, row.id, {
+          'Status': 'Refunded',
+          'Refunded At': new Date().toISOString(),
+        }).catch(() => {});
+      }
+    });
+  }
+  // 'Cancelled At' is a NEW Rancher Orders field — its own best-effort patch
+  // so a not-yet-created field can never 422 the status flip above.
+  if (cancelled) {
+    await updateRecord(TABLES.RANCHER_ORDERS, order.id, {
+      'Cancelled At': new Date().toISOString(),
     }).catch(() => {});
   }
 
@@ -706,14 +779,17 @@ export async function reconcileProductOrderRefund(
   const product = String(order['Product Name'] || 'a product');
   const rancher = String(order['Rancher Name'] || 'the ranch');
   const amt = opts.amountCents ? ` ($${dollars(opts.amountCents)})` : '';
+  const eventWord = opts.kind === 'dispute' ? 'DISPUTED' : cancelled ? 'CANCELLED' : 'REFUNDED';
+  const notifyRancher = opts.notifyRancher !== false;
   await sendOperatorSignal({
     urgency: 'loud',
     kind: opts.kind === 'dispute' ? 'dispute' : 'sale',
-    summary: `PRODUCT ${opts.kind === 'dispute' ? 'DISPUTED' : 'REFUNDED'} — ${product}${amt}`,
+    summary: `PRODUCT ${eventWord} — ${product}${amt}`,
     detail:
-      `Order for ${product} from ${rancher} was ${opts.kind === 'dispute' ? 'disputed (chargeback)' : 'refunded'}.\n` +
-      `Order flipped to Refunded. Stop-ship push + email just went straight to ${rancher} too.`,
-    dedupeKey: `product-${opts.kind}:${piId}`,
+      `Order for ${product} from ${rancher} was ${opts.kind === 'dispute' ? 'disputed (chargeback)' : cancelled ? 'cancelled and refunded in full' : 'refunded'}.\n` +
+      `Order flipped to ${terminalStatus}.` +
+      (notifyRancher ? ` Stop-ship push + email just went straight to ${rancher} too.` : ` (${rancher} initiated it — no stop-ship alarm sent.)`),
+    dedupeKey: `product-${cancelled ? 'cancel' : opts.kind}:${piId}`,
   }).catch(() => {});
 
   // Tell the RANCHER — the one person who can actually stop the box (Wave A
@@ -724,14 +800,19 @@ export async function reconcileProductOrderRefund(
   // Push + email, both best-effort (a notify failure must never fail the
   // reconcile); skipped on the partial-refund branch above (order stays
   // live); idempotent via the Status==='Refunded' early-return.
+  //
+  // notifyRancher=false (shop-chain audit 2026-08-01): when the RANCHER is the
+  // one who clicked cancel, screaming "🛑 DO NOT SHIP" back at them is noise —
+  // they already know, and crying wolf is how a real stop-ship alarm gets
+  // ignored. Every other path (Stripe webhook, dispute, admin) still fires it.
   const stopShipRancherId = String(order['Rancher Record ID'] || '').trim();
   const buyerNameForStopShip = String(order['Buyer Name'] || '').trim() || 'the buyer';
-  if (stopShipRancherId) {
+  if (stopShipRancherId && notifyRancher) {
     try {
       const { sendRancherPush } = await import('@/lib/rancherPush');
       await sendRancherPush(stopShipRancherId, {
-        title: '🛑 DO NOT SHIP — order refunded',
-        body: `${product} for ${buyerNameForStopShip} was ${opts.kind === 'dispute' ? 'charged back' : 'refunded'} — do not ship. Marked Refunded in your dashboard.`,
+        title: cancelled ? '🛑 DO NOT SHIP — order cancelled' : '🛑 DO NOT SHIP — order refunded',
+        body: `${product} for ${buyerNameForStopShip} was ${opts.kind === 'dispute' ? 'charged back' : cancelled ? 'cancelled' : 'refunded'} — do not ship. Marked ${terminalStatus} in your dashboard.`,
         url: '/rancher#products',
       });
     } catch (e: any) {
@@ -747,7 +828,7 @@ export async function reconcileProductOrderRefund(
           rancherFirstName: String(rancherRec?.['Operator Name'] || '').trim().split(/\s+/)[0],
           productName: product,
           buyerName: buyerNameForStopShip,
-          kind: opts.kind,
+          kind: cancelled ? 'cancel' : opts.kind,
         });
       } else {
         console.warn('[productSettlement] stop-ship email skipped — rancher has no email:', stopShipRancherId);
@@ -755,7 +836,7 @@ export async function reconcileProductOrderRefund(
     } catch (e: any) {
       console.warn('[productSettlement] stop-ship email failed (non-fatal):', e?.message);
     }
-  } else {
+  } else if (!stopShipRancherId) {
     console.warn('[productSettlement] stop-ship notify skipped — order has no Rancher Record ID (pre-stamp legacy row)');
   }
 
@@ -773,7 +854,8 @@ export async function reconcileProductOrderRefund(
         productName: product,
         rancherName: rancher,
         amountCents: opts.amountCents,
-        kind: opts.kind === 'dispute' ? 'dispute' : 'refund',
+        kind: opts.kind === 'dispute' ? 'dispute' : cancelled ? 'cancel' : 'refund',
+        orderStatusUrl: orderStatusUrlFor(order.id),
       });
     } catch (e: any) {
       console.warn('[productSettlement] buyer refund notice failed (non-fatal):', e?.message);

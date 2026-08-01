@@ -24,6 +24,9 @@ import {
 } from '@/lib/rancherProductInput';
 import { absorptionPreview } from '@/lib/feeMath';
 import { decideSyncManagedRow } from '@/lib/syncManagedProductFence';
+// Pure + import-clean (no Airtable, no env, no next/server) — safe in a
+// client component. Same helper the SHARE rail's member order card uses.
+import { carrierTrackingUrl } from '@/lib/trackingLink';
 
 interface RancherOrder {
   id: string;
@@ -38,6 +41,8 @@ interface RancherOrder {
   orderedAt: string;
   shippedAt: string;
   trackingNumber: string;
+  /** Shop-chain audit 2026-08-01 — turns the number into a clickable link. */
+  carrier?: string;
   depositStyle: boolean;
   // Wave C (2026-07-14): pickup orders ('PICKUP — ' Order Ref marker) get
   // "mark picked up" with no tracking input — the buyer drives out, nothing
@@ -77,6 +82,8 @@ interface RancherProduct {
   packaging?: string;
   feeds?: string;
   shippingCost?: number | null;
+  /** 'included' | 'charged' | '' — '' = predates the question, must be asked. */
+  shippingChoice?: string;
   localOnly?: boolean;
 }
 
@@ -97,7 +104,11 @@ const EMPTY_FORM = {
   shipsInDays: '' as string,
   packaging: '',
   feeds: '',
-  shippingCost: '' as string, // blank = shipping included in the price
+  shippingCost: '' as string,
+  // Shop-chain audit 2026-08-01: '' means UNANSWERED and the API refuses it
+  // on a nationwide product — the whole point is that nobody drifts into
+  // eating cold-chain costs by leaving a field blank.
+  shippingChoice: '' as string,
 };
 
 export default function ProductsTab({
@@ -123,6 +134,11 @@ export default function ProductsTab({
   const [ordersErr, setOrdersErr] = useState('');
   const [shippingId, setShippingId] = useState<string | null>(null);
   const [trackingDraft, setTrackingDraft] = useState<Record<string, string>>({});
+  const [carrierDraft, setCarrierDraft] = useState<Record<string, string>>({});
+  // Cancel + refund (shop-chain audit 2026-08-01). Two-step by design: the
+  // first click only ARMS the confirm — no single click ever moves money.
+  const [confirmCancelId, setConfirmCancelId] = useState<string | null>(null);
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
   // Stock-only inline editor for deposit-style rows (full edit is ops-fenced,
   // but stock must stay rancher-updatable — the monthly check-in depends on it).
   const [stockDraft, setStockDraft] = useState<Record<string, string>>({});
@@ -191,6 +207,9 @@ export default function ProductsTab({
         body: JSON.stringify({
           orderId: o.id,
           trackingNumber: o.pickup ? '' : (trackingDraft[o.id] || '').trim(),
+          // Carrier makes the buyer's tracking number a real link instead of
+          // a number they have to go paste somewhere themselves.
+          carrier: o.pickup ? '' : (carrierDraft[o.id] || '').trim(),
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -212,6 +231,35 @@ export default function ProductsTab({
       setSaveErr(e?.message || 'could not mark shipped');
     } finally {
       setShippingId(null);
+    }
+  }
+
+  // CANCEL + REFUND (shop-chain audit 2026-08-01). Before this there was no
+  // refund or cancel path at all for a rancher OR an admin on a product order
+  // — it took the Stripe dashboard, and the order row stayed shippable until
+  // the webhook caught up. The server does the real guarding (pure decision in
+  // lib/productOrderTermination + a fail-closed status flip BEFORE the money
+  // moves); this is just the two-step affordance in front of it.
+  async function cancelOrder(o: RancherOrder) {
+    setCancellingId(o.id);
+    setSaveErr('');
+    try {
+      const res = await fetch('/api/rancher/orders/refund', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId: o.id, action: 'cancel', confirm: true }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || `could not cancel this order (${res.status})`);
+      const next = orders.map((x) => (x.id === o.id ? { ...x, status: data?.status || 'Cancelled' } : x));
+      setOrders(next);
+      onOrdersChanged?.(next);
+      setSavedNote('cancelled — the buyer has been refunded and emailed.');
+      setConfirmCancelId(null);
+    } catch (e: any) {
+      setSaveErr(e?.message || 'could not cancel this order');
+    } finally {
+      setCancellingId(null);
     }
   }
 
@@ -256,6 +304,9 @@ export default function ProductsTab({
       packaging: p.packaging || '',
       feeds: p.feeds || '',
       shippingCost: p.shippingCost == null ? '' : String(p.shippingCost),
+      // Pre-fills from the recorded answer; a listing that predates the
+      // question comes back '' and the rancher is asked once.
+      shippingChoice: p.shippingChoice || '',
     });
     setEditingId(p.id);
     setSaveErr('');
@@ -301,6 +352,7 @@ export default function ProductsTab({
         packaging: form.packaging,
         feeds: form.feeds,
         shippingCost: form.shippingCost.trim() === '' ? '' : Number(form.shippingCost),
+        shippingChoice: form.shippingChoice,
       };
       const res = await fetch('/api/rancher/products', {
         method: editingId ? 'PATCH' : 'POST',
@@ -451,6 +503,7 @@ export default function ProductsTab({
       packaging: p.packaging || '',
       feeds: p.feeds || '',
       shippingCost: p.shippingCost == null ? '' : String(p.shippingCost),
+      shippingChoice: p.shippingChoice || '',
     });
     setEditingId(null); // POST, not PATCH — creates a new row
     setSaveErr('');
@@ -554,28 +607,59 @@ export default function ProductsTab({
                 className="w-full p-3 border border-dust bg-bone text-[15px]"
               />
             </label>
+            {/* SHIPPING IS A DELIBERATE CHOICE (shop-chain audit 2026-08-01).
+                The old field was "shipping charge (optional)" beside a
+                nationwide checkbox that defaults ON — so the default outcome
+                was blank shipping and a rancher silently eating the cold-chain
+                cost on every order. Now they pick, and the pick is persisted
+                (Shipping Cost 0 = "my price covers it"). */}
             <label className="block">
               <span className="block text-xs uppercase tracking-wider text-saddle mb-1.5">
-                shipping charge (optional)
+                shipping {form.shipsNationwide && <span className="text-weathered">*</span>}
               </span>
-              <input
-                type="number"
-                min="0"
-                max="200"
-                step="0.01"
-                value={form.shippingCost}
-                onChange={(e) => setForm((f) => ({ ...f, shippingCost: e.target.value }))}
-                placeholder="0.00"
+              <select
+                value={form.shippingChoice}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    shippingChoice: e.target.value,
+                    // Switching to "included" clears any stale amount so the
+                    // buyer is never charged for shipping you said you cover.
+                    shippingCost: e.target.value === 'included' ? '' : f.shippingCost,
+                  }))
+                }
                 disabled={!form.shipsNationwide}
                 className="w-full p-3 border border-dust bg-bone text-[15px] disabled:opacity-40"
-              />
+              >
+                <option value="">— pick one —</option>
+                <option value="included">my price already includes shipping</option>
+                <option value="charged">the buyer pays shipping on top</option>
+              </select>
+              {form.shipsNationwide && form.shippingChoice === 'charged' && (
+                <input
+                  type="number"
+                  min="0.01"
+                  max="200"
+                  step="0.01"
+                  value={form.shippingCost}
+                  onChange={(e) => setForm((f) => ({ ...f, shippingCost: e.target.value }))}
+                  placeholder="e.g. 65.00"
+                  className="w-full mt-2 p-3 border border-dust bg-bone text-[15px]"
+                />
+              )}
               <span className="block text-[11px] text-saddle mt-1">
-                {form.shipsNationwide
-                  ? <>leave blank if shipping&rsquo;s built into your price. if set, the buyer pays it at checkout and 100% of it comes to you.{' '}
-                      <a href="/rancher/shipping-guide" target="_blank" rel="noreferrer" className="underline">
-                        how to ship frozen so it arrives frozen &rarr;
-                      </a></>
-                  : <>local pickup — no shipping is ever charged on this product.</>}
+                {!form.shipsNationwide ? (
+                  <>local pickup &mdash; no shipping is ever charged on this product.</>
+                ) : (
+                  <>
+                    shipping frozen beef cross-country usually runs <strong>$40 to $90</strong> a box.
+                    if your price doesn&rsquo;t cover that, you&rsquo;re paying it out of your own cut
+                    on every order. whatever the buyer pays for shipping, 100% of it comes to you.{' '}
+                    <a href="/rancher/shipping-guide" target="_blank" rel="noreferrer" className="underline">
+                      how to ship frozen so it arrives frozen &rarr;
+                    </a>
+                  </>
+                )}
               </span>
             </label>
             <label className="block">
@@ -615,7 +699,7 @@ export default function ProductsTab({
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <label className="block">
               <span className="block text-xs uppercase tracking-wider text-saddle mb-1.5">
-                ships within (days)
+                ships within (days) {form.shipsNationwide && <span className="text-weathered">*</span>}
               </span>
               <input
                 type="number"
@@ -627,6 +711,12 @@ export default function ProductsTab({
                 placeholder="e.g. 3"
                 className="w-full p-3 border border-dust bg-bone text-[15px]"
               />
+              {form.shipsNationwide && (
+                <span className="block text-[11px] text-saddle mt-1">
+                  buyers see this at checkout, and it&rsquo;s what we hold the order to &mdash; a
+                  number you can actually hit beats an optimistic one.
+                </span>
+              )}
             </label>
             <label className="block">
               <span className="block text-xs uppercase tracking-wider text-saddle mb-1.5">
@@ -892,7 +982,7 @@ export default function ProductsTab({
                   className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 ${
                     o.status === 'Shipped'
                       ? 'bg-sage text-bone'
-                      : o.status === 'Refunded'
+                      : o.status === 'Refunded' || o.status === 'Cancelled'
                         ? 'border border-dust text-saddle'
                         : 'bg-charcoal text-bone'
                   }`}
@@ -914,30 +1004,95 @@ export default function ProductsTab({
                 </div>
               )}
               {o.status === 'New' && (
-                <div className="flex gap-2 flex-wrap items-center">
-                  {/* Pickup orders: no tracking input — nothing ships. The
-                      settle email promised a "mark complete" affordance;
-                      this is it. */}
+                <div className="space-y-2">
+                  <div className="flex gap-2 flex-wrap items-center">
+                    {/* Pickup orders: no tracking input — nothing ships. The
+                        settle email promised a "mark complete" affordance;
+                        this is it. */}
+                    {!o.pickup && (
+                      <>
+                        <input
+                          type="text"
+                          placeholder="carrier (UPS, FedEx, USPS…)"
+                          value={carrierDraft[o.id] || ''}
+                          onChange={(e) => setCarrierDraft((d) => ({ ...d, [o.id]: e.target.value }))}
+                          maxLength={60}
+                          className="w-[170px] p-2.5 border border-dust bg-bone-warm text-sm"
+                        />
+                        <input
+                          type="text"
+                          placeholder="tracking number"
+                          value={trackingDraft[o.id] || ''}
+                          onChange={(e) => setTrackingDraft((d) => ({ ...d, [o.id]: e.target.value }))}
+                          className="flex-1 min-w-[160px] p-2.5 border border-dust bg-bone-warm text-sm"
+                        />
+                      </>
+                    )}
+                    <button
+                      onClick={() => markShipped(o)}
+                      disabled={shippingId === o.id}
+                      className="px-4 py-2.5 bg-charcoal text-bone text-xs uppercase tracking-wider hover:bg-saddle transition-colors disabled:opacity-50"
+                    >
+                      {shippingId === o.id ? 'saving…' : o.pickup ? 'mark picked up →' : 'mark shipped →'}
+                    </button>
+                  </div>
                   {!o.pickup && (
-                    <input
-                      type="text"
-                      placeholder="tracking number (optional)"
-                      value={trackingDraft[o.id] || ''}
-                      onChange={(e) => setTrackingDraft((d) => ({ ...d, [o.id]: e.target.value }))}
-                      className="flex-1 min-w-[180px] p-2.5 border border-dust bg-bone-warm text-sm"
-                    />
+                    <p className="text-[11px] text-saddle">
+                      add the carrier and the buyer gets a tracking link they can actually click.
+                    </p>
                   )}
-                  <button
-                    onClick={() => markShipped(o)}
-                    disabled={shippingId === o.id}
-                    className="px-4 py-2.5 bg-charcoal text-bone text-xs uppercase tracking-wider hover:bg-saddle transition-colors disabled:opacity-50"
-                  >
-                    {shippingId === o.id ? 'saving…' : o.pickup ? 'mark picked up →' : 'mark shipped →'}
-                  </button>
+                  {/* CANCEL + REFUND — two-step, never a single click. */}
+                  {confirmCancelId === o.id ? (
+                    <div className="flex gap-2 flex-wrap items-center border border-weathered/40 bg-bone-warm p-2.5">
+                      <span className="text-xs text-charcoal flex-1 min-w-[200px]">
+                        refund {money(o.buyerPaid)} to {o.buyerName || 'the buyer'} and cancel this
+                        order? this can&rsquo;t be undone.
+                      </span>
+                      <button
+                        onClick={() => cancelOrder(o)}
+                        disabled={cancellingId === o.id}
+                        className="px-4 py-2 bg-weathered text-bone text-xs uppercase tracking-wider hover:bg-charcoal transition-colors disabled:opacity-50"
+                      >
+                        {cancellingId === o.id ? 'refunding…' : 'yes, refund + cancel'}
+                      </button>
+                      <button
+                        onClick={() => setConfirmCancelId(null)}
+                        disabled={cancellingId === o.id}
+                        className="px-3 py-2 border border-dust text-xs uppercase tracking-wider hover:bg-charcoal hover:text-bone transition-colors disabled:opacity-50"
+                      >
+                        keep it
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setConfirmCancelId(o.id)}
+                      className="text-[11px] text-saddle underline hover:text-charcoal transition-colors"
+                    >
+                      can&rsquo;t fill this one? cancel &amp; refund the buyer
+                    </button>
+                  )}
                 </div>
               )}
               {o.status === 'Shipped' && o.trackingNumber && (
-                <div className="text-xs text-sage">tracking: {o.trackingNumber}</div>
+                <div className="text-xs text-sage">
+                  tracking:{' '}
+                  {carrierTrackingUrl(o.carrier || '', o.trackingNumber) ? (
+                    <a
+                      href={carrierTrackingUrl(o.carrier || '', o.trackingNumber) as string}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline break-all"
+                    >
+                      {o.carrier ? `${o.carrier} · ` : ''}
+                      {o.trackingNumber}
+                    </a>
+                  ) : (
+                    <span className="break-all">
+                      {o.carrier ? `${o.carrier} · ` : ''}
+                      {o.trackingNumber}
+                    </span>
+                  )}
+                </div>
               )}
             </div>
           ))}

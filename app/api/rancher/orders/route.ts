@@ -19,6 +19,8 @@ import { requireRancher } from '@/lib/rancherAuth';
 import { getAllRecords, getRecordById, updateRecord, TABLES, escapeAirtableValue } from '@/lib/airtable';
 import { claimOnce } from '@/lib/rancherCapacity';
 import { sendEmail } from '@/lib/email';
+import { carrierTrackingUrl } from '@/lib/trackingLink';
+import { orderStatusUrlFor } from '@/lib/orderStatusLink';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -50,6 +52,11 @@ function toClientOrder(r: any) {
     orderedAt: String(r['Ordered At'] || ''),
     shippedAt: String(r['Shipped At'] || ''),
     trackingNumber: String(r['Tracking Number'] || ''),
+    // 'Shipping Carrier' (NEW Rancher Orders field, shop-chain audit
+    // 2026-08-01) — reads blank until Ben adds it, which is exactly the
+    // legacy behaviour: carrierTrackingUrl still builds a working search
+    // link from the number alone.
+    carrier: String(r['Shipping Carrier'] || ''),
     // Deposit-style orders carry the marker settlement stamped into the ref —
     // the UI must say "confirm details first", never "ship it".
     depositStyle: ref.startsWith('DEPOSIT — '),
@@ -110,6 +117,12 @@ export async function POST(request: Request) {
   }
   const orderId = String(body?.orderId || '').trim();
   const trackingNumber = String(body?.trackingNumber || '').trim().slice(0, 120);
+  // CARRIER (shop-chain audit 2026-08-01): the SHARE rail has carried a
+  // carrier since D3 and turns it into a clickable link; the PRODUCT rail
+  // shipped a bare number in bold text and made the buyer go find the right
+  // carrier site. Optional + length-capped; carrierTrackingUrl treats an
+  // unknown/blank carrier as "search", never a broken link.
+  const carrier = String(body?.carrier || '').trim().slice(0, 60);
   if (!/^rec[A-Za-z0-9]{14}$/.test(orderId)) {
     return NextResponse.json({ error: 'Invalid order id' }, { status: 400 });
   }
@@ -122,6 +135,12 @@ export async function POST(request: Request) {
   const status = String(order['Status'] || 'New');
   if (status === 'Refunded') {
     return NextResponse.json({ error: 'This order was refunded — nothing to ship.' }, { status: 409 });
+  }
+  // CANCELLED (shop-chain audit 2026-08-01): a cancelled order is refunded
+  // money, exactly like Refunded — the "refund never ships" invariant must
+  // cover both terminal states or a rancher could ship a cancelled box.
+  if (status === 'Cancelled' || status === 'Canceled') {
+    return NextResponse.json({ error: 'This order was cancelled — nothing to ship.' }, { status: 409 });
   }
   if (status === 'Shipped') {
     return NextResponse.json({ error: 'Already marked shipped.' }, { status: 409 });
@@ -147,6 +166,18 @@ export async function POST(request: Request) {
     ...(trackingNumber && !isPickup ? { 'Tracking Number': trackingNumber } : {}),
   });
 
+  // 'Shipping Carrier' is a NEW Rancher Orders field — written in its OWN
+  // best-effort patch, deliberately NOT folded into the mark-shipped write
+  // above: an unknown field name 422s the WHOLE patch in Airtable, which
+  // would take the entire ship rail down until Ben creates the field. Worst
+  // case here is the carrier isn't persisted and the buyer's link falls back
+  // to a carrier search (still useful, never broken).
+  if (carrier && !isPickup) {
+    await updateRecord(TABLES.RANCHER_ORDERS, orderId, { 'Shipping Carrier': carrier }).catch((e: any) => {
+      console.warn('[rancher/orders] Shipping Carrier not persisted (field may not exist yet):', e?.message);
+    });
+  }
+
   // The buyer email the receipt promised — tracking for shipped orders, a
   // picked-up note for pickups. Transactional (both templateNames whitelisted
   // in emailFrequencyGuard) — best-effort, never blocks the status update.
@@ -159,6 +190,22 @@ export async function POST(request: Request) {
   const productName = escapeHtml(String(order['Product Name'] || 'your order'));
   const ranchName = escapeHtml(String(order['Rancher Name'] || session.ranchName || 'the ranch'));
   const trackingSafe = escapeHtml(trackingNumber);
+  const carrierSafe = escapeHtml(carrier);
+  // CLICKABLE TRACKING (shop-chain audit 2026-08-01): the buyer used to get a
+  // bare number in bold and had to go find the carrier's site themselves.
+  // carrierTrackingUrl returns null on an unusable number — we then render the
+  // plain number, never a dead link.
+  const trackingUrl = isPickup ? null : carrierTrackingUrl(carrier, trackingNumber);
+  const trackingHtml = trackingSafe
+    ? trackingUrl
+      ? `<p style="font-size:14px;color:#2A2A2A">tracking: <a href="${trackingUrl}" style="color:#0E0E0E"><strong>${carrierSafe ? `${carrierSafe} · ` : ''}${trackingSafe}</strong></a></p>`
+      : `<p style="font-size:14px;color:#2A2A2A">tracking: <strong>${carrierSafe ? `${carrierSafe} · ` : ''}${trackingSafe}</strong></p>`
+    : '';
+  // The order-status page — the buyer's own durable view of this order.
+  const statusUrl = orderStatusUrlFor(orderId);
+  const statusHtml = statusUrl
+    ? `<p style="font-size:14px"><a href="${statusUrl}" style="color:#0E0E0E">see your order &rarr;</a></p>`
+    : '';
   if (buyerEmail) {
     await sendEmail({
       to: buyerEmail,
@@ -169,13 +216,15 @@ export async function POST(request: Request) {
         ? `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
         <p>hey ${buyerFirst},</p>
         <p>hope the pickup went smooth — your <strong>${productName}</strong> order with <strong>${ranchName}</strong> is complete.</p>
+        ${statusHtml}
         <p style="font-size:14px;color:#5A5752">if anything's off with your order, we make it right — just reply to this email.</p>
         <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow</p>
       </div>`
         : `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
         <p>hey ${buyerFirst},</p>
         <p>your <strong>${productName}</strong> just shipped from <strong>${ranchName}</strong>.</p>
-        ${trackingSafe ? `<p style="font-size:14px;color:#2A2A2A">tracking: <strong>${trackingSafe}</strong></p>` : ''}
+        ${trackingHtml}
+        ${statusHtml}
         <p style="font-size:14px;color:#5A5752">if anything shows up wrong or freezer-burned, we make it right — just reply to this email.</p>
         <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow</p>
       </div>`,
