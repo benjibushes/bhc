@@ -135,6 +135,11 @@ export default async function middleware(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     const loginUrl = new URL('/admin/login', request.url);
+    // Carry the destination so login can return the operator to the page they
+    // asked for (Telegram deep-links land here on an expired session). The
+    // client layout guard already mints ?next= — this edge redirect was the
+    // one hop that dropped it. Login validates the value (must start /admin).
+    loginUrl.searchParams.set('next', pathname);
     return NextResponse.redirect(loginUrl);
   }
 
