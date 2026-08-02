@@ -29,7 +29,7 @@ export default function TermsPage() {
           </h1>
           
           <p className="text-sm text-saddle">
-            Last Updated: January 27, 2026
+            Last Updated: August 2, 2026
           </p>
 
           <a

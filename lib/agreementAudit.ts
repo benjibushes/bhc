@@ -12,12 +12,14 @@
 /**
  * Version tag stamped into `Agreement Version` at e-sign time.
  *
- * '2026-04-legacy' = the agreement text live since the April launch (predates
- * versioning — hence "legacy"). BUMP THIS when Ben lands the /terms legal
- * rewrite (the deprecated invoice model is still referenced there) so
- * signatures made against the new text are distinguishable from old ones.
+ * '2026-04-legacy'    = the April-launch text (predates versioning).
+ * '2026-08-buyer-pays' = PR #536 rewrite: sign-agreement §2 + /terms §4 moved
+ *   to the locked buyer-pays-on-top model (rancher keeps 100%, fee added to
+ *   the buyer at deposit, per-plan rate; legacy pre-June-2026 signers stay on
+ *   their original terms). BUMP THIS on every material contract-text change —
+ *   the stamp is what makes "which text did this rancher agree to" answerable.
  */
-export const AGREEMENT_VERSION = '2026-04-legacy';
+export const AGREEMENT_VERSION = '2026-08-buyer-pays';
 
 // Airtable long-text is effectively unbounded, but a UA is identification
 // noise past a few hundred chars — cap it so a hostile 100KB header can't

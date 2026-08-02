@@ -8,8 +8,11 @@ function fakeHeaders(map: Record<string, string>): { get(name: string): string |
   return { get: (name: string) => (name.toLowerCase() in lower ? lower[name.toLowerCase()] : null) };
 }
 
-test('AGREEMENT_VERSION is the pre-rewrite legacy tag', () => {
-  assert.equal(AGREEMENT_VERSION, '2026-04-legacy');
+test('AGREEMENT_VERSION matches the live contract text (PR #536 buyer-pays rewrite)', () => {
+  // Pinned on purpose: changing the sign-agreement/§4 text without bumping the
+  // version stamp makes "which text did this rancher agree to" unanswerable.
+  // If this fails, you changed one without the other.
+  assert.equal(AGREEMENT_VERSION, '2026-08-buyer-pays');
 });
 
 test('signatureAuditFields: first hop of x-forwarded-for wins', () => {
