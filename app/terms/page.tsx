@@ -98,15 +98,19 @@ export default function TermsPage() {
                 4. Transactions & Commissions
               </h2>
               <p>
-                <strong>4.1 No Marketplace:</strong> BuyHalfCow does not process transactions. All sales occur 
-                directly between members and ranchers/partners.
+                <strong>4.1 Payment Processing:</strong> BuyHalfCow processes deposits and certain
+                payments on behalf of ranchers through our payment processor (Stripe). The sale
+                contract for beef — pricing, fulfillment, and delivery — remains directly between
+                the member and the rancher; BuyHalfCow is not a party to it.
               </p>
               <p>
-                <strong>4.2 Commission Agreement:</strong> Ranchers agree to commission on sales facilitated
-                through the Platform, based on their subscription tier: Pasture ($150/mo) + 7% commission,
-                Ranch ($350/mo) + 3% commission, Operator ($500/mo) + 0% commission. Legacy ranchers (pre-Stage-3):
-                10% post-close invoice. Commission tracking and payment terms are agreed upon separately.
-                See /founders or your /rancher/billing dashboard for current rates.
+                <strong>4.2 Service Fee:</strong> BuyHalfCow&rsquo;s service fee is paid by the
+                buyer, added on top of the rancher&rsquo;s price at the time of deposit, at the
+                rate set by the rancher&rsquo;s plan: free plan 10%, Pasture ($150/mo) 7%,
+                Ranch ($350/mo) 3%, Operator ($500/mo) 0%. Ranchers keep 100% of their listed
+                price. Ranchers who joined on the legacy referral model (before June 2026) remain
+                governed by their original agreement, including its 10% post-close commission.
+                Current rates are shown in the rancher billing dashboard.
               </p>
               <p>
                 <strong>4.3 Independent Relationships:</strong> BuyHalfCow acts only as a connection facilitator. 
