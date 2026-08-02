@@ -131,9 +131,10 @@ const sections: Section[] = [
               full card-fraud protection.
             </p>
             <p>
-              Balance due at pickup or delivery is paid directly to the rancher in whatever method
-              they prefer (check, cash, Venmo, Zelle &mdash; varies by rancher). The two of you sort
-              that in your message thread before pickup.
+              The balance is due when your cut is confirmed. Most ranches send it through
+              BuyHalfCow &mdash; a secure card payment straight to the rancher&apos;s account, same
+              protection as the deposit. Some ranches prefer to settle direct at pickup instead;
+              your rancher confirms which in your message thread.
             </p>
           </>
         ),
@@ -180,8 +181,10 @@ const sections: Section[] = [
               price.
             </p>
             <p>
-              Balance due at pickup/delivery is yours to collect direct &mdash; whatever method you
-              already use (check, cash, Venmo, Zelle, wire). BHC doesn&apos;t touch that side.
+              The balance is yours too: send it from your dashboard as a card invoice &mdash; the
+              money lands in the same account as your deposit, no extra fee from us &mdash; or
+              collect direct at pickup if that&apos;s how you and the buyer want it. Either way you
+              keep 100%.
             </p>
           </>
         ),

@@ -4303,7 +4303,7 @@ export async function sendInstantCommissionInvoice(data: {
   /**
    * Stripe-hosted invoice URL. If present, the email surfaces a one-click
    * "Pay this invoice" CTA pointing at the hosted page instead of the
-   * legacy "reply for a Stripe link / Venmo / mail a check" fallback.
+   * legacy reply-for-a-payment-link fallback (all collection is Stripe — card or ACH).
    */
   stripeInvoiceUrl?: string;
 }) {
@@ -4360,12 +4360,7 @@ th{font-size:11px;text-transform:uppercase;letter-spacing:1.5px;color:#6B4F3F;fo
       ? `<div style="text-align:center;margin:28px 0;"><a href="${esc(data.stripeInvoiceUrl)}" style="display:inline-block;padding:14px 36px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px;">Pay invoice</a></div>
   <p style="font-size:13px;color:#6B4F3F;text-align:center;">Pay by card or ACH on the hosted Stripe invoice. Due in 30 days.</p>
   <p style="font-size:13px;color:#6B4F3F;text-align:center;margin-top:8px;">Stripe also sent you the invoice email directly — same link, either works.</p>`
-      : `<p style="font-size:14px;">Pay any of these ways within 30 days:</p>
-  <ul style="font-size:14px;color:#2A2A2A;line-height:1.8;">
-    <li>Reply to this email — I'll send you a Stripe payment link</li>
-    <li>Venmo: @buyhalfcow</li>
-    <li>Check: BuyHalfCow · Kalispell, MT 59901</li>
-  </ul>`
+      : `<p style="font-size:14px;">Your Stripe invoice link is on its way — reply to this email and I'll resend it. Pay by card or ACH, due in 30 days.</p>`
   }
   <p style="font-size:13px;color:#6B4F3F;">This is sent automatically when you mark a deal Closed Won. Monthly statement still arrives on the 1st as a rollup of any unpaid balance.</p>
   <p style="font-size:12px;color:#A7A29A;">— Ben<br>BuyHalfCow</p>
@@ -4450,13 +4445,9 @@ export async function sendMonthlyCommissionInvoice(data: {
     <a href="${process.env.COMMISSION_PAYMENT_URL}" style="display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px;border:2px solid #0E0E0E;">Pay $${data.runningTotalUnpaid.toLocaleString('en-US', { minimumFractionDigits: 2 })} Now</a>
     <p style="font-size:12px;color:#A7A29A;margin-top:8px;">Secure card payment via Stripe</p>
   </div>
-  <p style="font-size:13px;color:#6B4F3F;">Or pay manually:</p>
-  ` : ''}
-  <ul style="color:#6B4F3F;line-height:2;">
-    <li><strong>Venmo:</strong> @BuyHalfCow</li>
-    <li><strong>Zelle:</strong> ${ADMIN_EMAIL}</li>
-    <li><strong>Check:</strong> Payable to BuyHalfCow — reply for mailing address</li>
-  </ul>
+  ` : `
+  <p style="font-size:14px;color:#2A2A2A;">Reply to this email and I'll send your secure Stripe payment link — pay by card or ACH.</p>
+  `}
   <p style="font-size:13px;">Questions about this invoice? Reply to this email.</p>
 
   <div class="footer">
