@@ -1866,50 +1866,16 @@ export default function RancherSetupWizard() {
                 onChange={(v) => setField('Beef Types', v)}
                 placeholder="100% grass-fed Angus"
               />
-              <div className="border-t border-dust pt-4 mt-4">
-                <Field
-                  label="Cal.com booking link (so buyers can self-schedule calls with you)"
-                  value={form['Cal.com Slug']}
-                  onChange={(v) => setField('Cal.com Slug', v.trim().replace(/^https?:\/\/(www\.)?cal\.com\//, ''))}
-                  placeholder="yourname or yourname/buyhalfcow-intro"
-                />
-                <div className="bg-bone border border-dust p-4 mt-3 text-sm leading-relaxed text-charcoal">
-                  {/* This is an OPTIONAL side task, not part of the 15-minute
-                      wizard promise — it used to claim "10 minutes total",
-                      the same number the whole wizard claimed. Scoped and
-                      labelled optional so the two numbers can't collide. */}
-                  <p className="font-medium mb-2">
-                    Optional — skip it and come back any time. 3-step setup, about 5 minutes:
-                  </p>
-                  <ol className="list-decimal pl-5 space-y-1.5 text-saddle">
-                    <li>
-                      <a
-                        href="https://cal.com/signup"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="underline text-charcoal"
-                      >
-                        Sign up free at cal.com
-                      </a>{' '}
-                      (if you don&rsquo;t already have an account).
-                    </li>
-                    <li>
-                      Create a <strong>15-minute event type</strong> named &ldquo;BuyHalfCow Intro&rdquo; with your real availability windows.
-                    </li>
-                    <li>
-                      In that event&rsquo;s settings, add{' '}
-                      <code className="bg-white border border-dust px-1.5 py-0.5">{OPERATOR_NOTIFY_EMAIL}</code>{' '}
-                      as an <strong>Additional Guest</strong> (Cal.com → Event Type → Limits/Workflows → Add invitee).
-                      That&rsquo;s how Ben sees every booking and can join if needed.
-                    </li>
-                  </ol>
-                  <p className="mt-3 text-xs text-saddle">
-                    Then paste your link above — just the part after <code className="bg-white px-1">cal.com/</code> works
-                    (e.g. <code className="bg-white px-1">yourname/buyhalfcow-intro</code>).
-                    We embed this in every buyer&rsquo;s intro email as the primary call-to-action.
-                  </p>
-                </div>
-              </div>
+              {/* Cal.com setup REMOVED from the wizard (2026-08-02, live-rancher
+                  pushback): telling a rancher to go create a third-party
+                  account + event type mid-onboarding was a wall — several
+                  stalled on the Cal sign-in and thought BHC required it. It
+                  never was required: with no slug the buyer intro email
+                  simply hides the booking block and buyers text/call instead
+                  (lib/email.ts intro CTA branch). Ranchers who already use
+                  Cal.com can paste their link any time in My Page, which is
+                  now the ONLY surface that mentions it. The wizard asks for
+                  nothing beyond BHC + Stripe. */}
             </div>
             <StepFooter
               saving={saving}
