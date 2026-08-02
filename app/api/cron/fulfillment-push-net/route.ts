@@ -117,7 +117,20 @@ async function realHandler(_request: Request): Promise<NetResult> {
   for (const id of sel.toPush) {
     await runFulfillmentPush(id);
     const after = await getRecordById(TABLES.RANCHER_ORDERS, id).catch(() => null);
-    outcomes[classifyPushOutcome(String(after?.['External Push Status'] || ''))] += 1;
+    let outcome = classifyPushOutcome(String(after?.['External Push Status'] || ''));
+    // 2026-08-02 (first-shop-order false alarm): within the 3-day grace the
+    // sweep deliberately attempts KNOWN-no-integration ranchers (late-connect
+    // cover), the runner correctly refuses and leaves status blank — but blank
+    // classified as 'retryable', so a manual-fulfillment rancher's order rang
+    // the zero-progress alarm every 2h for 3 days. A known-no-integration
+    // refusal is a SKIP (the SLA cron owns manual fulfillment), not stuck work.
+    if (
+      outcome === 'retryable' &&
+      hasIntegration(String(after?.['Rancher Record ID'] || '')) === false
+    ) {
+      outcome = 'skipped';
+    }
+    outcomes[outcome] += 1;
   }
 
   // M2: clear 'Push Retry Requested At' after the attempt (and on moot rows) so
