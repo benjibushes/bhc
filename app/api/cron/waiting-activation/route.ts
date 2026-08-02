@@ -19,9 +19,10 @@
 // Env `WAITING_ACTIVATION_ENABLED`: unset/other → the cron returns
 // { skipped: 'disabled' } before reading or writing ANYTHING (no Airtable
 // reads, no Cron Runs row). 'dry-run' → the exact live selection runs
-// read-only and a Telegram report shows what WOULD send (no sends, no
-// stamps — plus a stamp-SCHEMA probe, see below) — the founder eyeballs this
-// before going live. 'true' → live.
+// read-only and the would-send plan goes to logs + the Cron Runs note
+// (Wave 1C: no Telegram while dark; no sends, no stamps — plus a
+// stamp-SCHEMA probe, see below) — the founder eyeballs the note before
+// going live. 'true' → live.
 // Optional knobs (all honor an explicit 0 — parseNudgeKnob):
 //   WAITING_NUDGE_COOLDOWN_DAYS  — min days between nudges per buyer (default 14)
 //   WAITING_NUDGE_MAX_PER_RUN    — WAITING batch cap per daily run (default 50)
@@ -297,16 +298,14 @@ async function realHandler(_request: Request): Promise<CronResult> {
       ? 'READY chase: reads FAILED — stage would be skipped this run'
       : `READY chase: would nudge ${selectedReady.length} of ${readyCandidates.length} READY buyers (post-nurture, no live referral, cap ${readyBatchCap})`;
     const schemaLine = `Stamp schema — WAITING: ${waitingSchema} · READY: ${readySchema}`;
-    await sendOperatorSignal({
-      urgency: 'normal',
-      kind: 'other',
-      summary: `waiting-activation DRY RUN: would nudge ${report.selectedCount} of ${report.poolSize} WAITING buyers`,
-      detail: `${text}\n${readyLine}\n${schemaLine}`,
-      // Daily cron + daily report is the point of dry-run mode; dedupe only
-      // guards a same-day double-fire (manual curl + schedule).
-      dedupeKey: 'waiting-activation-dry-run',
-      dedupeWindowMs: 6 * 60 * 60 * 1000,
-    }).catch(() => {});
+    // Wave 1C: while the rail is env-dark, the daily would-send plan goes to
+    // logs + the Cron Runs note only (the notes below carry every count +
+    // both schema probes) — no realtime Telegram for work that will never
+    // execute. Failures still page via withCronRun's error/partial alert.
+    console.info(
+      `[waiting-activation] DRY RUN: would nudge ${report.selectedCount} of ${report.poolSize} WAITING buyers\n` +
+        `${text}\n${readyLine}\n${schemaLine}`,
+    );
     return {
       status: 'success',
       recordsTouched: 0,
@@ -580,8 +579,9 @@ async function authedHandler(request: Request): Promise<Response> {
   // DARK-BY-DEFAULT GATE — before withCronRun so a disabled cron performs
   // ZERO reads/writes (not even a Cron Runs row). WAITING_ACTIVATION_ENABLED:
   //   unset / anything else → dark (this skip)
-  //   'dry-run'             → selection runs read-only + Telegram report,
-  //                           NO sends, NO stamps (founder eyeballs the batch)
+  //   'dry-run'             → selection runs read-only; plan goes to logs +
+  //                           Cron Runs note (no Telegram while dark),
+  //                           NO sends, NO stamps (founder eyeballs the note)
   //   'true'                → live sends
   const mode = process.env.WAITING_ACTIVATION_ENABLED;
   if (mode !== 'true' && mode !== 'dry-run') {

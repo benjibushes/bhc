@@ -9,7 +9,8 @@
 // ── DARK BY DEFAULT ─────────────────────────────────────────────────────────
 // Env `PRODUCT_REVIEW_ASK_ENABLED` (fleet 3-state contract):
 //   unset/other → { skipped: 'disabled' } before ANY read (no Cron Runs row)
-//   'dry-run'   → live selection read-only + Telegram report, no sends/stamps
+//   'dry-run'   → live selection read-only; plan goes to logs + Cron Runs
+//                 note (Wave 1C: no Telegram while dark), no sends/stamps
 //   'true'      → live sends, capped per run
 //
 // Idempotency: CLAIM-BEFORE-SEND on 'Review Asked At' with read-back abort
@@ -73,16 +74,12 @@ async function realHandler(_request: Request): Promise<CronResult> {
   const batch = eligible.slice(0, cap);
 
   if (dryRun) {
-    await sendOperatorSignal({
-      urgency: 'normal',
-      kind: 'other',
-      summary: `product-review-ask DRY RUN: would ask ${batch.length} of ${eligible.length} eligible buyers`,
-      detail:
-        `shipped orders: ${orders.length} · eligible (${MIN_DAYS}-${MAX_DAYS}d, never asked): ${eligible.length} · this run would send: ${batch.length} (cap ${cap})\n` +
-        `flip PRODUCT_REVIEW_ASK_ENABLED=true to go live.`,
-      dedupeKey: 'product-review-ask-dry-run',
-      dedupeWindowMs: 6 * 60 * 60 * 1000,
-    }).catch(() => {});
+    // Wave 1C: env-dark plan → log + Cron Runs note only; no Telegram for a
+    // rail that's off. Failures page via withCronRun's error/partial alert.
+    console.info(
+      `[product-review-ask] DRY RUN — would ask ${batch.length} of ${eligible.length} eligible buyers ` +
+        `(shipped ${orders.length}, ${MIN_DAYS}-${MAX_DAYS}d window, cap ${cap}) — flip PRODUCT_REVIEW_ASK_ENABLED=true to go live`,
+    );
     return { status: 'success', recordsTouched: 0, notes: `DRY RUN shipped=${orders.length} eligible=${eligible.length} would=${batch.length} — no sends` };
   }
 

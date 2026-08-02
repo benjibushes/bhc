@@ -31,6 +31,7 @@ import { getAllRecords, deleteRecordsBatch, TABLES } from '@/lib/airtable';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
+import { shouldSendCronReport } from '@/lib/cronReportGate';
 
 export const maxDuration = 300;
 
@@ -109,17 +110,23 @@ async function realHandler(_request: Request): Promise<CronResult> {
     lines.push(`${table}: deleted ${deleted}/${backlogLabel} past ${days}d`);
   }
 
-  // Report in BOTH modes — dry-run is exactly the eyeball step before the
-  // env flips true, and live runs stay visible until the backlog drains.
-  await sendOperatorSignal({
-    urgency: 'digest',
-    kind: 'audit',
-    summary: dryRun
-      ? 'log-retention DRY RUN — nothing deleted'
-      : `log-retention: pruned ${totalDeleted} rows`,
-    detail: lines.join('\n') + (errors.length ? `\nerrors: ${errors.slice(0, 3).join(' | ')}` : ''),
-    dedupeKey: `log-retention:${new Date().toISOString().slice(0, 10)}`,
-  }).catch(() => {});
+  // Wave 1C (2026-08-01): was urgency 'digest', which suppress-and-logs (no
+  // digest collector exists) — this report NEVER reached the operator; the
+  // Cron Runs note was the only record. Now: realtime 'normal' card only when
+  // the run actually pruned something or errored (shouldSendCronReport);
+  // zero-work runs stay in the Cron Runs row alone. Dry-run counts land in
+  // the notes below — no realtime ping for a plan that won't execute.
+  if (!dryRun && shouldSendCronReport({ workDone: totalDeleted, failures: errors.length })) {
+    await sendOperatorSignal({
+      urgency: 'normal',
+      kind: 'audit',
+      summary: `log-retention: pruned ${totalDeleted} rows`,
+      detail: lines.join('\n') + (errors.length ? `\nerrors: ${errors.slice(0, 3).join(' | ')}` : ''),
+      dedupeKey: `log-retention:${new Date().toISOString().slice(0, 10)}`,
+    }).catch(() => {});
+  } else {
+    console.info(`[log-retention] ${dryRun ? 'DRY RUN — ' : ''}${lines.join(' · ') || 'nothing to prune'} (no realtime report)`);
+  }
 
   return {
     status: errors.length ? 'partial' : 'success',

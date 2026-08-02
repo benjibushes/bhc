@@ -22,10 +22,6 @@
       "schedule": "0 * * * *"
     },
     {
-      "path": "/api/cron/daily-digest",
-      "schedule": "7 14 * * *"
-    },
-    {
       "path": "/api/cron/batch-approve",
       "schedule": "0 9 * * *"
     },

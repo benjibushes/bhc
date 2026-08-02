@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { getAllRecords, getRecordById, updateRecord, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
-import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { sendOperatorSignal } from '@/lib/operatorSignal';
+import { calBookingCardDedupe } from '@/lib/cronReportGate';
 import { sendOperatorPreCallBrief } from '@/lib/email';
 import { logAuditEntry, buildAirtableUpdateReverse } from '@/lib/auditLog';
 
@@ -26,6 +27,17 @@ export const maxDuration = 60;
 // but log a warning.
 //
 // Events handled:
+// ── OPERATOR CARDS (Wave 1C, 2026-08-01) ──────────────────────────────────
+// Every Telegram card here rides sendOperatorSignal (dedupe + failover), and
+// all booking-LIFECYCLE cards share one dedupe key per attendee with a 5-min
+// window (lib/cronReportGate calBookingCardDedupe). Why: a single reschedule
+// makes Cal fire BOOKING_CANCELLED + BOOKING_CREATED + BOOKING_RESCHEDULED
+// (sometimes across two booking uids), which used to fan 3-4 cards at the
+// operator for one human action. Now the first card of the burst wins; the
+// Airtable status writes still all run (dedupe gates ONLY the card). No-show
+// and handler-error alerts use their own keys so a booking card can never
+// swallow them.
+//
 //   BOOKING_CREATED      → flip Onboarding Status to "Call Scheduled" if rancher
 //                          is in earlier stage. Telegram + ?email auto-match.
 //   BOOKING_RESCHEDULED  → if rancher was in cancelled / empty / New state, flip
@@ -257,10 +269,13 @@ export async function POST(request: Request) {
               // Tie back to the onboarding wizard gate for pre-live ranchers.
               ...(isPreLive ? { 'Onboarding Status': 'Call Scheduled', 'Call Scheduled': true } : {}),
             }).catch((e: any) => console.warn('[cal webhook] migration booked stamp failed:', e?.message));
-            await sendTelegramMessage(
-              TELEGRAM_ADMIN_CHAT_ID,
-              `📅 <b>Migration call booked</b>\n\n${rancher['Operator Name'] || rancher['Ranch Name']} (${rancher['State'] || '?'}) booked Ben's ${slotLabel} @ ${dateDisplay}.${migMeetingUrl ? `\n🔗 ${migMeetingUrl}` : ''}`
-            ).catch(() => {});
+            await sendOperatorSignal({
+              urgency: 'normal',
+              kind: 'other',
+              summary: `📅 Migration call booked`,
+              detail: `${rancher['Operator Name'] || rancher['Ranch Name']} (${rancher['State'] || '?'}) booked the operator's ${slotLabel} @ ${dateDisplay}.${migMeetingUrl ? `\n🔗 ${migMeetingUrl}` : ''}`,
+              ...calBookingCardDedupe(attendeeEmail),
+            }).catch(() => {});
           } else if (triggerEvent === 'MEETING_ENDED') {
             await updateRecord(TABLES.RANCHERS, rancher.id, {
               'Migration Call Completed At': new Date().toISOString(),
@@ -348,15 +363,18 @@ export async function POST(request: Request) {
 
         // Telegram alert (distinct from rancher migration emoji set)
         try {
-          await sendTelegramMessage(
-            TELEGRAM_ADMIN_CHAT_ID,
-            `${verb}\n\n` +
+          await sendOperatorSignal({
+            urgency: 'normal',
+            kind: 'other',
+            summary: verb,
+            detail:
               `👤 <b>Buyer:</b> ${buyerName} (${attendeeEmail})\n` +
               `🤠 <b>Rancher:</b> ${rancherName}\n` +
               `🗓 ${dateDisplay} MT\n` +
               (referral ? `📎 Ref: ${referral.id} · ${referral['Status'] || '?'}` : '⚠️ No active referral matched — buyer may have booked off-funnel.') +
-              (meetingUrl ? `\n🔗 ${meetingUrl}` : '')
-          );
+              (meetingUrl ? `\n🔗 ${meetingUrl}` : ''),
+            ...calBookingCardDedupe(attendeeEmail),
+          });
         } catch (e: any) {
           console.error('[cal webhook] buyer-sales Telegram failed:', e?.message);
         }
@@ -564,15 +582,18 @@ export async function POST(request: Request) {
           : triggerEvent === 'MEETING_ENDED' ? '✅ CALL ENDED'
           : '📅 ' + triggerEvent;
         try {
-          await sendTelegramMessage(
-            TELEGRAM_ADMIN_CHAT_ID,
-            `${verb} — Buyer ↔ Rancher\n\n` +
+          await sendOperatorSignal({
+            urgency: 'normal',
+            kind: 'other',
+            summary: `${verb} — Buyer ↔ Rancher`,
+            detail:
               `👤 <b>Buyer:</b> ${buyerDisplay} (${attendeeEmail})\n` +
               `🤠 <b>Rancher:</b> ${hostName}\n` +
               `🗓 ${dateDisplay}\n` +
               `🎯 ${eventTitle}` +
-              (meetingUrl ? `\n🔗 ${meetingUrl}` : '')
-          );
+              (meetingUrl ? `\n🔗 ${meetingUrl}` : ''),
+            ...calBookingCardDedupe(attendeeEmail),
+          });
         } catch (e) {
           console.error('[cal webhook] buyer-rancher Telegram alert failed:', e);
         }
@@ -641,23 +662,22 @@ export async function POST(request: Request) {
         }
       }
 
-      await sendTelegramMessage(
-        TELEGRAM_ADMIN_CHAT_ID,
-        `📞 <b>CALL BOOKED</b>\n\n` +
-        `🤠 ${rancherName}\n` +
-        `📅 ${dateDisplay} MT\n` +
-        `📧 ${attendeeEmail}\n` +
-        (rancher
-          ? `Status: ${rancher['Onboarding Status'] || 'New'}\n\n<i>After the call, tap below to unlock their wizard signing step. MEETING_ENDED webhook also flips this automatically if Cal.com fires it.</i>`
-          : '⚠️ Not found in rancher database — they may have booked with a different email than they self-submitted with.'),
-        rancher
-          ? {
-              inline_keyboard: [
-                [{ text: '✅ Mark Call Complete', callback_data: `rcallcompl_${rancher.id}` }],
-              ],
-            }
-          : undefined
-      );
+      await sendOperatorSignal({
+        urgency: 'normal',
+        kind: 'other',
+        summary: `📞 CALL BOOKED`,
+        detail:
+          `🤠 ${rancherName}\n` +
+          `📅 ${dateDisplay} MT\n` +
+          `📧 ${attendeeEmail}\n` +
+          (rancher
+            ? `Status: ${rancher['Onboarding Status'] || 'New'}\n\n<i>After the call, tap below to unlock their wizard signing step. MEETING_ENDED webhook also flips this automatically if Cal.com fires it.</i>`
+            : '⚠️ Not found in rancher database — they may have booked with a different email than they self-submitted with.'),
+        actions: rancher
+          ? [{ label: '✅ Mark Call Complete', callbackData: `rcallcompl_${rancher.id}` }]
+          : undefined,
+        ...calBookingCardDedupe(attendeeEmail),
+      }).catch(() => {});
     }
 
     else if (triggerEvent === 'MEETING_ENDED') {
@@ -681,17 +701,22 @@ export async function POST(request: Request) {
       const isNoShow = attendeeNoShow || hostNoShow || topLevelNoShow;
 
       if (isNoShow) {
-        await sendTelegramMessage(
-          TELEGRAM_ADMIN_CHAT_ID,
-          `🚨 <b>RANCHER NO-SHOW</b>\n\n` +
-          `🤠 ${rancherName}\n` +
-          `📧 ${attendeeEmail}\n` +
-          `📅 ${dateDisplay} MT\n\n` +
-          `<i>Cal flagged ${hostNoShow ? 'host' : 'attendee'} as no-show — wizard NOT auto-advanced. ` +
-          (rancher
-            ? `Reach out to rebook, or use /bhc-ops to advance manually if call did happen.</i>`
-            : `Rancher not in DB either — likely junk booking.</i>`)
-        );
+        // Own dedupe key (NOT the shared booking-card key): a lifecycle card
+        // from the same attendee must never swallow a no-show alert.
+        await sendOperatorSignal({
+          urgency: 'loud',
+          kind: 'stuck-rancher',
+          summary: `RANCHER NO-SHOW: ${rancherName}`,
+          detail:
+            `📧 ${attendeeEmail}\n` +
+            `📅 ${dateDisplay} MT\n\n` +
+            `<i>Cal flagged ${hostNoShow ? 'host' : 'attendee'} as no-show — wizard NOT auto-advanced. ` +
+            (rancher
+              ? `Reach out to rebook, or advance manually if the call did happen.</i>`
+              : `Rancher not in DB either — likely junk booking.</i>`),
+          dedupeKey: `cal-noshow:${attendeeEmail}`,
+          dedupeWindowMs: 6 * 60 * 60 * 1000,
+        }).catch(() => {});
         await markCalEventProcessed(dedupeKey);
         return NextResponse.json({ success: true, event: triggerEvent, rancher: rancherName, noShow: true });
       }
@@ -727,10 +752,14 @@ export async function POST(request: Request) {
           console.error('[cal webhook] MEETING_ENDED update failed:', e);
         }
       } else {
-        await sendTelegramMessage(
-          TELEGRAM_ADMIN_CHAT_ID,
-          `⚠️ <b>UNMATCHED MEETING_ENDED</b>\n\n📧 ${attendeeEmail}\n📅 ${dateDisplay} MT\n\n<i>Call ended but attendee email doesn't match any Rancher row.</i>`
-        );
+        await sendOperatorSignal({
+          urgency: 'normal',
+          kind: 'other',
+          summary: `⚠️ UNMATCHED MEETING_ENDED`,
+          detail: `📧 ${attendeeEmail}\n📅 ${dateDisplay} MT\n\n<i>Call ended but attendee email doesn't match any Rancher row.</i>`,
+          dedupeKey: `cal-unmatched:${attendeeEmail}`,
+          dedupeWindowMs: 6 * 60 * 60 * 1000,
+        }).catch(() => {});
       }
     }
 
@@ -770,16 +799,19 @@ export async function POST(request: Request) {
           console.error('[cal webhook] BOOKING_CANCELLED update failed:', e);
         }
       }
-      await sendTelegramMessage(
-        TELEGRAM_ADMIN_CHAT_ID,
-        `❌ <b>CALL CANCELLED</b>\n\n` +
-        `🤠 ${rancherName}\n` +
-        `📧 ${attendeeEmail}\n` +
-        `Originally: ${dateDisplay} MT` +
-        (rancher
-          ? `\n\n<i>Onboarding Status reset — rancher-followup cron will nudge them to rebook.</i>`
-          : `\n\n<i>⚠️ Rancher not in DB — no status change applied.</i>`)
-      );
+      await sendOperatorSignal({
+        urgency: 'normal',
+        kind: 'other',
+        summary: `❌ CALL CANCELLED`,
+        detail:
+          `🤠 ${rancherName}\n` +
+          `📧 ${attendeeEmail}\n` +
+          `Originally: ${dateDisplay} MT` +
+          (rancher
+            ? `\n\n<i>Onboarding Status reset — rancher-followup cron will nudge them to rebook.</i>`
+            : `\n\n<i>⚠️ Rancher not in DB — no status change applied.</i>`),
+        ...calBookingCardDedupe(attendeeEmail),
+      }).catch(() => {});
     }
 
     else if (triggerEvent === 'BOOKING_RESCHEDULED') {
@@ -813,14 +845,17 @@ export async function POST(request: Request) {
           console.error('[cal webhook] BOOKING_RESCHEDULED update failed:', e);
         }
       }
-      await sendTelegramMessage(
-        TELEGRAM_ADMIN_CHAT_ID,
-        `🔄 <b>CALL RESCHEDULED</b>\n\n` +
-        `🤠 ${rancherName}\n` +
-        `📅 New time: ${dateDisplay} MT\n` +
-        `📧 ${attendeeEmail}` +
-        (rancher ? '' : `\n\n<i>⚠️ Rancher not in DB.</i>`)
-      );
+      await sendOperatorSignal({
+        urgency: 'normal',
+        kind: 'other',
+        summary: `🔄 CALL RESCHEDULED`,
+        detail:
+          `🤠 ${rancherName}\n` +
+          `📅 New time: ${dateDisplay} MT\n` +
+          `📧 ${attendeeEmail}` +
+          (rancher ? '' : `\n\n<i>⚠️ Rancher not in DB.</i>`),
+        ...calBookingCardDedupe(attendeeEmail),
+      }).catch(() => {});
     }
 
     // 2026-06-09 P1 fix: mark event 'processed' so dedupe gate fires on retry.
@@ -832,10 +867,16 @@ export async function POST(request: Request) {
     // Telegram alert so ops sees it without infinite-retry pressure.
     console.error('[cal webhook] handler error:', error);
     try {
-      await sendTelegramMessage(
-        TELEGRAM_ADMIN_CHAT_ID,
-        `⚠️ <b>CAL WEBHOOK ERROR</b>\n${error?.message || 'unknown'}\n<i>Returning 200 to prevent retry storm.</i>`,
-      );
+      // Loud + failover: a broken webhook handler is a system error; 30-min
+      // dedupe so a Cal retry storm can't fan identical error cards.
+      await sendOperatorSignal({
+        urgency: 'loud',
+        kind: 'system-error',
+        summary: `CAL WEBHOOK ERROR: ${(error?.message || 'unknown').slice(0, 120)}`,
+        detail: `Returning 200 to prevent retry storm.`,
+        dedupeKey: 'cal-webhook-error',
+        dedupeWindowMs: 30 * 60 * 1000,
+      });
     } catch { /* best-effort */ }
     return NextResponse.json({ error: error.message }, { status: 200 });
   }
