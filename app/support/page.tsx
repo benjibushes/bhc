@@ -160,8 +160,10 @@ function SupportForm() {
         </div>
 
         <div>
+          {/* No asterisk: the select always has a valid value (defaults to
+              order-issue; the server falls back to 'other') — it never blocks. */}
           <label htmlFor="support-category" className="block text-sm font-medium mb-1">
-            What&apos;s going on? <span className="text-weathered">*</span>
+            What&apos;s going on?
           </label>
           <select
             id="support-category"
@@ -208,21 +210,12 @@ function SupportForm() {
           )}
         </div>
 
-        <div>
-          <label htmlFor="support-order-id" className="block text-sm font-medium mb-1">
-            Order ID <span className="text-muted">(optional)</span>
-          </label>
-          <input
-            id="support-order-id"
-            name="referralId"
-            type="text"
-            autoComplete="off"
-            value={form.referralId}
-            onChange={e => setForm(f => ({ ...f, referralId: e.target.value }))}
-            placeholder="From your order emails, if handy"
-            className="w-full px-4 py-3 border border-dust bg-white text-base focus:border-charcoal transition-colors"
-          />
-        </div>
+        {/* Order ID input REMOVED (2026-08-02 friction cut): the server looks
+            orders up by the required email and silently drops any id that
+            isn't a real record id (lib/supportIntake.ts) — asking a buyer to
+            dig through order emails mid-report only stalled the form. Deep
+            links (?ref=recXXX) still prefill form.referralId, which continues
+            to ride the POST body untouched. */}
 
         {/* Honeypot — hidden from real users, bots fill it */}
         <div className="hidden" aria-hidden="true">

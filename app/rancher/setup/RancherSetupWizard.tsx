@@ -8,7 +8,6 @@ import ImageUploader from '../../components/ImageUploader';
 import LivePreview from './LivePreview';
 import StripeConnectStep from './steps/StripeConnectStep';
 import OnboardingRoadmap from '../OnboardingRoadmap';
-import ShopifyConnectCard from '../ShopifyConnectCard';
 import { remapSavedStep, shouldAutoSelectFreeTier } from '@/lib/onboardingFlow';
 import { commissionCopyFor, TIER_FEE_PERCENT } from '@/lib/onboardingPaths';
 import {
@@ -325,9 +324,6 @@ export default function RancherSetupWizard() {
   const [websiteForAbout, setWebsiteForAbout] = useState('');
   const [showTaglineTemplates, setShowTaglineTemplates] = useState(false);
   const [buyerCountInState, setBuyerCountInState] = useState<number | null>(null);
-  const [testimonials, setTestimonials] = useState<
-    Array<{ name: string; quote: string; location?: string }>
-  >([]);
 
   // Editable form state — initialized from server response, updated locally.
   const [form, setForm] = useState<Record<string, any>>({});
@@ -357,15 +353,6 @@ export default function RancherSetupWizard() {
           setError(data?.error || 'Could not load your page');
         } else {
           setRancher(data.rancher);
-          // Parse existing testimonials from JSON string field. Treat any
-          // parse failure as "no testimonials yet" — non-fatal.
-          try {
-            const raw = data.rancher.Testimonials || (data.rancher as any)['Testimonials'];
-            if (raw) {
-              const parsed = JSON.parse(raw);
-              if (Array.isArray(parsed)) setTestimonials(parsed);
-            }
-          } catch {}
           setForm({
             // Operator Name arrives BOTH ways: camelCase (always) and raw
             // (since it joined ALLOWED_FIELDS). Prefer the raw name, fall back
@@ -882,21 +869,6 @@ export default function RancherSetupWizard() {
     }
   }
 
-  // Testimonials — array of {name, quote, location}. Stored in form
-  // as JSON-stringified Testimonials field (existing schema).
-  const addTestimonial = () =>
-    setTestimonials((t) => [...t, { name: '', quote: '', location: '' }]);
-  const removeTestimonial = (i: number) =>
-    setTestimonials((t) => t.filter((_, idx) => idx !== i));
-  const setTestimonial = (
-    i: number,
-    key: 'name' | 'quote' | 'location',
-    value: string
-  ) =>
-    setTestimonials((t) =>
-      t.map((row, idx) => (idx === i ? { ...row, [key]: value } : row))
-    );
-
   const toggleTier = (tier: 'Quarter' | 'Half' | 'Whole') => {
     setForm((f) => {
       const cur: string[] = Array.isArray(f['Tier Specialty']) ? f['Tier Specialty'] : [];
@@ -1093,8 +1065,6 @@ export default function RancherSetupWizard() {
         slice[`${tier} lbs`] = form[`${tier} lbs`] ?? '';
         slice[`${tier} Payment Link`] = form[`${tier} Payment Link`] ?? '';
       }
-      const validTestimonials = testimonials.filter((t) => t.name.trim() && t.quote.trim());
-      if (validTestimonials.length > 0) slice['Testimonials'] = JSON.stringify(validTestimonials);
       return slice;
     }
     if (step === 8) {
@@ -1119,7 +1089,7 @@ export default function RancherSetupWizard() {
     }
     return null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, form, testimonials]);
+  }, [step, form]);
 
   const fireStepAutoSave = useCallback(async () => {
     if (saving) return; // never race the explicit Save & continue PATCH
@@ -1163,7 +1133,7 @@ export default function RancherSetupWizard() {
       if (stepAutoSaveTimer.current) clearTimeout(stepAutoSaveTimer.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form, testimonials, step, loading, rancher]);
+  }, [form, step, loading, rancher]);
 
   // ── Wave 2 rancher-UX: validation errors must be SEEN ────────────────────
   // Every step's validation error renders in the ONE banner at the top of the
@@ -1966,40 +1936,19 @@ export default function RancherSetupWizard() {
             </header>
 
             <div className="space-y-5">
-              {/* Logo URL with instant preview chip — paste URL, see logo
-                  rendered inline. Fails gracefully if URL bad. */}
-              <div className="space-y-2">
-                <Field
-                  label="Logo URL"
-                  value={form['Logo URL']}
-                  onChange={(v) => setField('Logo URL', v)}
-                  placeholder="https://yourranch.com/logo.png"
-                  type="url"
-                />
-                {form['Logo URL'] && (
-                  <div className="flex items-center gap-3 px-3 py-2 bg-bone-warm border border-dust">
-                    <div className="relative w-12 h-12 bg-bone border border-dust shrink-0">
-                      <img
-                        src={form['Logo URL']}
-                        alt="Logo preview"
-                        className="absolute inset-0 w-full h-full object-contain p-1"
-                        onError={(e) => {
-                          (e.currentTarget as HTMLImageElement).style.display = 'none';
-                          (e.currentTarget.nextSibling as HTMLElement)?.classList?.remove?.('hidden');
-                        }}
-                      />
-                      <span className="hidden absolute inset-0 flex items-center justify-center text-xs text-weathered">
-                        ⚠
-                      </span>
-                    </div>
-                    <p className="text-xs text-saddle leading-relaxed">
-                      Logo preview. If you see a broken icon, the URL isn&rsquo;t
-                      reachable — try right-clicking your logo on your site and
-                      choosing &ldquo;Copy image address&rdquo;.
-                    </p>
-                  </div>
-                )}
-              </div>
+              {/* Logo — on-site upload (2026-08-02): the old paste-a-hosted-URL
+                  field assumed the rancher HAS a hosted logo URL and knows how
+                  to right-click-copy it — a mid-signup research chore. Same
+                  ImageUploader the gallery below already uses (drop a file →
+                  /api/rancher/upload → blob URL), writing to the same
+                  'Logo URL' form key so the save path is unchanged. The
+                  uploader keeps a validated paste-URL fallback built in. */}
+              <ImageUploader
+                label="Logo"
+                hint="(optional)"
+                value={form['Logo URL']}
+                onChange={(url) => setField('Logo URL', url)}
+              />
 
               {/* Tagline + templates */}
               <div className="space-y-2">
@@ -2410,7 +2359,8 @@ export default function RancherSetupWizard() {
                         })}
                       <p className="text-xs text-saddle leading-relaxed">
                         <strong>Deposit</strong> — what the buyer pays now to reserve. Auto-set to ~25% of each
-                        price; edit any and we&rsquo;ll keep your number.
+                        price; edit any and we&rsquo;ll keep your number. Leave a deposit blank and the buyer
+                        pays the full price up front when they reserve.
                       </p>
                     </div>
                   )}
@@ -2433,49 +2383,48 @@ export default function RancherSetupWizard() {
                 return (
                   <div key={tier} className="border border-dust p-4 md:p-5 space-y-3 bg-bone-warm">
                     <p className="font-serif text-lg text-charcoal">{tier} Cow — processing &amp; extras</p>
+                    {/* Optional — the final-invoice modal re-asks the fee (with
+                        this value as prefill) at the moment it matters, so a
+                        blank here never blocks money. NOT editable in My Page,
+                        so the input stays rather than being demoted entirely.
+                        Approx finished weight (lbs) REMOVED from the wizard
+                        (2026-08-02 friction cut): display-only on the public
+                        page and editable any time in My Page's pricing editor. */}
                     <Field
-                      label="Processing fee ($) — your processor cost"
+                      label="Processing fee ($, optional) — your processor cost"
                       type="number"
                       value={form[`${tier} Processing Fee`]}
                       onChange={(v) => setField(`${tier} Processing Fee`, v)}
                       placeholder="1000"
                     />
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <Field
-                        label="Approx finished weight (lbs)"
-                        value={form[`${tier} lbs`]}
-                        onChange={(v) => setField(`${tier} lbs`, v)}
-                        placeholder="~150 lbs"
-                      />
-                      {/* COMPANION GUARD (2026-07-21 legacy-default flip): a
-                          STAYING-legacy rancher has no Stripe Connect step —
-                          their own payment link IS the money path, so it's
-                          labeled required and Continue blocks below when every
-                          sold share's link is empty. tier_v2 keeps it optional
-                          — and so does a fresh applicant about to auto-select
-                          the free plan (shouldAutoSelectFreeTier): they'll be
-                          tier_v2 before they ever go live, so demanding a
-                          payment link here would be asking for a money path
-                          they'll never use. */}
-                      <Field
-                        label={
-                          String((rancher as any)['Pricing Model'] || 'legacy') === 'legacy' &&
-                          !shouldAutoSelectFreeTier(rancher as any)
-                            ? 'Payment link — required to go live'
-                            : 'Stripe / payment link (optional)'
-                        }
-                        value={form[`${tier} Payment Link`]}
-                        onChange={(v) => setField(`${tier} Payment Link`, v)}
-                        type="url"
-                        placeholder="https://buy.stripe.com/..."
-                        helper={
-                          String((rancher as any)['Pricing Model'] || 'legacy') === 'legacy' &&
-                          !shouldAutoSelectFreeTier(rancher as any)
-                            ? 'Buyers pay you directly through this link. At least one share you sell needs one.'
-                            : undefined
-                        }
-                      />
-                    </div>
+                    {/* COMPANION GUARD (2026-07-21 legacy-default flip): a
+                        STAYING-legacy rancher has no Stripe Connect step —
+                        their own payment link IS the money path, so it's
+                        labeled required and Continue blocks below when every
+                        sold share's link is empty. tier_v2 keeps it optional
+                        — and so does a fresh applicant about to auto-select
+                        the free plan (shouldAutoSelectFreeTier): they'll be
+                        tier_v2 before they ever go live, so demanding a
+                        payment link here would be asking for a money path
+                        they'll never use. */}
+                    <Field
+                      label={
+                        String((rancher as any)['Pricing Model'] || 'legacy') === 'legacy' &&
+                        !shouldAutoSelectFreeTier(rancher as any)
+                          ? 'Payment link — required to go live'
+                          : 'Stripe / payment link (optional)'
+                      }
+                      value={form[`${tier} Payment Link`]}
+                      onChange={(v) => setField(`${tier} Payment Link`, v)}
+                      type="url"
+                      placeholder="https://buy.stripe.com/..."
+                      helper={
+                        String((rancher as any)['Pricing Model'] || 'legacy') === 'legacy' &&
+                        !shouldAutoSelectFreeTier(rancher as any)
+                          ? 'Buyers pay you directly through this link. At least one share you sell needs one.'
+                          : undefined
+                      }
+                    />
                     {price > 0 && Number.isFinite(fee) && fee >= 0 && (
                       <div className="bg-bone border border-dust p-3 text-xs text-charcoal/85 leading-relaxed">
                         {/* Tier-agnostic on purpose: BHC's commission depends on the
@@ -2505,72 +2454,13 @@ export default function RancherSetupWizard() {
                 );
               })}
 
-            {/* Testimonials editor — array of {name, quote, location}.
-                Stored as JSON-stringified Testimonials field. Renders on the
-                public /ranchers/[slug] page in the "Word of mouth" section.
-                Optional — most ranchers add later from dashboard. */}
-            <div className="border-t border-dust pt-5 space-y-3">
-              <div className="flex items-baseline justify-between flex-wrap gap-2">
-                <div>
-                  <p className="text-sm font-medium text-charcoal">
-                    Customer testimonials (optional)
-                  </p>
-                  <p className="text-xs text-saddle">
-                    Quotes from real customers. Adds trust on your public page.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={addTestimonial}
-                  className="text-xs uppercase tracking-widest font-semibold text-saddle hover:text-charcoal underline underline-offset-2"
-                >
-                  + Add testimonial
-                </button>
-              </div>
-              {testimonials.map((t, i) => (
-                <div
-                  key={i}
-                  className="border border-dust bg-bone-warm p-3 space-y-2"
-                >
-                  <div className="flex items-center justify-between">
-                    <p className="text-[11px] uppercase tracking-widest text-saddle font-semibold">
-                      Testimonial #{i + 1}
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => removeTestimonial(i)}
-                      className="text-xs text-weathered hover:underline"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                  <Field
-                    label="Name"
-                    value={t.name}
-                    onChange={(v) => setTestimonial(i, 'name', v)}
-                    placeholder="Jane Doe"
-                  />
-                  <Field
-                    label="Location (city, state)"
-                    value={t.location || ''}
-                    onChange={(v) => setTestimonial(i, 'location', v)}
-                    placeholder="Bozeman, MT"
-                  />
-                  <TextareaField
-                    label="Quote"
-                    value={t.quote}
-                    onChange={(v) => setTestimonial(i, 'quote', v)}
-                    rows={2}
-                    placeholder="The freezer's full and the kids actually eat dinner now."
-                  />
-                </div>
-              ))}
-              {testimonials.length === 0 && (
-                <p className="text-xs text-dust italic">
-                  No testimonials yet. Click + Add testimonial above to build trust on your page.
-                </p>
-              )}
-            </div>
+            {/* Testimonials editor REMOVED from the wizard (2026-08-02
+                friction cut): a brand-new rancher rarely has customer quotes
+                on hand mid-pricing, and the public page simply hides the
+                "Word of mouth" section when the field is empty. The full
+                editor lives in My Page on the dashboard (the only surface
+                that writes Testimonials now), where ranchers add quotes once
+                real buyers exist. */}
 
             <StepFooter
               saving={saving}
@@ -2646,11 +2536,6 @@ export default function RancherSetupWizard() {
                 const willAutoSelect = shouldAutoSelectFreeTier(rancher as any);
                 const hasAnyLink = () =>
                   sells.some((tier) => String(form[`${tier} Payment Link`] || '').trim().length > 0);
-                // Filter out empty testimonials before saving (rancher may add
-                // then leave blank).
-                const validTestimonials = testimonials.filter(
-                  (t) => t.name.trim() && t.quote.trim()
-                );
                 // Persist ONLY the tiers the rancher sells. A deselected tier is
                 // nulled so it can never ship derived/stale price+deposit to a
                 // buyer page (which renders any tier that has a price).
@@ -2664,14 +2549,14 @@ export default function RancherSetupWizard() {
                     [`${tier} Payment Link`]: sold ? form[`${tier} Payment Link`] : '',
                   };
                 };
+                // Testimonials deliberately NOT written here anymore — the My
+                // Page editor is the single writer, so a wizard save can never
+                // clobber quotes added from the dashboard.
                 const ok = await saveStep({
                   'Tier Specialty': form['Tier Specialty'],
                   ...tierSlice('Quarter'),
                   ...tierSlice('Half'),
                   ...tierSlice('Whole'),
-                  Testimonials: validTestimonials.length
-                    ? JSON.stringify(validTestimonials)
-                    : '',
                 });
                 if (!ok) return;
 
@@ -2733,24 +2618,13 @@ export default function RancherSetupWizard() {
               }}
             />
 
-            {/* ── SECOND WAY TO SELL (2026-07-24): sync an existing store ──
-                Same money model, said out loud: we list their products at
-                their price plus our margin; their store receives a normal
-                paid order. The card's endpoints ride the rancher-session
-                cookie the wizard GET minted on load, so this works inside
-                the token-authed wizard with no auth changes. Share prices
-                above remain the go-live spine — the routing engine sells
-                shares; synced products land on /shop. */}
-            <div className="border-t border-dust pt-6">
-              <p className="text-xs uppercase tracking-widest text-saddle mb-3">
-                Also selling online already?
-              </p>
-              <ShopifyConnectCard
-                payoutsReady={
-                  String((rancher as any)['Stripe Connect Status'] || '').toLowerCase() === 'active'
-                }
-              />
-            </div>
+            {/* Shopify connect card REMOVED from the wizard (2026-08-02
+                friction cut): a third-party integration pitch mid-pricing
+                stalled the signup for the many to serve the few who have a
+                store. The same card is permanently mounted on the dashboard's
+                Products tab (app/rancher/ProductsTab.tsx), where a rancher
+                who sells online finds it the first time they look at
+                products. */}
           </section>
         )}
 
@@ -4359,10 +4233,31 @@ function FulfillmentStep({
   })();
   const processingDateIsPast = !!nextProcessingDate && nextProcessingDate < todayStr;
 
+  // Pickup City prefill (2026-08-02 friction cut): most ranchers' pickup spot
+  // is the ranch itself, and step 1 already asked for City + State — so when
+  // Local Pickup is on and Pickup City is blank, start it at "City, ST".
+  // Fully editable, and NEVER overwrites a value the rancher typed.
+  const prefillPickupCity = () => {
+    if (String(form['Pickup City'] || '').trim()) return;
+    const city = String(form.City || '').trim();
+    const st = String(form.State || '').trim();
+    const guess = city && st ? `${city}, ${st}` : city || st;
+    if (guess) setField('Pickup City', guess);
+  };
+  // Covers re-entering the step with Local Pickup already saved but the city
+  // still blank (the toggle handler below covers the fresh check).
+  useEffect(() => {
+    if (hasPickup) prefillPickupCity();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const toggle = (val: string) => {
     const cur = new Set(types);
     if (cur.has(val)) cur.delete(val);
-    else cur.add(val);
+    else {
+      cur.add(val);
+      if (val === 'Local Pickup') prefillPickupCity();
+    }
     setField('Fulfillment Types', Array.from(cur));
   };
 

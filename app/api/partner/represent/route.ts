@@ -79,10 +79,11 @@ export async function POST(request: Request) {
   if (!ranchName) return NextResponse.json({ error: 'Ranch name is required' }, { status: 400 });
   if (!contactName) return NextResponse.json({ error: 'Your name is required' }, { status: 400 });
   if (!isValidEmail(email)) return NextResponse.json({ error: 'A valid email is required' }, { status: 400 });
-  if (!isValidUsPhone(phoneRaw)) {
-    return NextResponse.json({ error: 'A valid US phone number is required' }, { status: 400 });
-  }
-  if (!state) return NextResponse.json({ error: 'A valid US state is required' }, { status: 400 });
+  // Phone + State are OPTIONAL (2026-08-02 friction cut): the broker rail is a
+  // one-page speed play and email is the rail's only required channel — the
+  // existing-rancher branch below never wrote either field anyway. When
+  // provided they're still recorded (formatted when parseable, else as typed
+  // so nothing the rancher gave us is lost).
   if (!agreed) {
     // The whole rail depends on this agreement being explicit and recorded.
     return NextResponse.json(
@@ -91,7 +92,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const phone = formatPhoneInput(phoneRaw);
+  const phone = phoneRaw ? (isValidUsPhone(phoneRaw) ? formatPhoneInput(phoneRaw) : phoneRaw) : '';
 
   // Dedupe by email. This matches ANY row in the Ranchers table, not just
   // broker rows — and that table holds prospects and half-onboarded leads Ben
@@ -122,8 +123,9 @@ export async function POST(request: Request) {
     'Ranch Name': ranchName,
     'Operator Name': contactName,
     Email: email,
-    Phone: phone,
-    State: state,
+    // Phone/State only when provided — never write blanks into the record.
+    ...(phone ? { Phone: phone } : {}),
+    ...(state ? { State: state } : {}),
     // THE rail flag. Everything downstream keys off this.
     [BROKER_RAIL_FIELD]: true,
     [BROKER_BALANCE_NOTE_FIELD]: balanceNote || BROKER_BALANCE_NOTE_FALLBACK,
@@ -191,8 +193,9 @@ export async function POST(request: Request) {
           ? `🤝 <b>EXISTING RANCH MOVED TO BROKER RAIL</b>${alreadyBroker ? ' (re-submitted)' : ''}`
           : `🤝 <b>NEW REPRESENTED RANCH</b>`,
         '',
-        `${ranchName} — ${state}`,
-        `${contactName} · ${phone}`,
+        state ? `${ranchName} — ${state}` : ranchName,
+        phone ? `${contactName} · ${phone}` : contactName,
+        `Email: ${email}`,
         sells ? `Sells: ${sells}` : '',
         '',
         `<b>Next: set Quarter/Half/Whole Price AND Deposit on this record.</b>`,

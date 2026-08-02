@@ -15,6 +15,7 @@ import { createProductPaymentIntent } from '@/lib/productPaymentIntent';
 import { ensureApplePayDomains } from '@/lib/applePayDomain';
 import { isDemoMode } from '@/lib/demo/demoMode';
 import { rateLimitStrict, getTrustedClientIp } from '@/lib/rateLimit';
+import { requireBuyerEmail } from '@/lib/productIntentEmail';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -37,10 +38,15 @@ export async function POST(request: Request) {
   if (!/^[A-Za-z0-9-]{8,64}$/.test(attemptId)) {
     return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
   }
-  const email = String(body?.email || '').trim().toLowerCase();
-  if (email && (!email.includes('@') || email.length > 200)) {
-    return NextResponse.json({ error: 'that email doesn\'t look right — check it and try again.' }, { status: 400 });
+  // Email is REQUIRED (friction cuts 2026-08-02): the client has always
+  // required it, but the server minted without it — a paid, receipt-less
+  // order was possible (settlement's email chain starts at
+  // metadata.buyerEmail). Gate is pure + tested: lib/productIntentEmail.
+  const emailCheck = requireBuyerEmail(body?.email);
+  if (!emailCheck.ok) {
+    return NextResponse.json({ error: emailCheck.error }, { status: 400 });
   }
+  const email = emailCheck.email;
 
 
   // Consent (checkout audit 2026-07-14): the charge relies on the written

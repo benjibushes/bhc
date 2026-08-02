@@ -601,8 +601,14 @@ export default function ProductsTab({
       {connectActive && showForm && (
         <div className="border border-dust bg-bone-warm p-5 space-y-4 max-w-2xl">
           <div className="font-serif text-lg">{editingId ? 'edit product' : 'add a product'}</div>
+          {/* The header must match lib/rancherProductInput.ts truth: a
+              SHIPPABLE product also 400s without a shipping choice and
+              ships-in days — "only name, category, and price" was a lie the
+              rancher discovered at save time. */}
           <p className="text-xs text-saddle">
-            Only <span className="text-weathered">*</span> name, category, and price are required — everything else is optional.
+            {form.shipsNationwide
+              ? <>Required <span className="text-weathered">*</span>: name, category, price, your shipping choice, and ships-in days — everything else is optional.</>
+              : <>Only <span className="text-weathered">*</span> name, category, and price are required — everything else is optional.</>}
           </p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

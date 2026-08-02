@@ -3,8 +3,9 @@
 // BRAND-OWNED CHECKOUT form (Payment Element migration — spec §3/§4).
 // The payment fields live INSIDE our page, skinned to brand tokens — no
 // iframe chrome, no Stripe-looking checkout. Flow (deferred intent):
-//   1. buyer fills email (ours) + shipping (AddressElement) + card/wallet
-//      (PaymentElement) — no PaymentIntent exists yet
+//   1. buyer fills email (ours) + shipping (AddressElement; local-pickup
+//      products ask for a pickup CONTACT — name + phone — instead) +
+//      card/wallet (PaymentElement) — no PaymentIntent exists yet
 //   2. pay-click: elements.submit() → POST /api/checkout/product/intent
 //      (every stock/rancher gate re-runs seconds before the charge) →
 //      stripe.confirmPayment with the fresh clientSecret
@@ -12,7 +13,10 @@
 //      (cached clientSecret — no duplicate mint, idempotent by attemptId)
 //
 // Shipping lands on pi.shipping at confirm (settlement's formatShipping
-// reads it); email rides metadata.buyerEmail (settlement receipt chain #1).
+// reads it); email rides metadata.buyerEmail (settlement receipt chain #1)
+// AND payment_method_data.billing_details (chain #2). Billing details the
+// page already collected are passed at confirm rather than re-asked by the
+// PaymentElement (fields.billingDetails 'never' — the ZIP-dedupe fix).
 
 import { useMemo, useRef, useState } from 'react';
 import { loadStripe } from '@stripe/stripe-js/pure';
@@ -38,6 +42,11 @@ function InnerForm({
   const stripe = useStripe();
   const elements = useElements();
   const [email, setEmail] = useState('');
+  // LOCAL PICKUP contact (friction cut 2026-08-02): a pickup order needs a
+  // person to coordinate with, not a shipping address — the old full
+  // AddressElement's own label admitted it ("contact info only").
+  const [contactName, setContactName] = useState('');
+  const [contactPhone, setContactPhone] = useState('');
   const [err, setErr] = useState('');
   const [paying, setPaying] = useState(false);
   // Consent (checkout audit 2026-07-14): perishable-goods + policy
@@ -60,6 +69,14 @@ function InnerForm({
       setErr('add your email — it’s where your receipt and tracking go.');
       return;
     }
+    if (localOnly && !contactName.trim()) {
+      setErr('add your name — the ranch needs it to set up your pickup.');
+      return;
+    }
+    if (localOnly && !contactPhone.trim()) {
+      setErr('add your phone — the ranch calls or texts to set the pickup time.');
+      return;
+    }
     if (!consent) {
       setErr('check the box to agree to the shipping & refund policy first.');
       return;
@@ -72,6 +89,42 @@ function InnerForm({
       if (submitted.error) {
         setErr(submitted.error.message || 'check the highlighted fields.');
         return;
+      }
+
+      // Billing details for confirm. The PaymentElement is configured with
+      // fields.billingDetails 'never' for everything we already collected
+      // (ZIP-dedupe: the buyer types their address exactly once), so those
+      // values MUST be passed here via payment_method_data.billing_details.
+      //   - shipping orders: name + address from the AddressElement above
+      //   - local pickup: our own contact inputs (card ZIP stays with the
+      //     PaymentElement — it's the only address anyone types)
+      let billingDetails: Record<string, any>;
+      if (localOnly) {
+        billingDetails = {
+          name: contactName.trim(),
+          email: cleanEmail,
+          phone: contactPhone.trim(),
+        };
+      } else {
+        const addressEl = elements.getElement(AddressElement);
+        const av = addressEl ? await addressEl.getValue() : null;
+        const a = av?.value?.address;
+        if (!a) {
+          setErr('check the shipping address fields.');
+          return;
+        }
+        billingDetails = {
+          name: av?.value?.name || '',
+          email: cleanEmail,
+          address: {
+            line1: a.line1,
+            ...(a.line2 ? { line2: a.line2 } : {}),
+            city: a.city,
+            state: a.state,
+            postal_code: a.postal_code,
+            country: a.country,
+          },
+        };
       }
 
       let clientSecret = cachedSecretRef.current;
@@ -117,6 +170,7 @@ function InnerForm({
         clientSecret,
         confirmParams: {
           return_url: `${SITE_URL}/order/success?pid=${productId}`,
+          payment_method_data: { billing_details: billingDetails },
         },
         redirect: 'if_required',
       });
@@ -154,16 +208,60 @@ function InnerForm({
         />
       </label>
 
-      <div>
-        <span className="block text-[13px] text-saddle mb-1.5">
-          {localOnly ? 'your address — contact info only, this order is picked up at the ranch' : 'shipping address'}
-        </span>
-        <AddressElement options={{ mode: 'shipping', allowedCountries: ['US'] }} />
-      </div>
+      {localOnly ? (
+        // LOCAL PICKUP: no shipping address exists — the order is collected at
+        // the ranch, so we ask only for the contact the ranch coordinates with.
+        <div>
+          <span className="block text-[13px] text-saddle mb-1.5">
+            pickup contact — the ranch reaches out to set the time + place
+          </span>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <input
+              type="text"
+              value={contactName}
+              onChange={(e) => setContactName(e.target.value)}
+              placeholder="full name"
+              autoComplete="name"
+              aria-label="Full name"
+              className="w-full p-3 border border-dust bg-white text-[15px]"
+            />
+            <input
+              type="tel"
+              value={contactPhone}
+              onChange={(e) => setContactPhone(e.target.value)}
+              placeholder="phone"
+              autoComplete="tel"
+              aria-label="Phone"
+              className="w-full p-3 border border-dust bg-white text-[15px]"
+            />
+          </div>
+        </div>
+      ) : (
+        <div>
+          <span className="block text-[13px] text-saddle mb-1.5">shipping address</span>
+          <AddressElement options={{ mode: 'shipping', allowedCountries: ['US'] }} />
+        </div>
+      )}
 
       <div>
         <span className="block text-[13px] text-saddle mb-1.5">payment</span>
-        <PaymentElement options={{ layout: 'accordion' }} />
+        {/* ZIP-dedupe (friction cut 2026-08-02): every billing field we already
+            collect is set to 'never' so the buyer is never asked twice — the
+            values ride payment_method_data.billing_details at confirm (see
+            pay()). Shipping orders: billing address comes from the
+            AddressElement, so the card form shows no second postal-code box.
+            Local pickup: no AddressElement exists, so the card form keeps its
+            own postal-code field — still typed exactly once. */}
+        <PaymentElement
+          options={{
+            layout: 'accordion',
+            fields: {
+              billingDetails: localOnly
+                ? { name: 'never', email: 'never', phone: 'never' }
+                : { name: 'never', email: 'never', address: 'never' },
+            },
+          }}
+        />
       </div>
 
       {/* Consent gate — links the written policy the charge relies on. */}
