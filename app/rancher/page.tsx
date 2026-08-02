@@ -4434,23 +4434,17 @@ export default function RancherDashboardPage() {
                         </p>
                       </div>
                     ) : (
-                      <div className="text-xs text-saddle mt-1 space-y-1">
-                        <p className="font-medium text-charcoal">2-step setup:</p>
-                        <ol className="list-decimal pl-5 space-y-0.5">
-                          <li>
-                            <a
-                              href="https://cal.com/signup"
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="underline text-charcoal"
-                            >
-                              Sign up free at cal.com
-                            </a>{' '}
-                            and create a 15-min event type called &ldquo;BuyHalfCow Intro&rdquo;
-                          </li>
-                          <li>Paste your slug above (e.g. <code className="bg-bone px-1">yourname/buyhalfcow-intro</code>).</li>
-                        </ol>
-                      </div>
+                      // 2026-08-02: was a "sign up at cal.com" setup task —
+                      // live ranchers read it as required and stalled on the
+                      // third-party sign-in. Now framed as what it is: a nice
+                      // extra for ranchers who ALREADY use Cal.com. Everyone
+                      // else is fully covered — buyers text or call directly.
+                      <p className="text-xs text-saddle mt-1">
+                        Totally optional — buyers already reach you by call or
+                        text. If you happen to use Cal.com, paste your booking
+                        link here (the part after cal.com/) and buyers can also
+                        self-schedule a call from your page.
+                      </p>
                     )}
                   </div>
 
