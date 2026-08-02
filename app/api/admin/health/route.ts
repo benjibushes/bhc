@@ -8,6 +8,11 @@ import {
   computeConnectFeeCaptured,
   countConnectFeePayments,
 } from '@/lib/commissionStats';
+import {
+  isRancherOperationalForBuyers,
+  getOperationalServedStates,
+} from '@/lib/rancherEligibility';
+import { normalizeState } from '@/lib/states';
 
 // GET /api/admin/health
 //
@@ -124,19 +129,25 @@ export async function GET(request: Request) {
   const totalApproved = consumers.filter((c) => c['Status'] === 'Approved').length;
   const yesClickers = consumers.filter((c) => !!c['Warmup Engaged At']).length;
 
-  // State coverage vs demand
+  // State coverage vs demand — the 6-gate CANON (Wave 1B, 2026-08-01).
+  //
+  // This used to be a local 2-gate loop (Page Live && Active Status) that
+  // reported 17 covered states while command-center's 6-gate
+  // isRancherOperationalForBuyers reported fewer — Ben got OPPOSITE answers
+  // to "do I have supply in CA?" depending on which page he opened, and the
+  // more prominent one was the optimistic wrong one. One canonical function,
+  // everywhere.
   const liveStates = new Set<string>();
-  for (const r of live) {
-    if (r['State']) liveStates.add(String(r['State']).toUpperCase());
-    if (r['Admin Approved Multi-State']) {
-      const routing = String(r['Routing States'] || '').split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
-      for (const s of routing) liveStates.add(s);
-    }
+  for (const r of ranchers) {
+    if (!isRancherOperationalForBuyers(r)) continue;
+    for (const s of getOperationalServedStates(r)) liveStates.add(s);
   }
   const byBuyerState: Record<string, number> = {};
   for (const c of consumers) {
     if (c['Status'] !== 'Approved') continue;
-    const s = String(c['State'] || '').trim().toUpperCase();
+    // normalizeState so full names ("Texas") count against TX coverage —
+    // matches command-center's demand cross.
+    const s = normalizeState(c['State']);
     if (!s) continue;
     byBuyerState[s] = (byBuyerState[s] || 0) + 1;
   }

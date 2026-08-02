@@ -14,7 +14,6 @@ import {
   heldReferralsFormula,
   activeDealReferralsFormula,
   sequenceRancherMapReferralsFormula,
-  dailyDigestReferralsFormula,
   unsubscribedConsumersFormula,
   mailableConsumersFormula,
   readyStuckBuyersFormula,
@@ -107,14 +106,8 @@ test('sequenceRancherMapReferralsFormula covers both the closed-won and active-r
   }
 });
 
-// ── dailyDigestReferralsFormula ─────────────────────────────────────────
-test('dailyDigestReferralsFormula covers every status the digest stats read', () => {
-  const formulaSet = statusSetOf(dailyDigestReferralsFormula());
-  // pending, recentIntros, monthWins, stalled → these four statuses.
-  for (const s of ['Pending Approval', 'Intro Sent', 'Rancher Contacted', 'Closed Won']) {
-    assert.equal(formulaSet.has(s), true, `${s} must pass the formula`);
-  }
-});
+// (dailyDigestReferralsFormula test removed Wave 1C — formula deleted with
+// the daily-digest cron; daily-health-digest reads Referrals unfiltered.)
 
 // ── consumer formulas: exact strings (field-name safety) ────────────────
 test('unsubscribedConsumersFormula references only {Unsubscribed}', () => {

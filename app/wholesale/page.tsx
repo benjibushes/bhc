@@ -210,11 +210,11 @@ export default async function WholesalePage() {
             </p>
           </div>
           <Link
-            href="/start"
+            href="/"
             className="inline-flex items-baseline gap-2 text-sm text-saddle hover:text-charcoal transition-base"
           >
             <span aria-hidden="true">&larr;</span>
-            <span>back to /start</span>
+            <span>back to the homepage</span>
           </Link>
         </footer>
       </div>

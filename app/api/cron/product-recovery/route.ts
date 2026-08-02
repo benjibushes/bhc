@@ -10,8 +10,9 @@
 // ── DARK BY DEFAULT ─────────────────────────────────────────────────────────
 // Env `PRODUCT_RECOVERY_ENABLED` (same 3-state contract as REPLENISHMENT_ENABLED):
 //   unset/other → { skipped: 'disabled' } before ANY read (no Cron Runs row)
-//   'dry-run'   → the exact live selection runs read-only; Telegram report of
-//                 what WOULD send. NO sends, NO stamps.
+//   'dry-run'   → the exact live selection runs read-only; the would-send
+//                 plan goes to logs + the Cron Runs note (Wave 1C: no
+//                 Telegram while dark). NO sends, NO stamps.
 //   'true'      → live sends.
 // Optional knob: PRODUCT_RECOVERY_MAX_PER_RUN (default 25).
 //
@@ -92,20 +93,12 @@ async function realHandler(_request: Request): Promise<CronResult> {
   if (dryRun) {
     const crossN = planned.filter((p) => p.nudge === 'crosssell').length;
     const repeatN = planned.filter((p) => p.nudge === 'repeat').length;
-    const text = [
-      'PRODUCT RECOVERY — DRY RUN (no sends, no stamps)',
-      `PRODUCT_BUYER pool: ${buyers.length}`,
-      `Would nudge this run: ${planned.length} (cap ${batchCap}) — cross-sell ${crossN}, repeat ${repeatN}`,
-      'Flip PRODUCT_RECOVERY_ENABLED=true in Vercel to go live (one nudge per buyer per run, each once ever).',
-    ].join('\n');
-    await sendOperatorSignal({
-      urgency: 'normal',
-      kind: 'other',
-      summary: `product-recovery DRY RUN: would nudge ${planned.length} of ${buyers.length} product buyers`,
-      detail: text,
-      dedupeKey: 'product-recovery-dry-run',
-      dedupeWindowMs: 6 * 60 * 60 * 1000,
-    }).catch(() => {});
+    // Wave 1C: env-dark plan → log + Cron Runs note only; no Telegram for a
+    // rail that's off. Failures page via withCronRun's error/partial alert.
+    console.info(
+      `[product-recovery] DRY RUN — would nudge ${planned.length} of ${buyers.length} product buyers ` +
+        `(cap ${batchCap}; cross-sell ${crossN}, repeat ${repeatN}) — flip PRODUCT_RECOVERY_ENABLED=true to go live`,
+    );
     return {
       status: 'success',
       recordsTouched: 0,

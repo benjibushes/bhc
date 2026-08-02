@@ -36,6 +36,24 @@ export function computeUnpaidCommission(
     .reduce((sum, r) => sum + (Number(r['Commission Due']) || 0), 0);
 }
 
+// Pure: the fee a referral ACTUALLY carried, in dollars — Wave 1A (2026-08-01).
+// 'Commission Due' is the DEPRECATED legacy-invoice receivable, deliberately
+// never written on the Connect rail (see shouldWriteLegacyCommissionDue in
+// lib/commission.ts) — so summing it alone showed every Connect rancher
+// "Commission $0" over the "buyers paid this on top" sub-copy. The true
+// Connect-rail fee is stamped in CENTS as 'BHC Fee Cents' at deposit settle
+// (lib/stripeSettlement.ts); the buyer paid it ON TOP of the rancher's price.
+// Prefer the stamp when a real fee was captured; otherwise fall back to the
+// legacy receivable. A written 0 ("no fee captured" — legacy checkout
+// sessions) intentionally falls through to Commission Due so a legacy row can
+// never be masked to $0 by the stamp. Exported (non-handler export — ignored
+// by the Next router) so it can be unit-tested without spinning the route.
+export function referralFeeDollars(r: Record<string, any>): number {
+  const feeCents = Number(r['BHC Fee Cents']);
+  if (Number.isFinite(feeCents) && feeCents > 0) return Math.round(feeCents) / 100;
+  return Number(r['Commission Due']) || 0;
+}
+
 // Rancher-scoped Referrals read — extracted to lib/referralReads.ts (scale
 // audit 2026-07-07) so customers/earnings/close-path routes share the same
 // filtered+projected read instead of full-scanning Referrals.
@@ -126,7 +144,11 @@ export async function GET(request: Request) {
     const closedLost = myReferrals.filter((r: any) => r['Status'] === 'Closed Lost');
 
     const totalRevenue = closedWon.reduce((sum: number, r: any) => sum + (r['Sale Amount'] || 0), 0);
-    const totalCommission = closedWon.reduce((sum: number, r: any) => sum + (r['Commission Due'] || 0), 0);
+    // Wave 1A (2026-08-01): per-row fee preference — 'BHC Fee Cents' (the
+    // buyer-paid Connect fee) when captured, else the legacy 'Commission Due'
+    // receivable. Summing Commission Due alone read "Commission $0" to every
+    // Connect rancher (that field is never written on their rail).
+    const totalCommission = closedWon.reduce((sum: number, r: any) => sum + referralFeeDollars(r), 0);
     // tier_v2 ranchers never owe a post-close commission invoice (see
     // computeUnpaidCommission). Forced to 0 so the dashboard doesn't show a
     // phantom "Invoice pending" balance + dead "Pay now" link.
@@ -168,6 +190,11 @@ export async function GET(request: Request) {
       notes: r['Notes'] || '',
       sale_amount: r['Sale Amount'] || 0,
       commission_due: r['Commission Due'] || 0,
+      // Wave 1A (2026-08-01): the buyer-paid BHC fee in CENTS, stamped at
+      // deposit settle. commission_due above is the deprecated legacy
+      // receivable and is $0 on every Connect row — earnings surfaces prefer
+      // this when > 0 (see referralFeeDollars).
+      bhc_fee_cents: Number(r['BHC Fee Cents'] || 0),
       commission_paid: r['Commission Paid'] || false,
       created_at: r['Created At'] || r._createdTime || '',
       intro_sent_at: r['Intro Sent At'] || '',

@@ -9,8 +9,9 @@
 // Env `REPLENISHMENT_ENABLED` (same three-state contract as
 // WAITING_ACTIVATION_ENABLED):
 //   unset/other → { skipped: 'disabled' } before ANY read (no Cron Runs row)
-//   'dry-run'   → the exact live selection runs read-only; Telegram report
-//                 of what WOULD send. NO sends, NO stamps.
+//   'dry-run'   → the exact live selection runs read-only; the would-send
+//                 plan goes to logs + the Cron Runs note (Wave 1C: no
+//                 Telegram while dark). NO sends, NO stamps.
 //   'true'      → live sends.
 // Optional knob: REPLENISH_MAX_PER_RUN (default 25).
 //
@@ -88,21 +89,12 @@ async function realHandler(_request: Request): Promise<CronResult> {
       const closed = String(r['Closed At'] || '').slice(0, 10);
       return `${String(r['Order Type'] || '?')} closed ${closed}`;
     });
-    const text = [
-      'REPLENISHMENT — DRY RUN (no sends, no stamps)',
-      `Closed Won pool: ${candidates.length}`,
-      `Would nudge this run: ${selected.length} (cap ${batchCap}; buyer suppression still applies at send time)`,
-      `Sample: ${sample.join(' · ') || '—'}`,
-      'Flip REPLENISHMENT_ENABLED=true in Vercel to go live (one batch per day, one nudge per deal ever).',
-    ].join('\n');
-    await sendOperatorSignal({
-      urgency: 'normal',
-      kind: 'other',
-      summary: `replenishment DRY RUN: would nudge ${selected.length} of ${candidates.length} Closed Won deals`,
-      detail: text,
-      dedupeKey: 'replenishment-dry-run',
-      dedupeWindowMs: 6 * 60 * 60 * 1000,
-    }).catch(() => {});
+    // Wave 1C: env-dark plan → log + Cron Runs note only; no Telegram for a
+    // rail that's off. Failures page via withCronRun's error/partial alert.
+    console.info(
+      `[replenishment] DRY RUN — would nudge ${selected.length} of ${candidates.length} Closed Won deals ` +
+        `(cap ${batchCap}) · sample: ${sample.join(' · ') || '—'} — flip REPLENISHMENT_ENABLED=true to go live`,
+    );
     return {
       status: 'success',
       recordsTouched: 0,

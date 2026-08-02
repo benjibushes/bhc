@@ -346,20 +346,10 @@ export async function POST(request: Request) {
             },
           });
           if (funnelScoreQ >= 80) {
-            try {
-              await sendTelegramConsumerSignup({
-                consumerId: funnelRec.id,
-                name: fullNameQ,
-                email: emailLowerQ,
-                state: stateCodeQ,
-                segment: 'Beef Buyer',
-                intentScore: funnelScoreQ,
-                intentClassification: funnelClassificationQ,
-                status: 'Approved',
-                orderType: tierQ,
-                budgetRange: budgetQ || undefined,
-              });
-            } catch (e) { console.error('[funnel] Telegram signup alert error:', e); }
+            // Wave 1C (2026-08-01): the NEW SIGNUP card + HOT LEAD card fired
+            // together for the same person — two cards, one buyer. The hot-lead
+            // card is the strict superset (phone + one-tap actions), so it is
+            // the only card now. Threshold and content unchanged.
             try {
               await sendTelegramHotLeadAlert({
                 consumerId: funnelRec.id,
@@ -1026,10 +1016,13 @@ export async function POST(request: Request) {
       // Visibility threshold raised 2026-05-13 from 40 → 80 ahead of volume
       // spike. The 40 setting produced 1 ping per medium-intent signup and
       // detonated Telegram's 1 msg/sec/chat cap at burst scale. 80+ now
-      // captures only "real" buyers — daily-digest still rolls up the
-      // medium-intent population. Hot-lead alert below (also 80+) provides
-      // 1-tap action buttons for those highest-priority signups.
-      if (serverIntentScore >= 80) {
+      // captures only "real" buyers — the daily health digest still rolls up
+      // the medium-intent population.
+      // Wave 1C (2026-08-01): 80+ Beef Buyers used to get BOTH this card AND
+      // the hot-lead card below — two cards for one person. The hot-lead card
+      // is the strict superset (phone + one-tap actions), so it is the only
+      // card for that cohort; this card remains for 80+ non-beef signups.
+      if (serverIntentScore >= 80 && consumerSegment !== 'Beef Buyer') {
         try {
           await sendTelegramConsumerSignup({
             consumerId: record.id,

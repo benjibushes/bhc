@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { aggregateStuckOnboarding } from './route';
+import { aggregateStuckOnboarding, aggregateMonthToDate, buildFollowUpBlock } from './route';
+import type { DueFollowUp } from '@/lib/followUpQueue';
 
 const NOW = Date.parse('2026-07-23T12:00:00.000Z');
 const daysAgo = (d: number) => new Date(NOW - d * 24 * 60 * 60 * 1000).toISOString();
@@ -75,4 +76,68 @@ test('name falls back Operator → Ranch → id', () => {
 test('empty input yields empty buckets', () => {
   const out = aggregateStuckOnboarding([], NOW);
   assert.deepEqual(out, { blankOver2d: [], signedNotLive: [], welcomeFailed: [] });
+});
+
+// ── aggregateMonthToDate (Wave 1C: absorbed from daily-digest) ────────────
+
+test('month-to-date counts only Closed Won closed this calendar month', () => {
+  const refs = [
+    { Status: 'Closed Won', 'Closed At': '2026-07-05T10:00:00.000Z', 'Commission Due': 200 },
+    { Status: 'Closed Won', 'Closed At': '2026-07-20T10:00:00.000Z', 'Commission Due': 150.5 },
+    { Status: 'Closed Won', 'Closed At': '2026-06-30T10:00:00.000Z', 'Commission Due': 999 }, // prior month
+    { Status: 'Closed Lost', 'Closed At': '2026-07-10T10:00:00.000Z', 'Commission Due': 50 }, // wrong status
+    { Status: 'Closed Won' }, // no Closed At
+  ];
+  const out = aggregateMonthToDate(refs, NOW);
+  assert.equal(out.wins, 2);
+  assert.equal(out.commission, 350.5);
+});
+
+test('month-to-date is empty-safe and bad-data-safe', () => {
+  assert.deepEqual(aggregateMonthToDate([], NOW), { wins: 0, commission: 0 });
+  const out = aggregateMonthToDate(
+    [{ Status: 'Closed Won', 'Closed At': 'not-a-date', 'Commission Due': 'NaN' }],
+    NOW,
+  );
+  assert.deepEqual(out, { wins: 0, commission: 0 });
+});
+
+// ── buildFollowUpBlock (Wave 1C: absorbed from daily-digest) ──────────────
+
+const due = (over: Partial<DueFollowUp>): DueFollowUp => ({
+  id: 'c1',
+  name: 'Test Buyer',
+  email: 't@example.com',
+  phone: '',
+  state: 'CO',
+  notes: '',
+  dueAt: '2026-07-23',
+  daysOverdue: 0,
+  ...over,
+});
+
+test('follow-up block is EMPTY (not "0 due") on a day with no promises', () => {
+  assert.equal(buildFollowUpBlock([]), '');
+});
+
+test('follow-up block renders name, phone fallback, and overdue marker', () => {
+  const block = buildFollowUpBlock([
+    due({ name: 'A Buyer', phone: '555-0100', daysOverdue: 2 }),
+    due({ id: 'c2', name: 'B Buyer' }),
+  ]);
+  assert.match(block, /Follow up today \(2\)/);
+  assert.match(block, /A Buyer · 555-0100 <i>\(2d late\)<\/i>/);
+  assert.match(block, /B Buyer · no phone/);
+});
+
+test('follow-up block collapses past the line cap with a "+N more" tail', () => {
+  const many = Array.from({ length: 13 }, (_, i) => due({ id: `c${i}`, name: `Buyer ${i}` }));
+  const block = buildFollowUpBlock(many);
+  assert.match(block, /Follow up today \(13\)/);
+  assert.match(block, /\+3 more on the desk/);
+});
+
+test('follow-up block HTML-escapes buyer-supplied text', () => {
+  const block = buildFollowUpBlock([due({ name: '<b>Sneaky</b> & Co' })]);
+  assert.match(block, /&lt;b&gt;Sneaky&lt;\/b&gt; &amp; Co/);
 });

@@ -76,9 +76,9 @@ export const INTERNAL_API_SECRET: string = (() => {
 
 // ─── Project 1 — Discover Map / AI scraper ──────────────────────────────────
 
-// Tavily web search API key. Used by lib/aiSearch.ts as the primary search
-// provider for the discover-ranchers scraper. If unset, the scraper falls
-// back to Anthropic native web_search tool (slower, lower-quality results).
+// Tavily web search API key. Used by the rancher auto-about generator
+// (app/api/rancher/setup/auto-about reads process.env directly). The old
+// lib/aiSearch.ts consumer was deleted 2026-08-01 (zero importers).
 // Optional.
 export const TAVILY_API_KEY = process.env.TAVILY_API_KEY || '';
 

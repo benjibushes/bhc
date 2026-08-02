@@ -213,6 +213,83 @@ test('fresh active buyer is NOT suppressed', () => {
   assert.equal(suppressionReason({ Email: 'a@x.com', Created: daysAgo(10), 'Last Email Opened At': daysAgo(10) }, NOW), null);
 });
 
+// Wave 2 (2026-08-01): the cross-rail cooldown must see EVERY Consumers-row
+// send stamp — the READY chase, nurture drip, and sequence engine were omitted,
+// so a buyer those rails emailed yesterday could still catch a Msg1 today.
+test('cross-rail cooldown: Ready Nudge Last Sent At counts as recent contact', () => {
+  assert.equal(
+    suppressionReason(
+      { Email: 'a@x.com', Created: daysAgo(40), 'Ready Nudge Last Sent At': daysAgo(2) },
+      NOW,
+    ),
+    'recent-contact',
+  );
+});
+
+test('cross-rail cooldown: Nurture Touched At counts as recent contact', () => {
+  assert.equal(
+    suppressionReason(
+      { Email: 'a@x.com', Created: daysAgo(40), 'Nurture Touched At': daysAgo(1) },
+      NOW,
+    ),
+    'recent-contact',
+  );
+});
+
+test('cross-rail cooldown: Sequence Sent At counts as recent contact', () => {
+  assert.equal(
+    suppressionReason(
+      { Email: 'a@x.com', Created: daysAgo(40), 'Sequence Sent At': daysAgo(6) },
+      NOW,
+    ),
+    'recent-contact',
+  );
+});
+
+test('cross-rail cooldown: stale stamps (8+ days) on the new fields do NOT suppress', () => {
+  assert.equal(
+    suppressionReason(
+      {
+        Email: 'a@x.com',
+        Created: daysAgo(40),
+        'Ready Nudge Last Sent At': daysAgo(9),
+        'Nurture Touched At': daysAgo(30),
+        'Sequence Sent At': daysAgo(12),
+      },
+      NOW,
+    ),
+    null,
+  );
+});
+
+test('cross-rail cooldown: a stale Last Contacted At does not mask a fresh Ready Nudge stamp', () => {
+  assert.equal(
+    suppressionReason(
+      {
+        Email: 'a@x.com',
+        Created: daysAgo(40),
+        'Last Contacted At': daysAgo(30),
+        'Ready Nudge Last Sent At': daysAgo(1),
+      },
+      NOW,
+    ),
+    'recent-contact',
+  );
+});
+
+test('a fresh Ready Nudge / Nurture stamp keeps a buyer out of 18-month-dead', () => {
+  // Only activity is a nudge stamp 8 days ago — alive (not dead), and past the
+  // 7-day contact window, so eligible.
+  assert.equal(
+    suppressionReason({ Email: 'a@x.com', 'Ready Nudge Last Sent At': daysAgo(8) }, NOW),
+    null,
+  );
+  assert.equal(
+    suppressionReason({ Email: 'a@x.com', 'Nurture Touched At': daysAgo(8) }, NOW),
+    null,
+  );
+});
+
 // ─── wave progression + idempotency ──────────────────────────────────────
 
 test('no stage → Msg1 (day 0)', () => {

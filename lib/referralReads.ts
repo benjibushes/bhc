@@ -69,6 +69,12 @@ export const REFERRAL_DASHBOARD_FIELDS = [
   // breaker above degrades gracefully if a field is ever renamed.
   'Final Paid Amount', 'Payment Confirmed At', 'Payment Confirmation Method',
   'Commission Paid At',
+  // Wave 1A (2026-08-01) — the TRUE Connect-rail fee, stamped in cents at
+  // deposit settle (lib/stripeSettlement.ts). 'Commission Due' above is the
+  // DEPRECATED legacy-invoice receivable — deliberately never written on
+  // Connect closes — so without this field every Connect rancher read
+  // "Commission $0" on their own earnings.
+  'BHC Fee Cents',
   // My Leads (2026-07-29) — provenance marker (fldC5pUi90WDpBTsa). The
   // dashboard splits rancher-entered leads ('rancher-added') into the My
   // Leads CRM block and keeps them out of the routed Deals lists.

@@ -235,7 +235,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // chargedCents mirrors createDepositCheckout's totalChargedCents exactly
   // (deposit + round(fullSale × feeRate), same locked-rate-aware rate) so the
   // quoted "Today" figure is byte-identical to what Stripe charges.
-  // FEE-INVISIBLE: one number, no split.
+  // FEE-INVISIBLE for the buyer: one number, no split. The RANCHER gets the
+  // same number back in the response below (Wave 1A, 2026-08-01) — before
+  // that, the rancher quoted "$500 deposit", the buyer's card was hit for
+  // deposit + fee, the buyer called the rancher, the rancher called us.
+  const chargedCents = depositCents + Math.round(fullSaleCents * feeRate);
   //
   // EMAIL TRUTH (finding 3, 2026-07-02): guardedSend returns
   // { success:false, suppressed:true } WITHOUT throwing for bounced/
@@ -254,7 +258,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       cutTier: cut,
       depositCents,
       fullSaleCents,
-      chargedCents: depositCents + Math.round(fullSaleCents * feeRate),
+      chargedCents,
       checkoutUrl,
       // LEAK 1 (2026-07-05): give the buyer a human to text — the rancher's
       // phone from the already-fetched rancher record. Optional downstream.
@@ -293,7 +297,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
   }
 
-  // PERSIST THE INVITE OUTCOME (2026-07-19, Champion Valley/Dave incident).
+  // PERSIST THE INVITE OUTCOME (2026-07-19, Champion Valley/buyer A incident).
   // Before this, the send result lived ONLY in the HTTP response + a transient
   // operator signal — nothing was written to the referral. So
   // `Deposit Invite Sent At` stayed blank forever and no one could later answer
@@ -337,6 +341,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     cutTier: cut,
     depositAmount: depositDollars,
     fullSaleAmount: fullSaleDollars,
+    // Wave 1A (2026-08-01): the TRUE card charge (deposit + fee on top) — the
+    // same figure the buyer email quotes. The dashboard modal shows the
+    // rancher this exact number so what they say on the phone matches the
+    // buyer's statement.
+    chargedCents,
     // Email truth (finding 3): ok:true means "link created", NOT "buyer
     // emailed". The dashboard modal keys off emailSent to offer the
     // share-the-link-directly fallback.

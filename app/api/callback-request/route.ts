@@ -33,6 +33,7 @@ import { normalizeToE164 } from '@/lib/phoneE164';
 import { hasOpenCallbackRequest } from '@/lib/callbackQueue';
 import { isCallbackRailEnabled, resolveCallbackPhone } from '@/lib/callbackRail';
 import { sendTelegramCallbackRequest } from '@/lib/telegram';
+import { sendCallbackRequestAck } from '@/lib/email';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -260,6 +261,24 @@ export async function POST(req: Request) {
     // The record is already stamped, so the desk will surface this buyer at the
     // top of the queue regardless. A dead Telegram must not 500 the buyer.
     console.error('[callback-request] telegram ping failed:', e?.message || e);
+  }
+
+  // ── Buyer ack (Wave 2, GTM plan 2.1) — the buyer's own receipt. Until now
+  // this route pinged the operator and left the buyer with nothing in their
+  // inbox. Best-effort: an ack failure must never fail the request. One ack
+  // per request cycle by construction — the open-request guard above returns
+  // early on a second POST while a request is open.
+  const ackEmail = String(consumer['Email'] || session.email || '').trim();
+  if (ackEmail) {
+    try {
+      await sendCallbackRequestAck({
+        email: ackEmail,
+        firstName: fullName.split(/\s+/)[0] || '',
+        phone: phoneForAlert || undefined,
+      });
+    } catch (e: any) {
+      console.error('[callback-request] buyer ack failed (non-fatal):', e?.message || e);
+    }
   }
 
   return NextResponse.json({

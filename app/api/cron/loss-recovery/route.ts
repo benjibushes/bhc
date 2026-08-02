@@ -59,7 +59,8 @@
 import { getAllRecords, updateRecord, isInvalidFilterFormulaError, TABLES } from '@/lib/airtable';
 import { activeDealReferralsFormula } from '@/lib/cronReadFilters';
 import { isMaintenanceMode } from '@/lib/maintenance';
-import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { sendOperatorSignal } from '@/lib/operatorSignal';
+import { shouldSendCronReport } from '@/lib/cronReportGate';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 import { sendSMSToConsumer } from '@/lib/twilio';
@@ -165,13 +166,14 @@ async function realHandler(_request: Request): Promise<CronResult> {
   if (!live) {
     const wouldSend = sel.planned.map((p) => `${p.referralId}:${p.action}`).join(', ');
     if (sel.planned.length > 0) {
-      await sendTelegramMessage(
-        TELEGRAM_ADMIN_CHAT_ID,
-        `🪃 <b>loss recovery DRY RUN</b> — nothing sent\n\n` +
-          `would touch <b>${sel.planned.length}</b> (re-engage ${byAction.reengage} · downsell ${byAction.downsell} · nurture-stamp ${byAction.nurture}${sel.capped ? ` · ${sel.capped} over cap` : ''})\n` +
-          `reasons seen: ${fmtCounts(sel.reasonCounts)}\n\n` +
-          `flip LOSS_RECOVERY_ENABLED=true in Vercel to go live.`,
-      ).catch(() => {});
+      // Wave 1C: env-dark plan → log + Cron Runs note only (the notes below
+      // carry the full would-send list). No Telegram for a rail that's off.
+      console.info(
+        `[loss-recovery] DRY RUN — would touch ${sel.planned.length} ` +
+          `(re-engage ${byAction.reengage} · downsell ${byAction.downsell} · nurture-stamp ${byAction.nurture}` +
+          `${sel.capped ? ` · ${sel.capped} over cap` : ''}) · reasons: ${fmtCounts(sel.reasonCounts)} — ` +
+          `flip LOSS_RECOVERY_ENABLED=true to go live`,
+      );
     }
     return {
       status: 'success',
@@ -190,12 +192,18 @@ async function realHandler(_request: Request): Promise<CronResult> {
   // months-old losses masquerading as fresh. Stop loudly; nothing is stamped.
   const eligibleTotal = sel.planned.length + sel.capped;
   if (eligibleTotal > LIVE_ELIGIBLE_SANITY_MAX) {
-    await sendTelegramMessage(
-      TELEGRAM_ADMIN_CHAT_ID,
-      `🪃 <b>loss recovery HALTED</b> — ${eligibleTotal} eligible touches in one day ` +
-        `(sanity max ${LIVE_ELIGIBLE_SANITY_MAX}).\n\nThat's a mass edit / Loss Reason backfill, not organic closes. ` +
+    // Loud + failover (Wave 1C transport migration): a halted live rail needs
+    // operator action and must survive a dead bot token. Content unchanged.
+    await sendOperatorSignal({
+      urgency: 'loud',
+      kind: 'system-error',
+      summary: `loss recovery HALTED — ${eligibleTotal} eligible touches in one day (sanity max ${LIVE_ELIGIBLE_SANITY_MAX}).`,
+      detail:
+        `That's a mass edit / Loss Reason backfill, not organic closes. ` +
         `Nothing sent. Pre-stamp '${RECOVERY_SENT_AT_FIELD}' on backfilled rows (or review via dry-run) before re-enabling.`,
-    ).catch(() => {});
+      dedupeKey: 'loss-recovery-halt',
+      dedupeWindowMs: 6 * 60 * 60 * 1000,
+    }).catch(() => {});
     return {
       status: 'error',
       recordsTouched: 0,
@@ -294,17 +302,23 @@ async function realHandler(_request: Request): Promise<CronResult> {
   }
 
   const touched = done.reengage + done.downsell + done.nurture;
-  if (touched > 0 || errors.length > 0) {
-    await sendTelegramMessage(
-      TELEGRAM_ADMIN_CHAT_ID,
-      `🪃 <b>loss recovery</b> — <b>${touched}</b> recovered touch${touched === 1 ? '' : 'es'}\n\n` +
+  // Wave 1C transport migration: same gate (work or errors), now with dedupe
+  // + SMS/email failover via sendOperatorSignal. Content unchanged.
+  if (shouldSendCronReport({ workDone: touched, failures: errors.length })) {
+    await sendOperatorSignal({
+      urgency: 'normal',
+      kind: 'recovery-suggestion',
+      summary: `loss recovery — ${touched} recovered touch${touched === 1 ? '' : 'es'}`,
+      detail:
         `re-engage ${done.reengage} (+${smsSent} sms) · downsell ${done.downsell} · nurture-stamp ${done.nurture}` +
         `${suppressed ? ` · ${suppressed} suppressed/capped` : ''}` +
         `${failed ? ` · ⚠ ${failed} SEND-FAILED (rolled back, retry tomorrow)` : ''}` +
         `${errors.length ? ` · ${errors.length} errors` : ''}` +
         `${sel.capped ? ` · ${sel.capped} over cap (tomorrow)` : ''}${timeBoxed ? ' · time-boxed' : ''}\n` +
         `reasons seen: ${fmtCounts(sel.reasonCounts)}`,
-    ).catch(() => {});
+      dedupeKey: 'loss-recovery-summary',
+      dedupeWindowMs: 6 * 60 * 60 * 1000,
+    }).catch(() => {});
   }
 
   return {

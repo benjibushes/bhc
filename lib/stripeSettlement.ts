@@ -319,7 +319,7 @@ export async function settleBuyerDeposit(pi: any): Promise<void> {
       // never routed through matching) kept a stale pre-payment stage
       // (READY + 'Waitlisted' denorm). classifyBuyer then read them as an
       // incomplete-profile nurture target and the sequences engine sent a
-      // paying customer marketing nags (Dave, CV half, 2 nags post-payment).
+      // paying customer marketing nags (buyer A, CV half, 2 nags post-payment).
       // MATCHED + the fresh denorm short-circuit to TERMINAL in
       // lib/routingSegment.ts and keep every routing/nurture pool off them.
       // The same write backfills Status='Approved' onto a BLANK Status (My

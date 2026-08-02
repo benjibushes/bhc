@@ -3,7 +3,8 @@ import { getAllRecords, getRecordById, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { partitionUnpaidByRail } from '@/lib/commission';
 import { isMaintenanceMode } from '@/lib/maintenance';
-import { sendTelegramUpdate } from '@/lib/telegram';
+import { sendOperatorSignal } from '@/lib/operatorSignal';
+import { shouldSendCronReport } from '@/lib/cronReportGate';
 import { sendMonthlyCommissionInvoice } from '@/lib/email';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
@@ -40,7 +41,8 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
   ) as any[];
 
   if (allUnpaid.length === 0) {
-    await sendTelegramUpdate('📋 <b>Commission Invoices</b>: No unpaid commissions found. No invoices sent.');
+    // Wave 1C noise gate: "No unpaid commissions found" is a zero-work run —
+    // the Cron Runs row (written by withCronRun) is the record; no Telegram.
     return { status: 'success', recordsTouched: 0, notes: `${monthYear}: no unpaid commissions` };
   }
 
@@ -194,16 +196,26 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     }
   }
 
-  const telegramMsg = [
-    `📋 <b>Monthly Commission Invoices — ${monthYear}</b>`,
-    `${invoicesSent} invoice(s) sent`,
-    ...summaryLines,
-    errors > 0 ? `⚠️ ${errors} error(s)` : '',
-  ]
-    .filter(Boolean)
-    .join('\n');
-
-  await sendTelegramUpdate(telegramMsg);
+  // Wave 1C: report only when the run did work or failed (zero-work months
+  // where every unpaid row was deposit-rail-stamped stay in the Cron Runs
+  // note). Rides sendOperatorSignal so a dead bot token falls back instead of
+  // silently swallowing a money report. Content unchanged.
+  if (shouldSendCronReport({ workDone: invoicesSent + depositRailStamped, failures: errors })) {
+    await sendOperatorSignal({
+      urgency: 'normal',
+      kind: 'other',
+      summary: `Monthly Commission Invoices — ${monthYear}: ${invoicesSent} invoice(s) sent`,
+      detail: [
+        ...summaryLines,
+        depositRailStamped > 0 ? `💳 ${depositRailStamped} deposit-rail referral(s) stamped paid (taken at deposit)` : '',
+        errors > 0 ? `⚠️ ${errors} error(s)` : '',
+      ]
+        .filter(Boolean)
+        .join('\n') || undefined,
+      dedupeKey: `commission-invoices:${monthYear}`,
+      dedupeWindowMs: 6 * 60 * 60 * 1000,
+    }).catch(() => {});
+  }
 
   return {
     status: errors > 0 ? 'partial' : 'success',

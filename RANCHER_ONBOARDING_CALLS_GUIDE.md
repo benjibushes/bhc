@@ -154,7 +154,7 @@ They email you, you reply with times, book manually.
 - Members browse ranchers in their state
 - When they request introduction, I review and facilitate
 - You handle transaction directly (pricing, delivery, payment)
-- I track sales for commission monthly (mention 10% here)
+- Deposits flow through the platform to your Stripe account — you keep 100% of your price, the buyer pays our 10% fee on top (mention the model here)
 
 **Next Steps (5 min):**
 - If good fit: "I'll approve your application and we'll discuss ranch tour timing"
@@ -208,7 +208,7 @@ They email you, you reply with times, book manually.
 
 **During the call, around the 15-minute mark:**
 
-> "So here's how the business model works. I charge a 10% commission on sales I facilitate through introductions. You handle pricing and transactions directly with buyers, and when a sale closes, you just email me the details — buyer name and sale amount. I invoice you at the end of the month. Simple, transparent, and you keep 90% of every sale. Sound fair?"
+> "So here's how the business model works. You keep 100% of your price. When a buyer reserves through BuyHalfCow, our 10% platform fee is added on top of your price and the buyer pays it with the deposit. It never comes out of your side. You set your pricing, the deposit lands in your Stripe account automatically, and there is nothing for you to track, remit, or get invoiced for. Simple, transparent, and every dollar of your number stays yours. Sound fair?"
 
 **If they push back:**
 - "The value you're getting is verified buyers only — no tire-kickers"
@@ -216,7 +216,7 @@ They email you, you reply with times, book manually.
 - "I've built a 15,000-person audience. That access is valuable."
 - "Plus, I'm personally certifying your ranch with an in-person tour. That stamp of approval matters."
 
-**Most ranchers say yes immediately.** They're used to middlemen taking 20-40% (distributors, retailers). 10% is cheap.
+**Most ranchers say yes immediately.** They're used to middlemen taking 20-40% out of THEIR side (distributors, retailers). A 10% fee the buyer pays on top — with the rancher keeping 100% of their price — is an easy yes.
 
 ---
 
@@ -271,7 +271,7 @@ Great talking with you today! I'm excited to have [Ranch Name] join The HERD net
 - Members will request introductions through the platform
 - I review each request and forward qualified buyers to you
 - You discuss pricing, delivery, and close the sale directly
-- You report sales to me monthly, and I invoice for commission
+- Deposits land in your own Stripe account — you keep 100% of your price, and the buyer pays the 10% platform fee on top at deposit
 
 **Questions?** Reply anytime.
 
@@ -312,7 +312,7 @@ A: Just let me know. I'll pause your listing until you have capacity again. Flex
 A: Nope. If someone requests an introduction and it doesn't feel right, just tell me. You're in control.
 
 **Q: When do I pay commission?**
-A: When a sale closes (beef is delivered + payment received), you email me the details. I invoice you at the end of the month. You can pay via Venmo, Zelle, check, bank transfer — whatever works for you.
+A: You don't — ever. The 10% platform fee is added on top of your price and the buyer pays it with the deposit through Stripe. Nothing is invoiced to you, and there is nothing for you to report or remit.
 
 **Q: What happens during the ranch tour?**
 A: I visit for 1-2 hours, tour the property, see the operation, meet the cattle, document practices with photos/video. It's casual, not an inspection. I'm just verifying you're legit and your beef is quality.

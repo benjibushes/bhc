@@ -47,7 +47,7 @@ export const EXPECTED_CRONS_24H = [
   'commission-invoices',
   'compliance-reminders',
   'daily-audit',
-  'daily-digest',
+  // 'daily-digest' removed Wave 1C 2026-08-01 — merged into daily-health-digest.
   'daily-health-digest',
   'demand-router',
   'deploy-drift',
@@ -72,6 +72,12 @@ export const EXPECTED_CRONS_24H = [
   // hourly either way (same as demand-router / stripe-reconcile). EXPECTED, not
   // EXCLUDED.
   'setup-link-undelivered',
+  // waitlist "your area opened" promise-keeper (Wave 2 2026-08-01) —
+  // env-gated (STATE_COVERAGE_NOTIFY_ENABLED) but the gate is INSIDE
+  // realHandler: while dark it still runs daily and reports the would-notify
+  // count, so a Cron Runs row is written either way. EXPECTED, not EXCLUDED
+  // (same pattern as setup-link-undelivered).
+  'state-coverage-notify',
   'deposit-request-nudge',
   'deposit-watchdog',
   'fulfillment-push-net',

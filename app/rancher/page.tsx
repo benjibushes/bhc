@@ -11,6 +11,8 @@ import Link from 'next/link';
 import { deriveLadder, deriveDeposit, checkWholePrice, MIN_TIER_PRICE } from '@/lib/pricing';
 import { FULFILLMENT_STATUSES, FULFILLMENT_STATUS_LABELS } from '@/lib/fulfillmentTracking';
 import { netEarningsFor, referralRail } from '@/lib/commission';
+import { formatUSD } from '@/lib/formatUSD';
+import { stripeFeeEstimateCents } from '@/lib/feeMath';
 import { gradeLead, gradeSortWeight } from '@/lib/leadGrade';
 import { selectUntouchedIntros } from '@/lib/untouchedIntros';
 import {
@@ -133,6 +135,11 @@ interface Referral {
   notes: string;
   sale_amount: number;
   commission_due: number;
+  // Wave 1A (2026-08-01): the buyer-paid BHC fee in CENTS, stamped at deposit
+  // settle. commission_due above is the deprecated legacy-invoice receivable
+  // and is $0 on every Connect row — earnings displays prefer this when > 0
+  // (see referralFeeShownDollars).
+  bhc_fee_cents?: number;
   commission_paid: boolean;
   created_at: string;
   intro_sent_at: string;
@@ -188,6 +195,12 @@ interface Referral {
   final_invoice_sent_at?: string;
   final_invoice_amount?: number;
   final_paid_at?: string;
+  // Wave 1A (2026-08-01): money-truth stamps the API already returned but the
+  // client never typed — the settled final amount (drives the est. card-
+  // processing figure on the Earnings tab) and the off-platform confirmation
+  // method (cash/check rows carry no Stripe processing).
+  final_paid_amount?: number;
+  payment_confirmation_method?: string;
   total_sale_amount?: number;
   // Recorded for the rancher's own books (their USDA out-of-pocket cost). It
   // does NOT enter the buyer-balance math — balance = total_sale_amount −
@@ -199,6 +212,19 @@ interface Referral {
   // from the routed Deals lists and use the {stage} PATCH rail, never the
   // legacy status buttons.
   referral_source?: string;
+}
+
+// Wave 1A (2026-08-01): the fee a row ACTUALLY carried, in dollars — client
+// twin of referralFeeDollars in /api/rancher/dashboard/route.ts. Prefer the
+// buyer-paid Connect fee stamp when a real fee was captured; fall back to the
+// legacy Commission Due receivable (a written 0 = "no fee captured" falls
+// through, so a legacy row is never masked to $0).
+// (Merge note 2026-08-02: main also carried a NetworkBenefit interface here —
+// dropped, the Benefits tab it fed was deleted by the Wave 2 rancher-UX cut.)
+function referralFeeShownDollars(ref: Referral): number {
+  const feeCents = Number(ref.bhc_fee_cents);
+  if (Number.isFinite(feeCents) && feeCents > 0) return Math.round(feeCents) / 100;
+  return Number(ref.commission_due) || 0;
 }
 
 // Cockpit (Wave A, 2026-06-22): 'home' is the new triage default. The spine
@@ -472,7 +498,10 @@ export default function RancherDashboardPage() {
   // whether the buyer email actually went out (guardedSend can suppress
   // bounced/unsubscribed buyers WITHOUT erroring). emailSent === false flips
   // the result panel to an honest "share the link directly" state.
-  const [depositResult, setDepositResult] = useState<{ url: string; depositAmount: number; fullSaleAmount: number; emailSent?: boolean; emailSuppressed?: boolean } | null>(null);
+  // chargedCents (Wave 1A, 2026-08-01): the TRUE card charge the route quoted
+  // the buyer (deposit + fee on top) — shown to the rancher so what they say
+  // on the phone matches the buyer's statement.
+  const [depositResult, setDepositResult] = useState<{ url: string; depositAmount: number; fullSaleAmount: number; chargedCents?: number; emailSent?: boolean; emailSuppressed?: boolean } | null>(null);
   const [depositLinkCopied, setDepositLinkCopied] = useState(false);
   const [pageForm, setPageForm] = useState<Record<string, string>>({});
   // SLICE G — sold cuts (Airtable 'Tier Specialty', multipleSelects). Which
@@ -1399,6 +1428,8 @@ export default function RancherDashboardPage() {
         url: data.url,
         depositAmount: data.depositAmount ?? amount,
         fullSaleAmount: data.fullSaleAmount ?? full,
+        // Absent on alreadySent replays — the charged line simply hides.
+        chargedCents: typeof data.chargedCents === 'number' ? data.chargedCents : undefined,
         // Only an explicit false means "email did not go out" — older/other
         // responses (alreadySent replay) omit the field and read as sent.
         emailSent: data.emailSent !== false,
@@ -3742,10 +3773,10 @@ export default function RancherDashboardPage() {
                     product money exists. */}
                 <StatCard
                   label="Total Revenue"
-                  value={`$${(stats.totalRevenue + productRevenue).toLocaleString()}`}
+                  value={formatUSD(stats.totalRevenue + productRevenue)}
                   sub={
                     productRevenue > 0
-                      ? `shares $${stats.totalRevenue.toLocaleString()} · products $${productRevenue.toLocaleString()}`
+                      ? `shares ${formatUSD(stats.totalRevenue)} · products ${formatUSD(productRevenue)}`
                       : ''
                   }
                 />
@@ -3760,24 +3791,29 @@ export default function RancherDashboardPage() {
                     sub-copy keys off the ACTUAL unpaid balance, not the
                     per-rancher tier flag — a tier_v2 rancher with any
                     invoice-owed history must not see "100% of your price". */}
+                {/* Wave 1A (2026-08-01): totalCommission is now per-row
+                    fee-preferred server-side ('BHC Fee Cents' when captured,
+                    legacy Commission Due otherwise) — before that, every
+                    Connect rancher read "Commission $0" here with "buyers
+                    paid this on top" sitting over the zero. */}
                 <StatCard
                   label={`Commission (${((rancherInfo.commissionRate ?? 0.10) * 100).toFixed(1)}%)`}
-                  value={`$${stats.totalCommission.toLocaleString()}`}
+                  value={formatUSD(stats.totalCommission)}
                   sub={rancherInfo.pricingModel === 'tier_v2' && stats.unpaidCommission === 0 ? 'buyers paid this on top' : ''}
                 />
                 <StatCard
                   label="Your Net"
-                  value={`$${(stats.netEarnings + productNet).toLocaleString()}`}
+                  value={formatUSD(stats.netEarnings + productNet)}
                   sub={
                     productNet > 0
-                      ? `shares $${stats.netEarnings.toLocaleString()} · products $${productNet.toLocaleString()}`
+                      ? `shares ${formatUSD(stats.netEarnings)} · products ${formatUSD(productNet)}`
                       : rancherInfo.pricingModel === 'tier_v2' && stats.unpaidCommission === 0 ? 'no BHC fee owed' : ''
                   }
                 />
                 {productNet > 0 && (
                   <StatCard
                     label="Product Sales"
-                    value={`$${productNet.toLocaleString()}`}
+                    value={formatUSD(productNet)}
                     sub={`your payout on ${productPaidOrders.length} order${productPaidOrders.length === 1 ? '' : 's'}`}
                   />
                 )}
@@ -3785,11 +3821,55 @@ export default function RancherDashboardPage() {
                     flag: any owed commission (legacy OR off-rail tier_v2 close)
                     shows a payable balance; zero owed shows "Collected". */}
                 {stats.unpaidCommission > 0 ? (
-                  <StatCard label="Unpaid Commission" value={`$${stats.unpaidCommission.toLocaleString()}`} sub="Invoice pending" />
+                  <StatCard label="Unpaid Commission" value={formatUSD(stats.unpaidCommission)} sub="Invoice pending" />
                 ) : (
                   <StatCard label="Commission" value="Collected" sub={rancherInfo.pricingModel === 'tier_v2' ? 'taken at deposit' : ''} />
                 )}
               </div>
+
+              {/* Wave 1A (2026-08-01) — how the money works, stated plainly and
+                  ALWAYS visible on the money surface. Ranchers read
+                  "Commission" and assumed it came out of their price; the live
+                  model is the opposite (docs/BUSINESS-MODEL.md ⭐). Connect
+                  ranchers only — the legacy post-close model has its own
+                  banner in Settings → money. */}
+              {rancherInfo.pricingModel === 'tier_v2' && (() => {
+                // Est. card processing the rancher absorbs on Stripe-collected
+                // final balances (~2.9% + 30¢ per charge — the same estimate
+                // lib/feeMath uses). Deposits are excluded: their processing is
+                // absorbed by BHC (net-your-number). Off-platform confirmations
+                // (cash/check/venmo…) carry no card processing.
+                const estProcessing = referrals
+                  .filter((r) => {
+                    if (r.status !== 'Closed Won' || referralRail(r) !== 'tier_v2') return false;
+                    if (!((r.final_paid_amount || 0) > 0)) return false;
+                    const method = String(r.payment_confirmation_method || '').toLowerCase();
+                    return !method || method === 'stripe';
+                  })
+                  .reduce(
+                    (s, r) => s + stripeFeeEstimateCents(Math.round((r.final_paid_amount || 0) * 100)) / 100,
+                    0,
+                  );
+                return (
+                  <div className="border border-dust bg-white p-5 text-sm leading-relaxed space-y-2">
+                    <p className="text-[11px] uppercase tracking-widest text-saddle">how our fee works</p>
+                    <p>
+                      <strong>You keep 100% of your price.</strong> Our{' '}
+                      {((rancherInfo.commissionRate ?? 0.10) * 100).toFixed(1).replace(/\.0$/, '')}% fee is
+                      added on top for the buyer at deposit time — they pay it, not you. And the
+                      deposit&apos;s card-processing fee is absorbed by us, so your number is your number.
+                    </p>
+                    <p className="text-xs text-saddle">
+                      The one cost on your side: standard card processing (~2.9% + 30¢) on the
+                      final-balance charge when the buyer pays it by card
+                      {estProcessing > 0
+                        ? ` — about ${formatUSD(estProcessing)} across your completed sales so far, already reflected in your Stripe payouts`
+                        : ''}
+                      .
+                    </p>
+                  </div>
+                );
+              })()}
 
               <Divider />
 
@@ -3803,11 +3883,13 @@ export default function RancherDashboardPage() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
+                      {/* Wave 1A: money columns right-aligned tabular-nums so
+                          amounts line up digit-for-digit down the table. */}
                       <tr className="border-b border-dust text-left">
                         <th className="py-3 pr-4 font-medium">Buyer</th>
-                        <th className="py-3 pr-4 font-medium">Sale</th>
-                        <th className="py-3 pr-4 font-medium">Commission</th>
-                        <th className="py-3 pr-4 font-medium">Your Net</th>
+                        <th className="py-3 pr-4 font-medium text-right">Sale</th>
+                        <th className="py-3 pr-4 font-medium text-right">Commission</th>
+                        <th className="py-3 pr-4 font-medium text-right">Your Net</th>
                         <th className="py-3 font-medium">Status</th>
                       </tr>
                     </thead>
@@ -3815,14 +3897,19 @@ export default function RancherDashboardPage() {
                       {referrals.filter(r => r.status === 'Closed Won').map((ref) => (
                         <tr key={ref.id} className="border-b border-bone-deep">
                           <td className="py-3 pr-4">{ref.buyer_name}</td>
-                          <td className="py-3 pr-4">${ref.sale_amount.toLocaleString()}</td>
-                          <td className="py-3 pr-4">${ref.commission_due.toLocaleString()}</td>
+                          <td className="py-3 pr-4 text-right tabular-nums">{formatUSD(ref.sale_amount)}</td>
+                          {/* Wave 1A: prefer the buyer-paid 'BHC Fee Cents'
+                              stamp — commission_due is the legacy receivable
+                              and reads $0 on every Connect row. On the
+                              Connect rail Sale − Commission ≠ Net on purpose:
+                              the buyer paid the fee ON TOP, Net = Sale. */}
+                          <td className="py-3 pr-4 text-right tabular-nums">{formatUSD(referralFeeShownDollars(ref))}</td>
                           {/* RAIL-PER-ROW (audit fix #3): net is split by what
                               THIS row rode — a deposit-paid row keeps 100% of
                               the sale (commission was skimmed at deposit); a
                               legacy/off-rail row nets the commission out. Never
                               the rancher's current tier flag. */}
-                          <td className="py-3 pr-4 font-medium">${netEarningsFor(referralRail(ref), ref.sale_amount, ref.commission_due).toLocaleString()}</td>
+                          <td className="py-3 pr-4 font-medium text-right tabular-nums">{formatUSD(netEarningsFor(referralRail(ref), ref.sale_amount, ref.commission_due))}</td>
                           <td className="py-3">
                             {/* Deposit-rail row: commission collected at deposit —
                                 "Collected". Legacy/off-rail row: the real Paid/
@@ -3861,9 +3948,9 @@ export default function RancherDashboardPage() {
                       {productPaidOrders.map((o) => (
                         <tr key={o.id} className="border-b border-bone-deep">
                           <td className="py-3 pr-4">{o.buyerName || '—'}</td>
-                          <td className="py-3 pr-4">${Number(o.buyerPaid || 0).toLocaleString()}</td>
-                          <td className="py-3 pr-4">${Math.max(0, Number(o.buyerPaid || 0) - Number(o.payout || 0)).toLocaleString()}</td>
-                          <td className="py-3 pr-4 font-medium">${Number(o.payout || 0).toLocaleString()}</td>
+                          <td className="py-3 pr-4 text-right tabular-nums">{formatUSD(Number(o.buyerPaid || 0))}</td>
+                          <td className="py-3 pr-4 text-right tabular-nums">{formatUSD(Math.max(0, Number(o.buyerPaid || 0) - Number(o.payout || 0)))}</td>
+                          <td className="py-3 pr-4 font-medium text-right tabular-nums">{formatUSD(Number(o.payout || 0))}</td>
                           <td className="py-3">
                             <span className="px-2 py-0.5 text-xs bg-bone-warm text-saddle">
                               Product · {o.productName || 'order'}
@@ -5423,7 +5510,10 @@ export default function RancherDashboardPage() {
             {finalInvoiceResult ? (
               <div className="border border-sage bg-sage/10 p-4 space-y-3">
                 <p className="text-sm text-sage-dark">
-                  <strong>Invoice sent.</strong> Buyer received an email with the Stripe payment link for <strong>${finalInvoiceResult.balanceAmount.toFixed(2)}</strong>. Goes straight to your account minus card processing — BHC takes nothing on the final balance.
+                  <strong>Invoice sent.</strong> Buyer received an email with the Stripe payment link for <strong>${finalInvoiceResult.balanceAmount.toFixed(2)}</strong>. Goes straight to your account minus card processing
+                  {/* Wave 1A: put a number on "minus card processing" so the
+                      payout that lands never reads as a shortfall. */}
+                  {' '}(est. ~{formatUSD(Math.max(0, finalInvoiceResult.balanceAmount - stripeFeeEstimateCents(Math.round(finalInvoiceResult.balanceAmount * 100)) / 100))} to you) — BHC takes nothing on the final balance.
                 </p>
                 <p className="text-xs text-sage-dark">
                   Payment link:{' '}
@@ -5493,6 +5583,24 @@ export default function RancherDashboardPage() {
                       <p className="text-xs text-saddle">
                         ${parseFloat(finalInvoiceTotalSale).toFixed(2)} listed sale &minus; ${(finalInvoiceModal.deposit_amount || 0).toFixed(2)} deposit already paid
                       </p>
+                      {/* Wave 1A (2026-08-01): honest net. Stripe's processing
+                          on THIS charge comes out of the rancher's side (only
+                          the deposit's processing is absorbed by BHC —
+                          net-your-number) — before this line the modal implied
+                          the full balance landed, overstating by ~$79 on a
+                          $2,999 half. Same estimate as lib/feeMath. */}
+                      {(() => {
+                        const balance = Math.max(0, parseFloat(finalInvoiceTotalSale) - (finalInvoiceModal.deposit_amount || 0));
+                        if (balance <= 0) return null;
+                        const estFee = stripeFeeEstimateCents(Math.round(balance * 100)) / 100;
+                        return (
+                          <p className="text-xs text-saddle">
+                            est. to you after card processing:{' '}
+                            <strong className="text-charcoal tabular-nums">~{formatUSD(Math.max(0, balance - estFee))}</strong>{' '}
+                            (Stripe&apos;s ~2.9% + 30¢ ≈ {formatUSD(estFee)} comes out of this charge)
+                          </p>
+                        );
+                      })()}
                       {/* U30 — say WHY send is disabled instead of a silently
                           dead button + a $0.00 balance. */}
                       {parseFloat(finalInvoiceTotalSale) <= (finalInvoiceModal.deposit_amount || 0) && (
@@ -5599,9 +5707,20 @@ export default function RancherDashboardPage() {
                   </p>
                 ) : (
                   <p className="text-sm text-sage-dark">
-                    <strong>deposit link sent.</strong> {depositModal.buyer_name} got an email with the Stripe link to pay
-                    {' '}<strong>${depositResult.depositAmount.toFixed(0)}</strong> and lock their {depositCut.toLowerCase()}
+                    <strong>deposit link sent.</strong> {depositModal.buyer_name} got an email with the Stripe link to lock their {depositCut.toLowerCase()}
                     {' '}(full sale ${depositResult.fullSaleAmount.toFixed(0)}). money lands straight in your stripe account.
+                  </p>
+                )}
+                {/* Wave 1A (2026-08-01): the EXACT charge the buyer email
+                    quotes — say it to the rancher too, so "my card was hit
+                    for more than the deposit" support calls stop at the
+                    source. Absent on alreadySent replays (line hides). */}
+                {typeof depositResult.chargedCents === 'number' && depositResult.chargedCents > 0 && (
+                  <p className="text-sm text-charcoal">
+                    buyer&rsquo;s card will be charged{' '}
+                    <strong className="tabular-nums">{formatUSD(depositResult.chargedCents / 100)}</strong>{' '}
+                    ({formatUSD(depositResult.depositAmount)} deposit to you +{' '}
+                    {formatUSD(depositResult.chargedCents / 100 - depositResult.depositAmount)} our fee on top) — quote that number if they ask.
                   </p>
                 )}
                 <p className="text-xs text-saddle">
@@ -5696,22 +5815,40 @@ export default function RancherDashboardPage() {
                     </p>
                   </div>
 
-                  {parseFloat(depositAmountInput) > 0 && cutPrice(depositCut) > 0 && (
-                    <div className="bg-bone-warm border-l-4 border-sage p-4 space-y-1 text-sm">
-                      <div className="flex justify-between">
-                        <span className="text-saddle">deposit today:</span>
-                        <strong className="text-charcoal">${parseFloat(depositAmountInput).toFixed(0)}</strong>
+                  {parseFloat(depositAmountInput) > 0 && cutPrice(depositCut) > 0 && (() => {
+                    // Wave 1A (2026-08-01): show the number the BUYER's card is
+                    // actually hit for — deposit + our fee on top (same math as
+                    // the server: round(fullSale × rate), the dashboard's locked
+                    // commission rate). Estimated here; the exact figure comes
+                    // back on send. Without it the rancher quotes "$500", the
+                    // card statement reads more, the buyer calls the rancher.
+                    const dep = parseFloat(depositAmountInput);
+                    const estFee = Math.round(cutPrice(depositCut) * (rancherInfo?.commissionRate ?? 0.1) * 100) / 100;
+                    return (
+                      <div className="bg-bone-warm border-l-4 border-sage p-4 space-y-1 text-sm">
+                        <div className="flex justify-between">
+                          <span className="text-saddle">deposit today (yours):</span>
+                          <strong className="text-charcoal tabular-nums">{formatUSD(dep)}</strong>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-saddle">our fee, added on top (est.):</span>
+                          <span className="text-charcoal tabular-nums">~{formatUSD(estFee)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-saddle">buyer&rsquo;s card today (est.):</span>
+                          <strong className="text-charcoal tabular-nums">~{formatUSD(dep + estFee)}</strong>
+                        </div>
+                        <div className="flex justify-between text-xs text-saddle pt-1 border-t border-dust">
+                          <span>full sale:</span>
+                          <span className="tabular-nums">{formatUSD(cutPrice(depositCut))}</span>
+                        </div>
+                        <div className="flex justify-between text-xs text-saddle">
+                          <span>balance at pickup:</span>
+                          <span className="tabular-nums">{formatUSD(Math.max(0, cutPrice(depositCut) - dep))}</span>
+                        </div>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-saddle">full sale:</span>
-                        <strong className="text-charcoal">${cutPrice(depositCut).toFixed(0)}</strong>
-                      </div>
-                      <div className="flex justify-between text-xs text-saddle pt-1 border-t border-dust">
-                        <span>balance at pickup:</span>
-                        <span>${Math.max(0, cutPrice(depositCut) - parseFloat(depositAmountInput)).toFixed(0)}</span>
-                      </div>
-                    </div>
-                  )}
+                    );
+                  })()}
 
                   {/* LEAK 4 (2026-07-05): show the rancher EXACTLY what the buyer
                       receives — the send is no longer a black box. Mirrors the

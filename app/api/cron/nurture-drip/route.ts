@@ -7,8 +7,9 @@
 //   1·d2 education → 2·d6 shop bridge → 3·d12 check-in → 4·d21 long-haul.
 //
 // SAFETY STACK (each layer independent):
-//   - NURTURE_ENABLED 3-state: unset → skip · 'dry-run' → Telegram counts,
-//     writes nothing · 'true' → live.
+//   - NURTURE_ENABLED 3-state: unset → skip · 'dry-run' → counts to logs +
+//     Cron Runs note (Wave 1C: no Telegram while dark), writes nothing ·
+//     'true' → live.
 //   - Pure selector gates: WAITING/READY only, Qualified At (or Funnel
 //     Completed At, for held not-ready completers) required, any
 //     active deal referral = out, terminal after touch 4, monotonic order.
@@ -20,7 +21,8 @@
 
 import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
 import { isMaintenanceMode } from '@/lib/maintenance';
-import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { sendOperatorSignal } from '@/lib/operatorSignal';
+import { shouldSendCronReport } from '@/lib/cronReportGate';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 import { dueNurtureTouch } from '@/lib/nurtureDrip';
@@ -96,13 +98,13 @@ async function realHandler(_request: Request): Promise<DripResult> {
   if (dryRun) {
     const byTouch: Record<string, number> = {};
     for (const d of due) byTouch[`touch${d.touch}`] = (byTouch[`touch${d.touch}`] || 0) + 1;
-    await sendTelegramMessage(
-      TELEGRAM_ADMIN_CHAT_ID,
-      `🌱 <b>nurture drip DRY RUN</b> — nothing sent\n\n` +
-        `would send <b>${Math.min(due.length, RUN_CAP)}</b> of ${due.length} due ` +
-        `(${Object.entries(byTouch).map(([k, v]) => `${k}: ${v}`).join(' · ')})\n\n` +
-        `d2 education · d6 shop · d12 check-in · d21 long-haul. flip NURTURE_ENABLED=true to go live.`,
-    ).catch(() => {});
+    // Wave 1C: env-dark plan → log + Cron Runs note only; no Telegram for a
+    // rail that's off. Failures page via withCronRun's error/partial alert.
+    console.info(
+      `[nurture-drip] DRY RUN — would send ${Math.min(due.length, RUN_CAP)} of ${due.length} due ` +
+        `(${Object.entries(byTouch).map(([k, v]) => `${k}: ${v}`).join(' · ')}) — ` +
+        `flip NURTURE_ENABLED=true to go live`,
+    );
     return {
       status: 'success',
       recordsTouched: 0,
@@ -154,14 +156,19 @@ async function realHandler(_request: Request): Promise<DripResult> {
     await new Promise((r) => setTimeout(r, 250));
   }
 
-  if (sent > 0 || failed > 0) {
-    await sendTelegramMessage(
-      TELEGRAM_ADMIN_CHAT_ID,
-      `🌱 <b>nurture drip</b> — sent <b>${sent}</b>` +
+  // Wave 1C transport migration: same gate (work or failures), now with
+  // dedupe + failover via sendOperatorSignal. Content unchanged.
+  if (shouldSendCronReport({ workDone: sent, failures: failed })) {
+    await sendOperatorSignal({
+      urgency: 'normal',
+      kind: 'other',
+      summary: `nurture drip — sent ${sent}` +
         (failed ? ` · ${failed} failed (retried tomorrow)` : '') +
         (due.length > RUN_CAP ? ` · ${due.length - RUN_CAP} deferred to tomorrow` : '') +
         (timeBoxed ? ' · time-boxed' : ''),
-    ).catch(() => {});
+      dedupeKey: 'nurture-drip-summary',
+      dedupeWindowMs: 6 * 60 * 60 * 1000,
+    }).catch(() => {});
   }
 
   return {

@@ -28,11 +28,11 @@ export interface AdminNavItem {
 
 export const ADMIN_NAV: AdminNavItem[] = [
   // PIPELINE — admin-only: referral decisions, go-live, consumer PII
-  // (Manifest #17: the /admin/desk LIST entry was removed — /admin/today/v2 is
-  //  the daily surface and links straight into /admin/desk/[referralId] deal
-  //  cockpits, which stay routable.)
+  // (Manifest #17: the /admin/desk LIST entry was removed. Wave 1B: the daily
+  //  surface is the /admin/today cockpit — /admin/today/v2 redirects there.
+  //  /admin/desk/[referralId] deal cockpits stay routable.)
   {
-    group: 'PIPELINE', icon: '☀️', label: 'Today', href: '/admin/today/v2', shortcut: 'g t',
+    group: 'PIPELINE', icon: '☀️', label: 'Today', href: '/admin/today', shortcut: 'g t',
     visibleTo: ['admin', 'onboarding'],
   },
   {

@@ -6,18 +6,41 @@
 // constant-time compare against ADMIN_PASSWORD env. Server-to-server
 // callers (Telegram bot, cron, ops) still authenticate with the
 // x-admin-password HTTP header — see lib/adminAuth.ts.
+//
+// Wave 1B (2026-08-01): honors a validated `?next=` param. Every guard mints
+// one (server pages, the admin layout), but this page previously hardcoded
+// router.push('/admin') — so an expired-session Telegram deep-link lost its
+// destination at the login wall. Default landing is the /admin/today cockpit,
+// not the 2+ MB /admin dashboard.
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Container from '../../components/Container';
 import Input from '../../components/Input';
 import Button from '../../components/Button';
 
-export default function AdminLoginPage() {
+/**
+ * Only ever navigate to a same-origin /admin path. Anything else (absolute
+ * URLs, protocol-relative //host, junk) falls back to the cockpit.
+ */
+function safeNext(raw: string | null): string {
+  if (
+    raw &&
+    raw.startsWith('/admin') &&
+    !raw.includes('//') &&
+    !/[\r\n\\]/.test(raw)
+  ) {
+    return raw;
+  }
+  return '/admin/today';
+}
+
+function AdminLoginForm() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -32,7 +55,7 @@ export default function AdminLoginPage() {
       });
 
       if (response.ok) {
-        router.push('/admin');
+        router.push(safeNext(searchParams.get('next')));
       } else {
         setError('Invalid password. Try again.');
         setIsLoading(false);
@@ -85,5 +108,14 @@ export default function AdminLoginPage() {
         </div>
       </Container>
     </main>
+  );
+}
+
+// useSearchParams requires a Suspense boundary for prerender (Next 15).
+export default function AdminLoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <AdminLoginForm />
+    </Suspense>
   );
 }

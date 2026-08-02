@@ -3,7 +3,8 @@ import { getAllRecords, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendEmail } from '@/lib/email';
-import { sendTelegramUpdate } from '@/lib/telegram';
+import { sendOperatorSignal } from '@/lib/operatorSignal';
+import { shouldSendCronReport } from '@/lib/cronReportGate';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 
@@ -139,7 +140,14 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
     }
   }
 
-  try {
+  // Wave 1C: "Sent to 0" was a monthly zero-work ping — report only when
+  // reminders actually went out, a rancher was flipped Non-Compliant, or the
+  // throttle field is missing (operator action needed). Zero-work runs keep
+  // their Cron Runs row only. Rides sendOperatorSignal for failover.
+  if (shouldSendCronReport({
+    workDone: sentCount + nonCompliantCount,
+    failures: throttleFieldMissing ? 1 : 0,
+  })) {
     const warningSuffix = throttleFieldMissing
       ? `\n\n⚠️ Add "Last Compliance Reminder Sent At" datetime field to Ranchers table so dedup throttle activates next month.`
       : '';
@@ -149,11 +157,14 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
     const migratingSuffix = skippedMigratingCount > 0
       ? ` (skipped ${skippedMigratingCount} tier_v2/migrating)`
       : '';
-    await sendTelegramUpdate(
-      `📋 <b>Compliance reminders sent</b>\n\nSent to ${sentCount} active rancher(s) for ${month}${skipSuffix}${migratingSuffix}${warningSuffix}`
-    );
-  } catch (e) {
-    console.error('Telegram error:', e);
+    await sendOperatorSignal({
+      urgency: 'normal',
+      kind: 'other',
+      summary: `Compliance reminders sent to ${sentCount} active rancher(s) for ${month}`,
+      detail: `${skipSuffix}${migratingSuffix}${warningSuffix}`.trim() || undefined,
+      dedupeKey: `compliance-reminders:${month}`,
+      dedupeWindowMs: 6 * 60 * 60 * 1000,
+    }).catch((e) => console.error('Telegram error:', e));
   }
 
   return {
