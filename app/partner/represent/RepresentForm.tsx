@@ -98,16 +98,18 @@ export default function RepresentForm() {
           Email
           <input required type="email" className={FIELD} value={state.email} onChange={(e) => set('email', e.target.value)} />
         </label>
+        {/* Phone + State demoted to optional (2026-08-02 friction cut): email
+            is the rail's only required channel — the server no longer 400s on
+            either, and this is a one-page speed play. */}
         <label className="block text-sm font-medium text-stone-800">
-          Phone
-          <input required type="tel" className={FIELD} value={state.phone} onChange={(e) => set('phone', e.target.value)} />
+          Phone <span className="font-normal text-stone-500">(optional)</span>
+          <input type="tel" className={FIELD} value={state.phone} onChange={(e) => set('phone', e.target.value)} />
         </label>
       </div>
 
       <label className="block text-sm font-medium text-stone-800">
-        State
+        State <span className="font-normal text-stone-500">(optional)</span>
         <input
-          required
           placeholder="MT"
           className={FIELD}
           value={state.state}

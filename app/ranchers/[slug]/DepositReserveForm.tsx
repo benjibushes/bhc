@@ -44,13 +44,6 @@ interface Props {
 
 const CUT_LABEL: Record<Cut, string> = { quarter: 'Quarter', half: 'Half', whole: 'Whole' };
 
-const US_STATES = [
-  'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA',
-  'KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ',
-  'NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT',
-  'VA','WA','WV','WI','WY','DC',
-];
-
 export default function DepositReserveForm({
   slug, ranchName, operatorFirst, bookingUrl, quarter, half, whole, requireZip = false,
 }: Props) {
@@ -62,7 +55,6 @@ export default function DepositReserveForm({
   const [phone, setPhone] = useState('');
   // TCPA SMS consent — UNCHECKED by default, never gates the reserve.
   const [smsOptIn, setSmsOptIn] = useState(false);
-  const [stateCode, setStateCode] = useState('');
   // Only rendered (and only sent) when `requireZip` — see the prop docs.
   const [zip, setZip] = useState('');
   const [loading, setLoading] = useState(false);
@@ -146,9 +138,11 @@ export default function DepositReserveForm({
         credentials: 'include',
         // smsOptIn rides along using the funnel's exact payload convention
         // (→ Airtable `SMS Opt-In`). ref = affiliate attribution captured from
-        // the URL above; server-validated before any stamp.
+        // the URL above; server-validated before any stamp. No `state`: the
+        // server never required it and the same datum arrives from the Stripe
+        // billing address at settlement — asking here only stalled the reserve.
         body: JSON.stringify({
-          slug, cut, email, phone, state: stateCode, smsOptIn,
+          slug, cut, email, phone, smsOptIn,
           ...(requireZip ? { zip: zip.trim() } : {}),
           ...(refCode ? { ref: refCode } : {}),
         }),
@@ -256,28 +250,15 @@ export default function DepositReserveForm({
           onChange={(e) => setEmail(e.target.value)}
           className="w-full px-4 py-3 border border-dust bg-white text-sm"
         />
-        <div className="grid grid-cols-2 gap-3">
-          <input
-            type="tel"
-            required
-            placeholder="Phone"
-            autoComplete="tel"
-            value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            className="w-full px-4 py-3 border border-dust bg-white text-sm"
-          />
-          <select
-            required
-            value={stateCode}
-            onChange={(e) => setStateCode(e.target.value)}
-            className="w-full px-4 py-3 border border-dust bg-white text-sm"
-          >
-            <option value="">State</option>
-            {US_STATES.map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
-        </div>
+        <input
+          type="tel"
+          required
+          placeholder="Phone"
+          autoComplete="tel"
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+          className="w-full px-4 py-3 border border-dust bg-white text-sm"
+        />
         {/* REQUIRED, and only for a ZIP-gated ranch — the fast path stays 4
             fields for everyone else and gets its ZIP from Stripe at payment. */}
         {requireZip && (
