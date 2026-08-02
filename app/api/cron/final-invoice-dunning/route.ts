@@ -459,6 +459,8 @@ async function realHandler(_request: Request): Promise<DunningResult> {
           processingDate: ref['Processing Date'] ? String(ref['Processing Date']) : undefined,
           notes: `Friendly reminder — your final balance with ${ranchName} is still open. Tap the link below to complete your order.`,
           checkoutUrl,
+          // Makes "reply goes straight to the rancher" true — tagged Reply-To.
+          referralId,
         });
         // TRUTH: guardedSend suppression (unsub/bounce/pause) returns
         // success:false without throwing — don't count a suppressed reminder

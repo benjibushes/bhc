@@ -108,6 +108,23 @@ textarea:invalid {
   box-shadow: none;
 }
 
+/* iOS AUTO-ZOOM FLOOR. Mobile Safari zooms the whole page in whenever a
+   focused form control renders under 16px — and it does NOT zoom back out
+   when the field blurs, so the rest of the page is left oversized and
+   horizontally scrolling. An audit found 79 of 159 form controls under 16px,
+   including the email field directly above the Stripe PaymentElement on the
+   live product rail. Rather than chase every utility class, set the floor
+   here: any control that is smaller than 16px is bumped to 16px on touch
+   devices only, so desktop keeps its intended type scale.
+   Font-size only — nothing else about the control changes. */
+@media (hover: none) and (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: max(16px, 1em);
+  }
+}
+
 input:focus:invalid,
 select:focus:invalid,
 textarea:focus:invalid {

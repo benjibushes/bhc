@@ -5592,6 +5592,13 @@ export async function sendBuyerFinalInvoice(data: {
   processingDate?: string;    // ISO string or human-readable date
   notes?: string;             // optional rancher message
   checkoutUrl: string;        // Stripe Connect Checkout Session URL
+  // The referral record id. REQUIRED for the promise this email makes: the
+  // body says "reply to this email — it goes straight to the rancher". Without
+  // a _replyContext the wrapper falls back to inbox@replies and the buyer's
+  // cuts/pickup/timing question lands in Ben's inbox while the buyer believes
+  // it reached the ranch. Optional in the type only so a caller that genuinely
+  // has no referral degrades to honest copy rather than a compile error.
+  referralId?: string;
 }): Promise<{ success: boolean; error?: any }> {
   const first = (data.buyerName || 'there').split(' ')[0] || 'there';
   const subject = `${data.ranchName} sent your final invoice — ${data.orderType}`;
@@ -5610,6 +5617,9 @@ export async function sendBuyerFinalInvoice(data: {
       from: getFromEmail(),
       to: data.buyerEmail,
       subject,
+      // Tagged Reply-To so the promise in the body is true — a reply routes to
+      // the referral thread, not to Ben's inbox.
+      ...(data.referralId ? { _replyContext: { type: 'ref' as const, recordId: data.referralId } } : {}),
       headers: getUnsubscribeHeaders(data.buyerEmail),
       html: `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 18px;line-height:1.3}p{margin:14px 0;color:#2A2A2A}.box{background:#FAF8F4;border-left:3px solid #0E0E0E;padding:16px 20px;margin:18px 0}.summary{border:1px solid #E5E2DC;padding:18px 20px;margin:18px 0}.summary table{width:100%;border-collapse:collapse;font-size:14px}.summary td{padding:6px 0}.summary td.r{text-align:right;font-weight:600}.summary tr.total td{border-top:1px solid #A7A29A;padding-top:12px;font-size:16px;color:#0E0E0E}.cta{display:inline-block;padding:14px 28px;background:#0E0E0E;color:#fff !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px;margin:8px 0}.footer{margin-top:36px;padding-top:18px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
@@ -5631,7 +5641,11 @@ export async function sendBuyerFinalInvoice(data: {
   </p>
   <p style="font-size:13px;color:#6B4F3F;">This payment goes directly to ${esc(data.ranchName)} — 100% of the balance, straight to the rancher.</p>
   <p style="font-size:13px;color:#6B4F3F;">Track your order anytime: <a href="${SITE_URL}/member" style="color:#0E0E0E;">buyhalfcow.com/member</a>.</p>
-  <p style="font-size:13px;color:#6B4F3F;">Questions about cuts, pickup, or timing? Reply to this email — it goes straight to the rancher.</p>
+  <p style="font-size:13px;color:#6B4F3F;">Questions about cuts, pickup, or timing? ${
+    data.referralId
+      ? 'Reply to this email — it goes straight to the rancher.'
+      : `Reply to this email and we'll get it to ${esc(data.ranchName)}.`
+  }</p>
   <p style="margin-top:32px;">— Ben</p>
 </div></body></html>`,
     }),

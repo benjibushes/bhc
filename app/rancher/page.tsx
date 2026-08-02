@@ -4177,16 +4177,24 @@ export default function RancherDashboardPage() {
                           ? 'Looks good — save first, then publish.'
                           : `Add ${missingEssentials.join(', ')} below, then save, before you can publish.`}
                       </p>
+                      {/* This action PUBLISHES — the endpoint self-publishes
+                          when the rancher is eligible (handleRequestGoLive
+                          flips pageLive off data.live). It used to say
+                          "Request Go Live" / "Request sent!", which trained a
+                          rancher who was already live to sit and wait on Ben
+                          for nothing. Say what it does. */}
                       {goLiveRequested ? (
-                        <span className="text-xs bg-sage/15 text-sage-dark px-3 py-1.5 whitespace-nowrap">Request sent!</span>
+                        <span className="text-xs bg-sage/15 text-sage-dark px-3 py-1.5 whitespace-nowrap">
+                          {rancherInfo.pageLive ? 'Published — your page is live' : 'Sent for review'}
+                        </span>
                       ) : (
                         <button
                           onClick={handleRequestGoLive}
                           disabled={goLiveLoading || !rancherInfo.slug || !essentialsMet}
                           title={!essentialsMet ? `Still needed: ${missingEssentials.join(', ')}` : (!rancherInfo.slug ? 'Set your page URL slug first' : undefined)}
-                          className="px-4 py-2 text-xs bg-charcoal text-bone hover:bg-saddle transition-colors whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="px-4 py-2 min-h-[44px] text-xs bg-charcoal text-bone hover:bg-saddle transition-colors whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          {goLiveLoading ? 'Requesting...' : 'Request Go Live'}
+                          {goLiveLoading ? 'Publishing...' : 'Publish my page'}
                         </button>
                       )}
                     </div>
@@ -5143,7 +5151,7 @@ export default function RancherDashboardPage() {
                 </button>
                 {!rancherInfo.pageLive && rancherInfo.slug && (
                   <p className="text-xs text-dust">
-                    After saving, click &quot;Request Go Live&quot; above to notify us.
+                    After saving, click &quot;Publish my page&quot; above.
                   </p>
                 )}
               </div>
@@ -7787,7 +7795,12 @@ function DashboardBannerCascade({ rancher }: { rancher: RancherInfo }) {
     try {
       const res = await fetch('/api/rancher/connect/start', { method: 'POST', credentials: 'include' });
       const data = await res.json();
-      if (res.ok && data?.url) window.open(data.url, '_blank', 'noopener,noreferrer');
+      // Same-tab navigation, NOT window.open. This fires after an await, so it
+      // is outside the user-gesture stack — iOS Safari and Android Chrome
+      // silently block the popup and the rancher sees "Opening…" then nothing.
+      // The setup wizard uses location.href and works; that is why Connect
+      // STARTERS finish and RETURNERS stall on this dashboard.
+      if (res.ok && data?.url) window.location.href = data.url;
       else setBannerErr(data?.error || 'Could not start Stripe Connect onboarding.');
     } catch {
       setBannerErr('Network error — try again in a moment.');
@@ -7813,7 +7826,8 @@ function DashboardBannerCascade({ rancher }: { rancher: RancherInfo }) {
         const res = await fetch('/api/rancher/connect/start', { method: 'POST', credentials: 'include' });
         const data = await res.json();
         if (res.ok && data?.url) {
-          window.open(data.url, '_blank', 'noopener,noreferrer');
+          // Same-tab — see openConnectOnboarding above.
+          window.location.href = data.url;
           return;
         }
         setBannerErr(data?.error || 'Could not resume Stripe onboarding.');
@@ -7837,7 +7851,8 @@ function DashboardBannerCascade({ rancher }: { rancher: RancherInfo }) {
     try {
       const res = await fetch('/api/rancher/tier/portal', { credentials: 'include' });
       const data = await res.json();
-      if (res.ok && data?.url) window.open(data.url, '_blank', 'noopener,noreferrer');
+      // Same-tab — see openConnectOnboarding above.
+      if (res.ok && data?.url) window.location.href = data.url;
       else setBannerErr(data?.error || 'Could not open billing portal.');
     } catch {
       setBannerErr('Network error — try again in a moment.');

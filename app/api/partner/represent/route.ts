@@ -25,7 +25,7 @@
 // commission out of his price must exist in writing, not be discovered later.
 
 import { NextResponse } from 'next/server';
-import { createRecord, getAllRecords, escapeAirtableValue, TABLES } from '@/lib/airtable';
+import { createRecord, updateRecord, getAllRecords, escapeAirtableValue, TABLES } from '@/lib/airtable';
 import { sendBrokerRepresentConfirmation } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
@@ -93,19 +93,23 @@ export async function POST(request: Request) {
 
   const phone = formatPhoneInput(phoneRaw);
 
-  // Dedupe by email — a second submit updates nothing and re-confirms nothing,
-  // it just reports success so the rancher isn't told he "failed".
+  // Dedupe by email. This matches ANY row in the Ranchers table, not just
+  // broker rows — and that table holds prospects and half-onboarded leads Ben
+  // entered by hand. The old behaviour returned {ok:true,duplicate:true} and
+  // RETURNED HERE, before writing Broker Rail, before the balance note, before
+  // the confirmation email, and before the Telegram. The rancher was told he
+  // was represented, nothing was written, and Ben never found out. Now an
+  // existing row is UPGRADED onto the broker rail and still alerts.
+  let existingId = '';
+  let alreadyBroker = false;
   try {
     const existing: any[] = await getAllRecords(
       TABLES.RANCHERS,
       `LOWER({Email}) = "${escapeAirtableValue(email)}"`,
     );
     if (existing.length > 0) {
-      return NextResponse.json({
-        ok: true,
-        duplicate: true,
-        message: "You're already set up with us — we'll email you when a share sells.",
-      });
+      existingId = existing[0].id;
+      alreadyBroker = !!existing[0].fields?.[BROKER_RAIL_FIELD];
     }
   } catch (e: any) {
     // A dedupe read failure must not block a real signup; worst case is a
@@ -139,11 +143,26 @@ export async function POST(request: Request) {
   // Self-Submitted At, Verification Status, Agreement Signed, Latitude,
   // Longitude. See the file header — each one is a deliberate omission.
 
-  let created: any;
+  let rancherId = '';
   try {
-    created = await createRecord(TABLES.RANCHERS, fields);
+    if (existingId) {
+      // Upgrade the existing row onto the broker rail. Ranch Name / Operator
+      // Name / Phone / State are left ALONE — an operator may have corrected
+      // them by hand and the signup form should not clobber that. The rail
+      // flag, the balance note and the written agreement are what must land.
+      await updateRecord(TABLES.RANCHERS, existingId, {
+        [BROKER_RAIL_FIELD]: true,
+        [BROKER_BALANCE_NOTE_FIELD]: balanceNote || BROKER_BALANCE_NOTE_FALLBACK,
+        'Ops Notes (Internal)': fields['Ops Notes (Internal)'],
+        ...(sells ? { 'Beef Types': sells } : {}),
+      });
+      rancherId = existingId;
+    } else {
+      const created: any = await createRecord(TABLES.RANCHERS, fields);
+      rancherId = created?.id || '';
+    }
   } catch (e: any) {
-    console.error('[partner/represent] rancher create failed:', e?.message);
+    console.error('[partner/represent] rancher write failed:', e?.message);
     return NextResponse.json(
       { error: 'We could not save that. Please try again, or email hello@buyhalfcow.com.' },
       { status: 502 },
@@ -168,7 +187,9 @@ export async function POST(request: Request) {
     await sendTelegramMessage(
       TELEGRAM_ADMIN_CHAT_ID,
       [
-        `🤝 <b>NEW REPRESENTED RANCH</b>`,
+        existingId
+          ? `🤝 <b>EXISTING RANCH MOVED TO BROKER RAIL</b>${alreadyBroker ? ' (re-submitted)' : ''}`
+          : `🤝 <b>NEW REPRESENTED RANCH</b>`,
         '',
         `${ranchName} — ${state}`,
         `${contactName} · ${phone}`,
@@ -184,7 +205,8 @@ export async function POST(request: Request) {
 
   return NextResponse.json({
     ok: true,
-    rancherId: created?.id || '',
+    rancherId,
+    duplicate: !!existingId,
     message: "You're set up. We'll email you the moment a share sells.",
   });
 }

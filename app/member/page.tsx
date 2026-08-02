@@ -304,7 +304,7 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
           <div className="max-w-md mx-auto text-center space-y-6">
             <h1 className="font-serif text-3xl">Unable to Load</h1>
             <p className="text-saddle">We couldn&apos;t load your dashboard. Please check your connection and try again.</p>
-            <button onClick={fetchContent} className="px-6 py-3 bg-charcoal text-bone hover:bg-opacity-80 transition-colors uppercase tracking-wider text-sm font-semibold">
+            <button onClick={fetchContent} className="px-6 py-3 bg-charcoal text-bone hover:bg-charcoal/80 transition-colors uppercase tracking-wider text-sm font-semibold">
               Retry
             </button>
           </div>
@@ -985,7 +985,7 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                   <button
                     onClick={handleUpgradeIntent}
                     disabled={!upgradeForm.orderType || upgrading}
-                    className="px-6 py-3 bg-charcoal text-bone hover:bg-opacity-80 transition-colors uppercase tracking-wider text-sm font-semibold disabled:opacity-50"
+                    className="px-6 py-3 bg-charcoal text-bone hover:bg-charcoal/80 transition-colors uppercase tracking-wider text-sm font-semibold disabled:opacity-50"
                   >
                     {upgrading ? 'Submitting...' : 'Match Me With a Rancher'}
                   </button>

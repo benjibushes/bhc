@@ -380,6 +380,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       processingDate: body.processingDate,
       notes: body.notes,
       checkoutUrl: durableUrl,
+      // Makes "reply goes straight to the rancher" true — tagged Reply-To.
+      referralId,
     });
   } catch (e: any) {
     console.error('[final-invoice] buyer email failed:', e?.message);
