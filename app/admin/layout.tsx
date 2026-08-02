@@ -33,12 +33,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           setAuthed(true);
         } else {
           setAuthed(false);
-          router.push('/admin/login');
+          // Mint ?next= so an expired session round-trips back to the page
+          // the user (or a Telegram deep-link) was actually headed to.
+          router.push(`/admin/login?next=${encodeURIComponent(pathname)}`);
         }
       } catch {
         if (!cancelled) {
           setAuthed(false);
-          router.push('/admin/login');
+          router.push(`/admin/login?next=${encodeURIComponent(pathname)}`);
         }
       }
     })();

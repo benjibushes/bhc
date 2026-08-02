@@ -106,3 +106,68 @@ export function countConnectFeePayments(payments: ConnectFeePayment[]): number {
     (p) => String(p.Status ?? '') === 'succeeded' && toNum(p['Platform Fee Cents']) > 0,
   ).length;
 }
+
+// ── Range-aware variants (Wave 1B cockpit) ─────────────────────────────────
+//
+// The /admin/today cockpit needs "earned TODAY" and "earned MTD", which the
+// all-time helpers above cannot answer. Range membership is decided by the
+// caller via a predicate over the row's capture timestamp so the timezone
+// question (Ben's calendar day is America/Denver, not UTC) stays in exactly
+// one place — the caller pairs these with lib/followUpQueue.operatorToday.
+
+export interface RangedConnectFeePayment extends ConnectFeePayment {
+  /** Stamped by markDepositSucceeded at settlement (lib/contracts/payments). */
+  'Captured At'?: string | null;
+  /** Row-creation stamp — fallback for pre-Captured-At legacy rows. */
+  'Created At'?: string | null;
+}
+
+/**
+ * Connect fees captured within a caller-defined range, in DOLLARS.
+ * Same succeeded-only definition as computeConnectFeeCaptured; the range is
+ * tested against `Captured At` (when the money actually moved), falling back
+ * to `Created At` for legacy rows that predate the Captured At stamp.
+ */
+export function computeConnectFeeCapturedInRange(
+  payments: RangedConnectFeePayment[],
+  inRange: (isoTimestamp: string) => boolean,
+): number {
+  const cents = payments
+    .filter((p) => String(p.Status ?? '') === 'succeeded')
+    .filter((p) => {
+      const ts = String(p['Captured At'] || p['Created At'] || '');
+      return !!ts && inRange(ts);
+    })
+    .reduce((sum, p) => sum + toNum(p['Platform Fee Cents']), 0);
+  return round2(cents / 100);
+}
+
+export interface ProductMarginOrder {
+  /** Rancher Orders — dollars kept by BHC on a shop sale (lib/productSettlement). */
+  'BHC Margin'?: number | string | null;
+  'Ordered At'?: string | null;
+}
+
+/**
+ * Shop-rail margin BHC keeps, in DOLLARS — all rows. Extracted from
+ * command-center's inline reduce so the cockpit and command-center share one
+ * definition of the product-rail money.
+ */
+export function computeProductMargin(orders: ProductMarginOrder[]): number {
+  return round2(orders.reduce((sum, o) => sum + toNum(o['BHC Margin']), 0));
+}
+
+/** Shop-rail margin within a caller-defined range (tested on `Ordered At`). */
+export function computeProductMarginInRange(
+  orders: ProductMarginOrder[],
+  inRange: (isoTimestamp: string) => boolean,
+): number {
+  return round2(
+    orders
+      .filter((o) => {
+        const ts = String(o['Ordered At'] || '');
+        return !!ts && inRange(ts);
+      })
+      .reduce((sum, o) => sum + toNum(o['BHC Margin']), 0),
+  );
+}
