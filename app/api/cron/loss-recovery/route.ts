@@ -66,6 +66,7 @@ import { requireCron } from '@/lib/cronAuth';
 import { sendSMSToConsumer } from '@/lib/twilio';
 import { isSmsWindow } from '@/lib/sendWindow';
 import { sendLossRecoveryReengage, sendLossRecoveryDownsell } from '@/lib/email';
+import { isRancherOperationalForBuyers, getOperationalServedStates } from '@/lib/rancherEligibility';
 import {
   selectLossRecovery,
   recoveryNoteLine,
@@ -150,6 +151,23 @@ async function realHandler(_request: Request): Promise<CronResult> {
   const consumersById = new Map<string, Record<string, any>>();
   for (const c of consumers) consumersById.set(c.id, c);
 
+  // Supply gate (2026-08-02, Ben's flip condition — "we shouldn't be routing
+  // people if we have no supply there"): reengage touches only go to buyers
+  // whose state has an operational rancher TODAY. Mirrors waiting-activation's
+  // gate and FAILS CLOSED: if the ranchers read errors, coveredStates is empty
+  // and every reengage skips ('reengage-no-supply') — downsell (/shop, ships
+  // nationwide) and nurture (stamp only) are unaffected.
+  const coveredStates = new Set<string>();
+  try {
+    const ranchers = (await getAllRecords(TABLES.RANCHERS)) as any[];
+    for (const r of ranchers) {
+      if (!isRancherOperationalForBuyers(r)) continue;
+      for (const s of getOperationalServedStates(r)) coveredStates.add(s);
+    }
+  } catch (e: any) {
+    console.error('[loss-recovery] ranchers read failed — supply gate fails closed:', e?.message);
+  }
+
   const sel = selectLossRecovery({
     candidates,
     activeReferrals,
@@ -158,6 +176,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
     windowDays: DEFAULT_WINDOW_DAYS,
     cap,
     windowEnforcedUpstream,
+    coveredStates,
   });
   const byAction = { reengage: 0, downsell: 0, nurture: 0 } as Record<string, number>;
   for (const p of sel.planned) byAction[p.action]++;

@@ -51,6 +51,7 @@
 // network. The cron does the reads, the claim-before-send stamp, the sends.
 
 import { isActiveDealReferral } from './capacityCount';
+import { normalizeState } from './states';
 import { LOSS_REASON_CHOICES, isLossReasonChoice, type LossReason } from './lossReasons';
 
 // ── Airtable field names ─────────────────────────────────────────────────────
@@ -236,6 +237,16 @@ export interface SelectLossRecoveryInput {
   windowDays?: number;
   cap?: number;
   windowEnforcedUpstream?: boolean;
+  /** Supply gate (2026-08-02, Ben's flip condition): states with at least one
+   *  operational rancher. A 'reengage' touch invites the buyer back toward a
+   *  NEW deal — sending it into a state with zero supply re-strands them, so
+   *  uncovered-state reengages are skipped (they stay eligible; the row ages
+   *  out of the window or the state gains coverage first). 'downsell' points
+   *  at /shop (ships nationwide) and 'nurture' is a stamp — neither routes,
+   *  neither is gated. Omitted ⇒ no gating (existing tests/back-compat);
+   *  the CRON always passes it, fail-closed (empty set on ranchers-read
+   *  failure ⇒ zero reengages). */
+  coveredStates?: Set<string>;
 }
 
 /**
@@ -253,6 +264,7 @@ export function selectLossRecovery(input: SelectLossRecoveryInput): LossRecovery
     windowDays = DEFAULT_WINDOW_DAYS,
     cap = DEFAULT_MAX_PER_RUN,
     windowEnforcedUpstream = false,
+    coveredStates,
   } = input;
 
   const skips: Record<string, number> = {};
@@ -302,6 +314,14 @@ export function selectLossRecovery(input: SelectLossRecoveryInput): LossRecovery
     if (!isBuyerContactable(buyer)) { skip('buyer-suppressed'); continue; }
     if (activeBuyerIds.has(buyerId)) { skip('active-referral-elsewhere'); continue; }
     if (plannedBuyers.has(buyerId)) { skip('duplicate-buyer'); continue; } // one touch per buyer per run
+
+    // Supply gate — reengage only (see SelectLossRecoveryInput.coveredStates).
+    // No Recovery Sent At burn: the buyer stays eligible for the day their
+    // state gains an operational rancher (or ages out of the window).
+    if (action === 'reengage' && coveredStates) {
+      const buyerState = normalizeState(buyer['State']);
+      if (!buyerState || !coveredStates.has(buyerState)) { skip('reengage-no-supply'); continue; }
+    }
 
     // Nurture is ONLY worth a touch if the re-warm rail will actually wake
     // the buyer later — otherwise the stamp is permanent silence (see
