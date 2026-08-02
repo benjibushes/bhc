@@ -1,6 +1,6 @@
 # BHC Marketing Video Scripts — All 12
 
-> Companion file to `docs/superpowers/plans/2026-05-20-marketing-engine-video-plan.md`.
+> Companion file to `docs/archive/superpowers/plans/2026-05-20-marketing-engine-video-plan.md`.
 > Each script is word-for-word, ready to teleprompter or memorize. Timecodes are guides, not gates.
 > Voice rules: direct, no hype, no "premium," no "revolutionizing." Per `docs/BHC.md`. Founder-first.
 

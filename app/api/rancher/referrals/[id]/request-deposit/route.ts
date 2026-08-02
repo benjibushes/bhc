@@ -297,7 +297,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
   }
 
-  // PERSIST THE INVITE OUTCOME (2026-07-19, Champion Valley/Dave incident).
+  // PERSIST THE INVITE OUTCOME (2026-07-19, Champion Valley/buyer A incident).
   // Before this, the send result lived ONLY in the HTTP response + a transient
   // operator signal — nothing was written to the referral. So
   // `Deposit Invite Sent At` stayed blank forever and no one could later answer

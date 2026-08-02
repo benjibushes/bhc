@@ -98,26 +98,26 @@ Note: The single `partial` is `nightly-rancher-audit` reporting an internal data
 ### Email Sends — last 20
 
 ```
-2026-05-27T00:50:05  sendWelcomeAndReadyToBuy        sent          twanner36@gmail.com
-2026-05-26T22:36:48  sendWelcomeAndReadyToBuy        sent          jenirowell@gmail.com
+2026-05-27T00:50:05  sendWelcomeAndReadyToBuy        sent          <redacted-email>
+2026-05-26T22:36:48  sendWelcomeAndReadyToBuy        sent          <redacted-email>
 2026-05-26T18:56:44  sendAdminAlert                  suppressed    benibeauchman@gmail.com
-2026-05-26T18:54:36  sendWelcomeAndReadyToBuy        sent          cvittum@verizon.net
-2026-05-26T18:15:33  sendTestimonialAsk              sent          summer.singer1@gmail.com
-2026-05-26T18:15:32  sendTestimonialAsk              sent          d.exwin.howell@gmail.com
-2026-05-26T18:15:31  sendTestimonialAsk              sent          meldeaton@hotmail.com
-2026-05-26T18:15:31  sendTestimonialAsk              sent          lukeforeman30@gmail.com
-2026-05-26T17:30:45  sendRancherOnboardingDripDay2   sent          savannahlarson.13@gmail.com
-2026-05-26T17:30:44  sendRancherOnboardingDripDay14  sent          cuinheavn@me.com
-2026-05-26T17:09:10  sendEmail                       sent          renickvalley@gmail.com
-2026-05-26T17:01:32  sendEmail                       sent          cwchambers7@gmail.com
-2026-05-26T17:01:29  sendEmail                       sent          thorablount14@gmail.com
-2026-05-26T17:01:27  sendEmail                       sent          hollybreen@proton.me
-2026-05-26T17:01:25  sendEmail                       sent          calebnewberry28@yahoo.com
-2026-05-26T17:01:22  sendEmail                       sent          jeff@socalretailservices.com
-2026-05-26T17:01:20  sendEmail                       sent          westoca@outlook.com
-2026-05-26T17:01:18  sendEmail                       sent          bllichlyter@gmail.com
-2026-05-26T17:01:14  sendEmail                       sent          ts.bell@hotmail.com
-2026-05-26T17:01:12  sendEmail                       sent          leah.sheets@ymail.com
+2026-05-26T18:54:36  sendWelcomeAndReadyToBuy        sent          <redacted-email>
+2026-05-26T18:15:33  sendTestimonialAsk              sent          <redacted-email>
+2026-05-26T18:15:32  sendTestimonialAsk              sent          <redacted-email>
+2026-05-26T18:15:31  sendTestimonialAsk              sent          <redacted-email>
+2026-05-26T18:15:31  sendTestimonialAsk              sent          <redacted-email>
+2026-05-26T17:30:45  sendRancherOnboardingDripDay2   sent          <redacted-email>
+2026-05-26T17:30:44  sendRancherOnboardingDripDay14  sent          <redacted-email>
+2026-05-26T17:09:10  sendEmail                       sent          <redacted-email>
+2026-05-26T17:01:32  sendEmail                       sent          <redacted-email>
+2026-05-26T17:01:29  sendEmail                       sent          <redacted-email>
+2026-05-26T17:01:27  sendEmail                       sent          <redacted-email>
+2026-05-26T17:01:25  sendEmail                       sent          <redacted-email>
+2026-05-26T17:01:22  sendEmail                       sent          <redacted-email>
+2026-05-26T17:01:20  sendEmail                       sent          <redacted-email>
+2026-05-26T17:01:18  sendEmail                       sent          <redacted-email>
+2026-05-26T17:01:14  sendEmail                       sent          <redacted-email>
+2026-05-26T17:01:12  sendEmail                       sent          <redacted-email>
 ```
 
 EMAIL_SENDS is logging both `sent` (19) and `suppressed` (1) statuses. Suppression telemetry is working.
@@ -148,15 +148,15 @@ Total sends past 7d: 96
 Unique recipients: 85
 Top 10 high-volume:
     4  benibeauchman@gmail.com    (admin alerts to me — not a deliverability risk)
-    2  greg@westwindre.com
-    2  katiematula@yahoo.com
-    2  mpardo1188@gmail.com
-    2  braden.taylon@gmail.com
-    2  trinityoylersmith@gmail.com
-    2  jediweah@gmail.com
-    2  allihouse1047@gmail.com
-    2  renickvalley@gmail.com
-    1  bennett12836@gmail.com
+    2  <redacted-email>
+    2  <redacted-email>
+    2  <redacted-email>
+    2  <redacted-email>
+    2  <redacted-email>
+    2  <redacted-email>
+    2  <redacted-email>
+    2  <redacted-email>
+    1  <redacted-email>
 ```
 
 Top recipient = 4 sends to admin. Top external recipient = 2. EMAIL_FREQUENCY_CAP_PER_WEEK = 10. **All recipients well under cap.** No frequency-guard failure.
@@ -166,9 +166,9 @@ Top recipient = 4 sends to admin. Top external recipient = 2. EMAIL_FREQUENCY_CA
 ```
 Suppressed Consumer count: 30
 Leaked recipients (got 'sent' status past 7d): 3
-  - kmmlou@gmail.com         (1x sendWelcomeAndReadyToBuy on 2026-05-26)
-  - marjorie.head@gmail.com  (1x sendIncompleteProfileAsk on 2026-05-26)
-  - shondrekaperry@yahoo.com (1x sendWelcomeAndReadyToBuy on 2026-05-26)
+  - <redacted-email>         (1x sendWelcomeAndReadyToBuy on 2026-05-26)
+  - <redacted-email>  (1x sendIncompleteProfileAsk on 2026-05-26)
+  - <redacted-email> (1x sendWelcomeAndReadyToBuy on 2026-05-26)
 ```
 
 **FINDING — soft concern, not a hard blocker.** 3 Unsubscribed consumers have EMAIL_SENDS rows with `Status='sent'` in the past 7d. Neither template (`sendWelcomeAndReadyToBuy`, `sendIncompleteProfileAsk`) is on `TRANSACTIONAL_WHITELIST` (lib/emailFrequencyGuard.ts:18-31).

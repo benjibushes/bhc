@@ -554,7 +554,7 @@ export async function createDepositCheckout(input: CreateDepositCheckoutInput): 
       // buyer's email and walled the ENTIRE payment form behind "Confirm
       // it's you — enter the code sent to (•••) ••96" — an OTP to a possibly
       // years-old phone number, with only a tiny "Pay without Link" escape.
-      // Blocked a real $827 deposit (Dave @ Champion Valley). Our ICP skews
+      // Blocked a real $827 deposit (buyer A @ Champion Valley). Our ICP skews
       // older/less-technical; an OTP wall at the money moment costs more
       // than Link's one-tap saves. `payment_method_types: ['card']` still
       // renders Apple Pay / Google Pay (wallets ride the card method once
@@ -601,7 +601,7 @@ export async function createDepositCheckout(input: CreateDepositCheckoutInput): 
       // v2 suffix (2026-07-14): Stripe pins an idempotency key to the EXACT
       // params of its first use for ~24h. Shipping the Link-off param change
       // under the old key made every re-mint 400 for referrals with a prior
-      // attempt (live: Dave/Champion Valley, "that didn't go through").
+      // attempt (live: buyer A/Champion Valley, "that didn't go through").
       // BUMP THIS SUFFIX whenever session params change shape.
       idempotencyKey: `deposit-${input.referralId}-${input.amountCents}-${input.fullSaleCents}-v3`,
     },

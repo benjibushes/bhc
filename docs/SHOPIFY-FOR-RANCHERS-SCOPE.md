@@ -210,7 +210,7 @@ Three reasons to ship Stage-3 (3-tier hardcoded) before Phase B (multi-product):
 
 ## Next session can ship Phase B as a fresh plan
 
-When Stage-3 is shipped + canary'd, write `docs/superpowers/plans/2026-XX-XX-shopify-multi-product.md` referencing this scope doc as the spec. Same plan structure: tasks 1-12 + soak + audit + canary.
+When Stage-3 is shipped + canary'd, write a fresh plan doc (e.g. `docs/plans/2026-XX-XX-shopify-multi-product.md` — NOT under `docs/archive/`, which is executed history only) referencing this scope doc as the spec. Same plan structure: tasks 1-12 + soak + audit + canary.
 
 Subagent-driven execution. Same 3 docs structure (resume + game plan + plan).
 

@@ -2,7 +2,7 @@
 
 // UtmCapture — first-touch attribution on every entry page.
 //
-// Why: ads can land directly on /access, /start, /founders, /brand-partners,
+// Why: ads can land directly on /access, /founders, /brand-partners,
 // /access/[state], /ranchers/[slug] — not just /. Before this lived inside
 // FullHomepage only, so ad traffic to deep links silently dropped UTM →
 // Source fell back to "organic" → over-attribution to organic.

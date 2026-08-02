@@ -1,6 +1,6 @@
 # BHC GO-TO-MARKET — war-ready funnel + sales floor v1
 
-Built 2026-06-09 across F1-F13. Spec: `docs/superpowers/specs/2026-06-09-war-ready-funnel-design.md`. Per-feature receipts: `BUILD_LOG.md`.
+Built 2026-06-09 across F1-F13. Spec: `docs/archive/superpowers/specs/2026-06-09-war-ready-funnel-design.md`. Per-feature receipts: `BUILD_LOG.md`.
 
 ## Mission
 

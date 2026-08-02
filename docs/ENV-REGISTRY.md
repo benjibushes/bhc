@@ -40,10 +40,9 @@
 | `STRIPE_PAYMENT_LINK_STEWARD_MONTHLY` | Founders Steward monthly link | fail-silent | set-once |
 | `STRIPE_PAYMENT_LINK_TITLE_FOUNDER` | Title Founder Payment Link | fail-silent | set-once |
 | `STRIPE_RANCH_PRICE_ID` | Ranch-tier subscription price id | fail-loud | set-once |
-| ⚠️ `STRIPE_SECRET_KEY` | Every Stripe operation (deposits, Connect, settlement, subscriptions); checkout paths throw 500, but reservationHold/whiteGlove warn+return null (those two rails silently vanish) | fail-loud | set-once |
+| ⚠️ `STRIPE_SECRET_KEY` | Every Stripe operation (deposits, Connect, settlement, subscriptions); checkout paths throw 500, but reservationHold warns+returns null (that rail silently vanishes) | fail-loud | set-once |
 | ⚠️ `STRIPE_WEBHOOK_SECRET` | Platform webhook signature (founders/tier/brand purchases); '' → constructEvent fails, every event 400s, paid money never recorded internally — only visible in Stripe dashboard | fail-silent | set-once |
 | `TITLE_FOUNDER_CAP` | Title Founder cap, default 10 | fail-open | code-default |
-| `WHITE_GLOVE_PRICE_CENTS` | White-glove service price; same guarded-null pattern | fail-open | code-default |
 
 ## 🔌 Integration keys
 
@@ -134,7 +133,6 @@
 | `CALLBACK_PHONE` | The line buyers may call/text, any parseable format (server-only, read per request — never NEXT_PUBLIC_, so changing it needs no redeploy). UNSET BY DEFAULT and there is deliberately NO fallback: with no value, the call/text links render nothing — no placeholder, no number anywhere in this repo. Unparseable → also nothing (fail closed; a dead tel: link is worse than none). Independent of `CALLBACK_RAIL_ENABLED`; setting this alone shows nobody anything | fail-silent | ben-flips |
 | `ADS_PARTNER_PASSWORD` | Optional ads-partner login role; unset → role disabled | fail-open | set-once |
 | `AIRTABLE_TIMEOUT_MS` | Per-request Airtable timeout knob | fail-open | code-default |
-| `BACKFILL_LINK_EXPIRY_DAYS` | Expiry for backfill campaign magic links | fail-open | code-default |
 | `BHC_OPERATOR_EMAIL` | Pre-call brief recipient for Cal bookings; falls back to ADMIN_EMAIL | fail-open | set-once |
 | `BUSINESS_ADDRESS` | CAN-SPAM physical address in every email footer; has real default | fail-open | code-default |
 | `CAL_BOOKING_URL` | Fallback operator booking URL | fail-open | set-once |
@@ -201,15 +199,12 @@
 |---|---|---|---|
 | `NEXT_PUBLIC_BHC_OPERATOR_CAL_URL` | Public operator Cal link rendered in UI | fail-silent | set-once |
 | `NEXT_PUBLIC_BRAND_FOUNDING_CALENDLY` | Brand-partner founding-tier call link | fail-silent | set-once |
-| `NEXT_PUBLIC_CALENDLY_DISCOVERY_LINK` | Discovery-call Calendly link | fail-silent | set-once |
 | `NEXT_PUBLIC_CALENDLY_LINK` | Legacy Calendly link in buyer flow | fail-silent | set-once |
 | `NEXT_PUBLIC_CAL_OAUTH_CLIENT_ID` | Client-side Cal OAuth id for embedded booker | fail-silent | set-once |
 | `NEXT_PUBLIC_GA4_ID` | GA4 tag; unset → analytics silently off | fail-silent | set-once |
 | `NEXT_PUBLIC_GOOGLE_ADS_ID` | Google Ads conversion tag; unset → value-bidding data lost silently | fail-silent | set-once |
 | `NEXT_PUBLIC_META_DEPOSIT_PURCHASE_ENABLED` | Client-side twin of the deposit Purchase flag (browser pixel event) | fail-silent | ben-flips |
 | `NEXT_PUBLIC_META_PIXEL_ID` | Browser-side Meta pixel tag; unset → no pixel, browser-side attribution off | fail-silent | set-once |
-| `NEXT_PUBLIC_RANCHER_ONBOARDING_VIDEO_ID` | Rancher onboarding tutorial video id | fail-silent | set-once |
-| `NEXT_PUBLIC_START_VIDEO_ID` | Homepage/start video embed id; unset → video block hidden | fail-silent | set-once |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Fallback name for SUPABASE_ANON_KEY | fail-open | set-once |
 | `NEXT_PUBLIC_SUPABASE_URL` | Fallback name for SUPABASE_URL | fail-open | set-once |
 | `NEXT_PUBLIC_VAPID_PUBLIC_KEY` | Public half of Web Push pair; missing → subscription UI can't register | fail-open | set-once |

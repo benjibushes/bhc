@@ -1,12 +1,14 @@
 // /demo — the launcher index for recording rancher-onboarding tutorials.
 //
 // Only meaningfully useful when NEXT_PUBLIC_DEMO_MODE==='true' (a local-only
-// flag never set in Vercel — see lib/demo/demoMode.ts). When the flag is off
-// the page still renders but tells you demo mode is off and how to turn it on,
-// so it's harmless if it ever ships to prod.
+// flag never set in Vercel — see lib/demo/demoMode.ts). In production builds
+// without the flag this page 404s (GTM cut list 2026-08-01) — an internal
+// recording tool has no business rendering on the public site. In local dev
+// it still renders with the "demo mode is off" banner + instructions.
 
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { notFound } from 'next/navigation';
 
 export const metadata: Metadata = {
   title: 'Demo Launcher',
@@ -40,6 +42,12 @@ const SURFACES: { href: string; label: string; show: string }[] = [
 
 export default function DemoLauncherPage() {
   const on = process.env.NEXT_PUBLIC_DEMO_MODE === 'true';
+
+  // Never render publicly: prod without the demo flag → 404. Both values are
+  // inlined at build time, so Vercel prod builds compile this to a plain 404.
+  if (process.env.NODE_ENV === 'production' && !on) {
+    notFound();
+  }
 
   return (
     <main
