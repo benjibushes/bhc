@@ -1280,9 +1280,16 @@ async function realHandler(_request: Request): Promise<CronResult> {
   // already-read recoveryRows (scoped + age-bounded — A7) so no double read.
   const recovery = await runReserveRecovery(recoveryRows, now, live, smsOn, proof, failures);
 
-  // 6. Telegram report (always — dry-run reports the plan; live reports results).
+  // 6. Telegram report. This used to fire on EVERY run, unconditionally. This
+  // cron runs hourly, and with the kill-switch off it does nothing — so it was
+  // sending 24 messages a day to say a dark rail did nothing. That was 44% of
+  // all operator Telegram traffic from this one line. Report when the rail is
+  // live, when a dry run actually planned something, or when something failed.
+  // A silent dark rail is the correct signal that it is dark.
+  const reportWorthSending =
+    live || failures.length > 0 || plan.sends.length > 0 || smsRec.planned > 0 || recovery.emailPlanned > 0;
   try {
-    await sendTelegramMessage(
+    if (reportWorthSending) await sendTelegramMessage(
       TELEGRAM_ADMIN_CHAT_ID,
       buildReport(plan, {
         live,

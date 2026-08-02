@@ -123,7 +123,6 @@ Methods shown as exported handler names. Auth types: `JWT-cookie` = session cook
 | `PATCH /api/referrals/[id]/approve` | Admin approves a pending referral | admin-cookie | live |
 | `PATCH /api/referrals/[id]` | Admin edits a referral record | admin-cookie | live |
 | `GET /api/referrals` | Admin query of referrals by status | admin-cookie | live |
-| `POST /api/admin/route-state-to-rancher` | Bulk-routes all stuck buyers in a state to a target rancher | admin-cookie | live |
 
 ### 2d. Webhooks (External)
 

@@ -125,15 +125,24 @@ export async function GET(request: Request) {
         .reduce((s: number, r: any) => s + num(r['Commission Due']), 0);
 
       // Deposits collected vs outstanding (Payments table — same fields as
-      // /api/admin/payments/data). Collected = succeeded; outstanding =
-      // pending (invoice sent, not yet paid). Refunded/abandoned excluded.
+      // /api/admin/payments/data). Collected = succeeded.
+      //
+      // OUTSTANDING used to mean Status='pending' ONLY. In practice the deposit
+      // rail almost never parks a row at 'pending' — a checkout that isn't paid
+      // ends up 'abandoned'. Live today: 0 pending, 4 abandoned. So the tile
+      // rendered "$0 owed" while real uncollected money sat in the table, and
+      // the one number Ben would use to decide who to chase was structurally
+      // always zero. Outstanding = pending + abandoned.
       let depositsCollected: number | null = null;
       let depositsOutstanding: number | null = null;
       let depositsCollectedCount: number | null = null;
       let depositsOutstandingCount: number | null = null;
       if (payments) {
         const succeeded = payments.filter((p: any) => str(p['Status']) === 'succeeded');
-        const pending = payments.filter((p: any) => str(p['Status']) === 'pending');
+        const pending = payments.filter((p: any) => {
+          const s = str(p['Status']);
+          return s === 'pending' || s === 'abandoned';
+        });
         // Net of any partial refunds, in dollars.
         depositsCollected = round2(
           succeeded.reduce(
@@ -162,14 +171,6 @@ export async function GET(request: Request) {
       // null when no spend logged (don't fabricate a ratio).
       let blendedRoas: number | null = null;
       let adSpend: number | null = null;
-      const bhcRevenueAllRails = round2(commissionEarned + (connectFeeCaptured ?? 0));
-      try {
-        const spend = await getSpendInRange(0); // all-time
-        adSpend = round2(spend.total);
-        blendedRoas = spend.total > 0 ? round2(bhcRevenueAllRails / spend.total) : null;
-      } catch (e: any) {
-        console.warn('[command-center] ad spend read failed:', e?.message);
-      }
 
       // Product rail (Rancher Orders — the low-ticket shop). The money view
       // was blind to this rail: shop sales counted nowhere on /admin. Fields
@@ -191,6 +192,29 @@ export async function GET(request: Request) {
         }).length;
       }
 
+      // BHC REVENUE — computed here, AFTER product margin exists.
+      //
+      // This used to be `commissionEarned + connectFeeCaptured` and was
+      // labelled "all rails". It was neither: it omitted the shop/product
+      // margin entirely (computed 40 lines below it), and its largest term —
+      // commissionEarned — is the DEPRECATED invoice-after-close receivable,
+      // not money on a current rail. Ben read one number as "what BHC has
+      // earned" when the live-model figure was a fraction of it. Split them:
+      //   • current  = Connect marketplace fee + shop margin (the live models)
+      //   • legacy   = the old invoice-after-close receivable
+      //   • allRails = both, and now genuinely all three money models
+      // ROAS divides by allRails, since ads did earn the legacy closes too.
+      const bhcRevenueCurrentRails = round2((connectFeeCaptured ?? 0) + (productMarginBHC ?? 0));
+      const bhcRevenueLegacyRail = round2(commissionEarned);
+      const bhcRevenueAllRails = round2(bhcRevenueCurrentRails + bhcRevenueLegacyRail);
+      try {
+        const spend = await getSpendInRange(0); // all-time
+        adSpend = round2(spend.total);
+        blendedRoas = spend.total > 0 ? round2(bhcRevenueAllRails / spend.total) : null;
+      } catch (e: any) {
+        console.warn('[command-center] ad spend read failed:', e?.message);
+      }
+
       money = {
         openPipelineRevenue: round2(openPipelineRevenue),
         openPipelineCount,
@@ -207,7 +231,13 @@ export async function GET(request: Request) {
         // null ⇒ Payments read failed; render "—", never $0.
         connectFeeCaptured,
         connectFeeCount,
-        // Both rails combined — what ROAS is measured against.
+        // What BHC earns on the models it actually sells today (Connect fee +
+        // shop margin). This is the honest "what have I made" number.
+        bhcRevenueCurrentRails,
+        // The deprecated invoice-after-close receivable, shown separately so
+        // it can never be mistaken for current-rail earnings.
+        bhcRevenueLegacyRail,
+        // All three money models combined — what ROAS is measured against.
         bhcRevenueAllRails,
         blendedRoas,
         adSpend,
@@ -234,8 +264,18 @@ export async function GET(request: Request) {
     if (consumers && referrals) {
       const approved = consumers.filter((c: any) => str(c['Status']) === 'Approved');
       // Distinct buyers that have a referral = "matched". Real + populated.
+      // MATCHED must be a SUBSET of Qualified or the funnel renders >100%.
+      // Counting every buyer with any referral swept in ~1,400 legacy imports
+      // that never passed through the quiz, so this stage rendered a 196%
+      // conversion rate — the exact failure the stage list below says it was
+      // designed to avoid. Intersect with the qualified set.
+      const qualifiedIds = new Set(
+        approved.filter((c: any) => c['Qualified At']).map((c: any) => c.id),
+      );
       const matchedBuyers = new Set(
-        referrals.flatMap((r: any) => (Array.isArray(r['Buyer']) ? r['Buyer'] : [])).filter(Boolean),
+        referrals
+          .flatMap((r: any) => (Array.isArray(r['Buyer']) ? r['Buyer'] : []))
+          .filter((id: any) => id && qualifiedIds.has(id)),
       ).size;
       // Stages kept to fields that actually carry data today, so conversion %
       // stays honest + monotonic. "Call Booked" (Sales Call Booked At) is dead

@@ -68,7 +68,7 @@ export default function InquiryModal({ rancher, onClose }: InquiryModalProps) {
 
   if (isSuccess) {
     return (
-      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
         <div className="bg-bone p-8 max-w-md w-full">
           <h2 className="font-serif text-2xl mb-4">Inquiry Received!</h2>
           <p className="text-saddle">
@@ -80,7 +80,7 @@ export default function InquiryModal({ rancher, onClose }: InquiryModalProps) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
       <div className="bg-bone p-8 max-w-2xl w-full my-8">
         <div className="flex justify-between items-start mb-6">
           <div>
@@ -162,7 +162,7 @@ export default function InquiryModal({ rancher, onClose }: InquiryModalProps) {
           />
 
           {error && (
-            <div className="p-4 bg-weathered bg-opacity-10 border border-weathered text-weathered">
+            <div className="p-4 bg-weathered/10 border border-weathered text-weathered">
               {error}
             </div>
           )}

@@ -151,7 +151,7 @@ async function realHandler(
           TELEGRAM_ADMIN_CHAT_ID,
           `⏰ <b>UNACCEPTED PAID DEPOSIT — ${hrs}h</b>\n\n` +
             `${buyerName} paid, ${rancherName} hasn't tapped Accept Slot.\n` +
-            `Re-pinged the rancher (email + text). Buyer is waiting on a call.\n\n` +
+            `Re-pinged the rancher by email${process.env.ENABLE_SMS === 'true' ? ' + text' : ''}. Buyer is waiting on a call.\n\n` +
             `Nudge them: <code>${process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com'}/rancher</code>\n` +
             `ref=${String(refId).slice(-6)}`,
         );

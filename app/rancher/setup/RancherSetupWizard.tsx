@@ -2689,6 +2689,21 @@ export default function RancherSetupWizard() {
             saveStep={saveStep}
             onBack={() => setStep(3)}
             onContinue={() => {
+              // FulfillmentStep PATCHed 'Fulfillment Types' to Airtable via
+              // saveStep, but that writes `form` — `rancher` never learned.
+              // Step 9 calls decideConnectReturnStep with
+              // fulfillmentDone(rancher), so a stale-empty read sends the
+              // rancher straight back here. For a LEGACY rancher that's an
+              // infinite 8→9→8 loop with no error: StripeConnectStep fires
+              // onComplete(null) on mount (connectRequired:false), the
+              // decision reads fulfillment-missing, and we bounce. They can
+              // never reach Sign. Merge it forward before advancing.
+              const savedTypes = Array.isArray(form['Fulfillment Types'])
+                ? form['Fulfillment Types']
+                : [];
+              if (savedTypes.length > 0) {
+                setRancher((r) => (r ? { ...r, 'Fulfillment Types': savedTypes } : r));
+              }
               const connectActive =
                 String((rancher as any)['Pricing Model'] || 'legacy') === 'tier_v2' &&
                 String((rancher as any)['Stripe Connect Status'] || '').toLowerCase() === 'active';

@@ -30,6 +30,9 @@ interface MoneySection {
   connectFeeCaptured: number | null;
   connectFeeCount: number | null;
   bhcRevenueAllRails: number;
+  // Connect fee + shop margin — the models BHC actually sells today.
+  bhcRevenueCurrentRails: number;
+  bhcRevenueLegacyRail: number;
   blendedRoas: number | null;
   adSpend: number | null;
   // Product rail (Rancher Orders — the low-ticket shop). null = table read failed.
@@ -248,6 +251,16 @@ export default function CommandCenter() {
                   deprecated invoice-after-close rail — a Connect close would
                   have surfaced here as a receivable Stripe already banked at
                   deposit. Legacy receivable and Connect fee now stand apart. */}
+              {/* THE number. Connect marketplace fee + shop margin — money
+                  BHC earned on the two models it actually sells today. Sits
+                  ahead of the legacy receivable so the honest figure is the
+                  one read first. */}
+              <Metric
+                label="BHC earned (current rails)"
+                value={usd(money.bhcRevenueCurrentRails)}
+                sub={`Connect fee ${usd(money.connectFeeCaptured ?? 0)} + shop margin ${usd(money.productMarginBHC ?? 0)}`}
+                tone={money.bhcRevenueCurrentRails > 0 ? 'good' : 'warn'}
+              />
               <Metric
                 label="Legacy commission (pre-Connect)"
                 value={usd(money.commissionEarned)}

@@ -73,7 +73,12 @@ export default function ProgressRibbon({
         credentials: 'include',
       });
       const data = await res.json();
-      if (res.ok && data?.url) window.open(data.url, '_blank', 'noopener,noreferrer');
+      // Same-tab navigation, NOT window.open. This fires after an await, so it
+      // is outside the user-gesture stack — iOS Safari and Android Chrome
+      // silently block the popup and the rancher just sees the button say
+      // "Opening…" and then nothing. The setup wizard uses location.href and
+      // works; that is why starters finish Connect and returners don't.
+      if (res.ok && data?.url) window.location.href = data.url;
       else setErr(data?.error || 'Could not start Stripe onboarding — try again in a moment.');
     } catch {
       setErr('Network error — try again in a moment.');
@@ -97,7 +102,8 @@ export default function ProgressRibbon({
       }
       const res = await fetch('/api/rancher/tier/portal', { credentials: 'include' });
       const data = await res.json();
-      if (res.ok && data?.url) window.open(data.url, '_blank', 'noopener,noreferrer');
+      // Same-tab navigation — see the note in openConnectOnboarding above.
+      if (res.ok && data?.url) window.location.href = data.url;
       else setErr(data?.error || 'Could not open the billing portal.');
     } catch {
       setErr('Network error — try again in a moment.');

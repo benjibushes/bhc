@@ -275,7 +275,10 @@ function DepositSuccessContent() {
           <ol className="space-y-4 text-sm md:text-base text-charcoal">
             <li className="flex gap-3">
               <span className="text-saddle font-medium flex-shrink-0">Today:</span>
-              <span>We let {rancherName} know your deposit landed &mdash; by email and text. They reach out directly to set things up, usually the same day.</span>
+              {/* NOT "by email and text" — SMS is behind ENABLE_SMS, which is
+                  off and has no provider configured. Only claim the channel
+                  that actually fires. */}
+              <span>We let {rancherName} know your deposit landed. They reach out directly to set things up, usually the same day.</span>
             </li>
             <li className="flex gap-3">
               <span className="text-saddle font-medium flex-shrink-0">This week:</span>

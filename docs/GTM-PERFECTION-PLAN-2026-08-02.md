@@ -49,7 +49,7 @@ wrong number. Ordered by damage.
 | 0.11 | **11 test files silently never run.** The `package.json` glob is `lib/**/*.test.ts`; five `.mjs` files and six under `app/` never execute — **including the entire `lib/deal/__tests__/` state-machine trio, a money-path invariant with zero enforcement.** CI passes because CI runs `npm test`. | `package.json` | XS |
 | 0.12 | **Global 16px input rule.** 79 of 159 buyer/rancher form controls are under 16px with no CSS backstop — every one zooms iOS in and never zooms back, **including the email field immediately above the Stripe PaymentElement on the live product rail.** One global rule fixes all of them. | `app/globals.css` | XS |
 | 0.13 | **"Request Go Live" is a lie in the rancher's favour.** The endpoint can self-publish; the button, the success toast, and the helper text all train the rancher to sit and wait for Ben on an action they already completed. | `app/rancher/page.tsx` (go-live block) | XS |
-| 0.14 | **`route-state-to-rancher` is a loaded gun.** A cookie-authed endpoint with no UI, no caller, and no test that **bulk-routes every stuck consumer in a state to one rancher and sends intro emails to all of them.** | `app/api/admin/route-state-to-rancher` · `lib/bulkRoute.ts` | XS (delete) |
+| 0.14 | **`route-state-to-rancher` is a loaded gun.** A cookie-authed endpoint with no UI, no caller, and no test that **bulk-routes every stuck consumer in a state to one rancher and sends intro emails to all of them.** ⚠️ **Correction to the source audit:** it scoped this as "the endpoint + `lib/bulkRoute.ts`, 586 LOC." **`lib/bulkRoute.ts` is LIVE and load-bearing** — called by the Telegram webhook and the `batch-approve` cron. Only the 78-line HTTP endpoint is orphaned. Deleting the lib would break routing. | `app/api/admin/route-state-to-rancher` **only** | XS (delete) |
 | 0.15 | **The rancher call script still teaches the dead money model.** `RANCHER_ONBOARDING_CALLS_GUIDE.md` is README-indexed, untouched since 2026-02-08, and tells Ben to say the rancher "keeps 90%" and gets "invoiced monthly." `MANYCHAT_AI_STEP_PROMPTS.md:224` is an **LLM system prompt** that would repeat it to live prospects. | docs + ManyChat prompt | XS |
 
 **Wave 0 total: ~2 days.** Nine of the fifteen are one-to-ten-line changes.
@@ -269,8 +269,8 @@ only cron dir not in `vercel.json` — but it mints 30-day JWTs and sends cold
 email/SMS, and deleting breaks a CI test) · **`lib/whiteGlove.ts`** (zero
 importers, nothing can mint the session — **but the Stripe webhook still branches
 on that metadata**; archive lib + webhook branch together) ·
-**`route-state-to-rancher` + `lib/bulkRoute.ts`** (Wave 0.14 — this is a risk,
-not dead weight) · **`docs/superpowers/` (30 files), `docs/audits/` (6),
+**`route-state-to-rancher`** — the ENDPOINT only (Wave 0.14; `lib/bulkRoute.ts`
+is live, keep it) · **`docs/superpowers/` (30 files), `docs/audits/` (6),
 `docs/playbook/` (2)** — ~24k lines of executed plans whose headers read
 *"REQUIRED SUB-SKILL: execute this plan"*; a future session can mistake them for
 live orders. Move to `docs/archive/`.
