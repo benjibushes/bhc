@@ -3701,8 +3701,11 @@ export default function RancherDashboardPage() {
                           <div className="flex items-center gap-3">
                             {ref.status === 'Closed Won' && (
                               <div className="text-right">
-                                <p className="font-serif text-lg">${ref.sale_amount.toLocaleString()}</p>
-                                <p className="text-xs text-dust">Commission: ${ref.commission_due.toLocaleString()}</p>
+                                <p className="font-serif text-lg tabular-nums">{formatUSD(ref.sale_amount)}</p>
+                                {/* Wave 1A follow-up: commission_due is the legacy
+                                    receivable and reads $0 on the Connect rail —
+                                    show the fee the row actually carried. */}
+                                <p className="text-xs text-muted tabular-nums">Fee: {formatUSD(referralFeeShownDollars(ref))}</p>
                               </div>
                             )}
                             {isAdminImpersonating && ref.status === 'Closed Lost' && (

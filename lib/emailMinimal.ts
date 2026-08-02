@@ -154,8 +154,15 @@ export async function sendBuyerDepositInvoice(opts: {
   rancherTagline?: string;
   rancherAbout?: string;
 }) {
-  const dep = ((opts.chargedCents ?? opts.depositCents) / 100).toFixed(0);
-  const balance = ((opts.fullSaleCents - opts.depositCents) / 100).toFixed(0);
+  // Exact cents when the amount isn't whole — the rancher's modal shows the
+  // buyer's charge to the cent, and the email must quote the SAME number the
+  // card is hit for (a $807.50 charge emailed as "$808" reads as an error).
+  const fmtDollars = (cents: number) => {
+    const d = cents / 100;
+    return Number.isInteger(d) ? d.toFixed(0) : d.toFixed(2);
+  };
+  const dep = fmtDollars(opts.chargedCents ?? opts.depositCents);
+  const balance = fmtDollars(opts.fullSaleCents - opts.depositCents);
   // Compact brand block: tagline as an italic line + (optional) short about.
   // Renders only when a field is present so no empty header ever ships.
   const brandTagline = opts.rancherTagline
