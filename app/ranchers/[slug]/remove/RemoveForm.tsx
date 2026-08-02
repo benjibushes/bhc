@@ -62,7 +62,7 @@ export default function RemoveForm({
         <p className="text-sm text-saddle">— Ben</p>
         <Link
           href="/"
-          className="inline-block mt-2 text-sm underline text-dust hover:text-charcoal"
+          className="inline-block mt-2 text-sm underline text-muted hover:text-charcoal"
         >
           BuyHalfCow home
         </Link>
@@ -74,26 +74,26 @@ export default function RemoveForm({
     <form onSubmit={handleSubmit} className="space-y-4">
       <div>
         <label className="block text-sm font-medium mb-1">
-          Your email <span className="text-dust">(optional)</span>
+          Your email <span className="text-muted">(optional)</span>
         </label>
         <input
           type="email"
           value={contactEmail}
           onChange={(e) => setContactEmail(e.target.value)}
           placeholder="so I can confirm if needed"
-          className="w-full px-4 py-3 border border-dust bg-white text-sm focus:outline-none focus:border-charcoal transition-colors"
+          className="w-full px-4 py-3 border border-dust bg-white text-sm focus:border-charcoal transition-colors"
         />
       </div>
       <div>
         <label className="block text-sm font-medium mb-1">
-          Reason <span className="text-dust">(optional)</span>
+          Reason <span className="text-muted">(optional)</span>
         </label>
         <textarea
           rows={3}
           value={reason}
           onChange={(e) => setReason(e.target.value)}
           placeholder="Helps me improve the discovery process. Not required."
-          className="w-full px-4 py-3 border border-dust bg-white text-sm focus:outline-none focus:border-charcoal transition-colors resize-vertical"
+          className="w-full px-4 py-3 border border-dust bg-white text-sm focus:border-charcoal transition-colors resize-vertical"
         />
       </div>
 

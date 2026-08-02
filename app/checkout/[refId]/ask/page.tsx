@@ -133,11 +133,16 @@ export default function AskPage() {
         <div ref={endRef} />
       </div>
 
+      <label htmlFor="ask-message" className="sr-only">
+        Your message to {rancherName}
+      </label>
       <textarea
+        id="ask-message"
+        name="message"
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         placeholder={`e.g. Can you do a half cow processed by Aug 15? Local pickup ok?`}
-        className="w-full border border-dust p-3 min-h-32 bg-white text-charcoal text-sm md:text-base"
+        className="w-full border border-dust p-3 min-h-32 bg-white text-charcoal text-base"
         maxLength={5000}
       />
       <div className="flex items-center justify-between gap-3 mt-2">
@@ -150,7 +155,7 @@ export default function AskPage() {
         </button>
         <span className="text-saddle text-xs">{draft.length}/5000</span>
       </div>
-      {error && <p className="text-weathered mt-3 text-sm">{error}</p>}
+      {error && <p role="alert" className="text-weathered mt-3 text-sm">{error}</p>}
       {mirrorNote && <p className="text-saddle mt-3 text-sm border border-dust bg-bone-warm p-3">{mirrorNote}</p>}
     </div>
   );

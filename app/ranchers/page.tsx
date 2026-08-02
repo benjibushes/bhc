@@ -110,7 +110,7 @@ export default async function RanchersPage() {
                       <a
                         key={s}
                         href={`#state-${s}`}
-                        className="text-xs border border-dust px-2 py-0.5 text-saddle hover:border-charcoal hover:text-charcoal transition-colors"
+                        className="text-xs border border-dust px-3 py-2 text-saddle hover:border-charcoal hover:text-charcoal transition-colors"
                       >
                         {s}
                       </a>
@@ -134,7 +134,7 @@ export default async function RanchersPage() {
                       key={r.id}
                       href={`/ranchers/${slug}`}
                       id={state ? `state-${state}` : undefined}
-                      className="group block border border-dust bg-white hover:border-saddle transition-colors"
+                      className="group block border border-dust bg-white hover:border-saddle transition-colors scroll-mt-20"
                     >
                       {/* Logo / Image area */}
                       <div className="h-28 sm:h-40 bg-bone flex items-center justify-center overflow-hidden">
@@ -147,7 +147,7 @@ export default async function RanchersPage() {
                             className="object-contain max-h-32 p-4"
                           />
                         ) : (
-                          <span className="font-serif text-3xl text-dust">
+                          <span className="font-serif text-3xl text-muted">
                             {name.charAt(0)}
                           </span>
                         )}
@@ -174,7 +174,7 @@ export default async function RanchersPage() {
                           )}
                         </div>
                         {halfPrice && (
-                          <p className="text-sm text-dust">
+                          <p className="text-sm text-muted">
                             Half from{' '}
                             <span className="text-charcoal font-medium">
                               ${halfPrice.toLocaleString()}
@@ -205,15 +205,28 @@ export default async function RanchersPage() {
 
           <Divider />
 
-          {/* Footer CTA */}
+          {/* Footer CTA — BUYER page, buyer CTA (Wave 2 buyer UI 2026-08-01).
+              The only bottom CTA here used to be rancher recruitment ("Apply
+              to partner") — a supplier ask aimed at browsing buyers. The
+              buyer path is primary now; the rancher ask survives as a small
+              footnote. */}
           <div className="text-center space-y-4">
-            <p className="text-saddle">Are you a rancher ready to partner with us?</p>
+            <p className="text-saddle max-w-md mx-auto">
+              Not sure which ranch fits? Answer a few questions and we&apos;ll
+              match you with the right one near you.
+            </p>
             <Link
-              href="/sell"
+              href="/access"
               className="inline-block px-8 py-3 bg-charcoal text-bone text-sm tracking-wide uppercase hover:bg-saddle transition-colors"
             >
-              Apply to partner
+              Get matched with a rancher →
             </Link>
+            <p className="text-sm text-muted pt-2">
+              Raising beef yourself?{' '}
+              <Link href="/sell" className="underline underline-offset-2 hover:text-charcoal">
+                Apply to partner
+              </Link>
+            </p>
           </div>
 
         </div>

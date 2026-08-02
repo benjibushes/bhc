@@ -5,6 +5,11 @@ import { track } from '@/lib/track';
 import { accessFallbackUrl } from '@/lib/accessFallbackUrl';
 import { formatPhoneInput, isValidUsPhone } from '@/lib/phoneFormat';
 import SmsConsentCheckbox, { TermsNotice } from '@/app/components/SmsConsentCheckbox';
+import {
+  emailFieldError,
+  phoneFieldError,
+  requiredFieldError,
+} from '@/lib/buyerFieldValidation';
 
 const US_STATES = [
   'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA',
@@ -85,6 +90,30 @@ export default function RancherOrderForm({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState<{ rancherName: string; expectedHours: number } | null>(null);
+  // Per-field inline validation — set on blur, cleared on change, rendered
+  // directly under the offending field (the single bottom error line used to
+  // be the only feedback).
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+
+  const zipError = (v: string) =>
+    requireZip && !/^\d{5}$/.test(v.trim()) ? 'Enter your 5-digit ZIP code.' : '';
+
+  const validateField = (name: 'fullName' | 'email' | 'phone' | 'zip', value: string) => {
+    const err =
+      name === 'fullName'
+        ? requiredFieldError(value, 'Your name')
+        : name === 'email'
+          ? emailFieldError(value)
+          : name === 'phone'
+            ? phoneFieldError(value)
+            : zipError(value);
+    setFieldErrors((f) => ({ ...f, [name]: err }));
+    return err;
+  };
+
+  const clearFieldError = (name: string) => {
+    setFieldErrors((f) => (f[name] ? { ...f, [name]: '' } : f));
+  };
 
   // Probe member session — if logged in, skip name/email
   useEffect(() => {
@@ -173,6 +202,17 @@ export default function RancherOrderForm({
     // goes quiet). isValidUsPhone strips a leading +1 before counting digits —
     // same shared guard as every other signup door. Logged-in members never
     // see the phone field; the API tolerates their record's existing contact.
+    if (!session) {
+      const errs = [
+        validateField('fullName', form.fullName),
+        validateField('email', form.email),
+        validateField('phone', form.phone),
+        validateField('zip', form.zip),
+      ];
+      if (errs.some(Boolean)) return;
+    } else if (requireZip && validateField('zip', form.zip)) {
+      return;
+    }
     if (!session && !isValidUsPhone(form.phone)) {
       setError(`Please enter a valid phone number so ${rancherName} can reach you.`);
       return;
@@ -348,19 +388,46 @@ export default function RancherOrderForm({
                       <input
                         type="text"
                         placeholder="Full Name"
+                        aria-label="Full name"
                         required
+                        autoComplete="name"
                         value={form.fullName}
-                        onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))}
-                        className="w-full px-4 py-3 border border-dust bg-white text-sm"
+                        onChange={(e) => {
+                          setForm((f) => ({ ...f, fullName: e.target.value }));
+                          clearFieldError('fullName');
+                        }}
+                        onBlur={(e) => { if (e.target.value.trim()) validateField('fullName', e.target.value); }}
+                        aria-invalid={fieldErrors.fullName ? true : undefined}
+                        aria-describedby={fieldErrors.fullName ? 'order-fullname-error' : undefined}
+                        className={`w-full px-4 py-3 border bg-white text-base ${fieldErrors.fullName ? 'border-weathered' : 'border-dust'}`}
                       />
+                      {fieldErrors.fullName && (
+                        <p id="order-fullname-error" role="alert" className="text-sm text-weathered -mt-2">
+                          {fieldErrors.fullName}
+                        </p>
+                      )}
                       <input
                         type="email"
                         placeholder="Email"
+                        aria-label="Email"
                         required
+                        autoComplete="email"
+                        inputMode="email"
                         value={form.email}
-                        onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-                        className="w-full px-4 py-3 border border-dust bg-white text-sm"
+                        onChange={(e) => {
+                          setForm((f) => ({ ...f, email: e.target.value }));
+                          clearFieldError('email');
+                        }}
+                        onBlur={(e) => { if (e.target.value.trim()) validateField('email', e.target.value); }}
+                        aria-invalid={fieldErrors.email ? true : undefined}
+                        aria-describedby={fieldErrors.email ? 'order-email-error' : undefined}
+                        className={`w-full px-4 py-3 border bg-white text-base ${fieldErrors.email ? 'border-weathered' : 'border-dust'}`}
                       />
+                      {fieldErrors.email && (
+                        <p id="order-email-error" role="alert" className="text-sm text-weathered -mt-2">
+                          {fieldErrors.email}
+                        </p>
+                      )}
                       {/* H1 (2026-07-28): REQUIRED. The success screen promises
                           a 48h callback and phone is the rescue channel when
                           rancher email goes quiet — "(optional)" was a promise
@@ -369,17 +436,32 @@ export default function RancherOrderForm({
                       <input
                         type="tel"
                         placeholder="Phone"
+                        aria-label="Phone"
                         required
                         autoComplete="tel"
+                        inputMode="tel"
                         value={form.phone}
-                        onChange={(e) => setForm((f) => ({ ...f, phone: formatPhoneInput(e.target.value) }))}
-                        className="w-full px-4 py-3 border border-dust bg-white text-sm"
+                        onChange={(e) => {
+                          setForm((f) => ({ ...f, phone: formatPhoneInput(e.target.value) }));
+                          clearFieldError('phone');
+                        }}
+                        onBlur={(e) => { if (e.target.value.trim()) validateField('phone', e.target.value); }}
+                        aria-invalid={fieldErrors.phone ? true : undefined}
+                        aria-describedby={fieldErrors.phone ? 'order-phone-error' : undefined}
+                        className={`w-full px-4 py-3 border bg-white text-base ${fieldErrors.phone ? 'border-weathered' : 'border-dust'}`}
                       />
+                      {fieldErrors.phone && (
+                        <p id="order-phone-error" role="alert" className="text-sm text-weathered -mt-2">
+                          {fieldErrors.phone}
+                        </p>
+                      )}
                       <div className="grid grid-cols-2 gap-3">
                         <select
+                          aria-label="State (optional)"
+                          autoComplete="address-level1"
                           value={form.state}
                           onChange={(e) => setForm((f) => ({ ...f, state: e.target.value }))}
-                          className="w-full px-4 py-3 border border-dust bg-white text-sm"
+                          className="w-full px-4 py-3 border border-dust bg-white text-base"
                         >
                           <option value="">State (optional)</option>
                           {US_STATES.map((s) => (
@@ -391,18 +473,28 @@ export default function RancherOrderForm({
                         <input
                           type="text"
                           placeholder={requireZip ? 'ZIP' : 'ZIP (optional)'}
+                          aria-label={requireZip ? 'ZIP code' : 'ZIP code (optional)'}
                           required={requireZip}
                           inputMode="numeric"
                           autoComplete="postal-code"
                           pattern="\d{5}"
                           maxLength={5}
                           value={form.zip}
-                          onChange={(e) =>
-                            setForm((f) => ({ ...f, zip: e.target.value.replace(/\D/g, '').slice(0, 5) }))
-                          }
-                          className="w-full px-4 py-3 border border-dust bg-white text-sm"
+                          onChange={(e) => {
+                            setForm((f) => ({ ...f, zip: e.target.value.replace(/\D/g, '').slice(0, 5) }));
+                            clearFieldError('zip');
+                          }}
+                          onBlur={(e) => { if (e.target.value.trim()) validateField('zip', e.target.value); }}
+                          aria-invalid={fieldErrors.zip ? true : undefined}
+                          aria-describedby={fieldErrors.zip ? 'order-zip-error' : undefined}
+                          className={`w-full px-4 py-3 border bg-white text-base ${fieldErrors.zip ? 'border-weathered' : 'border-dust'}`}
                         />
                       </div>
+                      {fieldErrors.zip && (
+                        <p id="order-zip-error" role="alert" className="text-sm text-weathered -mt-2">
+                          {fieldErrors.zip}
+                        </p>
+                      )}
                       <SmsConsentCheckbox checked={smsOptIn} onChange={setSmsOptIn} />
                     </>
                   )}
@@ -422,20 +514,32 @@ export default function RancherOrderForm({
                       they are and would (correctly) refuse every request. Ask
                       here, only in that case. */}
                   {session && requireZip && (
-                    <input
-                      type="text"
-                      placeholder="Delivery ZIP"
-                      required
-                      inputMode="numeric"
-                      autoComplete="postal-code"
-                      pattern="\d{5}"
-                      maxLength={5}
-                      value={form.zip}
-                      onChange={(e) =>
-                        setForm((f) => ({ ...f, zip: e.target.value.replace(/\D/g, '').slice(0, 5) }))
-                      }
-                      className="w-full px-4 py-3 border border-dust bg-white text-sm"
-                    />
+                    <>
+                      <input
+                        type="text"
+                        placeholder="Delivery ZIP"
+                        aria-label="Delivery ZIP code"
+                        required
+                        inputMode="numeric"
+                        autoComplete="postal-code"
+                        pattern="\d{5}"
+                        maxLength={5}
+                        value={form.zip}
+                        onChange={(e) => {
+                          setForm((f) => ({ ...f, zip: e.target.value.replace(/\D/g, '').slice(0, 5) }));
+                          clearFieldError('zip');
+                        }}
+                        onBlur={(e) => { if (e.target.value.trim()) validateField('zip', e.target.value); }}
+                        aria-invalid={fieldErrors.zip ? true : undefined}
+                        aria-describedby={fieldErrors.zip ? 'order-zip-error' : undefined}
+                        className={`w-full px-4 py-3 border bg-white text-base ${fieldErrors.zip ? 'border-weathered' : 'border-dust'}`}
+                      />
+                      {fieldErrors.zip && (
+                        <p id="order-zip-error" role="alert" className="text-sm text-weathered -mt-2">
+                          {fieldErrors.zip}
+                        </p>
+                      )}
+                    </>
                   )}
 
                   <textarea
@@ -444,10 +548,11 @@ export default function RancherOrderForm({
                         ? 'Anything you want them to know? (optional)'
                         : 'Anything to mention? Timing, custom cuts, questions… (optional)'
                     }
+                    aria-label="Message (optional)"
                     value={form.message}
                     onChange={(e) => setForm((f) => ({ ...f, message: e.target.value }))}
                     rows={3}
-                    className="w-full px-4 py-3 border border-dust bg-white text-sm resize-none"
+                    className="w-full px-4 py-3 border border-dust bg-white text-base resize-none"
                   />
 
                   {error && (
@@ -464,11 +569,11 @@ export default function RancherOrderForm({
                   <button
                     type="button"
                     onClick={() => setSelectedTier(null)}
-                    className="w-full text-center text-xs text-dust hover:text-charcoal"
+                    className="w-full text-center text-xs text-muted hover:text-charcoal"
                   >
                     Cancel
                   </button>
-                  <p className="text-[10px] text-dust text-center leading-relaxed">
+                  <p className="text-[10px] text-muted text-center leading-relaxed">
                     No payment now. {rancherName} confirms timing + arranges payment directly.
                   </p>
                   <TermsNotice />
@@ -505,7 +610,7 @@ function PricingCard({
     >
       <p
         className={`text-xs uppercase tracking-widest mb-3 ${
-          highlighted ? 'text-bone/70' : 'text-dust'
+          highlighted ? 'text-bone/70' : 'text-muted'
         }`}
       >
         {label}
@@ -514,7 +619,7 @@ function PricingCard({
         ${price.toLocaleString()}
       </p>
       {lbs && (
-        <p className={`text-sm mb-6 ${highlighted ? 'text-bone/80' : 'text-dust'}`}>
+        <p className={`text-sm mb-6 ${highlighted ? 'text-bone/80' : 'text-muted'}`}>
           {lbs} of beef
         </p>
       )}

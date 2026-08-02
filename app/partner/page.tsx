@@ -403,7 +403,7 @@ function PartnerPageContent() {
               value={partnerType}
               onChange={(e) => setPartnerType(e.target.value as PartnerType)}
               required
-              className="w-full px-4 py-3 border border-dust bg-bone text-charcoal focus:outline-none focus:border-charcoal transition-colors text-base"
+              className="w-full px-4 py-3 border border-dust bg-bone text-charcoal focus:border-charcoal transition-colors text-base"
             >
               <option value="">Select partnership type</option>
               <option value="rancher">Rancher — sell beef to members</option>
@@ -459,7 +459,7 @@ function PartnerPageContent() {
                       <li>· Optional paid plans: <strong>$150–$500/mo</strong> drop the buyer&rsquo;s fee as low as <strong>0%</strong> (you pick at setup)</li>
                       <li>· Cancel anytime. No setup fee. No listing fee.</li>
                     </ul>
-                    <p className="text-xs text-dust mt-2">
+                    <p className="text-xs text-muted mt-2">
                       Full breakdown shown at setup.{' '}
                       <a href="/terms" target="_blank" rel="noopener noreferrer" className="underline hover:text-charcoal">
                         See commission terms

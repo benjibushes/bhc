@@ -46,8 +46,19 @@ export default function UncoveredStateCapture({ state }: { state: string }) {
         }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(data?.error || 'Something went wrong — try again.');
+      // HONEST SUCCESS ONLY (Wave 2 buyer UI 2026-08-01). The API has two
+      // failure shapes in the wild — the legacy { ok:true, captured:false }
+      // (write failed but the route still 200'd) and the newer
+      // { ok:false, error:'capture-failed' }. This component used to render
+      // "you're on the list" for the first one — a fake confirmation on a
+      // lead that was never saved. Both now land on the retry state.
+      const captured = res.ok && data?.ok !== false && data?.captured !== false;
+      if (!captured) {
+        setError(
+          data?.error === 'capture-failed' || data?.captured === false
+            ? 'That didn’t save on our end — give it one more try.'
+            : data?.error || 'Something went wrong — try again.',
+        );
         setStatus('error');
         return;
       }
@@ -62,9 +73,12 @@ export default function UncoveredStateCapture({ state }: { state: string }) {
     return (
       <div className="border border-sage/40 bg-sage/5 px-5 py-6 text-center">
         <p className="font-serif text-xl text-charcoal lowercase">you&rsquo;re on the list</p>
+        {/* Promise only what actually happens today: the capture logs demand
+            for the operator's scouting queue — there is no automated
+            "the moment one comes online" email rail. */}
         <p className="text-sm text-saddle mt-1">
-          We&rsquo;ll email you the moment a rancher near {state || 'you'} comes online —
-          and we&rsquo;re prioritizing scouting your area now.
+          We log demand and recruit ranchers where it&rsquo;s strongest — you&rsquo;ll
+          hear from us when {state || 'your area'} opens up.
         </p>
       </div>
     );
@@ -76,9 +90,9 @@ export default function UncoveredStateCapture({ state }: { state: string }) {
         no rancher in {state || 'your state'} yet
       </p>
       <p className="text-sm text-saddle mt-1 mb-4">
-        Get notified the second one comes online. Drop your email (and zip, so we
-        know exactly where to scout) — we&rsquo;ll prioritize bringing a rancher to
-        you.
+        Drop your email (and zip, so we know exactly where to scout). We log
+        demand and recruit ranchers where it&rsquo;s strongest — you&rsquo;ll hear
+        from us when your area opens.
       </p>
       <form onSubmit={onSubmit} className="flex flex-col sm:flex-row gap-2">
         <input
@@ -89,7 +103,7 @@ export default function UncoveredStateCapture({ state }: { state: string }) {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="you@email.com"
-          className="flex-1 px-3 py-3 border border-dust bg-bone text-charcoal text-sm placeholder:text-dust focus:outline-none focus:border-charcoal"
+          className="flex-1 px-3 py-3 border border-dust bg-bone text-charcoal text-sm placeholder:text-dust focus:border-charcoal"
         />
         <input
           type="text"
@@ -98,7 +112,7 @@ export default function UncoveredStateCapture({ state }: { state: string }) {
           value={zip}
           onChange={(e) => setZip(e.target.value.replace(/[^0-9-]/g, '').slice(0, 10))}
           placeholder="zip"
-          className="sm:w-24 px-3 py-3 border border-dust bg-bone text-charcoal text-sm placeholder:text-dust focus:outline-none focus:border-charcoal"
+          className="sm:w-24 px-3 py-3 border border-dust bg-bone text-charcoal text-sm placeholder:text-dust focus:border-charcoal"
           aria-label="ZIP code"
         />
         <button
@@ -110,10 +124,10 @@ export default function UncoveredStateCapture({ state }: { state: string }) {
         </button>
       </form>
       {status === 'error' && error ? (
-        <p className="text-xs text-weathered mt-2">{error}</p>
+        <p role="alert" className="text-xs text-weathered mt-2">{error}</p>
       ) : (
-        <p className="text-xs text-dust mt-2">
-          No spam. One email when your area opens up.
+        <p className="text-xs text-muted mt-2">
+          No spam — just a heads-up when your area opens.
         </p>
       )}
     </div>

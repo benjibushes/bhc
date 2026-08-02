@@ -107,7 +107,7 @@ export default function RancherContactPage() {
         <section className="py-20">
           <Container>
             <div className="max-w-2xl mx-auto text-center">
-              <p className="text-dust">Loading...</p>
+              <p className="text-muted">Loading...</p>
             </div>
           </Container>
         </section>
@@ -157,7 +157,7 @@ export default function RancherContactPage() {
                   />
                 ) : (
                   <div className="w-20 h-20 border border-dust flex items-center justify-center">
-                    <span className="font-serif text-3xl text-dust">
+                    <span className="font-serif text-3xl text-muted">
                       {rancher.name.charAt(0)}
                     </span>
                   </div>
@@ -169,7 +169,7 @@ export default function RancherContactPage() {
               <p className="text-saddle text-lg">
                 {rancher.name} will get back to you shortly.
               </p>
-              <p className="text-sm text-dust">
+              <p className="text-sm text-muted">
                 We&apos;ve also sent a copy to BuyHalfCow so we can follow up if needed.
               </p>
               <Link
@@ -202,7 +202,7 @@ export default function RancherContactPage() {
               />
             ) : (
               <div className="w-24 h-24 border border-dust flex items-center justify-center">
-                <span className="font-serif text-4xl text-dust">
+                <span className="font-serif text-4xl text-muted">
                   {rancher.name.charAt(0)}
                 </span>
               </div>
@@ -235,7 +235,7 @@ export default function RancherContactPage() {
               <h2 className="font-serif text-2xl">
                 Send a Message
               </h2>
-              <p className="text-sm text-dust">
+              <p className="text-sm text-muted">
                 Your message goes directly to {rancher.name}. They&apos;ll reply to your email.
               </p>
             </div>
@@ -251,7 +251,7 @@ export default function RancherContactPage() {
                   value={form.name}
                   onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
                   placeholder="Full Name"
-                  className="w-full px-4 py-3 border border-dust bg-white text-sm focus:outline-none focus:border-charcoal transition-colors"
+                  className="w-full px-4 py-3 border border-dust bg-white text-sm focus:border-charcoal transition-colors"
                 />
               </div>
 
@@ -265,20 +265,20 @@ export default function RancherContactPage() {
                   value={form.email}
                   onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
                   placeholder="you@example.com"
-                  className="w-full px-4 py-3 border border-dust bg-white text-sm focus:outline-none focus:border-charcoal transition-colors"
+                  className="w-full px-4 py-3 border border-dust bg-white text-sm focus:border-charcoal transition-colors"
                 />
               </div>
 
               <div>
                 <label className="block text-sm font-medium mb-1">
-                  Phone <span className="text-dust">(optional)</span>
+                  Phone <span className="text-muted">(optional)</span>
                 </label>
                 <input
                   type="tel"
                   value={form.phone}
                   onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
                   placeholder="(555) 555-5555"
-                  className="w-full px-4 py-3 border border-dust bg-white text-sm focus:outline-none focus:border-charcoal transition-colors"
+                  className="w-full px-4 py-3 border border-dust bg-white text-sm focus:border-charcoal transition-colors"
                 />
               </div>
 
@@ -287,7 +287,7 @@ export default function RancherContactPage() {
                   by state, so ask once here rather than chasing it later. */}
               <div>
                 <label className="block text-sm font-medium mb-1">
-                  ZIP code <span className="text-dust">(optional)</span>
+                  ZIP code <span className="text-muted">(optional)</span>
                 </label>
                 <input
                   type="text"
@@ -298,7 +298,7 @@ export default function RancherContactPage() {
                   value={form.zip}
                   onChange={e => setForm(f => ({ ...f, zip: e.target.value.replace(/\D/g, '').slice(0, 5) }))}
                   placeholder="78701"
-                  className="w-full px-4 py-3 border border-dust bg-white text-sm focus:outline-none focus:border-charcoal transition-colors"
+                  className="w-full px-4 py-3 border border-dust bg-white text-sm focus:border-charcoal transition-colors"
                 />
               </div>
 
@@ -317,7 +317,7 @@ export default function RancherContactPage() {
                   rows={5}
                   value={form.message}
                   onChange={e => setForm(f => ({ ...f, message: e.target.value }))}
-                  className="w-full px-4 py-3 border border-dust bg-white text-sm focus:outline-none focus:border-charcoal transition-colors resize-vertical"
+                  className="w-full px-4 py-3 border border-dust bg-white text-sm focus:border-charcoal transition-colors resize-vertical"
                 />
               </div>
 
@@ -335,7 +335,7 @@ export default function RancherContactPage() {
                 {submitting ? 'Sending...' : 'Send Message'}
               </button>
 
-              <p className="text-xs text-dust text-center">
+              <p className="text-xs text-muted text-center">
                 Your contact information is shared with {rancher.name} so they can reply directly. BuyHalfCow receives a copy for quality assurance.
               </p>
 
@@ -348,7 +348,7 @@ export default function RancherContactPage() {
       {/* Footer Nav */}
       <div className="border-t border-divider/10 py-10">
         <Container>
-          <div className="max-w-4xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-4 text-sm text-dust">
+          <div className="max-w-4xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-4 text-sm text-muted">
             <Link href={`/ranchers/${slug}`} className="hover:text-charcoal transition-colors">
               &larr; Back to {rancher.name}
             </Link>

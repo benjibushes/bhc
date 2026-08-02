@@ -67,7 +67,7 @@ export default async function StoreConnectedPage({
     <main className="min-h-[70vh] flex items-center justify-center px-6 py-20 bg-bone">
       <div className="max-w-2xl w-full">
         <div className="border border-divider/20 bg-bone-warm px-8 py-12 sm:px-14 text-center">
-          <p className="text-[11px] uppercase tracking-[0.25em] text-dust mb-8">
+          <p className="text-[11px] uppercase tracking-[0.25em] text-muted mb-8">
             BuyHalfCow · Store Connection
           </p>
 
@@ -100,7 +100,7 @@ export default async function StoreConnectedPage({
                 ))}
               </div>
 
-              <p className="text-xs text-dust mt-10">
+              <p className="text-xs text-muted mt-10">
                 Questions? Reply to any email from Ben, or text him — a real person answers.
               </p>
             </>
@@ -111,7 +111,7 @@ export default async function StoreConnectedPage({
                 {FAIL_COPY[why] || 'Something unexpected happened. Text Ben — he can see exactly what.'}
               </p>
               {PRE_INSTALL_REASONS.has(why) && (
-                <p className="text-xs text-dust mt-6">Nothing was changed on your store.</p>
+                <p className="text-xs text-muted mt-6">Nothing was changed on your store.</p>
               )}
             </>
           )}

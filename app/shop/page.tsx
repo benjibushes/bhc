@@ -106,7 +106,7 @@ export default async function MarketplacePage() {
             where the buying decision actually happens. */}
         <div className="flex items-baseline justify-between gap-3 flex-wrap mb-1">
           <h1 className="font-serif text-[clamp(26px,5vw,40px)] lowercase">shop the ranches</h1>
-          <span className="text-xs text-dust tabular-nums">{products.length} products · {stands.length} ranch {stands.length === 1 ? 'stand' : 'stands'}</span>
+          <span className="text-xs text-muted tabular-nums">{products.length} products · {stands.length} ranch {stands.length === 1 ? 'stand' : 'stands'}</span>
         </div>
         <p className="text-charcoal/85 text-[15px] max-w-[58ch] leading-normal mb-2">
           real beef from the family that raised it — shipped frozen to your door.

@@ -19,6 +19,11 @@
   --color-bone: #F4F1EC;
   --color-saddle: #6B4F3F;
   --color-dust: #A7A29A;
+  /* CONTRAST FIX (2026-08-01): dust on bone is 2.23:1 — fine for borders,
+     a WCAG failure for text. `muted` is the TEXT version of dust (4.7:1 on
+     bone). Rule: text-muted for de-emphasized copy on light surfaces;
+     text-dust only on dark surfaces (charcoal), borders stay border-dust. */
+  --color-muted: #6E6A63;
   --color-weathered: #8C2F2F;
   --color-divider: #2A2A2A;
   --color-sage: #4F7A3F;

@@ -187,7 +187,7 @@ export default function WholesaleForm() {
           type="text"
           required
           autoComplete="organization"
-          className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal"
+          className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:border-charcoal"
           value={businessName}
           onChange={(e) => setBusinessName(e.target.value)}
         />
@@ -201,7 +201,7 @@ export default function WholesaleForm() {
         <select
           id="businessType"
           required
-          className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal appearance-none"
+          className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:border-charcoal appearance-none"
           value={businessType}
           onChange={(e) => setBusinessType(e.target.value)}
         >
@@ -224,7 +224,7 @@ export default function WholesaleForm() {
           type="text"
           required
           autoComplete="name"
-          className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal"
+          className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:border-charcoal"
           value={contactName}
           onChange={(e) => setContactName(e.target.value)}
         />
@@ -240,7 +240,7 @@ export default function WholesaleForm() {
           type="email"
           required
           autoComplete="email"
-          className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal"
+          className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:border-charcoal"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
         />
@@ -256,7 +256,7 @@ export default function WholesaleForm() {
           type="tel"
           required
           autoComplete="tel"
-          className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal"
+          className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:border-charcoal"
           value={phone}
           onChange={(e) => setPhone(e.target.value)}
         />
@@ -270,7 +270,7 @@ export default function WholesaleForm() {
         <select
           id="state"
           required
-          className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal appearance-none"
+          className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:border-charcoal appearance-none"
           value={state}
           onChange={(e) => setState(e.target.value)}
         >
@@ -291,7 +291,7 @@ export default function WholesaleForm() {
         <select
           id="monthlyVolume"
           required
-          className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal appearance-none"
+          className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:border-charcoal appearance-none"
           value={monthlyVolume}
           onChange={(e) => setMonthlyVolume(e.target.value)}
         >
@@ -347,7 +347,7 @@ export default function WholesaleForm() {
         <select
           id="timeline"
           required
-          className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal appearance-none"
+          className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:border-charcoal appearance-none"
           value={timeline}
           onChange={(e) => setTimeline(e.target.value)}
         >
@@ -369,7 +369,7 @@ export default function WholesaleForm() {
           id="notes"
           rows={4}
           maxLength={500}
-          className="w-full border border-charcoal/30 px-4 py-3 bg-bone text-charcoal focus:outline-none focus:border-charcoal resize-none"
+          className="w-full border border-charcoal/30 px-4 py-3 bg-bone text-charcoal focus:border-charcoal resize-none"
           value={notes}
           onChange={(e) => setNotes(e.target.value.slice(0, 500))}
           placeholder="anything specific — sourcing preferences, processing requirements, etc."

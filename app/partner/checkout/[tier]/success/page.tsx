@@ -97,7 +97,7 @@ function TierCheckoutSuccessContent() {
         </p>
 
         {sessionId && (
-          <p className="text-xs text-dust mt-2">
+          <p className="text-xs text-muted mt-2">
             Receipt: <code className="text-saddle">{sessionId.slice(0, 28)}…</code>
           </p>
         )}

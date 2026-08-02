@@ -7,7 +7,7 @@
 
 export default function AffiliateDisclosure({ className = '' }: { className?: string }) {
   return (
-    <p className={`text-xs text-dust leading-relaxed ${className}`}>
+    <p className={`text-xs text-muted leading-relaxed ${className}`}>
       some links are affiliate links — if you buy, bhc may earn a small
       commission at no extra cost to you. we only recommend gear we&rsquo;d put
       in our own freezer.

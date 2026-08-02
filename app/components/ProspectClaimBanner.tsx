@@ -37,7 +37,7 @@ export default function ProspectClaimBanner({
           </Link>
           <Link
             href={`/ranchers/${slug}/remove`}
-            className="text-xs text-dust hover:text-charcoal underline self-center whitespace-nowrap"
+            className="text-xs text-muted hover:text-charcoal underline self-center whitespace-nowrap"
           >
             Remove me
           </Link>

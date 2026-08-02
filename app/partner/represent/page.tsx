@@ -17,7 +17,10 @@ export const metadata: Metadata = {
 
 export default function RepresentPage() {
   return (
-    <main className="mx-auto max-w-2xl px-5 py-14">
+    // paddingBottom: var(--consent-h) — the fixed first-visit consent banner
+    // publishes its height on <html> (see ConsentBanner); without this pad it
+    // covers the form's Submit button on mobile. 0px once a choice is made.
+    <main className="mx-auto max-w-2xl px-5 py-14" style={{ paddingBottom: 'var(--consent-h, 0px)' }}>
       <p className="text-sm uppercase tracking-wide text-stone-500">For ranchers</p>
       <h1 className="mt-2 font-serif text-4xl leading-tight">
         We sell your beef. You fulfill and get paid.

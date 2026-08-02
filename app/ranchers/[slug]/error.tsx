@@ -47,7 +47,7 @@ export default function RancherPageError({
             Browse the map →
           </Link>
         </div>
-        <p className="text-xs text-dust pt-2">
+        <p className="text-xs text-muted pt-2">
           Looking for beef near you? <Link href="/access" className="underline underline-offset-2 hover:text-charcoal">Take the 90-second quiz →</Link>
         </p>
       </div>

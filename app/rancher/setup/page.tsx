@@ -20,7 +20,11 @@ export const metadata: Metadata = {
 
 export default function RancherSetupPage() {
   return (
-    <main className="min-h-screen bg-bone text-charcoal">
+    // paddingBottom: var(--consent-h) — the fixed first-visit consent banner
+    // publishes its height on <html> (see ConsentBanner); without this pad it
+    // covers the wizard's primary button on a first visit. Padding wrapper
+    // ONLY — wizard internals are owned elsewhere.
+    <main className="min-h-screen bg-bone text-charcoal" style={{ paddingBottom: 'var(--consent-h, 0px)' }}>
       <Suspense
         fallback={
           <Container>

@@ -47,7 +47,7 @@ export default function AffiliateLoginPage() {
             <p className="text-lg text-saddle leading-relaxed">
               If you&apos;re a registered affiliate, you&apos;ll receive a login link at <strong className="text-charcoal">{email}</strong>.
             </p>
-            <p className="text-sm text-dust">
+            <p className="text-sm text-muted">
               The link expires in 24 hours. Check spam if you don&apos;t see it.
             </p>
             <div className="pt-6">
@@ -87,7 +87,7 @@ export default function AffiliateLoginPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="your@email.com"
                 required
-                className="w-full px-4 py-3 border border-dust bg-white text-charcoal focus:outline-none focus:border-charcoal transition-colors"
+                className="w-full px-4 py-3 border border-dust bg-white text-charcoal focus:border-charcoal transition-colors"
               />
             </div>
 

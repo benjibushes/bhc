@@ -201,7 +201,7 @@ export default function DepositReserveForm({
 
   if (sent) {
     return (
-      <div id="reserve" className="scroll-mt-12 rounded-lg border border-dust bg-white p-6 text-center space-y-3">
+      <div id="reserve" className="scroll-mt-20 rounded-lg border border-dust bg-white p-6 text-center space-y-3">
         <p className="text-xs uppercase tracking-widest text-saddle">Check your email</p>
         <p className="text-sm text-charcoal">{sent}</p>
         {/* P2 — nothing arrived? Re-POST the reserve (the server re-sends the
@@ -224,7 +224,7 @@ export default function DepositReserveForm({
   }
 
   return (
-    <div id="reserve" className="space-y-6 scroll-mt-12">
+    <div id="reserve" className="space-y-6 scroll-mt-20">
       <div className="grid sm:grid-cols-3 gap-4">
         {order.map((c) => cd(c) ? (
           <button
@@ -237,7 +237,7 @@ export default function DepositReserveForm({
           >
             <p className={`text-xs uppercase tracking-widest ${cut === c ? 'text-bone/70' : 'text-saddle'}`}>{CUT_LABEL[c]}</p>
             <p className="font-serif text-3xl mt-1">${Number(cd(c)!.price).toLocaleString()}</p>
-            {cd(c)!.lbs ? <p className={`text-xs mt-1 ${cut === c ? 'text-bone/60' : 'text-dust'}`}>~{cd(c)!.lbs} lbs</p> : null}
+            {cd(c)!.lbs ? <p className={`text-xs mt-1 ${cut === c ? 'text-bone/60' : 'text-muted'}`}>~{cd(c)!.lbs} lbs</p> : null}
           </button>
         ) : null)}
       </div>
@@ -304,7 +304,7 @@ export default function DepositReserveForm({
         >
           {loading ? 'Starting…' : `Reserve your ${CUT_LABEL[cut]} — $${depositOf(cut).toLocaleString()} deposit →`}
         </button>
-        <p className="text-[11px] text-dust text-center">
+        <p className="text-[11px] text-muted text-center">
           {REFUND_POLICY_SHORT}. {operatorFirst} ships your beef straight to you.
         </p>
         <TermsNotice />

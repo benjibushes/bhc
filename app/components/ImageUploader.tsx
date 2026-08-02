@@ -191,7 +191,7 @@ export default function ImageUploader({ label, hint, value, onChange }: Props) {
     <div className="space-y-2">
       <label className="block text-sm font-medium">
         {label}
-        {hint ? <span className="text-dust font-normal"> {hint}</span> : null}
+        {hint ? <span className="text-muted font-normal"> {hint}</span> : null}
       </label>
 
       {/* Preview if URL set */}
@@ -241,8 +241,8 @@ export default function ImageUploader({ label, hint, value, onChange }: Props) {
           : (
             <>
               <strong className="text-charcoal">Drop an image here</strong>
-              <span className="text-dust"> or click to pick a file</span>
-              <span className="block text-xs text-dust mt-1">JPG/PNG/WEBP/GIF · max 5 MB</span>
+              <span className="text-muted"> or click to pick a file</span>
+              <span className="block text-xs text-muted mt-1">JPG/PNG/WEBP/GIF · max 5 MB</span>
             </>
           )
         }
@@ -261,7 +261,7 @@ export default function ImageUploader({ label, hint, value, onChange }: Props) {
 
       {/* URL fallback — validated on blur / Enter, not on every keystroke */}
       <div className="space-y-1">
-        <label className="text-xs text-dust">Or paste a direct image URL (ends in .jpg/.png — not a Google Drive link):</label>
+        <label className="text-xs text-muted">Or paste a direct image URL (ends in .jpg/.png — not a Google Drive link):</label>
         <input
           type="url"
           value={urlDraft || value}
@@ -269,7 +269,7 @@ export default function ImageUploader({ label, hint, value, onChange }: Props) {
           onBlur={(e) => commitUrl(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitUrl((e.target as HTMLInputElement).value); } }}
           placeholder="https://…/photo.jpg"
-          className="w-full px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-xs font-mono"
+          className="w-full px-3 py-2 border border-dust bg-bone focus:border-charcoal text-xs font-mono"
         />
       </div>
 

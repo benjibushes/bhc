@@ -6,14 +6,14 @@
 // given browser, onError swaps to the branded placeholder — a card or PDP can
 // NEVER show a broken-image icon to cold paid traffic.
 //
-// Placeholder colors come from brand tokens (bg-bone-deep / text-dust) per the
+// Placeholder colors come from brand tokens (bg-bone-deep / text-muted) per the
 // Phase 3 design-system migration. Callers pass className for layout; the
 // legacy style prop stays supported for dimension/object-fit only (no colors).
 
 import { useState } from 'react';
 
 const Placeholder = () => (
-  <div className="w-full h-full flex items-center justify-center bg-bone-deep text-dust font-serif text-sm">
+  <div className="w-full h-full flex items-center justify-center bg-bone-deep text-muted font-serif text-sm">
     BuyHalfCow
   </div>
 );

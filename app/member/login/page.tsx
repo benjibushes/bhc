@@ -6,12 +6,17 @@ import Container from '../../components/Container';
 import Divider from '../../components/Divider';
 import Link from 'next/link';
 import { safeNextPath } from '@/lib/safeNextPath';
+import { emailFieldError } from '@/lib/buyerFieldValidation';
 
 export default function MemberLoginPage() {
   const [email, setEmail] = useState('');
   const [sent, setSent] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
+  // Inline field validation — set on blur, cleared on change, shown under
+  // the field (not just the browser's native bubble, which is suppressed
+  // globally in globals.css).
+  const [emailError, setEmailError] = useState('');
   const router = useRouter();
 
   // Already-authed buyers skip the form entirely — a member with a live
@@ -34,6 +39,9 @@ export default function MemberLoginPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const fieldErr = emailFieldError(email);
+    setEmailError(fieldErr);
+    if (fieldErr) return;
     setError('');
     setSending(true);
 
@@ -80,7 +88,7 @@ export default function MemberLoginPage() {
             <p className="text-lg text-saddle leading-relaxed">
               If you have an approved account, you&apos;ll receive a login link at <strong className="text-charcoal">{email}</strong>.
             </p>
-            <p className="text-sm text-dust">
+            <p className="text-sm text-muted">
               The link works for 7 days. Check spam if you don&apos;t see it.
             </p>
             <div className="pt-6">
@@ -112,17 +120,39 @@ export default function MemberLoginPage() {
 
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>
-              <label className="block text-sm font-medium mb-2 uppercase tracking-wider">
+              <label
+                htmlFor="member-login-email"
+                className="block text-sm font-medium mb-2 uppercase tracking-wider"
+              >
                 Email Address
               </label>
               <input
+                id="member-login-email"
+                name="email"
                 type="email"
+                inputMode="email"
+                autoComplete="email"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  if (emailError) setEmailError('');
+                }}
+                onBlur={() => {
+                  if (email.trim()) setEmailError(emailFieldError(email));
+                }}
                 placeholder="your@email.com"
                 required
-                className="w-full px-4 py-3 border border-dust bg-bone text-charcoal focus:outline-none focus:border-charcoal transition-colors"
+                aria-invalid={emailError ? true : undefined}
+                aria-describedby={emailError ? 'member-login-email-error' : undefined}
+                className={`w-full px-4 py-3 border bg-bone text-charcoal transition-colors ${
+                  emailError ? 'border-weathered' : 'border-dust focus:border-charcoal'
+                }`}
               />
+              {emailError && (
+                <p id="member-login-email-error" role="alert" className="mt-2 text-sm text-weathered">
+                  {emailError}
+                </p>
+              )}
             </div>
 
             {error && (
@@ -141,7 +171,7 @@ export default function MemberLoginPage() {
           </form>
 
           <div className="mt-8 text-center space-y-3">
-            <p className="text-sm text-dust">
+            <p className="text-sm text-muted">
               Don&apos;t have an account?
             </p>
             <Link

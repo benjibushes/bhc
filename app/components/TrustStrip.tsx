@@ -13,7 +13,7 @@ export default function TrustStrip({ className = '' }: { className?: string }) {
   return (
     <p className={`text-sm text-saddle ${className}`}>
       <span className="text-sage">verified ranch</span> · full cost shown up front · secured by
-      stripe · a real person answers your receipt — ben
+      stripe · a real person answers every message
     </p>
   );
 }

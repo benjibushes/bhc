@@ -60,7 +60,7 @@ export default function LandDealsPage() {
           {/* Filter bar */}
           {deals.length > 0 && (
             <div className="flex flex-col sm:flex-row gap-3 sm:items-center justify-between">
-              <p className="text-sm text-dust">
+              <p className="text-sm text-muted">
                 {filtered.length} listing{filtered.length === 1 ? '' : 's'}
                 {filterState ? ` in ${filterState}` : ' available'}
               </p>
@@ -236,7 +236,7 @@ function InquiryModal({ deal, onClose }: { deal: LandDeal; onClose: () => void }
                 required
                 value={form.name}
                 onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                className="w-full px-3 py-2 border border-dust bg-white focus:outline-none focus:border-charcoal"
+                className="w-full px-3 py-2 border border-dust bg-white focus:border-charcoal"
               />
             </div>
 
@@ -247,7 +247,7 @@ function InquiryModal({ deal, onClose }: { deal: LandDeal; onClose: () => void }
                 required
                 value={form.email}
                 onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-                className="w-full px-3 py-2 border border-dust bg-white focus:outline-none focus:border-charcoal"
+                className="w-full px-3 py-2 border border-dust bg-white focus:border-charcoal"
               />
             </div>
 
@@ -257,7 +257,7 @@ function InquiryModal({ deal, onClose }: { deal: LandDeal; onClose: () => void }
                 type="tel"
                 value={form.phone}
                 onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
-                className="w-full px-3 py-2 border border-dust bg-white focus:outline-none focus:border-charcoal"
+                className="w-full px-3 py-2 border border-dust bg-white focus:border-charcoal"
               />
             </div>
 
@@ -269,7 +269,7 @@ function InquiryModal({ deal, onClose }: { deal: LandDeal; onClose: () => void }
                 value={form.message}
                 onChange={(e) => setForm((f) => ({ ...f, message: e.target.value }))}
                 placeholder="Tell the seller what you'd like to know — pricing flexibility, mineral rights, water access, intended use..."
-                className="w-full px-3 py-2 border border-dust bg-white focus:outline-none focus:border-charcoal"
+                className="w-full px-3 py-2 border border-dust bg-white focus:border-charcoal"
               />
             </div>
 

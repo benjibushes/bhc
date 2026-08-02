@@ -33,6 +33,9 @@ function PreferencesContent() {
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState('');
+  // Inline validation for the one required answer — rendered under the
+  // fieldset itself instead of a banner at the top of the page.
+  const [fulfillmentError, setFulfillmentError] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -68,7 +71,7 @@ function PreferencesContent() {
 
   const submit = async () => {
     if (!fulfillment) {
-      setError('Pick delivery or pickup first.');
+      setFulfillmentError('Pick delivery or pickup first.');
       return;
     }
     setSubmitting(true);
@@ -140,7 +143,7 @@ function PreferencesContent() {
               <button
                 key={opt}
                 type="button"
-                onClick={() => setFulfillment(opt)}
+                onClick={() => { setFulfillment(opt); setFulfillmentError(''); }}
                 className={`px-4 py-3 min-h-[48px] border text-sm uppercase tracking-wider transition ${
                   fulfillment === opt
                     ? 'bg-charcoal text-bone border-charcoal'
@@ -152,6 +155,11 @@ function PreferencesContent() {
               </button>
             ))}
           </div>
+          {fulfillmentError && (
+            <p role="alert" className="mt-2 text-sm text-weathered">
+              {fulfillmentError}
+            </p>
+          )}
         </fieldset>
 
         {/* Target window */}
@@ -165,7 +173,7 @@ function PreferencesContent() {
             value={windowPref}
             onChange={(e) => setWindowPref(e.target.value)}
             placeholder="e.g. mid-July, or after the 20th, or as soon as it's ready"
-            className="w-full px-4 py-3 min-h-[48px] bg-white border border-dust text-charcoal placeholder:text-dust focus:border-charcoal focus:outline-none"
+            className="w-full px-4 py-3 min-h-[48px] bg-white border border-dust text-charcoal placeholder:text-dust focus:border-charcoal"
           />
         </div>
 
@@ -180,7 +188,7 @@ function PreferencesContent() {
             onChange={(e) => setCutNotes(e.target.value)}
             rows={4}
             placeholder="e.g. thick ribeyes, extra ground, keep the soup bones & oxtail, no liver. Or leave blank and trust their standard cut."
-            className="w-full px-4 py-3 bg-white border border-dust text-charcoal placeholder:text-dust focus:border-charcoal focus:outline-none resize-y"
+            className="w-full px-4 py-3 bg-white border border-dust text-charcoal placeholder:text-dust focus:border-charcoal resize-y"
           />
         </div>
 

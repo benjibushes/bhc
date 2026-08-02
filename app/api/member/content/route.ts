@@ -5,6 +5,8 @@ import { normalizeState, normalizeStates } from '@/lib/states';
 import { resolveBuyerSession } from '@/lib/buyerAuth';
 import { FULFILLMENT_FIELDS } from '@/lib/fulfillmentTracking';
 import { normalizeNationwidePreference, NATIONWIDE_PREFERENCE_FIELD } from '@/lib/nationwidePreference';
+import { mintOrderStatusToken, orderStatusPath } from '@/lib/orderStatusLink';
+import { buildOrderStatusView } from '@/lib/orderStatusView';
 
 export const maxDuration = 60;
 
@@ -43,11 +45,26 @@ export async function GET(request: Request) {
       return (await getAllRecords(TABLES.REFERRALS)) as any[];
     };
 
-    // All five reads are independent — one parallel round instead of three
+    // WAVE 2 buyer UI (2026-08-01) — /member used to read ONLY Referrals, so a
+    // buyer who paid on /shop (Rancher Orders, written by
+    // lib/productSettlement) opened "My Order" and was told "no active
+    // referrals yet". Read their shop/broker orders too, matched on the same
+    // Buyer Email settlement stamps (lowercased at write time; TRIM+LOWER here
+    // for belt). Scoped server-side — never a full-table scan filtered in JS.
+    const fetchBuyerShopOrders = async (): Promise<any[]> => {
+      const e = String(session.email || '').toLowerCase().replace(/"/g, '').trim();
+      if (!e || !e.includes('@')) return [];
+      return (await getAllRecords(
+        TABLES.RANCHER_ORDERS,
+        `LOWER(TRIM({Buyer Email})) = "${e}"`,
+      )) as any[];
+    };
+
+    // All six reads are independent — one parallel round instead of three
     // serial rounds (consumer row → ranchers/deals/brands → referrals). Each
     // promise preserves its old failure semantics: consumer row is non-fatal
     // (segment stays empty), everything else degrades to [].
-    const [memberConsumer, ranchers, landDeals, brands, referrals] = await Promise.all([
+    const [memberConsumer, ranchers, landDeals, brands, referrals, rancherOrderRows] = await Promise.all([
       // Rehydrates memberState if the JWT didn't carry it — older session
       // tokens minted by /api/warmup/engage didn't include state, which made
       // the dashboard show "0 ranchers" even after a successful match.
@@ -64,6 +81,10 @@ export async function GET(request: Request) {
       getAllRecords(TABLES.BRANDS, "{Featured}").catch(() => []),
       fetchBuyerReferralRows().catch(() => {
         console.warn('Referrals table not accessible, returning empty referrals');
+        return [] as any[];
+      }),
+      fetchBuyerShopOrders().catch((e: any) => {
+        console.warn('[member/content] Rancher Orders read failed:', e?.message || e);
         return [] as any[];
       }),
     ]);
@@ -208,6 +229,43 @@ export async function GET(request: Request) {
       };
     });
 
+    // WAVE 2 buyer UI — the buyer's shop/broker orders, worded by the SAME
+    // view model as /order/<token> (lib/orderStatusView) so the dashboard and
+    // the emailed status page can never disagree about the same order. Each
+    // row also carries its signed status link (lib/orderStatusLink) — minted
+    // per order, omitted (never broken) if minting fails.
+    const shopOrders = rancherOrderRows
+      .map((o: any) => {
+        const v = buildOrderStatusView({ ...o, id: o.id });
+        let statusPath = '';
+        try {
+          statusPath = orderStatusPath(mintOrderStatusToken({ orderId: String(o.id) }));
+        } catch {
+          /* no JWT secret / malformed id — the card renders without a link */
+        }
+        return {
+          id: o.id,
+          product_name: v.productName,
+          quantity: v.quantity,
+          buyer_paid: v.buyerPaid,
+          kind: v.kind,
+          state: v.state,
+          status_label: v.statusLabel,
+          status_detail: v.statusDetail,
+          ordered_at: v.orderedAt,
+          shipped_at: v.shippedAt,
+          tracking_number: v.trackingNumber,
+          tracking_url: v.trackingUrl,
+          carrier: v.carrier,
+          rancher_name: v.rancherName,
+          status_path: statusPath,
+        };
+      })
+      .sort(
+        (a: any, b: any) =>
+          (Date.parse(b.ordered_at || '') || 0) - (Date.parse(a.ordered_at || '') || 0),
+      );
+
     // F17 — surface affiliate code on member portal so Closed Won
     // buyers (auto-enrolled per I-9) can refer friends + earn.
     const affiliateCode = String((memberConsumer as any)?.['Affiliate Code'] || '');
@@ -230,6 +288,7 @@ export async function GET(request: Request) {
       landDeals,
       brands,
       memberReferrals,
+      shopOrders,
     });
   } catch (error: any) {
     console.error('API error fetching member content:', error);

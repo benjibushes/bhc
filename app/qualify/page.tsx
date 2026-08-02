@@ -31,7 +31,7 @@ export default function QualifyLandingPage() {
             Start your application →
           </Link>
         </div>
-        <p className="text-xs text-dust pt-3 border-t border-dust">
+        <p className="text-xs text-muted pt-3 border-t border-dust">
           Already applied? Check your inbox for the &ldquo;Yes — Ready to Buy&rdquo; email and click the button
           inside it to land back here with a fresh link.
         </p>

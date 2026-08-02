@@ -70,7 +70,7 @@ export default async function RemovePage({
 
       <section className="pb-20">
         <Container>
-          <div className="max-w-md mx-auto text-xs text-dust space-y-2">
+          <div className="max-w-md mx-auto text-xs text-muted space-y-2">
             <p>
               Changed your mind? The{' '}
               <Link

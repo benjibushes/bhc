@@ -59,10 +59,10 @@ export default function StateMultiSelect({ value, onChange, disabled }: Props) {
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           placeholder="Filter states (e.g. MT or Montana)"
-          className="flex-1 px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
+          className="flex-1 px-3 py-2 border border-dust bg-bone focus:border-charcoal text-sm"
           disabled={disabled}
         />
-        <span className="text-xs text-dust whitespace-nowrap">
+        <span className="text-xs text-muted whitespace-nowrap">
           {selected.size} selected
         </span>
       </div>
@@ -102,12 +102,12 @@ export default function StateMultiSelect({ value, onChange, disabled }: Props) {
               }`}
             >
               <span className="font-mono font-bold">{s.code}</span>{' '}
-              <span className={isSelected ? 'opacity-90' : 'text-dust'}>{s.name}</span>
+              <span className={isSelected ? 'opacity-90' : 'text-muted'}>{s.name}</span>
             </button>
           );
         })}
         {visibleStates.length === 0 && (
-          <p className="col-span-full text-xs text-dust text-center py-4">
+          <p className="col-span-full text-xs text-muted text-center py-4">
             No states match &ldquo;{filter}&rdquo;
           </p>
         )}

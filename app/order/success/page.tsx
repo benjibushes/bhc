@@ -21,7 +21,8 @@
 
 import Card from '../../components/Card';
 import Button from '../../components/Button';
-import { getRecordById, TABLES } from '@/lib/airtable';
+import { escapeAirtableValue, getAllRecords, getRecordById, TABLES } from '@/lib/airtable';
+import { mintOrderStatusToken, orderStatusPath } from '@/lib/orderStatusLink';
 
 export const metadata = { title: "you're set — BuyHalfCow" };
 
@@ -54,10 +55,33 @@ async function resolveOrderKind(pid: string): Promise<{ kind: OrderKind; pickupA
   }
 }
 
+// WAVE 2 buyer UI (2026-08-01) — resolve the buyer's freshly-paid order so
+// this page can link its signed /order/<token> status page (the one the
+// receipt email carries). Stripe appends ?payment_intent= to the Payment
+// Element return_url on redirect flows; the webhook writes the Rancher Orders
+// row keyed on that PI. Best-effort BY DESIGN: right after payment the
+// webhook may not have landed yet, and the non-redirect confirm path carries
+// no PI — both fall back to '' and the page points at the receipt email
+// instead. Never blocks the paint, never renders a broken link.
+async function resolveOrderStatusPath(paymentIntentId: string): Promise<string> {
+  if (!/^pi_[A-Za-z0-9]+$/.test(paymentIntentId)) return '';
+  try {
+    const rows = (await getAllRecords(
+      TABLES.RANCHER_ORDERS,
+      `{Stripe Payment Intent} = "${escapeAirtableValue(paymentIntentId)}"`,
+    )) as any[];
+    const orderId = String(rows?.[0]?.id || '');
+    if (!/^rec[A-Za-z0-9]{14}$/.test(orderId)) return '';
+    return orderStatusPath(mintOrderStatusToken({ orderId }));
+  } catch {
+    return '';
+  }
+}
+
 export default async function OrderSuccessPage({
   searchParams,
 }: {
-  searchParams: Promise<{ redirect_status?: string; pid?: string }>;
+  searchParams: Promise<{ redirect_status?: string; pid?: string; payment_intent?: string }>;
 }) {
   const sp = await searchParams;
   const failed = String(sp?.redirect_status || '') === 'failed';
@@ -81,13 +105,16 @@ export default async function OrderSuccessPage({
             </a>
             .
           </p>
-          <p className="text-xs text-dust mt-6">&mdash; Ben, BuyHalfCow</p>
+          <p className="text-xs text-muted mt-6">&mdash; Ben, BuyHalfCow</p>
         </Card>
       </main>
     );
   }
 
-  const { kind, pickupAddress } = await resolveOrderKind(pid);
+  const [{ kind, pickupAddress }, orderPath] = await Promise.all([
+    resolveOrderKind(pid),
+    resolveOrderStatusPath(String(sp?.payment_intent || '')),
+  ]);
 
   return (
     <main className="min-h-[70vh] flex items-center justify-center px-5 py-10 bg-bone text-charcoal">
@@ -127,11 +154,32 @@ export default async function OrderSuccessPage({
             )}
           </>
         )}
+        {/* WAVE 2 buyer UI — this page used to be a cul-de-sac: no order
+            link, no account link, its ONE button an upsell. The buyer's own
+            order is the primary action now; the upsell is secondary. */}
         <div className="border-t border-dust pt-5 mt-1 space-y-3">
+          {orderPath ? (
+            <Button href={orderPath} fullWidth>
+              track your order &rarr;
+            </Button>
+          ) : (
+            <p className="text-sm text-saddle leading-relaxed">
+              your receipt email has a <strong className="text-charcoal">track your order</strong>{' '}
+              link — status, tracking, and your rancher&rsquo;s contact, any time.
+            </p>
+          )}
+          <p className="text-sm text-saddle">
+            or see everything on this email in{' '}
+            <a href="/member" className="underline hover:text-charcoal transition-colors">
+              your dashboard &rarr;
+            </a>
+          </p>
+        </div>
+        <div className="border-t border-dust pt-5 mt-5 space-y-3">
           <p className="text-sm text-saddle">
             liked what you tasted? a half or whole share is the same beef by the freezer-full.
           </p>
-          <Button href="/map">explore full shares &rarr;</Button>
+          <Button href="/map" variant="secondary">explore full shares &rarr;</Button>
           <p className="text-xs text-saddle">
             and the tools to cook it right &mdash;{' '}
             <a href="/gear" className="underline hover:text-charcoal transition-colors">
@@ -139,7 +187,7 @@ export default async function OrderSuccessPage({
             </a>
           </p>
         </div>
-        <p className="text-xs text-dust mt-6">&mdash; Ben, BuyHalfCow</p>
+        <p className="text-xs text-muted mt-6">&mdash; Ben, BuyHalfCow</p>
       </Card>
     </main>
   );

@@ -47,7 +47,7 @@ export default function CheckoutError({
             Go home
           </Link>
         </div>
-        <p className="text-xs text-dust pt-2">
+        <p className="text-xs text-muted pt-2">
           Need a hand right now?{' '}
           <a href="mailto:hello@buyhalfcow.com" className="underline underline-offset-2 hover:text-charcoal">
             Email hello@buyhalfcow.com

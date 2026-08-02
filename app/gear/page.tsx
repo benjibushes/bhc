@@ -133,7 +133,7 @@ export default async function GearPage() {
                     href={`#gear-${cat}`}
                     className="px-3.5 py-2 border border-dust text-[13px] text-charcoal hover:bg-charcoal hover:text-bone transition-base"
                   >
-                    {CATEGORY_LABELS[cat] || cat} <span className="text-dust">·</span>{' '}
+                    {CATEGORY_LABELS[cat] || cat} <span className="text-muted">·</span>{' '}
                     <span className="tabular-nums">{list.length}</span>
                   </a>
                 ))}
@@ -145,7 +145,7 @@ export default async function GearPage() {
                 <section key={cat} id={`gear-${cat}`} className="scroll-mt-24">
                   <div className="flex items-baseline justify-between gap-3 border-b border-dust pb-2 mb-5">
                     <h2 className="font-serif text-2xl">{CATEGORY_LABELS[cat] || cat}</h2>
-                    <span className="text-xs text-dust tabular-nums shrink-0">
+                    <span className="text-xs text-muted tabular-nums shrink-0">
                       {list.length} {list.length === 1 ? 'pick' : 'picks'}
                     </span>
                   </div>

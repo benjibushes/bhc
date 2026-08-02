@@ -175,7 +175,7 @@ export default function ShopGrid({
           id="shop-state"
           value={st}
           onChange={(e) => pickState(e.target.value)}
-          className="text-[13px] px-2.5 py-1.5 border border-dust bg-bone text-charcoal focus:outline-none focus:border-charcoal"
+          className="text-[13px] px-2.5 py-1.5 border border-dust bg-bone text-charcoal focus:border-charcoal"
         >
           <option value="">pick your state…</option>
           {US_STATES.map((s) => (
@@ -207,7 +207,7 @@ export default function ShopGrid({
                 : 'bg-bone text-charcoal border-dust hover:border-charcoal'
             }`}
           >
-            {c.label} <span className={active === c.key ? 'text-bone/60' : 'text-dust'}>{c.count}</span>
+            {c.label} <span className={active === c.key ? 'text-bone/60' : 'text-muted'}>{c.count}</span>
           </button>
         ))}
         <span className="flex-1" />
@@ -215,7 +215,7 @@ export default function ShopGrid({
           value={sort}
           onChange={(e) => setSort(e.target.value as StandSort)}
           aria-label="Sort products"
-          className="shrink-0 text-[12.5px] px-3 py-1.5 border border-dust rounded-full bg-bone text-charcoal focus:outline-none focus:border-charcoal"
+          className="shrink-0 text-[12.5px] px-3 py-1.5 border border-dust rounded-full bg-bone text-charcoal focus:border-charcoal"
         >
           <option value="price-asc">price: low → high</option>
           <option value="price-desc">price: high → low</option>

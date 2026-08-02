@@ -48,7 +48,7 @@ export default function LinksPage() {
         <LinksButtons />
 
         {/* Trust strip — same honest three beats as the shop rail. */}
-        <p className="text-center text-[11.5px] text-dust leading-relaxed">
+        <p className="text-center text-[11.5px] text-muted leading-relaxed">
           verified ranches · secured by stripe · if anything shows up wrong, we make it right
         </p>
 

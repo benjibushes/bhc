@@ -421,7 +421,7 @@ function Field({
         pattern={pattern}
         inputMode={inputMode}
         maxLength={maxLength}
-        className="w-full px-3 py-3 border border-dust bg-bone text-base text-charcoal transition-base focus:outline-none focus:border-charcoal hover:border-saddle"
+        className="w-full px-3 py-3 border border-dust bg-bone text-base text-charcoal transition-base focus:border-charcoal hover:border-saddle"
       />
     </label>
   );
@@ -447,7 +447,7 @@ function SelectField({
         name={name}
         required={required}
         defaultValue=""
-        className="w-full px-3 py-3 border border-dust bg-bone text-base text-charcoal transition-base focus:outline-none focus:border-charcoal hover:border-saddle"
+        className="w-full px-3 py-3 border border-dust bg-bone text-base text-charcoal transition-base focus:border-charcoal hover:border-saddle"
       >
         {children}
       </select>
@@ -473,7 +473,7 @@ function TextareaField({
         name={name}
         rows={rows}
         placeholder={placeholder}
-        className="w-full px-3 py-3 border border-dust bg-bone text-base text-charcoal transition-base focus:outline-none focus:border-charcoal hover:border-saddle resize-y"
+        className="w-full px-3 py-3 border border-dust bg-bone text-base text-charcoal transition-base focus:border-charcoal hover:border-saddle resize-y"
       />
     </label>
   );

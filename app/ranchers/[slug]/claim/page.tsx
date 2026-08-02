@@ -67,7 +67,7 @@ export default async function ClaimPage({
                 partner. The moment you&rsquo;re live, the badge flips to verified
                 and your page goes hot.
               </p>
-              <p className="text-sm text-dust">— Ben</p>
+              <p className="text-sm text-muted">— Ben</p>
               <div className="pt-4">
                 <Link
                   href={`/ranchers/${slug}`}
@@ -154,7 +154,7 @@ export default async function ClaimPage({
 
       <section className="pb-20">
         <Container>
-          <div className="max-w-md mx-auto text-xs text-dust space-y-2">
+          <div className="max-w-md mx-auto text-xs text-muted space-y-2">
             <p>
               Current claim status:{' '}
               <span className="text-saddle">{claimStatus}</span>

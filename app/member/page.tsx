@@ -119,6 +119,29 @@ interface MemberReferral {
   rancher_pickup_instructions?: string;
 }
 
+// WAVE 2 buyer UI (2026-08-01) — a shop/broker order from Rancher Orders
+// (written by lib/productSettlement). Worded server-side by the SAME view
+// model as /order/<token> so the dashboard and the emailed status page can
+// never disagree. status_path is the signed read-only /order/<token> link
+// ('' when it couldn't be minted — render no link, never a broken one).
+interface ShopOrder {
+  id: string;
+  product_name: string;
+  quantity: number;
+  buyer_paid: number;
+  kind: 'ship' | 'pickup' | 'deposit';
+  state: 'new' | 'shipped' | 'delivered' | 'refunded' | 'cancelled';
+  status_label: string;
+  status_detail: string;
+  ordered_at: string;
+  shipped_at: string;
+  tracking_number: string;
+  tracking_url: string | null;
+  carrier: string;
+  rancher_name: string;
+  status_path: string;
+}
+
 // WAVE 3 — one adapter, so every consumer of the stage model reads the SAME
 // referral shape. Airtable field names stay in the route; camelCase stays in
 // lib/buyerDealStage; this is the only bridge.
@@ -238,6 +261,7 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
     landDeals: LandDeal[];
     brands: Brand[];
     memberReferrals: MemberReferral[];
+    shopOrders?: ShopOrder[];
   } | null>(null);
 
   useEffect(() => {
@@ -338,7 +362,7 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                 </div>
                 <button
                   onClick={() => setWarmupCelebration(false)}
-                  className="text-dust hover:text-charcoal text-sm"
+                  className="text-muted hover:text-charcoal text-sm"
                   aria-label="Dismiss"
                 >
                   ✕
@@ -363,7 +387,7 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                 </div>
                 <button
                   onClick={() => setInvoiceOutcome(null)}
-                  className="text-dust hover:text-charcoal text-sm"
+                  className="text-muted hover:text-charcoal text-sm"
                   aria-label="Dismiss"
                 >
                   ✕
@@ -382,7 +406,7 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                 </div>
                 <button
                   onClick={() => setInvoiceOutcome(null)}
-                  className="text-dust hover:text-charcoal text-sm"
+                  className="text-muted hover:text-charcoal text-sm"
                   aria-label="Dismiss"
                 >
                   ✕
@@ -403,7 +427,7 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
             </div>
             <button
               onClick={handleLogout}
-              className="text-sm text-dust hover:text-charcoal transition-colors"
+              className="text-sm text-muted hover:text-charcoal transition-colors"
             >
               Log out
             </button>
@@ -488,7 +512,7 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
 
               <h2 className="font-serif text-2xl">Your order</h2>
 
-              {data?.memberReferrals && data.memberReferrals.length > 0 ? (
+              {data?.memberReferrals && data.memberReferrals.length > 0 && (
                 <div className="space-y-4">
                   {data.memberReferrals.map((ref) => {
                     // BLOCKER-1 (2026-07-01): Status='Awaiting Payment' +
@@ -542,7 +566,7 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                               </p>
                             )}
                           </div>
-                          <p className="text-xs text-dust">
+                          <p className="text-xs text-muted">
                             {ref.created_at ? new Date(ref.created_at).toLocaleDateString() : ''}
                           </p>
                         </div>
@@ -611,9 +635,9 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                                 Pay deposit → {ref.deposit_amount ? `$${ref.deposit_amount}` : ''}
                               </a>
                             ) : (
-                              <p className="text-xs text-dust">Check your email for the Stripe link.</p>
+                              <p className="text-xs text-muted">Check your email for the Stripe link.</p>
                             )}
-                            <p className="text-xs text-dust">
+                            <p className="text-xs text-muted">
                               Once paid, your rancher confirms the slot. Deposit becomes non-refundable at that point.
                             </p>
                           </div>
@@ -623,7 +647,7 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                             and the processing date. All that is left here is
                             the promise the buyer actually bought. */}
                         {ref.status === 'Slot Locked' && ref.rancher_accepted_at && (
-                          <p className="mt-3 text-xs text-dust">
+                          <p className="mt-3 text-xs text-muted">
                             {ref.rancher_name || 'Your rancher'} accepted on {formatDate(ref.rancher_accepted_at)}.
                             Per the BHC promise, your deposit is now locked toward this slot.
                           </p>
@@ -654,7 +678,7 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                               Pay final balance
                               {ref.final_invoice_amount ? ` · ${formatMoney(ref.final_invoice_amount)}` : ''} →
                             </a>
-                            <p className="text-xs text-dust">
+                            <p className="text-xs text-muted">
                               Every cent of the balance goes to {ref.rancher_name || 'your rancher'}.
                               {' '}
                               <Link
@@ -710,7 +734,7 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                             <p className="text-xs uppercase tracking-widest text-saddle">Fulfillment</p>
                             <p className="text-charcoal font-medium">{fulfillmentLabel}</p>
                             {ref.fulfillment_updated_at && (
-                              <p className="text-xs text-dust">
+                              <p className="text-xs text-muted">
                                 Updated {formatDate(ref.fulfillment_updated_at)} by {ref.rancher_name || 'your rancher'}.
                               </p>
                             )}
@@ -737,15 +761,15 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                               <p className="text-xs uppercase tracking-widest text-saddle">Shipment</p>
                               {ref.shipping_carrier && (
                                 <p>
-                                  <span className="text-dust">Carrier:</span>{' '}
+                                  <span className="text-muted">Carrier:</span>{' '}
                                   <strong className="text-charcoal">{ref.shipping_carrier}</strong>
                                 </p>
                               )}
                               <p>
-                                <span className="text-dust">Tracking #:</span>{' '}
+                                <span className="text-muted">Tracking #:</span>{' '}
                                 <span className="font-mono text-xs text-charcoal select-all break-all">{ref.tracking_number}</span>
                               </p>
-                              <p className="text-xs text-dust">{statusLine}</p>
+                              <p className="text-xs text-muted">{statusLine}</p>
                               {trackUrl && (
                                 <p className="pt-1">
                                   <a
@@ -825,13 +849,115 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                     );
                   })}
                 </div>
-              ) : (
-                <div className="p-8 border border-dust text-center bg-white">
-                  <p className="text-saddle mb-4">
-                    No active referrals yet. We&apos;re working on matching you with a rancher in {data?.memberState || 'your state'}.
+              )}
+
+              {/* WAVE 2 buyer UI — shop/broker orders (Rancher Orders rows).
+                  A buyer who paid on /shop and clicked "My Order" used to be
+                  told "no active referrals yet" — their money was real, their
+                  dashboard said otherwise. Same words as /order/<token>
+                  (shared view model server-side), plus that signed link. */}
+              {(data?.shopOrders || []).length > 0 && (
+                <div className="space-y-4">
+                  {(data?.memberReferrals || []).length > 0 && (
+                    <h3 className="font-serif text-xl">Shop orders</h3>
+                  )}
+                  {(data?.shopOrders || []).map((o) => {
+                    const badge =
+                      o.state === 'shipped' || o.state === 'delivered'
+                        ? 'bg-sage/15 text-sage-dark'
+                        : o.state === 'refunded' || o.state === 'cancelled'
+                          ? 'bg-dust/20 text-saddle'
+                          : 'bg-charcoal/10 text-charcoal';
+                    return (
+                      <div key={o.id} className="p-6 border border-dust bg-white">
+                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                          <div>
+                            <span className={`inline-block px-3 py-1 text-xs font-medium uppercase tracking-wider ${badge}`}>
+                              {o.status_label}
+                            </span>
+                            <p className="mt-2 text-sm text-saddle">
+                              {o.quantity > 1 ? `${o.quantity}× ` : ''}
+                              <strong className="text-charcoal">{o.product_name}</strong>
+                              {o.rancher_name ? ` from ${o.rancher_name}` : ''}
+                            </p>
+                          </div>
+                          <p className="text-xs text-muted">
+                            {o.ordered_at ? new Date(o.ordered_at).toLocaleDateString() : ''}
+                          </p>
+                        </div>
+                        <p className="mt-3 text-sm text-saddle leading-relaxed">{o.status_detail}</p>
+                        <p className="mt-2 text-sm text-saddle">
+                          Paid <strong className="text-charcoal">${Number(o.buyer_paid || 0).toFixed(2)}</strong>
+                        </p>
+                        {o.tracking_number && (
+                          <p className="mt-2 text-sm text-saddle">
+                            Tracking:{' '}
+                            {o.tracking_url ? (
+                              <a
+                                href={o.tracking_url}
+                                target="_blank"
+                                rel="noopener noreferrer nofollow"
+                                className="underline hover:text-charcoal break-all"
+                              >
+                                {o.carrier ? `${o.carrier} · ` : ''}
+                                {o.tracking_number}
+                              </a>
+                            ) : (
+                              <span className="font-mono text-xs text-charcoal select-all break-all">
+                                {o.carrier ? `${o.carrier} · ` : ''}
+                                {o.tracking_number}
+                              </span>
+                            )}
+                          </p>
+                        )}
+                        {o.status_path && (
+                          <p className="mt-4">
+                            <Link
+                              href={o.status_path}
+                              className="inline-block px-4 py-2 border border-charcoal text-charcoal hover:bg-bone-warm text-xs uppercase tracking-widest font-semibold"
+                            >
+                              View order status →
+                            </Link>
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Honest empty state — only when there is genuinely NOTHING on
+                  the account (no share journey, no shop orders). No fake
+                  "we're matching you" promise: with zero referrals, nobody is
+                  matching anything. Give them the two real doors instead. */}
+              {(data?.memberReferrals || []).length === 0 &&
+                (data?.shopOrders || []).length === 0 && (
+                <div className="p-8 border border-dust text-center bg-white space-y-4">
+                  <p className="text-charcoal font-medium">No orders on this account yet.</p>
+                  <p className="text-sm text-saddle max-w-md mx-auto leading-relaxed">
+                    When you reserve a share or buy from the shop with this email
+                    ({member.email}), it shows up here with live status and tracking.
                   </p>
-                  <p className="text-sm text-dust">
-                    You&apos;ll receive an email when a match is found.
+                  <div className="flex flex-wrap justify-center gap-2 pt-1">
+                    <Link
+                      href="/access"
+                      className="inline-block px-5 py-3 bg-charcoal text-bone hover:bg-saddle text-xs uppercase tracking-widest font-semibold"
+                    >
+                      Get matched with a rancher →
+                    </Link>
+                    <Link
+                      href="/shop"
+                      className="inline-block px-5 py-3 border border-charcoal text-charcoal hover:bg-bone-warm text-xs uppercase tracking-widest font-semibold"
+                    >
+                      Browse the shop
+                    </Link>
+                  </div>
+                  <p className="text-xs text-muted">
+                    Ordered with a different email? Log in with that one, or{' '}
+                    <Link href="/support" className="underline hover:text-charcoal">
+                      tell a real person
+                    </Link>{' '}
+                    and we&apos;ll find it.
                   </p>
                 </div>
               )}
@@ -926,7 +1052,7 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                       buyerId={member.id}
                       refId={latest?.id || ''}
                     />
-                    <p className="text-xs text-dust">
+                    <p className="text-xs text-muted">
                       <Link href="/gear" className="underline hover:text-charcoal">
                         see all the gear we trust →
                       </Link>
@@ -1198,7 +1324,7 @@ function DealStepper({ ladder }: { ladder: BuyerDealStep[] }) {
                     ? 'bg-charcoal border-charcoal text-bone'
                     : current
                       ? 'bg-bone border-2 border-charcoal text-charcoal'
-                      : 'bg-bone border-dust text-dust'
+                      : 'bg-bone border-dust text-muted'
                 }`}
               >
                 {done ? '✓' : ''}
@@ -1210,12 +1336,12 @@ function DealStepper({ ladder }: { ladder: BuyerDealStep[] }) {
             <div className={`min-w-0 flex-1 ${isLast ? '' : 'pb-4'}`}>
               <p
                 className={`text-sm leading-tight ${
-                  current ? 'text-charcoal font-semibold' : done ? 'text-charcoal' : 'text-dust'
+                  current ? 'text-charcoal font-semibold' : done ? 'text-charcoal' : 'text-muted'
                 }`}
               >
                 {step.label}
                 {step.date && (
-                  <span className="text-dust font-normal"> · {formatDate(step.date)}</span>
+                  <span className="text-muted font-normal"> · {formatDate(step.date)}</span>
                 )}
               </p>
               {step.detail && step.state !== 'upcoming' && (
@@ -1264,7 +1390,7 @@ function OrderMoneySummary({ deal }: { deal: MemberReferral }) {
         ))}
       </dl>
       {balancePaid && (
-        <p className="mt-2 text-xs text-dust">Paid in full. Nothing else is owed.</p>
+        <p className="mt-2 text-xs text-muted">Paid in full. Nothing else is owed.</p>
       )}
     </div>
   );
@@ -1350,15 +1476,15 @@ function CutSheetSummary({ deal }: { deal: MemberReferral }) {
       <p className="text-xs uppercase tracking-widest text-saddle">Your cut sheet</p>
       <dl className="space-y-1">
         <div className="flex gap-2">
-          <dt className="text-dust flex-shrink-0">Fulfillment:</dt>
+          <dt className="text-muted flex-shrink-0">Fulfillment:</dt>
           <dd className="text-charcoal">{fulfillment || 'not set'}</dd>
         </div>
         <div className="flex gap-2">
-          <dt className="text-dust flex-shrink-0">Target window:</dt>
+          <dt className="text-muted flex-shrink-0">Target window:</dt>
           <dd className="text-charcoal">{windowPref || 'flexible'}</dd>
         </div>
         <div className="flex gap-2">
-          <dt className="text-dust flex-shrink-0">Cut notes:</dt>
+          <dt className="text-muted flex-shrink-0">Cut notes:</dt>
           <dd className="text-charcoal whitespace-pre-wrap">
             {cutNotes || `none — ${rancherFirst} uses their standard cut sheet`}
           </dd>
@@ -1372,7 +1498,7 @@ function CutSheetSummary({ deal }: { deal: MemberReferral }) {
           Change your cut sheet →
         </Link>
       </p>
-      <p className="text-xs text-dust">
+      <p className="text-xs text-muted">
         Changes go straight to {rancherFirst}. Worth doing before your processing date.
       </p>
     </div>
@@ -1394,7 +1520,7 @@ function RancherContactBlock({ deal }: { deal: MemberReferral }) {
       </p>
       {deal.rancher_email && (
         <p className="text-saddle">
-          <span className="text-dust">Email:</span>{' '}
+          <span className="text-muted">Email:</span>{' '}
           <a href={`mailto:${deal.rancher_email}`} className="text-charcoal underline break-all">
             {deal.rancher_email}
           </a>
@@ -1402,14 +1528,14 @@ function RancherContactBlock({ deal }: { deal: MemberReferral }) {
       )}
       {deal.rancher_phone && (
         <p className="text-saddle">
-          <span className="text-dust">Phone:</span>{' '}
+          <span className="text-muted">Phone:</span>{' '}
           <a href={`tel:${deal.rancher_phone}`} className="text-charcoal underline">
             {deal.rancher_phone}
           </a>
         </p>
       )}
       {!hasContact && (
-        <p className="text-xs text-dust">
+        <p className="text-xs text-muted">
           We don&apos;t have direct contact details on file for them yet. Use the message thread
           below — it reaches them by email either way.
         </p>
@@ -1523,7 +1649,7 @@ function MatchingPreferenceBlock({ initial }: { initial: string }) {
           />
         </button>
       </div>
-      <p className="text-xs text-dust">
+      <p className="text-xs text-muted">
         {saving
           ? 'Saving…'
           : error
@@ -1630,7 +1756,7 @@ function PastOrdersSection({
                     <p className="font-serif text-lg truncate">
                       {rancher?.['Ranch Name'] || order.rancher_name || 'Past rancher'}
                     </p>
-                    <p className="text-xs text-dust">
+                    <p className="text-xs text-muted">
                       {[order.order_type, closedDate, order.sale_amount ? `$${Number(order.sale_amount).toLocaleString()}` : null]
                         .filter(Boolean)
                         .join(' · ')}
@@ -1764,7 +1890,7 @@ function BuyTierButtons({ rancher }: { rancher: Rancher }) {
         >
           <div className="text-xs uppercase tracking-wider text-saddle group-hover:text-bone">{t.label}</div>
           <div className="font-serif text-2xl mt-1">${Number(t.price).toLocaleString()}</div>
-          {t.lbs && <div className="text-xs text-dust group-hover:text-bone mt-0.5">{t.lbs} lbs</div>}
+          {t.lbs && <div className="text-xs text-muted group-hover:text-bone mt-0.5">{t.lbs} lbs</div>}
           <div className="mt-2 text-xs font-medium uppercase tracking-wider">Buy Now →</div>
         </a>
       ))}
@@ -1894,7 +2020,7 @@ function RancherCard({ rancher }: { rancher: Rancher }) {
           <div className="min-w-0">
             <h3 className="font-serif text-xl">{rancher['Ranch Name']}</h3>
             <p className="text-sm text-saddle">Operator: {rancher['Operator Name']}</p>
-            {rancher.Tagline && <p className="text-sm text-dust mt-1 italic">&ldquo;{rancher.Tagline}&rdquo;</p>}
+            {rancher.Tagline && <p className="text-sm text-muted mt-1 italic">&ldquo;{rancher.Tagline}&rdquo;</p>}
           </div>
         </div>
         {rancher.Certified && (
