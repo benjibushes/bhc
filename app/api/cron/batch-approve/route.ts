@@ -5,8 +5,8 @@ import { excludeBrokerRanchers } from '@/lib/brokerRail';
 import { heldReferralsFormula } from '@/lib/cronReadFilters';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendConsumerApproval, sendWaitlistEmail, sendBackfillEmail, sendRancherGoLiveEmail } from '@/lib/email';
-import { sendTelegramUpdate, sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
+import { shouldSendCronReport } from '@/lib/cronReportGate';
 import { bulkRouteStateToRancher } from '@/lib/bulkRoute';
 import { getOperationalServedStates } from '@/lib/rancherEligibility';
 import { isQualifiedForRouting } from '@/lib/qualification';
@@ -147,8 +147,9 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     );
 
     if (pending.length === 0) {
-      await sendTelegramUpdate('⏳ Batch approve ran — no pending consumers.');
-      // Don't return yet — still need to retry waitlisted consumers below
+      // Wave 1C noise gate: "ran — no pending" was a daily zero-work ping.
+      // The Cron Runs row is the record; keep working the waitlist below.
+      console.info('[batch-approve] no pending consumers this run');
     }
 
     // ── PRE-FIRE TELEGRAM (2026-06-05 hardening) ──────────────────────
@@ -157,19 +158,29 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     // to halt before emails go out. >10 pending = the "this might cascade"
     // threshold.
     if (pending.length > 10) {
-      try {
-        await sendTelegramUpdate(
-          `📣 <b>BATCH-APPROVE PRE-FIRE</b>\n\n` +
-            `About to process <b>${pending.length}</b> pending consumers.\n` +
-            `Each may trigger matching/suggest → rancher intro email.\n\n` +
-            `<i>If this is unexpected, set MATCHING_ENABLED=false in Vercel env NOW to halt. Otherwise this proceeds.</i>`,
-        );
-      } catch {}
+      // Loud + failover (Wave 1C): this is the operator's halt window — a dead
+      // bot token must not swallow it. Content unchanged.
+      await sendOperatorSignal({
+        urgency: 'loud',
+        kind: 'other',
+        summary: `BATCH-APPROVE PRE-FIRE: about to process ${pending.length} pending consumers.`,
+        detail:
+          `Each may trigger matching/suggest → rancher intro email.\n\n` +
+          `If this is unexpected, set MATCHING_ENABLED=false in Vercel env NOW to halt. Otherwise this proceeds.`,
+        dedupeKey: 'batch-approve-prefire',
+        dedupeWindowMs: 60 * 60 * 1000,
+      }).catch(() => {});
     }
 
     // Kill-switch evaluated at loop entry. Lets operator halt mid-cron run.
     if (process.env.MATCHING_ENABLED === 'false') {
-      await sendTelegramUpdate('⛔ batch-approve HALTED — MATCHING_ENABLED=false in env.');
+      await sendOperatorSignal({
+        urgency: 'normal',
+        kind: 'other',
+        summary: 'batch-approve HALTED — MATCHING_ENABLED=false in env.',
+        dedupeKey: 'batch-approve-halted',
+        dedupeWindowMs: 6 * 60 * 60 * 1000,
+      }).catch(() => {});
       return {
         status: 'partial' as const,
         recordsTouched: 0,
@@ -581,31 +592,48 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
         await sleep(300);
       }
 
-      if (waitlistedRetried > 0 || cappedSkipped > 0 || unqualifiedSkipped > 0) {
-        await sendTelegramMessage(
-          TELEGRAM_ADMIN_CHAT_ID,
-          `🔄 <b>Waitlist Retry (throttled)</b>\n\n` +
-          `Processed: ${waitlistedRetried} of ${queue.length} eligible\n` +
-          `✅ Matched: ${waitlistedMatched} (cap ${DAILY_INTRO_CAP}/day)\n` +
-          `⏳ Still waiting: ${waitlistedRetried - waitlistedMatched}\n` +
-          (cappedSkipped > 0 ? `🛑 Deferred to tomorrow: ${cappedSkipped}\n` : '') +
-          (unqualifiedSkipped > 0
-            ? `🚫 Skipped (no engagement signal): ${unqualifiedSkipped}\n` +
-              `   ${Object.entries(unqualifiedReasons).slice(0, 3).map(([r, n]) => `${r}=${n}`).join(' · ')}`
-            : '')
-        );
+      // Wave 1C: only when the retry pass actually touched buyers (attempted
+      // routes). A day of pure skip-counts lives in the Cron Runs breakdown.
+      if (waitlistedRetried > 0) {
+        await sendOperatorSignal({
+          urgency: 'normal',
+          kind: 'other',
+          summary: `Waitlist Retry (throttled): ${waitlistedMatched} matched of ${waitlistedRetried} processed`,
+          detail:
+            `Processed: ${waitlistedRetried} of ${queue.length} eligible\n` +
+            `✅ Matched: ${waitlistedMatched} (cap ${DAILY_INTRO_CAP}/day)\n` +
+            `⏳ Still waiting: ${waitlistedRetried - waitlistedMatched}\n` +
+            (cappedSkipped > 0 ? `🛑 Deferred to tomorrow: ${cappedSkipped}\n` : '') +
+            (unqualifiedSkipped > 0
+              ? `🚫 Skipped (no engagement signal): ${unqualifiedSkipped}\n` +
+                `   ${Object.entries(unqualifiedReasons).slice(0, 3).map(([r, n]) => `${r}=${n}`).join(' · ')}`
+              : ''),
+          dedupeKey: 'batch-approve-waitlist-retry',
+          dedupeWindowMs: 60 * 60 * 1000,
+        }).catch(() => {});
       }
     } catch (e: any) {
       console.error('Waitlisted retry error:', e.message);
     }
 
-    const summary = `✅ <b>Batch Approval Complete</b>
-
-📥 Pending reviewed: ${pending.length}
-✅ Approved: ${approved}
-🤝 Matched to ranchers: ${matched}${ranchersGoLive > 0 ? `\n🚀 Ranchers auto-published: ${ranchersGoLive}` : ''}${waitlistedMatched > 0 ? `\n🔄 Waitlisted re-matched: ${waitlistedMatched}/${waitlistedRetried}` : ''}${capacityFixed > 0 ? `\n🔧 Capacity counters fixed: ${capacityFixed}` : ''}${errors.length > 0 ? `\n⚠️ Errors: ${errors.length} (${errors.slice(0, 3).join(', ')})` : ''}${timeBoxedAt ? `\n⏱ Time-boxed at ${Math.round(SOFT_DEADLINE_MS / 1000)}s (${timeBoxedAt}) — remainder picked up tomorrow.` : ''}`;
-
-    await sendTelegramUpdate(summary);
+    // Wave 1C: zero-work mornings (nothing approved / matched / published /
+    // fixed, no errors, no time-box) stay silent — the Cron Runs row is the
+    // record. Any real work or failure still reports, content unchanged.
+    const summaryWork = approved + matched + ranchersGoLive + waitlistedMatched + capacityFixed;
+    const summaryFailures = errors.length + (timeBoxedAt ? 1 : 0);
+    if (shouldSendCronReport({ workDone: summaryWork, failures: summaryFailures })) {
+      await sendOperatorSignal({
+        urgency: 'normal',
+        kind: 'other',
+        summary: `Batch Approval Complete: ${approved} approved · ${matched} matched`,
+        detail:
+          `📥 Pending reviewed: ${pending.length}\n` +
+          `✅ Approved: ${approved}\n` +
+          `🤝 Matched to ranchers: ${matched}${ranchersGoLive > 0 ? `\n🚀 Ranchers auto-published: ${ranchersGoLive}` : ''}${waitlistedMatched > 0 ? `\n🔄 Waitlisted re-matched: ${waitlistedMatched}/${waitlistedRetried}` : ''}${capacityFixed > 0 ? `\n🔧 Capacity counters fixed: ${capacityFixed}` : ''}${errors.length > 0 ? `\n⚠️ Errors: ${errors.length} (${errors.slice(0, 3).join(', ')})` : ''}${timeBoxedAt ? `\n⏱ Time-boxed at ${Math.round(SOFT_DEADLINE_MS / 1000)}s (${timeBoxedAt}) — remainder picked up tomorrow.` : ''}`,
+        dedupeKey: 'batch-approve-summary',
+        dedupeWindowMs: 60 * 60 * 1000,
+      }).catch(() => {});
+    }
 
   return {
     status: errors.length > 0 || timeBoxedAt ? 'partial' : 'success',

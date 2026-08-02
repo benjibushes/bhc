@@ -149,8 +149,18 @@ export function threadsByRancherFormula(rancherId: string): string {
  *
  * Belt: fast-path rows are ALSO JS-filtered on the {Rancher} link array, so a
  * stale/mis-backfilled text field can never leak another rancher's thread.
+ *
+ * Wave 2 rancher-UX: `opts.throwOnTotalFailure` opts INTO an error when BOTH
+ * paths fail. The rancher inbox route needs to distinguish "no threads" from
+ * "couldn't read threads" — the never-error default turned every Airtable
+ * outage into a confident empty inbox ("no messages") for a rancher whose
+ * buyer had just replied. Default behavior is unchanged for every other
+ * caller.
  */
-export async function listThreadsForRancher(rancherId: string): Promise<any[]> {
+export async function listThreadsForRancher(
+  rancherId: string,
+  opts: { throwOnTotalFailure?: boolean } = {},
+): Promise<any[]> {
   const linkedToRancher = (t: any): boolean =>
     Array.isArray(t?.['Rancher']) && t['Rancher'].includes(rancherId);
 
@@ -172,7 +182,10 @@ export async function listThreadsForRancher(rancherId: string): Promise<any[]> {
     const all: any[] = (await getAllRecords(THREADS_TABLE)) as any[];
     return all.filter(linkedToRancher);
   } catch (e: any) {
-    console.warn('[listThreadsForRancher] full-scan fallback failed — returning empty:', e?.message);
+    console.warn('[listThreadsForRancher] full-scan fallback failed:', e?.message);
+    if (opts.throwOnTotalFailure) {
+      throw new Error(`threads read failed: ${e?.message || 'unknown'}`);
+    }
     return [];
   }
 }

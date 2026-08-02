@@ -420,6 +420,10 @@ export function lastActivityMs(buyer: Record<string, unknown>): number {
     // Cross-rail cooldown (audit 2026-07-22): the waiting-activation cron's
     // nudge stamp counts as activity so a freshly-nudged buyer isn't 18-month-dead.
     'Waiting Nudge Last Sent At',
+    // Wave 2 (2026-08-01): the READY-chase + nurture-drip stamps count as
+    // activity for the same reason.
+    'Ready Nudge Last Sent At',
+    'Nurture Touched At',
     'Last Email Event At',
     'Last Email Delivered At',
     'Last Email Opened At',
@@ -480,14 +484,34 @@ export function suppressionReason(
   // If we treated our own Msg1 as "recent contact" we'd permanently stall the
   // arc at Msg1 and Msg2/Msg3 would never fire. (`Campaign Last Sent At` still
   // counts as activity in lastActivityMs above, so it keeps the buyer alive.)
-  // CROSS-RAIL COOLDOWN (audit 2026-07-22): the waiting-activation nudge rail
-  // stamps 'Waiting Nudge Last Sent At' — a recent nudge is recent contact, so
-  // the campaign never piles a Msg1 deposit push onto a buyer the other rail
-  // just emailed with a conflicting "finish your qualification" CTA. Take the
-  // MAX across all three fields (a stale Last Contacted At must not mask a
-  // fresh nudge stamp).
+  // CROSS-RAIL COOLDOWN (audit 2026-07-22, widened Wave 2 2026-08-01): every
+  // rail that emails a buyer and stamps the CONSUMER row counts as recent
+  // contact, so the campaign never piles a Msg1 deposit push onto a buyer
+  // another rail just emailed with a conflicting CTA. Take the MAX across all
+  // of them (a stale Last Contacted At must not mask a fresh stamp):
+  //   • 'Waiting Nudge Last Sent At' — waiting-activation cron (quiz chase)
+  //   • 'Ready Nudge Last Sent At'   — the SAME cron's READY chase stage,
+  //     omitted until now: a buyer could get a "grab a slot" nudge and a
+  //     Msg1 deposit push in the same week
+  //   • 'Nurture Touched At'         — nurture-drip (d2/6/12/21)
+  //   • 'Sequence Sent At'           — email-sequences stage machine
+  //
+  // NOT here, deliberately: 'Last Chased At' and 'Buyer Pulse Sent At' are
+  // REFERRALS-table stamps (referral-chasup / buyer-pulse) — this function
+  // receives the Consumers row, where those field names simply don't exist,
+  // so listing them would be fake coverage. Buyers with an ACTIVE referral
+  // are already excluded from campaign pools upstream via
+  // activeDealBuyerKeys/hasActiveReferral, which is what actually keeps the
+  // chase rails and this campaign apart.
   let lastContactMs = 0;
-  for (const f of ['Last Contacted At', 'Last Contacted', 'Waiting Nudge Last Sent At']) {
+  for (const f of [
+    'Last Contacted At',
+    'Last Contacted',
+    'Waiting Nudge Last Sent At',
+    'Ready Nudge Last Sent At',
+    'Nurture Touched At',
+    'Sequence Sent At',
+  ]) {
     const v = buyer[f];
     if (!v) continue;
     const t = new Date(v as string).getTime();

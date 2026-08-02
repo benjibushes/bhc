@@ -24,7 +24,6 @@ export default function Footer() {
             <Button href="/faq" variant="secondary">FAQ</Button>
             <Button href="/support" variant="secondary">Support</Button>
             <Button href="/about" variant="secondary">About</Button>
-            <Button href="/news" variant="secondary">News</Button>
             <Button href="https://merch.buyhalfcow.com/collections/hats?utm_source=buyhalfcow&utm_medium=footer&utm_campaign=hat-launch" variant="secondary" external>Hats</Button>
             <Button href="/member/login" variant="secondary">Member Login</Button>
             <Button href="/rancher/login" variant="secondary">Rancher Login</Button>

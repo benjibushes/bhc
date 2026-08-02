@@ -20,6 +20,12 @@ import { sendInstantCommissionInvoice } from '@/lib/email';
 import { transition, logDealAudit } from '@/lib/deal/transitionLive';
 import { statusToState } from '@/lib/deal/states';
 import { lossReasonFromQuickAction, type LossReason } from '@/lib/lossReasons';
+import {
+  quickActionHttpStatus,
+  QUICK_ACTION_INVALID_TOKEN_STATUS,
+  QUICK_ACTION_BAD_ACTION_STATUS,
+  type QuickActionResult,
+} from '@/lib/quickActionHttp';
 
 // Site URL for internal calls (used by pass-action re-route → matching/suggest)
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
@@ -159,22 +165,22 @@ async function applyAction(
   saleAmount?: number,
   reason?: string,
   reasonDetail?: string
-): Promise<{ ok: boolean; message: string }> {
+): Promise<QuickActionResult> {
   // Look up referral + verify rancher ownership
   let referral: any;
   try {
     referral = await getRecordById(TABLES.REFERRALS, decoded.referralId);
   } catch {
-    return { ok: false, message: 'Referral not found.' };
+    return { ok: false, message: 'Referral not found.', failureKind: 'not-found' };
   }
-  if (!referral) return { ok: false, message: 'Referral not found.' };
+  if (!referral) return { ok: false, message: 'Referral not found.', failureKind: 'not-found' };
 
   const assigned = referral['Rancher'] || [];
   const suggested = referral['Suggested Rancher'] || [];
   const isOwner =
     assigned.includes(decoded.rancherId) || suggested.includes(decoded.rancherId);
   if (!isOwner) {
-    return { ok: false, message: 'This action link is no longer valid for this referral.' };
+    return { ok: false, message: 'This action link is no longer valid for this referral.', failureKind: 'not-owner' };
   }
 
   const currentStatus = referral['Status'] || '';
@@ -193,7 +199,7 @@ async function applyAction(
       console.log(
         `[quick-action] money-lock refusal: action=${action} referral=${decoded.referralId} status=${currentStatus} (Deposit Paid At stamped)`,
       );
-      return { ok: false, message: DEPOSIT_LOCKED_MESSAGE };
+      return { ok: false, message: DEPOSIT_LOCKED_MESSAGE, failureKind: 'locked' };
     }
   }
 
@@ -241,7 +247,7 @@ async function applyAction(
       return { ok: true, message: `Already marked "${currentStatus}". Invoice already on its way.` };
     }
     if (!saleAmount || saleAmount <= 0) {
-      return { ok: false, message: 'Sale amount required for Closed Won.' };
+      return { ok: false, message: 'Sale amount required for Closed Won.', failureKind: 'bad-input' };
     }
     // HARD GATE: rancher must have a locked Commission Rate. Stops the
     // "we never agreed on a rate" disputes that bit the Ashcraft pattern
@@ -256,6 +262,7 @@ async function applyAction(
         ok: false,
         message:
           'No Commission Rate locked on your account. Please contact hello@buyhalfcow.com before closing deals via email.',
+        failureKind: 'not-ready',
       };
     }
     updates['Status'] = 'Closed Won';
@@ -303,6 +310,7 @@ async function applyAction(
         message:
           `Can't auto-pass this lead — you've already engaged with the buyer (status: "${currentStatus}"). ` +
           `Mark it Closed Lost from your dashboard with a reason if you actually want out.`,
+        failureKind: 'locked',
       };
     }
     updates['Status'] = 'Closed Lost';
@@ -312,7 +320,7 @@ async function applyAction(
     updates['Notes'] = existing ? `${stamp}\n\n${existing}` : stamp;
     summary = 'Passed on this lead. Buyer is being re-routed now.';
   } else {
-    return { ok: false, message: 'Unknown action.' };
+    return { ok: false, message: 'Unknown action.', failureKind: 'bad-input' };
   }
 
   // ROUTE CLOSE PATHS THROUGH CONTRACT.
@@ -345,7 +353,8 @@ async function applyAction(
         ...(lossChoice ? { extraFields: { 'Loss Reason': lossChoice } } : {}),
       });
     } catch (e: any) {
-      return { ok: false, message: `Couldn't update — try again. (${e?.message || 'unknown'})` };
+      console.error('[quick-action] recordClose failed:', e?.message || e);
+      return { ok: false, message: "Couldn't update — nothing was changed. Try the link again in a minute.", failureKind: 'write-failed' };
     }
     // Deal Events audit row on rancher-initiated Closed Lost. Dashboard
     // closes route through transition() which logs one automatically; this
@@ -493,7 +502,8 @@ async function applyAction(
       try {
         await updateRecord(TABLES.REFERRALS, decoded.referralId, updates);
       } catch (e: any) {
-        return { ok: false, message: `Couldn't update — try again. (${e?.message || 'unknown'})` };
+        console.error('[quick-action in_talks] direct-write fallback failed:', e?.message || e);
+        return { ok: false, message: "Couldn't update — nothing was changed. Try the link again in a minute.", failureKind: 'write-failed' };
       }
     }
   }
@@ -652,7 +662,7 @@ export async function GET(request: Request) {
         href: 'https://www.buyhalfcow.com/rancher',
         label: 'Open dashboard',
       }),
-      { headers: { 'content-type': 'text/html' } }
+      { status: QUICK_ACTION_INVALID_TOKEN_STATUS, headers: { 'content-type': 'text/html' } }
     );
   }
 
@@ -741,13 +751,13 @@ export async function POST(request: Request) {
   if (!decoded) {
     return new NextResponse(
       htmlPage('Link expired', `<h1>This link expired or is invalid.</h1>`),
-      { headers: { 'content-type': 'text/html' } }
+      { status: QUICK_ACTION_INVALID_TOKEN_STATUS, headers: { 'content-type': 'text/html' } }
     );
   }
   if (!ALLOWED_ACTIONS.has(action)) {
     return new NextResponse(
       htmlPage('Bad action', `<h1>Unknown action.</h1>`),
-      { headers: { 'content-type': 'text/html' } }
+      { status: QUICK_ACTION_BAD_ACTION_STATUS, headers: { 'content-type': 'text/html' } }
     );
   }
 
@@ -774,16 +784,19 @@ export async function POST(request: Request) {
   ${lostFormFields()}
   <button type="submit">✗ Confirm Closed Lost</button>
 </form>`),
-      { headers: { 'content-type': 'text/html' } }
+      { status: QUICK_ACTION_BAD_ACTION_STATUS, headers: { 'content-type': 'text/html' } }
     );
   }
 
   const result = await applyAction(decoded, action, saleAmount, reason, reasonDetail);
+  // Wave 2 rancher-UX: real status codes. The page a human sees is unchanged;
+  // dead-man checks and log alerting can finally see failures (this route
+  // answered 200 on every outcome before).
   return new NextResponse(
     htmlPage(result.ok ? 'Updated' : 'Couldn\'t update', `<h1>${result.ok ? 'Done.' : 'Try again.'}</h1><p>${result.message}</p>`, {
       href: 'https://www.buyhalfcow.com/rancher',
       label: 'Open dashboard',
     }),
-    { headers: { 'content-type': 'text/html' } }
+    { status: quickActionHttpStatus(result), headers: { 'content-type': 'text/html' } }
   );
 }

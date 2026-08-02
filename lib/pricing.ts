@@ -14,7 +14,7 @@
 // reserve deposit (25% of that tier's price). Half is NOT naive ½: fixed
 // processing/packaging spread over less meat means small shares carry a ~10–20%
 // per-lb premium, so naive division would under-price the cuts that make up most
-// orders. See docs/superpowers/specs/2026-06-20-pricing-onboarding-design.md.
+// orders. See docs/archive/superpowers/specs/2026-06-20-pricing-onboarding-design.md.
 
 // ── Tunable constants ──────────────────────────────────────────────────────
 export const DEPOSIT_PCT = 0.25;     // deposit = 25% of each tier's price

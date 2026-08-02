@@ -69,10 +69,22 @@ export const REFERRAL_DASHBOARD_FIELDS = [
   // breaker above degrades gracefully if a field is ever renamed.
   'Final Paid Amount', 'Payment Confirmed At', 'Payment Confirmation Method',
   'Commission Paid At',
+  // Wave 1A (2026-08-01) — the TRUE Connect-rail fee, stamped in cents at
+  // deposit settle (lib/stripeSettlement.ts). 'Commission Due' above is the
+  // DEPRECATED legacy-invoice receivable — deliberately never written on
+  // Connect closes — so without this field every Connect rancher read
+  // "Commission $0" on their own earnings.
+  'BHC Fee Cents',
   // My Leads (2026-07-29) — provenance marker (fldC5pUi90WDpBTsa). The
   // dashboard splits rancher-entered leads ('rancher-added') into the My
   // Leads CRM block and keeps them out of the routed Deals lists.
   'Referral Source',
+  // Reviews visibility (Wave 2 rancher-UX, 2026-08-02) — the buyer review
+  // trio. The public page filters to rating ≥ 4; the rancher Reviews rail
+  // (GET /api/rancher/referrals) shows ALL of them, including the low-rated
+  // ones the public page hides, so the rancher can fix the cause. The
+  // projection breaker degrades gracefully if the fields are ever renamed.
+  'Buyer Rating', 'Buyer Review', 'Review Submitted At',
 ];
 
 const READ_PATH_BREAKER_MS = 5 * 60 * 1000;

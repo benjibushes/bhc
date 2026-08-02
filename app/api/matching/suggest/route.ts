@@ -1231,7 +1231,11 @@ export async function POST(request: Request) {
         const candName = candidate['Operator Name'] || candidate['Ranch Name'] || 'Unknown';
         try {
           await sendOperatorSignal({
-            urgency: isHotLead ? 'loud' : 'digest',
+            // Wave 1C (2026-08-01): the non-hot branch was urgency 'digest',
+            // which suppress-and-logs (no digest collector exists) — capacity
+            // races were invisible. 'normal' + 24h/rancher dedupe = at most
+            // one card per saturated rancher per day. Hot-lead path unchanged.
+            urgency: isHotLead ? 'loud' : 'normal',
             kind: 'capacity',
             summary: isHotLead
               ? `HOT-LEAD HARD CEILING HIT: ${candName} (${candidate['State'] || '?'}) at ${newRefs}/${HARD_CEILING} — slot released, trying next eligible rancher.`
@@ -1239,6 +1243,7 @@ export async function POST(request: Request) {
             detail: 'Buyer falls through to the next eligible candidate; waitlisted only if every candidate is at its valve.',
             refs: [{ type: 'rancher', id: candidate.id, label: candName }],
             dedupeKey: `${isHotLead ? 'hard-ceiling' : 'capacity-race'}:${candidate.id}`,
+            ...(isHotLead ? {} : { dedupeWindowMs: 24 * 60 * 60 * 1000 }),
           });
         } catch (e) {
           console.error('Capacity-bounce operator signal failed:', e);

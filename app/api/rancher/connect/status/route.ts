@@ -88,7 +88,9 @@ export async function GET(req: Request) {
     console.error('[connect/status] Stripe retrieve failed:', e?.message);
     return NextResponse.json(
       {
-        error: `Stripe read failed: ${e?.message || 'unknown'}`,
+        // Raw Stripe detail stays in the server log above — this string
+        // renders verbatim in dashboard banners.
+        error: "We couldn't reach Stripe to check your payout setup just now — try again in a moment.",
         status: 'unknown',
         state: 'incomplete' as const,
         // Actionable, not a silent failure: the rancher can still be sent to

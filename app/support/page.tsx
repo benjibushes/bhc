@@ -87,7 +87,7 @@ function SupportForm() {
       <div className="max-w-2xl mx-auto text-center space-y-6">
         <h1 className="font-serif text-3xl">We got it.</h1>
         <p className="text-saddle text-lg">
-          A real person will read your report and reply to your email within a few hours.
+          A real person will read your report and reply to your email within a day, usually sooner.
         </p>
         <div className="text-sm text-muted space-y-2">
           <p>
@@ -119,7 +119,7 @@ function SupportForm() {
         <h1 className="font-serif text-3xl md:text-4xl">Report a Problem</h1>
         <p className="text-sm text-muted">
           Something wrong with your order? Tell us here — a real person reads every report
-          and replies within a few hours.
+          and replies within a day.
         </p>
       </div>
 

@@ -29,7 +29,7 @@ If PR fix/rancher-wave-c is open: verify (merge main in, re-gauntlet, spot-check
 - SALES TAX decision: Stripe Tax on the product rail (mirror brand rail) OR documented rancher-merchant-of-record exemption.
 - The 9 live-no-Connect ranchers: pause routing or chase to connect. JC's Ranch NC first (12 stranded referrals). Use bhc-mutation-guardrails.
 - 29 warm stalled ranchers = the first onboarding wave: docs-send the 17 [D], e-sign nudge the 12 [E].
-- 5 Bar Beef CA (714-749-5717, approved, needs only Stripe) + Ashcraft TX (un-pause + approve). buyhalfcow.co purchase. Nurture + waiting-activation flips after reading dry-run Telegrams. Meta envs when 2-3 states have supply.
+- 5 Bar Beef CA (phone redacted — see Airtable, approved, needs only Stripe) + Ashcraft TX (un-pause + approve). buyhalfcow.co purchase. Nurture + waiting-activation flips after reading dry-run Telegrams. Meta envs when 2-3 states have supply.
 
 ## VERIFICATION RITUAL (every phase)
 `npx tsc --noEmit` clean · `npm test` all green · REAL `npm run build` exit 0 (retry once on transient Airtable prerender timeout) · merge main before PR · after squash-merge grep main for a signature symbol · confirm Vercel deploy READY · curl the changed surface live.

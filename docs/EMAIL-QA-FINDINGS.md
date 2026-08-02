@@ -2,6 +2,14 @@
 
 _2026-06-23. Read-only audit of all 93 emails across 4 dimensions. Findings consolidated below; full per-dimension reports follow._
 
+> **⚠️ STALE — P0 script findings unactionable (checked 2026-08-01):** the
+> `scripts/*.mjs` files the P0 tables cite are not in the repo (`scripts/` is
+> gitignored; 20 of the 23 cited paths no longer exist on disk). Do not open
+> work items from the script rows below — treat them as a historical record of
+> one-off scripts that have since been deleted or archived. The `lib/email.ts`
+> / cron findings elsewhere in this doc may still be live; re-verify before
+> acting.
+
 ## VERDICT — are we spamming?
 
 **Your automated app + cron emails are NOT spamming.** The central `lib/email.ts` wrapper enforces suppression (Unsub/Bounce/Complained), unsubscribe link, physical address, frequency cap, and List-Unsubscribe on **every** route + cron send. `_bypassSuppression` is used exactly once (justified admin forward). That foundation is solid.

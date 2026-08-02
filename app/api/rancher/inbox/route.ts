@@ -18,7 +18,21 @@ export async function GET(req: Request) {
   // Text' with a full-scan + JS link-id-filter fallback (the old
   // SEARCH/ARRAYJOIN({Rancher}) scan compared the record id against Ranch
   // Name and NEVER matched — the inbox listed zero threads since it shipped).
-  const threads: any[] = await listThreadsForRancher(session.rancherId);
+  //
+  // Wave 2 rancher-UX: a TOTAL read failure is a real error, not an empty
+  // list. This route used to answer 200-{threads:[]} on any upstream outage,
+  // so a rancher whose buyer had just replied saw a confident "no messages."
+  // The inbox page renders a couldn't-load + retry state on non-2xx.
+  let threads: any[];
+  try {
+    threads = await listThreadsForRancher(session.rancherId, { throwOnTotalFailure: true });
+  } catch (e: any) {
+    console.error('[rancher/inbox] threads read failed:', e?.message || e);
+    return NextResponse.json(
+      { error: "Couldn't load your messages just now — try again in a moment." },
+      { status: 503 },
+    );
+  }
   threads.sort((a: any, b: any) => new Date(b['Last Message At'] || 0).getTime() - new Date(a['Last Message At'] || 0).getTime());
 
   // For each thread, fetch the latest message preview + buyer name.

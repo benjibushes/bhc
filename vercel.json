@@ -1,7 +1,6 @@
 {
   "env": {
     "STRIPE_CONNECT_ENABLED": "true",
-    "ON_PLATFORM_MESSAGING_ENABLED": "false",
     "VERTICAL_BOUNDARY_ENFORCE": "warn"
   },
   "crons": [
@@ -20,10 +19,6 @@
     {
       "path": "/api/cron/send-scheduled",
       "schedule": "0 * * * *"
-    },
-    {
-      "path": "/api/cron/daily-digest",
-      "schedule": "7 14 * * *"
     },
     {
       "path": "/api/cron/batch-approve",
@@ -84,6 +79,10 @@
     {
       "path": "/api/cron/buyer-pulse",
       "schedule": "0 18 * * *"
+    },
+    {
+      "path": "/api/cron/state-coverage-notify",
+      "schedule": "40 16 * * *"
     },
     {
       "path": "/api/cron/re-warm-cohort",

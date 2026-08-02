@@ -3,14 +3,30 @@
 // D1 — Single Telegram message 9am with platform health.
 //
 // What Ben sees:
+//   - Promised follow-ups due today (absorbed from daily-digest, Wave 1C)
 //   - 24h cron error count (any non-success runs)
 //   - Active rancher count + capacity drift
 //   - Pipeline: pending approval, awaiting payment, slot locked, closed today
 //   - Funnel: signups, qualified, booked, closed (last 24h)
+//   - Month-to-date: deals closed + commission (absorbed from daily-digest)
 //   - Email pipeline: sent, suppressed, bounced
 //   - Deploy SHA (compared to git HEAD if drift cron exposes it)
 //
-// Schedule: daily 14:00 UTC (~9am MT). Single message, no spam.
+// Wave 1C (2026-08-01): daily-digest MERGED INTO this cron and deleted. The
+// two fired 65 minutes apart and re-reported the same funnel with DIFFERENT
+// filters ("new signups" = all consumers there, Approved-only here), so the
+// operator saw conflicting numbers for the same-sounding metric. Canonical
+// definitions now live here alone:
+//   signups (24h)  = ALL consumers created in the last 24h (any status) —
+//                    the daily-digest definition won; Approved-only silently
+//                    hid pending signups from the top of the funnel.
+//   qualified (24h)= those with Qualified At stamped.
+// Dropped from daily-digest without replacement (stated in PR #wave1):
+// whole-table member totals, pending-review count (batch-approve drains it
+// daily), and the AI Business Brief (a second message re-narrating the same
+// numbers — pure noise under the Wave 1C mandate).
+//
+// Schedule: daily 15:05 UTC (~9am MT). Single message, no spam.
 
 import { NextResponse } from 'next/server';
 import { getAllRecords, TABLES } from '@/lib/airtable';
@@ -21,6 +37,15 @@ import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 import { runPlatformProbes } from '@/lib/platformProbes';
+import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
+import {
+  selectDueFollowUps,
+  operatorToday,
+  followUpContextLine,
+  FOLLOW_UP_DIGEST_MAX_LINES,
+  type DueFollowUp,
+} from '@/lib/followUpQueue';
+import { classifyCronFailures } from '@/lib/cronFailures';
 
 export const maxDuration = 60;
 
@@ -36,6 +61,56 @@ interface CronResult {
   status: 'success' | 'partial' | 'error';
   recordsTouched: number;
   notes: string;
+}
+
+/** Telegram parse_mode=HTML. Buyer-supplied text must not be able to break it. */
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// ── Absorbed from daily-digest (Wave 1C merge) — pure so they're testable ──
+
+/** Month-to-date Closed Won wins + commission. Pure off the referrals read. */
+export function aggregateMonthToDate(
+  referrals: any[],
+  nowMs: number,
+): { wins: number; commission: number } {
+  const now = new Date(nowMs);
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  let wins = 0;
+  let commission = 0;
+  for (const r of referrals) {
+    if (String(r?.['Status'] || '') !== 'Closed Won') continue;
+    const closed = new Date(String(r?.['Closed At'] || 0)).getTime();
+    if (!Number.isFinite(closed) || closed < monthStart) continue;
+    wins++;
+    commission += Number(r?.['Commission Due']) || 0;
+  }
+  return { wins, commission };
+}
+
+/**
+ * Promised-follow-ups block ("I'll call you in two weeks", made real).
+ * SILENT WHEN EMPTY, deliberately: a digest that reports "0 follow-ups"
+ * every morning teaches the operator to skim past the whole message.
+ * OPERATOR-ONLY — this tells the operator to make a call; it never emails
+ * or texts the buyer.
+ */
+export function buildFollowUpBlock(followUpsDue: DueFollowUp[]): string {
+  if (followUpsDue.length === 0) return '';
+  const shown = followUpsDue.slice(0, FOLLOW_UP_DIGEST_MAX_LINES);
+  return `<b>⏰ Follow up today (${followUpsDue.length})</b>\n${shown
+    .map((f) => {
+      const late = f.daysOverdue > 0 ? ` <i>(${f.daysOverdue}d late)</i>` : '';
+      const phone = f.phone ? ` · ${escapeHtml(f.phone)}` : ' · no phone';
+      const ctx = followUpContextLine(f.notes);
+      return `• ${escapeHtml(f.name)}${phone}${late}${ctx ? `\n   ${escapeHtml(ctx)}` : ''}`;
+    })
+    .join('\n')}${
+    followUpsDue.length > shown.length
+      ? `\n<i>+${followUpsDue.length - shown.length} more on the desk</i>`
+      : ''
+  }`;
 }
 
 // P4b — "started but didn't finish" cohort. Pure so it's unit-testable off the
@@ -91,12 +166,16 @@ async function realHandler(_request: Request): Promise<CronResult> {
       return [];
     }
   };
-  const [cronRuns, ranchers, consumers, referrals, emailSends, stuckRanchers, failedSignupAttempts, cronPauses] = await Promise.all([
+  const [cronRuns, ranchers, consumers, referrals, emailSends, stuckRanchers, failedSignupAttempts, cronPauses, followUpRows, pendingSyncRows] = await Promise.all([
     safeRead('cronRuns', getAllRecords('Cron Runs', `IS_AFTER({Started At}, '${cutoff24h}')`) as Promise<any[]>),
     safeRead('ranchers', getAllRecords(TABLES.RANCHERS, `{Active Status}='Active'`) as Promise<any[]>),
+    // Wave 1C merge: was Approved-only, which disagreed with daily-digest's
+    // all-consumers count for the same-sounding "new signups" metric. The
+    // all-consumers definition is canonical now — a pending signup is still a
+    // signup; qualified24h narrows by Qualified At below.
     safeRead('consumers', getAllRecords(
       TABLES.CONSUMERS,
-      `AND({Status}='Approved', IS_AFTER(CREATED_TIME(), '${cutoff24h}'))`
+      `IS_AFTER(CREATED_TIME(), '${cutoff24h}')`
     ) as Promise<any[]>),
     safeRead('referrals', getAllRecords(TABLES.REFERRALS) as Promise<any[]>),
     safeRead('emailSends', getAllRecords(
@@ -124,26 +203,28 @@ async function realHandler(_request: Request): Promise<CronResult> {
       TABLES.CRON_PAUSES,
       `{Paused}=TRUE()`
     ) as Promise<any[]>),
+    // Wave 1C merge (from daily-digest): promised follow-ups. Filtered to
+    // rows with a promise on file — selectDueFollowUps applies the calendar
+    // + suppression + terminal-stage gates in JS.
+    safeRead('followUps', getAllRecords(
+      TABLES.CONSUMERS,
+      `NOT({Next Follow Up At} = BLANK())`
+    ) as Promise<any[]>),
+    // Wave 1C merge (from daily-digest): supply-stall backstop — synced
+    // Shopify products import OFF /shop until /approvestore. The filter
+    // returns ONLY unapproved rows, not the whole catalog.
+    safeRead('pendingSyncProducts', getAllRecords(
+      TABLES.RANCHER_PRODUCTS,
+      'AND({Sync Managed} = TRUE(), NOT({Marketplace Approved} = TRUE()))'
+    ) as Promise<any[]>),
   ]);
 
-  // Cron health
-  // Stale heartbeat rows (scale audit 2026-07-22): the hourly campaign crons
-  // write a 'started' Cron Runs row before the handler and complete it in
-  // finally. A row still 'started' after 2h means the lambda was KILLED
-  // (maxDuration) before finally ran — previously invisible because the next
-  // hourly tick wrote a fresh row. Count them as failed runs.
-  const staleStartedRuns = cronRuns.filter((r: any) => {
-    if (String(r['Status'] || '').toLowerCase() !== 'started') return false;
-    const startedAt = new Date(String(r['Started At'] || '')).getTime();
-    return Number.isFinite(startedAt) && now - startedAt > 2 * 60 * 60 * 1000;
-  });
-  const cronErrorRuns = cronRuns.filter((r: any) => {
-    const s = String(r['Status'] || '').toLowerCase();
-    return s === 'error' || s === 'partial';
-  }).concat(staleStartedRuns);
-  const failedCronNames = Array.from(
-    new Set(cronErrorRuns.map((r: any) => String(r['Name'] || 'unknown')))
-  );
+  // Cron health — shared classifier (lib/cronFailures, extracted 2026-08-01
+  // for the /admin/today cockpit): error/partial rows + stale 'started'
+  // heartbeats (lambda killed before `finally` — scale audit 2026-07-22).
+  // Same math as before the extraction; the digest's Telegram output is
+  // unchanged.
+  const { errorRuns: cronErrorRuns, failedCronNames } = classifyCronFailures(cronRuns, now);
 
   // ── Dead-man's switch (2026-07-02) ──
   // Everything above only inspects Cron Runs rows that EXIST — a cron that
@@ -205,6 +286,23 @@ async function realHandler(_request: Request): Promise<CronResult> {
     return b > cutoff24h;
   }).length;
 
+  // Wave 1C merge (from daily-digest): pending-approval + stalled pipeline
+  // counts, month-to-date wins, promised follow-ups — all off reads already
+  // in hand, zero extra Airtable calls beyond the two new filtered pulls.
+  const referralsPendingApproval = referrals.filter(
+    (r: any) => String(r['Status'] || '') === 'Pending Approval'
+  ).length;
+  const stalledReferrals = referrals.filter((r: any) => {
+    if (!['Intro Sent', 'Rancher Contacted'].includes(String(r['Status'] || ''))) return false;
+    const lastActivity = r['Last Chased At'] || r['Intro Sent At'] || r['Approved At'];
+    if (!lastActivity) return false;
+    return now - new Date(String(lastActivity)).getTime() >= 5 * 24 * 60 * 60 * 1000;
+  }).length;
+  const mtd = aggregateMonthToDate(referrals, now);
+  const followUpsDue = selectDueFollowUps(followUpRows as any[], operatorToday());
+  const followUpBlock = buildFollowUpBlock(followUpsDue);
+  const pendingSyncApproval = pendingSyncRows.length;
+
   // Ranchers
   const livePages = ranchers.filter((r: any) => r['Page Live'] === true).length;
   const tier_v2 = ranchers.filter((r: any) => String(r['Pricing Model'] || '').toLowerCase() === 'tier_v2').length;
@@ -221,6 +319,11 @@ async function realHandler(_request: Request): Promise<CronResult> {
     (acc: number, r: any) => acc + Number(r['Current Active Referrals'] || 0),
     0
   );
+  // Wave 1C merge (from daily-digest): active ranchers at ≥80% of their cap.
+  const nearCapacity = ranchers.filter((r: any) => {
+    const cur = Number(r['Current Active Referrals'] || 0);
+    return cur >= getMaxActiveReferrals(r) * 0.8;
+  }).length;
 
   // Email
   const sent24h = emailSends.filter((e: any) => String(e['Status'] || '') === 'sent').length;
@@ -261,6 +364,9 @@ async function realHandler(_request: Request): Promise<CronResult> {
   const lines = [
     anyRed ? '🚨 <b>BHC needs attention</b>' : '✅ <b>BHC all green</b>',
     '☀️ <b>BHC Daily Health Digest</b>',
+    // Promised follow-ups first — the one section that IS an action list.
+    // Renders as nothing on a day with no promises due (see buildFollowUpBlock).
+    followUpBlock || null,
     '',
     probeReds.length === 0
       ? `✅ <b>Probes:</b> ${probes.length}/${probes.length} green (stripe · resend · redis · secrets)${probeSkips.length ? ` · ${probeSkips.length} skipped (network)` : ''}`
@@ -270,15 +376,19 @@ async function realHandler(_request: Request): Promise<CronResult> {
         ].join('\n'),
     '',
     `<b>Closed today:</b> ${referralsClosedToday.length} deal${referralsClosedToday.length === 1 ? '' : 's'} · ${fmtUsd(closedTodayValueCents)}`,
-    `<b>Pipeline:</b> ${referralsAwaiting} awaiting payment · ${referralsLocked} slot locked`,
+    `<b>Month:</b> ${mtd.wins} deal${mtd.wins === 1 ? '' : 's'} closed · $${mtd.commission.toLocaleString()} commission`,
+    `<b>Pipeline:</b> ${referralsAwaiting} awaiting payment · ${referralsLocked} slot locked · ${referralsPendingApproval} pending approval · ${stalledReferrals} stalled 5d+`,
     '',
     `<b>Funnel (24h):</b>`,
     `  signups ${signups24h} → qualified ${qualified24h} → intro ${intro24h} → booked ${booked24h}`,
     '',
-    `<b>Ranchers:</b> ${ranchers.length} active · ${livePages} live pages · ${tier_v2} tier_v2 (${legacyActive} legacy) · ${capacityTotal} buyers in pipeline`,
+    `<b>Ranchers:</b> ${ranchers.length} active · ${livePages} live pages · ${tier_v2} tier_v2 (${legacyActive} legacy) · ${capacityTotal} buyers in pipeline${nearCapacity > 0 ? ` · ⚠️ ${nearCapacity} near capacity` : ''}`,
     connectStuck > 0
       ? `🚨 <b>Connect stuck:</b> ${connectStuck} tier_v2 rancher${connectStuck === 1 ? '' : 's'} can't take deposits (Stripe Connect ≠ active)`
       : `✅ <b>Connect:</b> all tier_v2 ranchers can take deposits`,
+    pendingSyncApproval > 0
+      ? `🕓 <b>Synced products pending /approvestore:</b> ${pendingSyncApproval} (off /shop until approved)`
+      : null,
     '',
     failed24h > 0
       ? `🚨 <b>Email (24h):</b> ${sent24h} sent · ${failed24h} FAILED · ${suppressed24h} suppressed · ${bounced24h} bounced — failed sends mean the pipe is sick NOW`
@@ -308,11 +418,11 @@ async function realHandler(_request: Request): Promise<CronResult> {
   ];
 
   // Surface read failures IN the digest so a blind monitor is impossible.
-  // 9 reads total: the 8 parallel pulls + the watchdog's Cron Runs read.
+  // 11 reads total: the 10 parallel pulls + the watchdog's Cron Runs read.
   if (readErrors.length > 0) {
     lines.push(
       '',
-      `⚠️ <b>Health read errors:</b> ${readErrors.length}/9 Airtable reads failed (${readErrors.map((e) => e.split(':')[0]).join(', ')}) — numbers above are incomplete.`
+      `⚠️ <b>Health read errors:</b> ${readErrors.length}/11 Airtable reads failed (${readErrors.map((e) => e.split(':')[0]).join(', ')}) — numbers above are incomplete.`
     );
   }
 
@@ -331,7 +441,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
   return {
     status,
     recordsTouched: 1,
-    notes: `signups=${signups24h} qualified=${qualified24h} closed=${referralsClosedToday.length} cronErrors=${cronErrorRuns.length} missingCrons=${missingCrons === null ? 'read-failed' : missingCrons.length} paused=${pausedCrons.length} readErrors=${readErrors.length} stuck=${stuck.blankOver2d.length}/${stuck.signedNotLive.length}/${stuck.welcomeFailed.length} failedSignups24h=${failedSignups24h}`,
+    notes: `signups=${signups24h} qualified=${qualified24h} closed=${referralsClosedToday.length} mtdWins=${mtd.wins} followUpsDue=${followUpsDue.length} syncPendingApproval=${pendingSyncApproval} cronErrors=${cronErrorRuns.length} missingCrons=${missingCrons === null ? 'read-failed' : missingCrons.length} paused=${pausedCrons.length} readErrors=${readErrors.length} stuck=${stuck.blankOver2d.length}/${stuck.signedNotLive.length}/${stuck.welcomeFailed.length} failedSignups24h=${failedSignups24h}`,
   };
 }
 

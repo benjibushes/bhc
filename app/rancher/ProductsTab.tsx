@@ -113,10 +113,18 @@ const EMPTY_FORM = {
 
 export default function ProductsTab({
   connectActive,
+  connectStatus = '',
   onGoToMyPage,
   onOrdersChanged,
 }: {
   connectActive: boolean;
+  // Wave 2 rancher-UX: the cached Connect status string ('restricted',
+  // 'onboarding', …). A rancher who ALREADY finished Stripe and later went
+  // restricted (routine re-KYC, bank removed) used to read "finish your
+  // Stripe setup first — takes a few minutes" — blaming them for a setup
+  // they completed. Restricted gets its own copy + the restricted-resolution
+  // flow instead of the generic billing link.
+  connectStatus?: string;
   onGoToMyPage: () => void;
   // Wave C — lets the dashboard shell keep its "N to ship" spine badge + Home
   // card in sync when orders load here or one gets marked shipped. Optional
@@ -143,6 +151,44 @@ export default function ProductsTab({
   // but stock must stay rancher-updatable — the monthly check-in depends on it).
   const [stockDraft, setStockDraft] = useState<Record<string, string>>({});
   const [stockSavingId, setStockSavingId] = useState<string | null>(null);
+
+  // Restricted-resolution flow (Wave 2 rancher-UX) — mirrors the dashboard
+  // banner's resolveRestricted: live status read → fresh onboarding link when
+  // Stripe says the restriction is resumable, billing portal otherwise.
+  // Same-tab navigation on purpose (window.open after an await is silently
+  // popup-blocked on mobile).
+  const [restrictedBusy, setRestrictedBusy] = useState(false);
+  const [restrictedErr, setRestrictedErr] = useState('');
+  async function resolveRestrictedFromProducts() {
+    setRestrictedErr('');
+    setRestrictedBusy(true);
+    try {
+      const statusRes = await fetch('/api/rancher/connect/status', { credentials: 'include' });
+      const statusData = await statusRes.json().catch(() => ({} as any));
+      const canResume = statusRes.ok && statusData?.canResumeOnboarding === true;
+      if (canResume) {
+        const res = await fetch('/api/rancher/connect/start', { method: 'POST', credentials: 'include' });
+        const data = await res.json().catch(() => ({} as any));
+        if (res.ok && data?.url) {
+          window.location.href = data.url;
+          return;
+        }
+        setRestrictedErr(data?.error || 'could not open Stripe onboarding — try again in a moment.');
+        return;
+      }
+      const portalRes = await fetch('/api/rancher/tier/portal', { credentials: 'include' });
+      const portalData = await portalRes.json().catch(() => ({} as any));
+      if (portalRes.ok && portalData?.url) {
+        window.location.href = portalData.url;
+        return;
+      }
+      setRestrictedErr(portalData?.error || 'could not open the Stripe portal — try again in a moment.');
+    } catch {
+      setRestrictedErr('network error — try again in a moment.');
+    } finally {
+      setRestrictedBusy(false);
+    }
+  }
 
   const [form, setForm] = useState({ ...EMPTY_FORM });
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -654,10 +700,8 @@ export default function ProductsTab({
                   <>
                     shipping frozen beef cross-country usually runs <strong>$40 to $90</strong> a box.
                     if your price doesn&rsquo;t cover that, you&rsquo;re paying it out of your own cut
-                    on every order. whatever the buyer pays for shipping, 100% of it comes to you.{' '}
-                    <a href="/rancher/shipping-guide" target="_blank" rel="noreferrer" className="underline">
-                      how to ship frozen so it arrives frozen &rarr;
-                    </a>
+                    on every order. whatever the buyer pays for shipping, 100% of it comes to you.
+                    pack frozen with dry ice in an insulated liner — 2-day shipping or faster.
                   </>
                 )}
               </span>
@@ -1100,8 +1144,32 @@ export default function ProductsTab({
       )}
 
       {/* ── Product management — Connect-gated (a form they can't submit is
-             worse than a clear next step). ── */}
-      {!connectActive && (
+             worse than a clear next step). ──
+          Wave 2 rancher-UX: 'restricted' is NOT "you never finished setup" —
+          it's a rancher who DID finish and whose account later got flagged
+          (routine re-KYC, bank removed). They get honest no-blame copy and
+          the same resolve flow the dashboard's red banner runs (live status
+          read → fresh onboarding link when resumable, billing portal
+          otherwise) instead of a generic billing link. */}
+      {!connectActive && connectStatus === 'restricted' && (
+        <div className="border border-dust bg-bone-warm p-6 max-w-xl">
+          <p className="text-sm leading-relaxed mb-4">
+            your product listings are paused — <strong>not because of anything you did</strong>. Stripe
+            has re-flagged your account and needs a few things confirmed (usually bank details or
+            re-accepting their terms) before payouts can flow again.
+          </p>
+          {restrictedErr && <p className="text-sm text-weathered mb-3">{restrictedErr}</p>}
+          <button
+            type="button"
+            onClick={resolveRestrictedFromProducts}
+            disabled={restrictedBusy}
+            className="inline-block px-5 py-3 min-h-[44px] bg-charcoal text-bone text-sm font-medium uppercase tracking-wider hover:bg-saddle transition-colors disabled:opacity-60"
+          >
+            {restrictedBusy ? 'checking…' : 'sort it out with Stripe →'}
+          </button>
+        </div>
+      )}
+      {!connectActive && connectStatus !== 'restricted' && (
         <div className="border border-dust bg-bone-warm p-6 max-w-xl">
           <p className="text-sm leading-relaxed mb-4">
             list jerky, boxes and bundles on the buyhalfcow marketplace — buyers pay online, you

@@ -91,12 +91,18 @@ export async function POST(
     // Telegram audit so revivals are visible — also useful for spotting
     // mass-revive accidents.
     try {
+      // Wave 1C (2026-08-01): was urgency 'digest', which suppress-and-logs
+      // (no digest collector exists) — revivals were invisible, defeating the
+      // stated "spot mass-revive accidents" purpose. 'normal' + per-referral
+      // 24h dedupe: one card per revive, a mass-revive shows as a burst.
       await sendOperatorSignal({
-        urgency: 'digest',
+        urgency: 'normal',
         kind: 'audit',
         summary: `LEAD REVIVED: ${buyerName} (${buyerEmail})`,
         detail: `Status: ${fromStatus} → ${toStatus}\nClosed At cleared. Activity stamped. Cron will treat as fresh.`,
         refs: [{ type: 'referral', id, label: buyerName }],
+        dedupeKey: `lead-revived:${id}`,
+        dedupeWindowMs: 24 * 60 * 60 * 1000,
       });
     } catch {}
 

@@ -188,7 +188,12 @@ export async function POST(request: Request) {
     try {
       await updateRecord(ADDONS_TABLE, addOnRowId, { 'Status': 'failed', 'Notes': `Stripe error: ${e?.message || 'unknown'}` });
     } catch {}
-    return NextResponse.json({ error: `Stripe invoice failed: ${e?.message || 'unknown'}` }, { status: 502 });
+    // Raw Stripe detail lives in the server log + the Airtable Notes stamp
+    // above; the rancher-facing message stays plain.
+    return NextResponse.json(
+      { error: 'The invoice couldn’t be created just now — nothing was charged. Try again in a minute.' },
+      { status: 502 },
+    );
   }
 
   // ── Stamp invoice id on Airtable row so the row is fully linked. ──

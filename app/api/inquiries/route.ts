@@ -156,13 +156,21 @@ export async function POST(request: Request) {
       inquiryId: record.id,
     });
 
-    // INSTANT BUYER ACK (2026-07-17, revenue-path audit): until now this route
-    // emailed ONLY the admin — a family asking a pre-purchase question about a
-    // ~$2k share got total silence while the inquiry sat at Status='Pending'
-    // waiting on a manual approve (no cron reads the Inquiries table at all).
-    // Silence on a high-intent question is the cheapest possible way to lose a
-    // buyer. The reply-to threads into resend-inbound, so if they answer, the
-    // buyer arm classifies it and stages a response like any other reply.
+    // INSTANT BUYER ACK (2026-07-17, revenue-path audit; hardened Wave 2
+    // 2026-08-01): until now this route emailed ONLY the admin — a family
+    // asking a pre-purchase question about a ~$2k share got total silence
+    // while the inquiry sat at Status='Pending' waiting on a manual approve
+    // (no cron reads the Inquiries table at all). Silence on a high-intent
+    // question is the cheapest possible way to lose a buyer. The reply-to
+    // threads into resend-inbound, so if they answer, the buyer arm
+    // classifies it and stages a response like any other reply.
+    //
+    // Wave 2 changes: 'inquiry_buyer_ack' is now WHITELISTED transactional
+    // (it rode the capped generic pool, so a fresh signup already at 3
+    // sends/week was silently unacknowledged), and the copy no longer claims
+    // "I'm passing it to them now / you should hear back shortly" — the
+    // rancher only sees the question AFTER a manual approve, so the honest
+    // promise is the escalation path, not an instant handoff.
     if (consumerEmail) {
       const first = String(consumerName || '').trim().split(/\s+/)[0] || 'there';
       await sendEmail({
@@ -171,7 +179,7 @@ export async function POST(request: Request) {
         html:
           `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">` +
           `<p>hey ${escapeHtml(first)},</p>` +
-          `<p>got your question for <strong>${escapeHtml(ranchName)}</strong> — I'm passing it to them now and you should hear back shortly.</p>` +
+          `<p>got your question for <strong>${escapeHtml(ranchName)}</strong> — I'm getting it to them, and you'll hear back within a day or so.</p>` +
           `<p style="font-size:14px;color:#5A5752">if you don't, just reply to this email and I'll chase it down myself.</p>` +
           `<p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow</p></div>`,
         templateName: 'inquiry_buyer_ack',

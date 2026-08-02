@@ -219,6 +219,54 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   //   • the order leaves the eligible set as soon as it ships/refunds
   //     (Status='New' is a hard filter upstream).
   'buyer_order_delay',
+  // SHARE-rail twin of buyer_order_delay (Wave 2 buyer-comms, 2026-08-01):
+  // the deposit-accept-sla cron re-pinged the RANCHER and rang the operator
+  // on an unaccepted paid deposit while the buyer — told "usually the same
+  // day" — heard nothing, ever. One-shot per referral by construction: the
+  // cron holds a Redis claimOnce (SET NX, ~1yr TTL) keyed on the referral
+  // BEFORE the send, so re-runs cannot repeat it (Referrals has no free
+  // stamp field; the Redis claim IS the throttle, same pattern as the
+  // settlement rails). A buyer mid-deal trivially has 3+ sends this week
+  // (welcome + invite + receipt), so without whitelisting the one honest
+  // "your deposit is safe, we're on it" note is exactly the email the cap
+  // eats.
+  'buyer_deposit_delay',
+  // Capture-point acks (Wave 2 buyer-comms, 2026-08-01). Three buyer capture
+  // points Telegram'd the operator and told the BUYER nothing. Each ack is
+  // 1:1, customer-expected seconds after their own submit, and throttled by
+  // the route itself, so whitelisting cannot create volume:
+  // /api/support/report — rate-limited 5/min/IP + honeypot; the /support page
+  // promises a human reply, so the receipt must never be cap-eaten (a buyer
+  // in distress already got order emails this week — that's the exact cohort
+  // at cap).
+  'support_report_ack',
+  // /api/callback-request — the open-request guard returns early on a second
+  // POST (one open request at a time), so at most one ack per request cycle.
+  'callback_request_ack',
+  // /api/inquiries — the pre-purchase question ack (existed since 2026-07-17
+  // but rode the capped generic name; a buyer asking a ~$2k question right
+  // after signup was silently unacknowledged). Route is rate-limited
+  // 3/min + 10/hr per IP.
+  'inquiry_buyer_ack',
+  // Day-5 rail pair (Wave 2 buyer-comms, 2026-08-01 — the collision fix).
+  // buyer-pulse and referral-chasup both fire ~day-5 after Intro Sent;
+  // both used the capped generic 'sendEmail' name and stamped claim-before-
+  // send, so the 3/week cap ate one and its stamp was burnt with nothing
+  // delivered. Now each has its own name, cross-reads the other's stamp
+  // before selecting, holds a Redis claimOnce, and stamps only AFTER
+  // {success:true} — cadence is owned by DB state + the cross-read, not the
+  // cap. buyer_pulse_check_in: once EVER per referral ('Buyer Pulse Sent
+  // At'); buyer_chase_followup: max 3 per referral ('Chase Count'), 5-day
+  // spacing ('Last Chased At').
+  'buyer_pulse_check_in',
+  'buyer_chase_followup',
+  // Waitlist promise-keeper (Wave 2 buyer-comms, 2026-08-01): the "your area
+  // opened" email the waitlist capture promised. Once EVER per buyer — the
+  // state-coverage-notify cron holds a Redis claimOnce per consumer before
+  // sending and is env-gated (STATE_COVERAGE_NOTIFY_ENABLED) + capped
+  // 50/run. This is the single email these buyers signed up to receive;
+  // cap-eating it breaks the only promise we made them.
+  'state_coverage_opened',
   // Sales-floor pivot 2026-06-09: 4 new minimal-pipeline templates. All
   // are 1:1 transactional triggered by buyer state changes (signup, quiz
   // complete, sales-call close, rancher accept). Capping any of these

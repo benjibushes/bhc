@@ -31,6 +31,17 @@ function computeUnpaidCommission(closedWon: Row[]): number {
     .reduce((sum, r) => sum + (Number(r['Commission Due']) || 0), 0);
 }
 
+// Mirror of referralFeeDollars in dashboard/route.ts (Wave 1A, 2026-08-01):
+// the fee a row ACTUALLY carried. 'BHC Fee Cents' (buyer-paid Connect fee,
+// stamped at deposit settle) wins when a real fee was captured; the legacy
+// 'Commission Due' receivable is the fallback — including on a written 0
+// ("no fee captured"), so a legacy row can never be masked to $0.
+function referralFeeDollars(r: Row): number {
+  const feeCents = Number(r['BHC Fee Cents']);
+  if (Number.isFinite(feeCents) && feeCents > 0) return Math.round(feeCents) / 100;
+  return Number(r['Commission Due']) || 0;
+}
+
 // Mirror of the collectBalanceRefs filter in page.tsx: deposit-paid + final
 // balance unpaid + not Closed Lost. CRUCIALLY includes Closed Won so an
 // already-closed deposit deal can never strand its uncollected balance.
@@ -78,6 +89,43 @@ test('missing / non-numeric Commission Due coerces to 0', () => {
     { 'Commission Due': 30, 'Commission Paid': false },
   ];
   assert.equal(computeUnpaidCommission(rows), 30);
+});
+
+// ─── Wave 1A: Connect fee visibility (referralFeeDollars) ───────────────────
+// The "Commission $0" bug: Connect rows never carry 'Commission Due' (that
+// receivable is legacy-rail only), so the Earnings totals summed to $0 under
+// the "buyers paid this on top" sub-copy. The stamped 'BHC Fee Cents' is the
+// real number.
+
+test('Connect row: BHC Fee Cents (cents) wins over the always-$0 Commission Due', () => {
+  assert.equal(
+    referralFeeDollars({ 'BHC Fee Cents': 29990, 'Commission Due': 0, 'Deposit Paid At': 't' }),
+    299.9,
+  );
+});
+
+test('legacy row (no fee stamp): falls back to Commission Due', () => {
+  assert.equal(referralFeeDollars({ 'Commission Due': 150 }), 150);
+});
+
+test('written 0 fee ("no fee captured") falls through — a legacy receivable is never masked to $0', () => {
+  assert.equal(referralFeeDollars({ 'BHC Fee Cents': 0, 'Commission Due': 150 }), 150);
+});
+
+test('garbage / missing values coerce to 0, never NaN on a money surface', () => {
+  assert.equal(referralFeeDollars({}), 0);
+  assert.equal(referralFeeDollars({ 'BHC Fee Cents': 'abc', 'Commission Due': null }), 0);
+});
+
+test('totalCommission with per-row preference: mixed Connect + legacy history sums both rails', () => {
+  const rows: Row[] = [
+    // Connect close — fee captured at deposit, Commission Due never written.
+    { 'BHC Fee Cents': 29990, 'Commission Due': 0, 'Deposit Paid At': 't' },
+    // Legacy close — invoice receivable only.
+    { 'Commission Due': 150 },
+  ];
+  const total = rows.reduce((sum, r) => sum + referralFeeDollars(r), 0);
+  assert.equal(total, 449.9);
 });
 
 // ─── Fix 1: close-won must not strand a deposit balance ─────────────────────

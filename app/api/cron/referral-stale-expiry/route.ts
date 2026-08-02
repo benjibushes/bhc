@@ -49,7 +49,8 @@
 //
 // ── GATES ───────────────────────────────────────────────────────────────────
 // STALE_HOLD_EXPIRY_ENABLED (master, unchanged): unset → whole cron skips ·
-//   'dry-run' → Telegram report, writes NOTHING · 'true' → runs.
+//   'dry-run' → log + Cron Runs note only (Wave 1C: no Telegram for a plan
+//   that never executes), writes NOTHING · 'true' → runs.
 // DEAL_RELEASE_ENABLED (NEW, default DRY): tiers 2+3 only. Anything but 'true'
 //   → they are SELECTED and REPORTED every run but write nothing, so Ben reads
 //   one honest report before ~12 real records are touched. 'true' → they write.
@@ -59,7 +60,8 @@
 import { getAllRecords, getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { findPaymentsByReferral } from '@/lib/contracts/payments';
 import { isMaintenanceMode } from '@/lib/maintenance';
-import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { sendOperatorSignal } from '@/lib/operatorSignal';
+import { shouldSendCronReport } from '@/lib/cronReportGate';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 import {
@@ -262,13 +264,13 @@ async function realHandler(_request: Request): Promise<ExpiryResult> {
   }
 
   if (dryRun) {
-    await sendTelegramMessage(
-      TELEGRAM_ADMIN_CHAT_ID,
-      `🧪 <b>no-dead-end sweep DRY RUN</b> — nothing written\n\n` +
-        `${tierBlocks.join('\n\n')}\n\n` +
-        `live mode also: resets stranded buyers → READY + resyncs capacity counters (Redis + mirror) ` +
-        `so the 14:30 UTC recovery pass re-routes them same-day. flip STALE_HOLD_EXPIRY_ENABLED=true.`,
-    ).catch(() => {});
+    // Wave 1C: a dry-run plan repeats daily and never executes — log + Cron
+    // Runs note only; withCronRun alerts on failures. No Telegram.
+    console.info(
+      `[referral-stale-expiry] DRY RUN — would expire ${staleCapacity.length} holds, ` +
+        `${stalePending.length} pending-approval, ${depositReleases.length} unpaid deposits ` +
+        `(flip STALE_HOLD_EXPIRY_ENABLED=true to act)`,
+    );
     return {
       status: 'success',
       recordsTouched: 0,
@@ -381,20 +383,31 @@ async function realHandler(_request: Request): Promise<ExpiryResult> {
   }
 
   const heldFreed = (flippedByTier['capacity'] || 0) + (flippedByTier['deposit-release'] || 0);
-  // When the gated tiers are the ONLY thing selected, nothing was written —
-  // say that plainly rather than reporting "released 0" over a list of names.
-  const header = planned.length
-    ? `🧹 <b>no-dead-end sweep</b> — released <b>${flippedIds.size}</b> deal${flippedIds.size === 1 ? '' : 's'} ` +
-      `(<b>${heldFreed}</b> capacity slot${heldFreed === 1 ? '' : 's'})` +
-      (failed ? ` · ${failed} failed, retried tomorrow` : '')
-    : `🧪 <b>no-dead-end sweep</b> — nothing written this run ` +
-      `(the tiers below are gated behind <code>DEAL_RELEASE_ENABLED</code>)`;
-  await sendTelegramMessage(
-    TELEGRAM_ADMIN_CHAT_ID,
-    `${header}\n\n${tierBlocks.join('\n\n')}\n\n` +
-      `buyers reset to READY: <b>${restored}</b> · counters resynced now: <b>${resynced}</b> rancher${resynced === 1 ? '' : 's'} · ` +
-      `recovery cron re-routes them at 14:30 UTC today.`,
-  ).catch(() => {});
+  // Wave 1C: the "nothing written this run" card (gated tiers selected, tier 1
+  // empty) repeated daily with the same names — zero-work runs now stay in the
+  // Cron Runs note. Report only when something was actually released or a
+  // write failed; rides sendOperatorSignal for dedupe + failover.
+  if (shouldSendCronReport({ workDone: flippedIds.size, failures: failed })) {
+    await sendOperatorSignal({
+      urgency: 'normal',
+      kind: 'other',
+      summary:
+        `no-dead-end sweep — released ${flippedIds.size} deal${flippedIds.size === 1 ? '' : 's'} ` +
+        `(${heldFreed} capacity slot${heldFreed === 1 ? '' : 's'})` +
+        (failed ? ` · ${failed} failed, retried tomorrow` : ''),
+      detail:
+        `${tierBlocks.join('\n\n')}\n\n` +
+        `buyers reset to READY: <b>${restored}</b> · counters resynced now: <b>${resynced}</b> rancher${resynced === 1 ? '' : 's'} · ` +
+        `recovery cron re-routes them at 14:30 UTC today.`,
+      dedupeKey: 'referral-stale-expiry-summary',
+      dedupeWindowMs: 6 * 60 * 60 * 1000,
+    }).catch(() => {});
+  } else if (!planned.length) {
+    console.info(
+      '[referral-stale-expiry] nothing written this run — gated tiers only ' +
+        `(DEAL_RELEASE_ENABLED off): pending=${stalePending.length} deposit=${depositReleases.length}`,
+    );
+  }
 
   const tierNote = Object.entries(flippedByTier)
     .map(([k, v]) => `${k}:${v}`)

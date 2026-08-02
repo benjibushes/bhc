@@ -151,10 +151,10 @@ export default function WholesaleForm() {
         </p>
         <div className="pt-4">
           <a
-            href="/start"
+            href="/"
             className="text-saddle hover:text-charcoal underline underline-offset-2 transition-colors"
           >
-            &larr; back to /start
+            &larr; back to the homepage
           </a>
         </div>
       </div>

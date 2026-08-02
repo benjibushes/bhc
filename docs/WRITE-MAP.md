@@ -3,6 +3,10 @@
 **Generated 2026-07-28** from a full-repo audit of `main`. Tables covered: Referrals,
 Ranchers, Consumers, Payments, Stripe Events, Rancher Orders, Rancher Products.
 
+> **Update 2026-08-01:** all `lib/capacityLiberator.ts` reader references were
+> removed from this map — the capacity-liberator cron and its lib were deleted
+> in #506 and no longer exist in the repo.
+
 > **RULE ZERO: verify against code before trusting — this doc can drift.**
 > It is a map, not the territory. Before diagnosing off any entry here, re-run the
 > grep for that field and read the writer. A blank field usually means NOTHING WRITES
@@ -67,7 +71,7 @@ R: checkout/deposit :268 (durable pay page quote); lib/staleHolds.ts:109 (>0 blo
 ### Deposit Paid At (dateTime) — THE rail discriminator
 W: lib/stripeSettlement.ts:147 — settleBuyerDeposit on payment_intent.succeeded (both webhooks); **lib/brokerSettlement.ts settleBrokerDeposit — BROKER rail, platform webhook only**; orphan-checkout-reaper :580 — daily auto-restamp from Payments ledger; lib/refundLifecycle.ts:44 — nulled on full refund.
 Sem (BROKER, 2026-07-31): `referralRail()` reads a stamped value as 'tier_v2' (Connect). A broker row is stamped too, so it is ALSO classified tier_v2 — which is the CORRECT outcome for the two things that classification drives: `partitionUnpaidByRail` must NOT raise a legacy commission invoice against a represented rancher (BHC already holds 100% of its fee), and `netEarningsFor` must not deduct a commission from him. Do not "fix" this into a third branch without re-reading both call sites.
-R: lib/commission.ts:191-195 referralRail() — stamped ⇒ Connect, blank ⇒ legacy; lib/depositPaidState.ts:43; lib/confirmPaymentGuard.ts:31 (blocks manual confirm while pending); lib/refundLifecycle.ts:86 canSendFinalInvoice (gates send-final-invoice :158 + /r/f :79); accept :111 (accept requires it); lib/capacityLiberator.ts:110; lib/staleHolds.ts:108; lib/reserveRecovery.ts:111; lib/depositWatchdog.ts:84; lib/depositRequestNudge.ts:71,141; lib/noActionNudge.ts:62; lib/fulfillmentChase.ts:112; resend-inbound :783 (NRD-6 auto-accept).
+R: lib/commission.ts:191-195 referralRail() — stamped ⇒ Connect, blank ⇒ legacy; lib/depositPaidState.ts:43; lib/confirmPaymentGuard.ts:31 (blocks manual confirm while pending); lib/refundLifecycle.ts:86 canSendFinalInvoice (gates send-final-invoice :158 + /r/f :79); accept :111 (accept requires it); lib/staleHolds.ts:108; lib/reserveRecovery.ts:111; lib/depositWatchdog.ts:84; lib/depositRequestNudge.ts:71,141; lib/noActionNudge.ts:62; lib/fulfillmentChase.ts:112; resend-inbound :783 (NRD-6 auto-accept).
 Sem: money-truth stamp; blank genuinely = no Stripe deposit ever settled (reaper is the belt). A failed write fires a LOUD operator signal (stripeSettlement.ts:151-190).
 
 ### BHC Fee Cents (number) + Fee Captured At (dateTime) — referral-level fee truth
@@ -111,16 +115,16 @@ Sem: LANDMINE — the future stamp makes every ager compute negative age (row in
 
 ### Intro Sent At (singleLineText)
 W: approve :60; suggest :1428; lib/bulkRoute.ts:246,285; reassign :133; resend-intro :145; telegram :828,980,1257,5743; email-sequences :474.
-R: primary age origin wherever Approved At is fallback (close-detector :79, chasup :110,117, buyer-pulse :67, first-touch-sla :105, nightly-rancher-audit :121,373); lib/capacityLiberator.ts:96; lib/staleHolds.ts:87; lib/deal/states.ts:47.
+R: primary age origin wherever Approved At is fallback (close-detector :79, chasup :110,117, buyer-pulse :67, first-touch-sla :105, nightly-rancher-audit :121,373); lib/staleHolds.ts:87; lib/deal/states.ts:47.
 
 ### Closed At (singleLineText)
 W: lib/contracts/rancher.ts:67 recordClose (all outcomes); rancher PATCH :137,147,435; quick-action :264,274,309; confirm-payment :137,152; admin PATCH :39 (:139 reverse); telegram :1104,1724,3057,3424,3551,3623; stuck-referral-reaper :210; referral-chasup :201,619; lib/bulkRoute.ts:256; CLEARED by lib/refundLifecycle.ts:37 + revive :79. Dormant flip does NOT stamp it.
-R: lib/replenishment.ts:82,115; lib/lossRecovery.ts:196 (comment :181 — "often unstamped"); lib/capacityLiberator.ts:129; lib/socialProof.ts:158; month-window revenue math.
+R: lib/replenishment.ts:82,115; lib/lossRecovery.ts:196 (comment :181 — "often unstamped"); lib/socialProof.ts:158; month-window revenue math.
 Sem: singleLineText — unparseable values possible; not every closer stamps it.
 
 ### Rancher Accepted At (dateTime)
 W: accept :145 (deal transition to SLOT_LOCKED; fallback :152); resend-inbound :784 (NRD-6 auto-accept when rancher replies after deposit); nulled on refund (refundLifecycle :45).
-R: lib/depositSla.ts:112 — stops accept-SLA chase; lib/fulfillmentChase.ts:112,127; lib/capacityLiberator.ts:111; admin refund route :102 — post-accept = non-refundable window; accept :123 idempotency.
+R: lib/depositSla.ts:112 — stops accept-SLA chase; lib/fulfillmentChase.ts:112,127; admin refund route :102 — post-accept = non-refundable window; accept :123 idempotency.
 Sem: the non-refundable-deposit commitment moment.
 
 ### Payment Confirmed At (dateTime) + Payment Confirmation Method
@@ -158,7 +162,7 @@ W: suggest :1307 at create. R: suggest :484 — per-state sub-cap bucket math.
 
 ### Last Chased At (dateTime)
 W: referral-chasup :756 (chase send, stamp-first) + :580 (stale-prompt claim); telegram :1949 (chase button), :1968 ('chaskip' — stamped purely to suppress tomorrow's cron); cleared by reassign :137, revive :81, resend-intro :147.
-R: referral-chasup :117,164,695 (head of staleness chain), :520 (re-chase throttle); lib/capacityLiberator.ts:95.
+R: referral-chasup :117,164,695 (head of staleness chain), :520 (re-chase throttle).
 Sem: OVERLOADED — "chased" and "operator dismissed the prompt" look identical.
 
 ### Stalled Alert Sent At (dateTime)
@@ -217,7 +221,7 @@ Sem: THE third-money-model flag (docs/BUSINESS-MODEL.md ⭐ MONEY MODEL 3). A re
 W(go-live via GO_LIVE_FIELDS lib/goLiveGates.ts:40): app/api/ranchers/sign-agreement/route.ts:159,207 — signing w/ content-ready page; app/api/cron/batch-approve/route.ts:357 — 2-hourly flip of Verification Complete; app/api/webhooks/stripe-connect/route.ts:863 — Connect goes active; app/api/rancher/activate/route.ts:341 — legacy activation link.
 W(pause): app/api/admin/ranchers/[id]/pause/route.ts:39; app/api/rancher/remove/route.ts:99; app/api/rancher/checkin-response/route.ts:99; app/api/rancher/decline/route.ts:195; app/api/referrals/[id]/route.ts:342 + app/api/rancher/referrals/[id]/route.ts:970 — pilot-goal pause; app/api/webhooks/stripe-connect/route.ts:1301 — Connect DEAUTHORIZE; app/api/cron/nightly-rancher-audit/route.ts:229; app/api/cron/migration-deadline/route.ts:152 — deadline auto-pause; app/api/cron/compliance-reminders/route.ts:136 ('Non-Compliant'); app/api/webhooks/telegram/route.ts:3261,5494,5520 — admin one-tap.
 W(capacity): app/api/ranchers/capacity-check/route.ts:31,40 — Active↔At Capacity off the mirror count; app/api/rancher/landing-page/route.ts:215,217,446; app/api/admin/ranchers/[id]/resume/route.ts:29; lib/pauseReversal.ts:115; lib/connectResync.ts:248 (paused_overdue auto-resume). Generic: app/api/admin/ranchers/[id]/route.ts:45.
-R: lib/rancherEligibility.ts:88-89 — hard ='Active' routing gate; lib/goLiveGates.ts:74; app/api/cron/migration-deadline/route.ts:116 (skips Paused); app/api/ranchers/capacity-check/route.ts:27; lib/connectResync.ts:157,223; lib/capacityLiberator.ts:158.
+R: lib/rancherEligibility.ts:88-89 — hard ='Active' routing gate; lib/goLiveGates.ts:74; app/api/cron/migration-deadline/route.ts:116 (skips Paused); app/api/ranchers/capacity-check/route.ts:27; lib/connectResync.ts:157,223.
 Sem: THE routing kill-switch. Many paths pause; ONLY the migration-deadline `paused_overdue` pause ever auto-resumes (lib/connectResync.ts:162-203). Every other Paused needs a human. NEVER batch-flip without Ben's per-rancher OK.
 
 ### Pickup Address (singleLineText — fldGTVzd7zCZIkKJf) + Pickup Instructions (long text — fldVwKoWIlPqC69GC)
@@ -287,7 +291,7 @@ Sem: per-RANCHER throttle for the daily lead digest (audit 2026-07-28). Because 
 
 ### Max Active Referalls (number — SINGLE-L TYPO is the real schema field)
 W: app/api/admin/ranchers/[id]/route.ts:49 + app/api/rancher/landing-page/route.ts:206 — both via `MAX_ACTIVE_REFERRALS_FIELD` (lib/rancherCapacity.ts:79 = typo spelling); app/api/rancher/activate/route.ts:347 — default 5; scripts/brimstone-launch.mjs:195.
-R: lib/rancherCapacity.ts:55-63 `getMaxActiveReferrals` — reads correct spelling FIRST then typo, default 5 — from app/api/matching/suggest/route.ts:592,755,1206,1364; app/api/ranchers/capacity-check/route.ts:26; app/api/referrals/[id]/approve/route.ts:41; app/api/admin/referrals/[id]/reassign/route.ts:96; lib/campaignReferral.ts:183; lib/capacityLiberator.ts:147,200; lib/demandRouter.ts:706.
+R: lib/rancherCapacity.ts:55-63 `getMaxActiveReferrals` — reads correct spelling FIRST then typo, default 5 — from app/api/matching/suggest/route.ts:592,755,1206,1364; app/api/ranchers/capacity-check/route.ts:26; app/api/referrals/[id]/approve/route.ts:41; app/api/admin/referrals/[id]/reassign/route.ts:96; lib/campaignReferral.ts:183; lib/demandRouter.ts:706.
 Sem: LANDMINE (lib/rancherCapacity.ts:70-77): the correctly-spelled field does NOT exist in Airtable (422s). Reader/writer/schema are a three-legged stool — fix all three or none, else every cap silently falls to 5.
 
 ### Current Active Referrals (number — Airtable MIRROR of Redis truth)

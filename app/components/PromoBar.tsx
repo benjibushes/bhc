@@ -25,7 +25,8 @@ const HAT_URL =
 // a $20-hat ad above the $13–$6,800 beef. Inverted from a blocklist so
 // money surfaces are clean BY CONSTRUCTION: the bar renders only on
 // content/browse surfaces, and any future page defaults to no-bar.
-const CONTENT_SURFACES = ['/gear', '/news', '/wins', '/map', '/faq', '/about'];
+// '/news' removed 2026-08-02 — the news rail was deleted (cut list).
+const CONTENT_SURFACES = ['/gear', '/wins', '/map', '/faq', '/about'];
 
 export default function PromoBar() {
   const pathname = usePathname() || '';
