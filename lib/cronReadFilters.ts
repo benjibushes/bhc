@@ -79,26 +79,9 @@ export function sequenceRancherMapReferralsFormula(): string {
   return statusOrFormula(SEQUENCE_RANCHER_MAP_STATUS_LIST)!;
 }
 
-// ── Referrals: daily-digest pipeline stats (line ~27)
-// daily-digest derives several counts from the referrals array:
-//   pendingReferrals  → Status = 'Pending Approval'
-//   recentIntros      → Status = 'Intro Sent' (+ recency, JS)
-//   monthWins         → Status = 'Closed Won' (+ month, JS)
-//   stalledReferrals  → Status ∈ { Intro Sent, Rancher Contacted } (+ age, JS)
-// Union of every status any stat reads. Superset (equal set) — recency/month
-// windows stay in JS. NOTE: this cron only reports NUMBERS; if the filter
-// ever silently narrowed a count it would be a reporting bug, so callers use
-// the invalid-filter fallback to preserve today's exact behavior on error.
-export const DAILY_DIGEST_REFERRAL_STATUS_LIST: readonly string[] = [
-  'Pending Approval',
-  'Intro Sent',
-  'Rancher Contacted',
-  'Closed Won',
-];
-
-export function dailyDigestReferralsFormula(): string {
-  return statusOrFormula(DAILY_DIGEST_REFERRAL_STATUS_LIST)!;
-}
+// (dailyDigestReferralsFormula removed Wave 1C 2026-08-01 — its sole consumer,
+// the daily-digest cron, merged into daily-health-digest, which reads the
+// full Referrals table for its pipeline counts.)
 
 // ── Consumers: unsubscribed-email set (referral-chasup line ~45)
 // chasup pulls consumers ONLY to build a Set of unsubscribed buyer emails

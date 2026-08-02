@@ -20,7 +20,8 @@
 // Schedule: every 30 min via vercel.json. Cheap (3 HTTP calls).
 
 import { NextResponse } from 'next/server';
-import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { sendOperatorSignal } from '@/lib/operatorSignal';
+import { deployDriftDedupe, DEPLOY_DRIFT_WINDOW_MS } from '@/lib/cronReportGate';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 
@@ -64,16 +65,21 @@ async function realHandler(_request: Request): Promise<DriftResult> {
     prodShortSha = String(j.shortSha || '');
     prodEnv = String(j.env || '');
   } catch (e: any) {
-    // Fatal: can't compare. Fire alert + return error.
-    try {
-      await sendTelegramMessage(
-        TELEGRAM_ADMIN_CHAT_ID,
-        `🚨 <b>DEPLOY DRIFT CRON — CAN'T REACH PROD</b>\n\n` +
-          `Failed to fetch ${PROD_URL}/api/version\n` +
-          `Error: ${(e?.message || 'unknown').slice(0, 200)}\n\n` +
-          `<i>Either prod is down OR /api/version not deployed yet. Investigate.</i>`,
-      );
-    } catch {}
+    // Fatal: can't compare. Fire alert + return error. Wave 1C: rides
+    // sendOperatorSignal (loud → SMS/email failover if Telegram is down —
+    // a prod outage is exactly when the bot may be unreachable too) with a
+    // 6h dedupe so a down morning is 1 alert, not 12.
+    await sendOperatorSignal({
+      urgency: 'loud',
+      kind: 'system-error',
+      summary: `DEPLOY DRIFT CRON — CAN'T REACH PROD`,
+      detail:
+        `Failed to fetch ${PROD_URL}/api/version\n` +
+        `Error: ${(e?.message || 'unknown').slice(0, 200)}\n\n` +
+        `Either prod is down OR /api/version not deployed yet. Investigate.`,
+      dedupeKey: 'deploy-drift-prod-unreachable',
+      dedupeWindowMs: DEPLOY_DRIFT_WINDOW_MS,
+    }).catch(() => {});
     return {
       status: 'error',
       recordsTouched: 0,
@@ -137,22 +143,26 @@ async function realHandler(_request: Request): Promise<DriftResult> {
     ? Math.floor((Date.now() - new Date(headCommitDate).getTime()) / 60000)
     : 0;
 
-  try {
-    await sendTelegramMessage(
-      TELEGRAM_ADMIN_CHAT_ID,
-      `🚨 <b>DEPLOY DRIFT — PROD IS STALE</b>\n\n` +
-        `🔵 Prod SHA: <code>${prodShortSha}</code> (${prodEnv})\n` +
-        `🟢 HEAD SHA: <code>${headSha.slice(0, 7)}</code>\n` +
-        `📊 Behind: ${commitsBehind} commit${commitsBehind === 1 ? '' : 's'}\n` +
-        `⏱ HEAD pushed ${stalenessMin}m ago\n\n` +
-        (commitMessages.length > 0
-          ? `<b>Missing commits:</b>\n${commitMessages.map((m, i) => `${i + 1}. ${m}`).join('\n')}\n\n`
-          : '') +
-        `<i>Likely cause: Vercel manual-promotion is ON. Click Promote on the latest READY deploy in the Vercel dashboard OR disable manual promotion in Settings → Git.</i>`,
-    );
-  } catch (e: any) {
-    console.error('[deploy-drift] Telegram alert failed:', e?.message);
-  }
+  // Wave 1C: was a raw sendTelegramMessage every 30 min — one stale deploy =
+  // 48 identical sirens/day, and a rotten bot token swallowed all of them.
+  // Now rides sendOperatorSignal: ~6h dedupe keyed on the STALE prod SHA (the
+  // same drift re-alerts ~4×/day; a different stale SHA alerts immediately)
+  // + SMS/email failover on loud. Content unchanged.
+  await sendOperatorSignal({
+    urgency: 'loud',
+    kind: 'system-error',
+    summary: `DEPLOY DRIFT — PROD IS STALE (${commitsBehind} commit${commitsBehind === 1 ? '' : 's'} behind)`,
+    detail:
+      `🔵 Prod SHA: <code>${prodShortSha}</code> (${prodEnv})\n` +
+      `🟢 HEAD SHA: <code>${headSha.slice(0, 7)}</code>\n` +
+      `📊 Behind: ${commitsBehind} commit${commitsBehind === 1 ? '' : 's'}\n` +
+      `⏱ HEAD pushed ${stalenessMin}m ago\n\n` +
+      (commitMessages.length > 0
+        ? `<b>Missing commits:</b>\n${commitMessages.map((m, i) => `${i + 1}. ${m}`).join('\n')}\n\n`
+        : '') +
+      `<i>Likely cause: Vercel manual-promotion is ON. Click Promote on the latest READY deploy in the Vercel dashboard OR disable manual promotion in Settings → Git.</i>`,
+    ...deployDriftDedupe(prodShortSha || prodSha),
+  }).catch((e: any) => console.error('[deploy-drift] alert failed:', e?.message));
 
   return {
     status: 'partial',

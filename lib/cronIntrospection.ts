@@ -47,7 +47,7 @@ export const EXPECTED_CRONS_24H = [
   'commission-invoices',
   'compliance-reminders',
   'daily-audit',
-  'daily-digest',
+  // 'daily-digest' removed Wave 1C 2026-08-01 — merged into daily-health-digest.
   'daily-health-digest',
   'demand-router',
   'deploy-drift',

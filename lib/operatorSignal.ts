@@ -90,7 +90,12 @@ export async function sendOperatorSignal(input: SignalInput): Promise<{ sent: bo
   // 'digest', still blasted Telegram in real time. That's alert fatigue: the
   // operator stops seeing the money alerts under the chatter. Now urgency gates
   // the Telegram wire too. OPERATOR_SIGNAL_TELEGRAM_FLOOR (default 'normal'):
-  //   'digest' → realtime silence (rolls into the daily digest / logs only)
+  //   'digest' → SUPPRESS-AND-LOG. There is NO digest queue or collector —
+  //              a 'digest' signal is console-logged and dropped, never
+  //              delivered anywhere. (Wave 1C 2026-08-01: an older comment
+  //              claimed these "roll into the daily digest" — they never did.
+  //              Use 'normal' + a wide dedupeWindowMs for "tell me, but at
+  //              most once a day".)
   //   'normal' → the default floor (loud + normal ring)
   //   'loud'   → MONEY-ONLY mode: only 'loud' rings; set this to go quiet.
   // Below-floor signals are logged and skipped BEFORE the wire — no fallback
