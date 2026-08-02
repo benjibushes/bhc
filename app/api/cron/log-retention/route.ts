@@ -28,6 +28,7 @@
 
 import { NextResponse } from 'next/server';
 import { getAllRecords, deleteRecordsBatch, TABLES } from '@/lib/airtable';
+import { runAirtableBackup } from '@/lib/airtableBackup';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
@@ -128,10 +129,23 @@ async function realHandler(_request: Request): Promise<CronResult> {
     console.info(`[log-retention] ${dryRun ? 'DRY RUN — ' : ''}${lines.join(' · ') || 'nothing to prune'} (no realtime report)`);
   }
 
+  // ── NIGHTLY ENTITY BACKUP LEG (2026-08-02, blindspot fix) ─────────────────
+  // Rides this cron by design ("no more crons"): the base had ZERO backups.
+  // Encrypted entity export → Vercel Blob, newest 14 kept. Runs in BOTH live
+  // and dry-run retention modes (it's read-only against Airtable, and a
+  // dry-run of DELETES must never also dry-run the BACKUP). A failed backup
+  // flips the run to 'partial' so the missing-backup state is visible in the
+  // dead-man/watchdog chain without its own alert channel. Full design +
+  // restore procedure: lib/airtableBackup.ts header.
+  const backup = await runAirtableBackup(Date.now());
+  const backupNote = backup.ok
+    ? `backup: ${backup.rows} rows/${backup.tables} tables → ${backup.blobPathname}${backup.pruned ? ` (pruned ${backup.pruned})` : ''}`
+    : `backup FAILED: ${backup.error}`;
+
   return {
-    status: errors.length ? 'partial' : 'success',
+    status: errors.length || !backup.ok ? 'partial' : 'success',
     recordsTouched: totalDeleted,
-    notes: `${dryRun ? 'DRY-RUN ' : ''}${lines.join(' · ')}${errors.length ? ` errs=${errors.length}` : ''}`.slice(0, 500),
+    notes: `${dryRun ? 'DRY-RUN ' : ''}${lines.join(' · ')}${errors.length ? ` errs=${errors.length}` : ''} · ${backupNote}`.slice(0, 500),
   };
 }
 
