@@ -20,6 +20,21 @@
 //   4. Mark `Buyer Pulse Sent At` so we don't re-ask.
 //
 // IDEMPOTENT: each buyer gets at most ONE pulse per intro.
+//
+// DAY-5 COLLISION FIX (Wave 2 buyer-comms, 2026-08-01): referral-chasup fires
+// its own day-5 buyer follow-up ~1h after this cron, and neither rail read the
+// other's stamp — the same buyer got two "did the rancher reach out?" emails
+// back to back, and with both riding the capped generic 'sendEmail' template
+// the 3/week cap ate one while its claim-before-send stamp was already burnt.
+// Now:
+//   • this cron SKIPS any referral chasup touched in the last
+//     CROSS_RAIL_COOLDOWN_DAYS ('Last Chased At' — chasup's stamp);
+//   • the send uses its own whitelisted templateName 'buyer_pulse_check_in';
+//   • the 'Buyer Pulse Sent At' stamp is written AFTER {success:true}, so a
+//     suppressed/failed send no longer burns the once-ever stamp with nothing
+//     delivered. Double-send protection while the stamp is un-written comes
+//     from a Redis claimOnce per referral (degrades open only when Redis is
+//     absent, i.e. local dev).
 
 import { NextResponse } from 'next/server';
 import { getAllRecords, getRecordById, updateRecord, TABLES } from '@/lib/airtable';
@@ -30,6 +45,7 @@ import { isSmsWindow } from '@/lib/sendWindow';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
+import { claimOnce } from '@/lib/rancherCapacity';
 import jwt from 'jsonwebtoken';
 import { JWT_SECRET } from '@/lib/secrets';
 
@@ -44,6 +60,10 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com
 const MIN_DAYS_SINCE_INTRO = 5;
 // Per-run cap to spread sends + avoid spam-flag heuristics.
 const MAX_PULSES_PER_RUN = 25;
+// Cross-rail cooldown vs referral-chasup: if chasup emailed this buyer within
+// this window, defer the pulse to a later run (the referral stays unpulsed, so
+// nothing is lost — it just doesn't stack two check-ins in one inbox day).
+const CROSS_RAIL_COOLDOWN_DAYS = 2;
 
 const rf = (v: any) => v == null ? '' : (typeof v === 'object' && 'name' in v) ? String(v.name) : String(v);
 
@@ -69,6 +89,15 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
       const days = (now - new Date(introAt).getTime()) / DAY_MS;
       if (days < MIN_DAYS_SINCE_INTRO) return false;
       if (r['Buyer Pulse Sent At']) return false; // already pulsed
+      // CROSS-READ referral-chasup's stamp: chasup emailed this buyer within
+      // the cooldown window → defer (don't stack two check-ins in one day).
+      const lastChased = r['Last Chased At'];
+      if (lastChased) {
+        const daysSinceChase = (now - new Date(lastChased).getTime()) / DAY_MS;
+        if (Number.isFinite(daysSinceChase) && daysSinceChase < CROSS_RAIL_COOLDOWN_DAYS) {
+          return false;
+        }
+      }
       const buyerLinks = r['Buyer'] || [];
       return Array.isArray(buyerLinks) && buyerLinks.length > 0;
     });
@@ -136,29 +165,42 @@ p{margin:14px 0;color:#2A2A2A;font-size:15px}
 <div class="foot"><p style="margin:0;">BuyHalfCow · 1001 S. Main St. Ste 600, Kalispell, MT 59901</p></div>
 </div></body></html>`;
 
-        // Claim BEFORE sending: stamp the pulse marker first so a missing or
-        // failed stamp SKIPS the pulse rather than re-firing it every run. The
-        // old order sent first, then stamped — and if the field was missing it
-        // swallowed the error and re-pulsed the same buyer on every run.
+        // STAMP-AFTER-SUCCESS (Wave 2 collision fix): the old claim-before-send
+        // order meant a cap-suppressed send burnt the once-ever stamp with
+        // nothing delivered. Now the Redis claimOnce guards the un-stamped
+        // window (a crashed run or failed stamp write cannot double-send
+        // within the claim TTL), the send happens on its own whitelisted
+        // template, and the Airtable stamp is written only on {success:true}.
+        const won = await claimOnce(`buyer-pulse:${ref.id}`, 14 * 24 * 60 * 60);
+        if (!won) continue; // another run (or a stamp-write-failed prior run) holds it
+
+        const result = await sendEmail({
+          to: buyerEmail,
+          subject: `${firstName}, did ${rancherName} reach out?`,
+          html,
+          templateName: 'buyer_pulse_check_in',
+          // Tagged Reply-To: replies thread back to this referral
+          _replyContext: { type: 'ref', recordId: ref.id },
+        } as any);
+
+        if (!result?.success) {
+          // Suppressed (unsub/bounce) or failed — nothing was delivered, so
+          // do NOT burn the once-ever stamp. The Redis claim throttles retries.
+          failed++;
+          continue;
+        }
+
         try {
           await updateRecord(TABLES.REFERRALS, ref.id, {
             'Buyer Pulse Sent At': new Date().toISOString(),
           });
         } catch (fieldErr: any) {
+          // Email already went out — surface the broken stamp loudly. The
+          // 14-day Redis claim above prevents a re-send while this is broken.
           if (skippedReasons.length === 0) {
-            skippedReasons.push(`Add "Buyer Pulse Sent At" datetime field to Referrals table — until then pulses are SKIPPED (not sent) to avoid re-firing each run. (${fieldErr?.message})`);
+            skippedReasons.push(`"Buyer Pulse Sent At" stamp write FAILED after a delivered pulse — Redis claim is the only dedupe until the field is fixed. (${fieldErr?.message})`);
           }
-          failed++;
-          continue;
         }
-
-        await sendEmail({
-          to: buyerEmail,
-          subject: `${firstName}, did ${rancherName} reach out?`,
-          html,
-          // Tagged Reply-To: replies thread back to this referral
-          _replyContext: { type: 'ref', recordId: ref.id },
-        } as any);
 
         // G14: SMS day-4-ish check-in alongside the email. Higher open rate
         // than email; lifts pulse-response rate which feeds ghosting signal.

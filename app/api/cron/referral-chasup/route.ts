@@ -11,7 +11,22 @@ import { withCronRun } from '@/lib/cronRun';
 import { shouldDecrementOnClose } from '@/lib/refundLifecycle';
 import { isReferralOnHold } from '@/lib/referralHold';
 import { isRancherAddedReferral } from '@/lib/rancherLeads';
+import { claimOnce } from '@/lib/rancherCapacity';
 import jwt from 'jsonwebtoken';
+
+// Local HTML escape (lib/email.ts keeps its `esc` private; buyer-pulse and
+// productSettlement declare their own the same way). Wave 2 (GTM plan 2.12):
+// this cron's inline templates interpolated buyer/rancher names AND the raw
+// LLM chase draft into HTML unescaped — the one template family in the repo
+// that skipped esc().
+function esc(str: string): string {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
 
 // 60 → 300 (2026-07-08): 7-day peak hit 47s (78% of the old ceiling) and the
 // chase list grows with active referrals. batch-approve crossed its own
@@ -156,6 +171,19 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
       }
       const chaseCount = r['Chase Count'] || 0;
       if (chaseCount >= MAX_CHASE_UPS) return false; // Already maxed out
+      // CROSS-READ buyer-pulse's stamp (Wave 2 collision fix): buyer-pulse
+      // fires its own day-5 "did the rancher reach out?" ~1h before this cron.
+      // A referral pulsed within the last 2 days defers its AI chase — the
+      // buyer already has a check-in in their inbox; stacking a second one an
+      // hour later reads like a broken machine.
+      const pulsedAt = r['Buyer Pulse Sent At'];
+      if (pulsedAt) {
+        const daysSincePulse = (Date.now() - new Date(pulsedAt).getTime()) / DAY_MS;
+        if (Number.isFinite(daysSincePulse) && daysSincePulse < 2) {
+          skipReasons['buyer-pulse-cooldown'] = (skipReasons['buyer-pulse-cooldown'] || 0) + 1;
+          return false;
+        }
+      }
       // CHASUP-FIX: status-aware staleness windows. The 5-day window over-
       // chased Rancher Contacted referrals where the rancher had texted /
       // called the buyer off-platform — BHC has no signal, so we kept firing.
@@ -614,9 +642,9 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
             to: p.rancherEmail,
             subject: `Quick check — ${p.buyerName}: still working it?`,
             html: `<div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:32px;border:1px solid #A7A29A;background:#fff;">
-              <h2 style="font-family:Georgia,serif;margin:0 0 12px;">Hey ${p.rancherName},</h2>
+              <h2 style="font-family:Georgia,serif;margin:0 0 12px;">Hey ${esc(p.rancherName)},</h2>
               <p>It's been ${p.daysSinceActivity} days since I saw activity on this lead. Want to give me a 1-click update?</p>
-              <p><strong>Buyer:</strong> ${p.buyerName}</p>
+              <p><strong>Buyer:</strong> ${esc(p.buyerName)}</p>
               <table cellspacing="0" cellpadding="0" style="margin:20px 0;width:100%;">
                 <tr>
                   <td style="padding:0 6px 8px 0;width:25%;"><a href="${base}&action=in_talks" style="display:block;padding:11px 8px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:0.8px;text-align:center;">💬 In talks</a></td>
@@ -774,30 +802,64 @@ Order interest: ${referral['Order Type'] || 'bulk beef'}, Budget: ${referral['Bu
           ? `Last follow-up — ${rancherName} on BuyHalfCow`
           : `Following up — ${rancherName} on BuyHalfCow`;
 
-        // MISMATCH FIX (P0 2026-06-23): stamp Chase Count + Last Chased At
-        // BEFORE the send (mirrors the stale-prompt block at ~543). Prior order
-        // sent the AI email then stamped; an Airtable write failure after a good
-        // send left Chase Count unincremented and re-sent the same AI chase on
-        // the next run. Stamp-first means at worst this buyer loses one chase if
-        // the send throws — far safer than re-emailing.
-        await updateRecord(TABLES.REFERRALS, referral.id, {
-          'AI Chase Draft': draft,
-          'Chase Count': chaseCount,
-          'Last Chased At': new Date().toISOString(),
-        });
+        // STAMP-AFTER-SUCCESS (Wave 2 collision fix, replaces the 2026-06-23
+        // stamp-first order): stamp-first meant a suppressed send still burnt
+        // one of the 3 lifetime chases with nothing delivered. The Redis
+        // claimOnce below guards the un-stamped window (a crash or failed
+        // stamp write cannot double-send within the TTL), the send rides its
+        // own whitelisted template, and Chase Count / Last Chased At are
+        // stamped only on {success:true}.
+        // TTL 6 days ≈ the chase's own 5-day spacing: even if the post-send
+        // stamp write fails (leaving Chase Count unbumped), the claim holds
+        // the cadence to one send per window instead of a daily repeat.
+        const wonChase = await claimOnce(`chasup:${referral.id}:${chaseCount}`, 6 * 24 * 60 * 60);
+        if (!wonChase) {
+          skipReasons['chase-claim-held'] = (skipReasons['chase-claim-held'] || 0) + 1;
+          continue;
+        }
 
-        await sendEmail({
+        // esc() EVERYTHING (GTM plan 2.12) — buyer/rancher names come from
+        // Airtable free text, and the draft is raw LLM output that was being
+        // injected as HTML. Escaping each draft paragraph neutralizes any
+        // markup the model emits while keeping the paragraph structure.
+        const result = await sendEmail({
           to: buyerEmail,
           subject,
+          templateName: 'buyer_chase_followup',
           html: `<div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;">
-            <p>Hi ${firstName},</p>
-            ${draft.split('\n').filter(Boolean).map(p => `<p>${p}</p>`).join('')}
+            <p>Hi ${esc(firstName)},</p>
+            ${draft.split('\n').filter(Boolean).map(p => `<p>${esc(p)}</p>`).join('')}
             <div style="background:#F4F1EC;border-left:3px solid #0E0E0E;padding:14px 18px;margin:20px 0;">
-              <p style="margin:0;font-size:14px;color:#0E0E0E;"><strong>Already bought from ${rancherName}?</strong> Just reply <strong>"YES"</strong> to this email and I'll close the loop on our end. Takes 5 seconds.</p>
+              <p style="margin:0;font-size:14px;color:#0E0E0E;"><strong>Already bought from ${esc(rancherName)}?</strong> Just reply <strong>"YES"</strong> to this email and I'll close the loop on our end. Takes 5 seconds.</p>
             </div>
-            <p style="font-size:12px;color:#A7A29A;margin-top:30px;">You're receiving this because you signed up on BuyHalfCow. <a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(buyerEmail)}" style="color:#A7A29A;">Unsubscribe</a></p>
           </div>`,
+          // (The old inline `?email=<raw address>` unsubscribe block is gone —
+          // it leaked the address into URLs/logs and duplicated the tokenised
+          // link the auto-injected CAN-SPAM footer already carries.)
         });
+
+        if (!result?.success) {
+          // Nothing was delivered — don't burn a lifetime chase slot. The
+          // 24h claim above stops an intra-day retry storm.
+          skipReasons['chase-send-suppressed-or-failed'] =
+            (skipReasons['chase-send-suppressed-or-failed'] || 0) + 1;
+          continue;
+        }
+
+        try {
+          await updateRecord(TABLES.REFERRALS, referral.id, {
+            'AI Chase Draft': draft,
+            'Chase Count': chaseCount,
+            'Last Chased At': new Date().toISOString(),
+          });
+        } catch (stampErr: any) {
+          // Email already delivered; the 6-day Redis claim is the only dedupe
+          // until this write path heals. Loud log, keep counting the send.
+          console.error(
+            `[referral-chasup] chase stamp write FAILED after a delivered send (ref ${referral.id}):`,
+            stampErr?.message,
+          );
+        }
 
         // NOISE CUT (2026-07-05): "info-only" auto chase-up pinged the phone
         // per buyer, per run — automated, not actionable. The run summary

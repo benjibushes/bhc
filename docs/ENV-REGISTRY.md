@@ -120,6 +120,7 @@
 | `REQUIRE_PRODUCT_APPROVAL` | 'true' → rancher-created products need admin approval before listing; unset → auto-list | fail-open | ben-flips |
 | `ROUTING_ADJACENCY_ENFORCE` | Enforce state-adjacency in nationwide routing | fail-open | ben-flips |
 | ⚠️ `STALE_HOLD_EXPIRY_ENABLED` | Tri-state MASTER gate for referral-stale-expiry, now a 3-tier no-dead-end sweep; unset → nothing expires: capacity silently starves AND buyers freeze in Pending Approval / unpaid deposits forever. Tiers 2+3 need `DEAL_RELEASE_ENABLED=true` on top of this | fail-silent | ben-flips |
+| `STATE_COVERAGE_NOTIFY_ENABLED` | 'true' → the daily state-coverage-notify cron sends the promised "your area opened" email to waitlist buyers (Source='relaunch_waitlist') whose state gained an operational rancher — one per buyer ever (Redis claim), 50/run, whitelisted `state_coverage_opened`. Anything else = DRY: the cron still runs and reports how many it WOULD notify in its Cron Runs note, sends nothing. Unset = the waitlist promise stays broken silently | fail-silent | ben-flips |
 | `STRIPE_CONSENT_COLLECTION` | 'true' → Connect checkout collects ToS consent | fail-open | ben-flips |
 | `WAITING_ACTIVATION_ENABLED` | Tri-state WAITING-lead activation rail (currently dry-run); unset=off | fail-silent | ben-flips |
 

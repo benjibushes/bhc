@@ -8,7 +8,7 @@ import {
   escapeAirtableValue,
   TABLES,
 } from '@/lib/airtable';
-import { sendEmail, sendBrandListingConfirmation, sendFoundingHerdWelcome, sendPostPurchaseWelcome } from '@/lib/email';
+import { sendEmail, sendBrandListingConfirmation, sendFoundingHerdWelcome } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { commissionRateForTier, TierSlug } from '@/lib/tiers';

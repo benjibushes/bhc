@@ -20,6 +20,14 @@ import { isDemoMode } from './demo/demoMode';
 // the buyer's /member view. This email used to own an inline ternary; the
 // portal needed the identical word, and two copies of a wording rule drift.
 import { handoffWord } from './buyerDealStage';
+// Wave 2 (GTM plan 2.8): one share-weight truth across every buyer email —
+// three templates used to quote three different tables.
+import {
+  SHARE_WEIGHTS,
+  SHARE_WEIGHT_RANGE_LBS,
+  SHARE_WEIGHT_RANGE_CU_FT,
+  shareTierFromOrderType,
+} from './beefWeights';
 // BROKER RAIL (2026-07-31): the settlement email BODIES are pure + unit-tested
 // in lib/brokerNotify (the money lines on that rail are the whole product), so
 // this module only wraps them in guardedSend. See the broker section at the
@@ -380,14 +388,32 @@ const resend = {
       }
       delete params._replyContext;
       // Auto-inject CAN-SPAM footer (physical address + unsubscribe link)
-      // into every HTML email unless explicitly opted out via _skipFooter.
-      if (params.html && !params._skipFooter) {
+      // into every HTML email.
+      //
+      // Wave 2 (GTM plan): the footer used to be string-CONCATENATED after the
+      // template's closing </body></html> — 52 templates end that way, so the
+      // footer rendered outside the document in whatever quirks-mode styling
+      // each client applied to trailing markup. Inject it BEFORE the closing
+      // tags when they exist; append (old behavior) only for fragment bodies
+      // that never had closing tags.
+      //
+      // (The never-used _skipFooter escape hatch was deleted in the same pass —
+      // it was declared here and set nowhere in the codebase.)
+      if (params.html) {
         const recipientEmail = Array.isArray(params.to) ? params.to[0] : params.to;
         if (recipientEmail) {
-          params.html = params.html + emailFooter(recipientEmail);
+          const footer = emailFooter(recipientEmail);
+          const closing = /<\/body>\s*<\/html>\s*$/i;
+          if (closing.test(params.html)) {
+            params.html = params.html.replace(closing, `${footer}</body></html>`);
+          } else if (/<\/body>/i.test(params.html)) {
+            // Defensive: a </body> without a trailing </html>.
+            params.html = params.html.replace(/<\/body>/i, `${footer}</body>`);
+          } else {
+            params.html = params.html + footer;
+          }
         }
       }
-      delete params._skipFooter;
       // Preheader text injection — optional field to boost open rate.
       // If preheader not provided, email sends normally without one.
       // (auto-derive from subject is future optimization)
@@ -575,16 +601,19 @@ async function guardedSend(opts: {
 const BUSINESS_ADDRESS = process.env.BUSINESS_ADDRESS || 'BuyHalfCow · 1001 S. Main St. Ste 600 · Kalispell, MT 59901';
 
 // Shared email footer — CAN-SPAM compliant: physical address + visible unsubscribe.
-// Append this to every outbound email HTML body.
+// Injected into every outbound email HTML body (before the closing tags).
+// Color note (Wave 2): #A7A29A on the #F4F1EC template background was 2.25:1 —
+// the legally required unsubscribe link was borderline invisible. #6B4F3F is
+// the existing saddle body-text tone and clears WCAG AA for small text.
 function emailFooter(recipientEmail: string): string {
   const unsubUrl = getUnsubscribeUrl(recipientEmail);
   return `
-    <div style="margin-top:40px;padding-top:20px;border-top:1px solid #E5E2DC;font-size:12px;color:#A7A29A;line-height:1.6;">
+    <div style="margin-top:40px;padding-top:20px;border-top:1px solid #E5E2DC;font-size:12px;color:#6B4F3F;line-height:1.6;">
       <p style="margin:0;">${BUSINESS_ADDRESS}</p>
       <p style="margin:8px 0 0;">
-        <a href="${unsubUrl}" style="color:#A7A29A;text-decoration:underline;">Unsubscribe</a>
+        <a href="${unsubUrl}" style="color:#6B4F3F;text-decoration:underline;">Unsubscribe</a>
         &nbsp;·&nbsp;
-        <a href="${SITE_URL}/privacy" style="color:#A7A29A;text-decoration:underline;">Privacy Policy</a>
+        <a href="${SITE_URL}/privacy" style="color:#6B4F3F;text-decoration:underline;">Privacy Policy</a>
       </p>
     </div>`;
 }
@@ -787,8 +816,8 @@ export async function sendWelcomeAndReadyToBuy(data: {
       <p style="font-size:14px;color:#6B4F3F;">Not ready yet? Just don't click. You stay on the list, no pressure.</p>
     `
     : `
-      <p>Right now we don't have a verified rancher in ${esc(stateLabel)} yet — but I'm working on it. Every week I'm signing new ranchers state by state. The moment one goes live in your area, you'll be one of the first to hear.</p>
-      <p>While you wait, I'll send you a short note once a month — what I'm seeing on the road, which states are about to launch, the actual numbers. Not marketing. Just the real situation.</p>
+      <p>Right now we don't have a verified rancher in ${esc(stateLabel)} yet — but I'm working on it. Every week I'm signing new ranchers state by state. When one goes live in your area, you'll be one of the first to hear.</p>
+      <p>While you wait I'll check in now and then with what's actually useful — where coverage stands, smaller ways to try the beef. The email that matters is the one that says a rancher in ${esc(stateLabel)} is live.</p>
       <p style="font-size:14px;color:#6B4F3F;">Know a rancher in ${esc(stateLabel)} who sells direct? Reply with their name and I'll reach out personally.</p>
       <div style="text-align:center;margin:30px 0;">
         <a href="${SITE_URL}/member/login" class="cta">View Your Dashboard</a>
@@ -817,7 +846,7 @@ export async function sendWelcomeAndReadyToBuy(data: {
     ✓ Apply &nbsp;·&nbsp; <strong style="color:#0E0E0E">Qualify</strong> &nbsp;·&nbsp; Match &nbsp;·&nbsp; Connect &nbsp;·&nbsp; Stock
   </div>
   <h1>You're in, ${esc(first)}.</h1>
-  <p>You applied to BuyHalfCow and I just approved you. Quick what-this-is: I personally connect families to a single verified rancher in their state for a quarter, half, or whole cow. No middleman. Direct relationship. Real beef.</p>
+  <p>You applied to BuyHalfCow and you're approved. Quick what-this-is: I personally connect families to a single verified rancher in their state for a quarter, half, or whole cow. No middleman. Direct relationship. Real beef.</p>
   ${ctaBlock}
   <div class="divider"></div>
   <p style="font-size:12px;color:#A7A29A;">— Ben<br>BuyHalfCow</p>
@@ -860,7 +889,7 @@ export async function sendQuizInvite(data: {
     ✓ Apply &nbsp;·&nbsp; <strong style="color:#0E0E0E">Qualify</strong> &nbsp;·&nbsp; Match &nbsp;·&nbsp; Connect &nbsp;·&nbsp; Stock
   </div>
   <h1>You're in, ${esc(first)}.</h1>
-  <p>You applied to BuyHalfCow and I just approved you. One quick step before I match you with a verified rancher in ${esc(stateLabel)} - a 60-second quiz. It tells me your size, your timing, and how you'll store it, so I match you to the right rancher and the right cut breakdown.</p>
+  <p>You applied to BuyHalfCow and you're approved. One quick step before I match you with a verified rancher in ${esc(stateLabel)} - a 60-second quiz. It tells me your size, your timing, and how you'll store it, so I match you to the right rancher and the right cut breakdown.</p>
   <div class="q">No payment. No pressure. About a minute.</div>
   <div style="text-align:center;margin:30px 0;">
     <a href="${data.quizUrl}" class="cta">Take the quiz &rarr;</a>
@@ -1143,12 +1172,11 @@ export async function sendPostPurchaseWelcome(data: {
   const first = data.firstName || 'there';
   // Rancher's first name for a warmer, more personal "they'll reach out" line.
   const rancherFirst = String(data.rancherName || '').trim().split(/\s+/)[0] || 'your rancher';
-  const tier = data.orderType?.toLowerCase().includes('quarter') ? 'quarter'
-    : data.orderType?.toLowerCase().includes('half') ? 'half'
-    : data.orderType?.toLowerCase().includes('whole') ? 'whole'
-    : 'share';
-  const lbsApprox = tier === 'quarter' ? '~85 lbs' : tier === 'half' ? '~170 lbs' : tier === 'whole' ? '~340 lbs' : '85–340 lbs';
-  const cuFt = tier === 'quarter' ? '~3–4 cu ft' : tier === 'half' ? '~6–8 cu ft' : tier === 'whole' ? '~12–16 cu ft' : '3–16 cu ft';
+  const shareTier = shareTierFromOrderType(data.orderType);
+  const tier = shareTier ?? 'share';
+  // One weight truth across every buyer email — lib/beefWeights.ts.
+  const lbsApprox = shareTier ? SHARE_WEIGHTS[shareTier].lbs : SHARE_WEIGHT_RANGE_LBS;
+  const cuFt = shareTier ? SHARE_WEIGHTS[shareTier].cuFt : SHARE_WEIGHT_RANGE_CU_FT;
 
   const isDeposit = typeof data.depositAmount === 'number' && data.depositAmount > 0;
   const fmtUsd = (n: number) => `$${Math.round(n).toLocaleString('en-US')}`;
@@ -3788,58 +3816,9 @@ th { text-align: left; padding: 8px 12px; background: #F4F1EC; font-size: 11px; 
   });
 }
 
-export async function sendRepeatPurchaseEmail(data: {
-  firstName: string;
-  email: string;
-  rancherName: string;
-  loginUrl: string;
-}) {
-  const subject = `Time for another half, ${esc(data.firstName)}?`;
-  return guardedSend({
-    templateName: 'sendRepeatPurchaseEmail',
-    recipientEmail: data.email,
-    subject,
-    send: () => resend.emails.send({
-      from: getFromEmail(),
-      to: data.email,
-      subject,
-      headers: getUnsubscribeHeaders(data.email),
-      html: `<!DOCTYPE html>
-<html>
-<head>
-<style>
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #0E0E0E; background: #F4F1EC; margin: 0; padding: 20px; }
-.container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border: 1px solid #A7A29A; }
-h1 { font-family: Georgia, serif; font-size: 26px; margin: 0 0 20px; }
-p { color: #6B4F3F; margin: 12px 0; }
-.cta { display: inline-block; padding: 16px 32px; background: #0E0E0E; color: #F4F1EC !important; text-decoration: none; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin: 20px 0; }
-.highlight { background: #F4F1EC; border-left: 3px solid #0E0E0E; padding: 12px 16px; margin: 20px 0; color: #0E0E0E; }
-.divider { height: 1px; background: #A7A29A; margin: 24px 0; }
-.footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #A7A29A; font-size: 12px; color: #A7A29A; }
-</style>
-</head>
-<body>
-<div class="container">
-  <h1>Ready for Another Round?</h1>
-  <p>Hi ${esc(data.firstName)},</p>
-  <p>It's been about a month since you picked up beef from <strong>${esc(data.rancherName)}</strong>. If the freezer is running low, now's a great time to lock in another order.</p>
-  <div class="highlight">
-    <strong>${esc(data.rancherName)}</strong> is still taking buyers. Same quality, same rancher, no middleman markup.
-  </div>
-  <p>Log in to let us know you want to be matched again — we'll get you connected within 24 hours.</p>
-  <div style="text-align: center;">
-    <a href="${utm(data.loginUrl, 'repeat-purchase', 'order-again')}" class="cta">Order Again →</a>
-  </div>
-  <div class="divider"></div>
-  <p style="font-size: 13px;">Not ready yet? No worries — you'll stay in our network and we'll check in again when the time is right.</p>
-  <div class="footer">
-    <p>— Ben<br>BuyHalfCow</p>  </div>
-</div>
-</body>
-</html>`,
-    }),
-  });
-}
+// (sendRepeatPurchaseEmail deleted 2026-08-01, Wave 2: zero callers — it was
+// explicitly retired 2026-06-30 in referral-chasup; the reorder moment is
+// owned by the on-brand sendRepeatPurchaseAsk via the sequence engine.)
 
 // =====================================================
 // UTILITY FUNCTIONS
@@ -4656,7 +4635,7 @@ export async function sendAbandonedRecoveryEmail(data: {
       <p>${greeting}</p>
       <p>Last note from me — I won't keep emailing.</p>
       <p>BuyHalfCow isn't a marketplace. It's a private network where I personally introduce serious buyers to verified ranchers. Members end up with 6-12 months of premium, traceable cuts in the freezer — from one animal, one rancher they can actually call, raised the way they'd raise it themselves.</p>
-      <p>If you're still interested, finishing the form takes a minute. If not, no hard feelings — I'll stop the emails after this one.</p>`;
+      <p>If you're still interested, finishing the form takes a minute. If not, no hard feelings — this is my last note about the application.</p>`;
 
   return guardedSend({
     templateName: 'sendAbandonedRecoveryEmail',
@@ -5253,7 +5232,7 @@ export async function sendIncompleteProfileAsk(data: {
   <h1>Two quick questions</h1>
   <p>Hi ${esc(first)},</p>
   <p>You signed up for BuyHalfCow but I don't have enough info to match you with the right rancher in ${esc(data.buyerState)}. Two questions, 30 seconds.</p>
-  <div class="q"><strong>1.</strong> How much beef do you want? <em>(Quarter ≈ 90 lbs, Half ≈ 180 lbs, Whole ≈ 360 lbs)</em></div>
+  <div class="q"><strong>1.</strong> How much beef do you want? <em>(Quarter ${SHARE_WEIGHTS.quarter.lbs}, Half ${SHARE_WEIGHTS.half.lbs}, Whole ${SHARE_WEIGHTS.whole.lbs})</em></div>
   <div class="q"><strong>2.</strong> What's your budget?</div>
   <p>Tap below to update your profile — takes less than a minute and gets you matched.</p>
   <div style="text-align:center;margin:30px 0;">
@@ -5306,7 +5285,6 @@ export async function sendNoBudgetFounderPitch(data: {
     <li>Quarterly expense ledger in your inbox — see exactly where every dollar went</li>
     <li>Name on the public Founders Wall (opt-in)</li>
     <li>First-pick access when a rancher comes online in your state</li>
-    <li>Voting rights on platform direction decisions</li>
   </ul>
   <p>I'm not selling equity. I'm not running a crowdfund I'm going to disappear from. I'm building a marketplace I'd want to use, and the Founding Herd capital is what funds the recruiting team that brings ranchers + buyers together.</p>
   <div style="text-align:center;margin:30px 0;">
@@ -5406,7 +5384,7 @@ export async function sendStateWaitlistLetter(data: {
   <p>Hi ${esc(first)},</p>
   <p>Thanks for signing up. Straight read: we don't have a verified rancher in ${esc(data.buyerState)} yet. You're on the waitlist.</p>
   <p>I cold-email D2C ranchers in uncovered states every week. ${esc(data.buyerState)} is on the list. When one signs the agreement + goes live, you're one of the first I match them to.</p>
-  <p>I'll email when it happens. No spam in the meantime — just one short monthly note so you know the platform is still building.</p>
+  <p>I'll email when it happens. In the meantime you may hear from me now and then with what's actually useful — never a blast, and every email has an unsubscribe link that works.</p>
   <p>You can check your spot on the list anytime at <a href="${SITE_URL}/member" style="color:#6B4F3F;">buyhalfcow.com/member</a> — we'll email you a sign-in link, no password needed.</p>
   <p>Thanks for being patient w/ a small platform doing it right.</p>
   <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
@@ -5948,7 +5926,7 @@ export async function sendNurtureLongHaul(data: { firstName: string; email: stri
   <p>Hi ${esc(data.firstName)},</p>
   <p>Straight talk: I only route buyers to ranchers I've verified, and in ${esc(data.state)} I'm still building that bench. Your spot holds — I'd rather be slow than send you to a ranch I wouldn't buy from myself.</p>
   <div class="highlight">Want to speed it up? If you know a ranch that sells direct — farmers market, a sign on the highway, your cousin's neighbor — send them to buyhalfcow.com/sell or drop them on the map. Demand in your state is exactly what gets ranchers to say yes.</div>
-  <p>This is the last of these check-ins. When your rancher is ready, the next email you get introduces you to them by name.</p>`,
+  <p>This is the last of these check-ins. When your rancher is ready, you'll get the introduction — their name, their contact info, their prices.</p>`,
         ctaHref: `${SITE_URL}/map/add-a-rancher`,
         ctaLabel: 'know a ranch? add them',
       }),
@@ -6009,7 +5987,7 @@ export async function sendLossRecoveryDownsell(data: {
       ? `<p>A quarter wasn't the right fit this time — that's honest, and useful to know.</p>
   <div class="highlight">The shop ships boxes from the same verified ranches starting at $13 — jerky, samplers, ground beef bundles. Real beef, no freezer commitment, and you'll know exactly whose ranch you're buying from.</div>`
       : `<p>A ${esc(data.cut)} is a big first bite — most folks don't start there.</p>
-  <div class="highlight">Most families start with a quarter (~85 lbs, $1,500–2,000) or a monthly box from the shop starting at $13. Real beef from the same ranches, smaller commitment.</div>`;
+  <div class="highlight">Most families start with a quarter (${SHARE_WEIGHTS.quarter.lbs}, $1,500–2,000) or a monthly box from the shop starting at $13. Real beef from the same ranches, smaller commitment.</div>`;
   return guardedSend({
     templateName: 'sendLossRecoveryDownsell',
     recipientEmail: data.email,
@@ -6027,6 +6005,119 @@ export async function sendLossRecoveryDownsell(data: {
         ctaHref: `${SITE_URL}/shop`,
         ctaLabel: 'see the smaller options',
       }),
+    }),
+  });
+}
+
+// =====================================================
+// BUYER CAPTURE-POINT ACKS (Wave 2, GTM plan 2.1)
+// =====================================================
+//
+// Three buyer capture points (support report, callback request, store
+// inquiry) notified the operator by Telegram and told the BUYER nothing —
+// no receipt, no record they can return to, no reply address. Each gets a
+// small transactional ack. Copy rule: never promise an SLA the rail can't
+// hold — "within a day", not "within a few hours".
+
+const ACK_SHELL_OPEN =
+  `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">`;
+const ACK_SIGNOFF =
+  `<p style="font-size:12px;color:#6B4F3F">- Ben<br>BuyHalfCow</p></div>`;
+
+/** Ack for POST /api/support/report — the buyer's distress receipt. */
+export async function sendSupportReportAck(data: {
+  email: string;
+  category: string;
+  messageExcerpt?: string;
+}) {
+  const subject = 'got your report - a real person is on it';
+  const excerpt = String(data.messageExcerpt || '').trim().slice(0, 200);
+  const excerptBlock = excerpt
+    ? `<p style="border-left:3px solid #A7A29A;padding-left:14px;color:#5A5752;font-size:14px;font-style:italic">"${esc(excerpt)}${excerpt.length >= 200 ? '…' : ''}"</p>`
+    : '';
+  return guardedSend({
+    templateName: 'support_report_ack',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `${ACK_SHELL_OPEN}
+      <p>hey,</p>
+      <p>got your report (${esc(data.category)}). A real person reads every one of these - you'll hear back within a day, usually sooner.</p>
+      ${excerptBlock}
+      <p style="font-size:14px;color:#2A2A2A">Need to add anything? Just reply to this email - it lands in the same thread we're working from.</p>
+      ${ACK_SIGNOFF}`,
+    }),
+  });
+}
+
+/** Ack for POST /api/callback-request — "got it, here's the number I'll call". */
+export async function sendCallbackRequestAck(data: {
+  email: string;
+  firstName?: string;
+  phone?: string;
+}) {
+  const first = (data.firstName || '').trim() || 'there';
+  const subject = 'got it - your callback request is in';
+  const phoneLine = data.phone
+    ? `<p>I'll call you at <strong>${esc(data.phone)}</strong>. If that number's wrong, or a certain time of day works best, reply to this email and tell me.</p>`
+    : `<p>If a certain time of day works best, reply to this email and tell me.</p>`;
+  return guardedSend({
+    templateName: 'callback_request_ack',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `${ACK_SHELL_OPEN}
+      <p>hey ${esc(first)},</p>
+      <p>Got your callback request. I work the list oldest-first, so your spot is held - no need to ask twice.</p>
+      ${phoneLine}
+      ${ACK_SIGNOFF}`,
+    }),
+  });
+}
+
+// =====================================================
+// STATE COVERAGE OPENED (Wave 2, GTM plan — waitlist truth)
+// =====================================================
+//
+// The waitlist capture promised "you'll get an email the moment a rancher
+// goes live in your state" while NOTHING sent that email. The
+// state-coverage-notify cron (env-gated STATE_COVERAGE_NOTIFY_ENABLED) now
+// keeps the promise: one email per buyer, ever, when their captured state
+// first shows operational coverage.
+export async function sendStateCoverageOpened(data: {
+  email: string;
+  firstName?: string;
+  state: string; // 2-letter code or full name — display only
+}) {
+  const first = (data.firstName || '').trim() || 'there';
+  const subject = `a rancher just went live in ${data.state}`;
+  const accessUrl = utm(`${SITE_URL}/access`, 'state-coverage-opened', 'get-matched');
+  return guardedSend({
+    templateName: 'state_coverage_opened',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `${ACK_SHELL_OPEN}
+      <p>hey ${esc(first)},</p>
+      <p>You asked me to tell you when a rancher went live in <strong>${esc(data.state)}</strong>. This is that email.</p>
+      <p>A verified rancher now serves your area - quarter, half, or whole shares, direct from their ranch. Waitlist folks hear first, so slots are open right now.</p>
+      <p style="margin:28px 0;text-align:center">
+        <a href="${accessUrl}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#FAF8F4;text-decoration:none;font-size:15px;font-weight:600">Get matched &rarr;</a>
+      </p>
+      <p style="font-size:14px;color:#2A2A2A">Takes about 90 seconds - a few questions on size, timing, and storage so I match you right. Questions first? Just reply.</p>
+      ${ACK_SIGNOFF}`,
     }),
   });
 }
