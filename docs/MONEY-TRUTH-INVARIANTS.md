@@ -1,7 +1,7 @@
 # Money Truth & Data Integrity — build spec
 
 *Written 2026-07-19 after a live incident: rancher Champion Valley couldn't
-collect $650 from buyer Dave. Root cause was NOT Stripe. This spec makes that
+collect $650 from buyer A. Root cause was NOT Stripe. This spec makes that
 class of failure impossible, and makes the tables provably honest — payments
 first.*
 
@@ -23,7 +23,7 @@ ownership, already-paid, rancher/tier/bank/Connect-account, price floor. And
 **So the rail works.** The failure was that the referral was stamped
 `Awaiting Payment` while `Deposit Link` was never minted, stored, or sent —
 a half-finished state. 8 of 8 Awaiting Payment referrals had no link;
-the oldest sat 17 days; one (Bonnie, $300) already died to Closed Lost.
+the oldest sat 17 days; one (buyer B, $300) already died to Closed Lost.
 ~$5,000 of requested deposits were sitting undeliverable.
 
 ---
@@ -86,7 +86,7 @@ commission was collected.** That must be unambiguous.
 | # | Invariant | Real violation found |
 |---|---|---|
 | H1 | No timestamp in the future | **82 rows stamped `2099-12`** |
-| H2 | One canonical field per fact — kill `Cut Size` vs `Order Type` duplication | Dave had `Order Type` only |
+| H2 | One canonical field per fact — kill `Cut Size` vs `Order Type` duplication | buyer A had `Order Type` only |
 | H3 | `Status = Closed Lost` ⇒ has a `Loss Reason` (or explicit `auto-reaped` flag) | **1,391 blank** |
 | H4 | Rancher `Stripe Connect Status` matches live Stripe (`charges_enabled`) | Airtable is a cache; Stripe is truth |
 | H5 | Rancher marked live ⇒ passes the 1c smoke test | |
@@ -121,6 +121,6 @@ on a clean run (a missing report is itself an alarm).
 5. **H1–H3 + write discipline** — hygiene and the field-duplication cleanup.
 
 ## Immediate manual action (not code)
-- Send Dave his link: `https://www.buyhalfcow.com/checkout/recbnzdZB4MixIyh5/deposit`
+- Send buyer A their link: `https://www.buyhalfcow.com/checkout/rec<redacted>/deposit`
 - Same for the other 7 Awaiting Payment (~$4,350 total, oldest 17 days)
 - Resolve M1: was the $2,920 of commission actually collected? Only Ben knows.

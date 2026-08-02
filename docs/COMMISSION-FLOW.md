@@ -124,5 +124,5 @@ For a specific deal, run `bhc-flow-debug`:
 
 ## History
 
-- **2026-05-20**: Ashcraft / Eric Turner incident — `clcheck_won` Telegram path bypassed every saleAmount gate. Triggered this bulletproofing. See `docs/superpowers/plans/2026-05-20-bulletproof-invoice-capture.md`.
+- **2026-05-20**: Ashcraft / Eric Turner incident — `clcheck_won` Telegram path bypassed every saleAmount gate. Triggered this bulletproofing. See `docs/archive/superpowers/plans/2026-05-20-bulletproof-invoice-capture.md`.
 - **PR #30**: dashboard PATCH gained the saleAmount > 0 hard gate (predecessor of T3).

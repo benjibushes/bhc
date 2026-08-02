@@ -284,7 +284,7 @@ deposit/fulfillment confirmations, etc.). Key buyer-path emails: `sendWelcomeAnd
 | `EMAIL_SEQUENCES_ENABLED` | Off → the buyer drip engine is dark |
 | `ENABLE_SMS` + per-buyer `SMS Opt-In` | Gate every Twilio send |
 | `STRIPE_CONNECT_ENABLED` | Off → the entire tier_v2 + Legacy-Connect track is dark |
-| `ON_PLATFORM_MESSAGING_ENABLED=false` | Threads off; intros rely on email Reply-To |
+| ~~`ON_PLATFORM_MESSAGING_ENABLED`~~ | REMOVED 2026-08-01 — the flag had ZERO code readers and its "Threads off" claim was false: threads/messaging is LIVE in 7 surfaces regardless of the flag. Intros also carry email Reply-To |
 
 ---
 

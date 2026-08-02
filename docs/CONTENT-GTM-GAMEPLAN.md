@@ -43,11 +43,11 @@ lens. Companion canon: `docs/BHC.md` (voice) · `docs/CONTENT-ENGINE.md`
 | `GO_TO_MARKET.md` | War-ready funnel, sales floor, Meta CAPI events, lead score | 2026-06-09 |
 | `docs/MONEY-FUNNELS.md` | Every path to money; tier_v2 deposit commission = THE engine | 2026-06-15 |
 | `docs/COPY-STYLE.md` + `docs/BHC-BRAND.md` | Copy rules + dual brand voice | 2026-05/06 |
-| `docs/playbook/MASTER-PLAN.md` | 90-day marketing execution master plan | 2026-05-29 |
+| `docs/archive/playbook/MASTER-PLAN.md` | 90-day marketing execution master plan | 2026-05-29 |
 
 **Deep bench (use when the task calls):**
 - Sales/offers: `docs/RANCHER-CALL-SCRIPTS.md`, `RANCHER_ONBOARDING_CALLS_GUIDE.md`, `docs/MARKETING-DELIVERY-GAMEPLAN.md` (tier deliverable rituals + capacity math), `docs/BUSINESS-MODEL.md`, `docs/BHC-PROMISE.md`, `docs/VISION.md`
-- Big plans: `docs/superpowers/plans/2026-05-26-bulletproof-gtm-100-ranchers-plan.md` (1,579 ln), `…-bulletproof-paid-scale-plan.md`, `…-sales-floor-pivot.md`, `…-unified-buyer-funnel.md`
+- Big plans: `docs/archive/superpowers/plans/2026-05-26-bulletproof-gtm-100-ranchers-plan.md` (1,579 ln), `…-bulletproof-paid-scale-plan.md`, `…-sales-floor-pivot.md`, `…-unified-buyer-funnel.md`
 - DM sales bot: `MANYCHAT_AI_CLOSER.md` + `MANYCHAT_AI_STEP_PROMPTS.md`
 - Tracking/ads: `docs/MARKETING-TRACKING-SETUP.md`, `docs/AD-ENDPOINTS.md`, `docs/META_CLOSE_PURCHASE_RUNBOOK.md`, `docs/FIX-per-post-attribution.md`
 - Ready-made copy: `marketing/drafts-2026-05-24/` (carousel, threads, ads, press kit), `marketing/CHRISTINA_SWEEPSTAKES_PLAN.md`

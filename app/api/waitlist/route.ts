@@ -115,9 +115,16 @@ export async function POST(request: Request) {
       });
     } catch (e: any) {
       console.error('Waitlist: create error:', e?.message);
-      // Still return success — if Airtable is flaky we don't want to reject
-      // the user, and most duplicates at this point are races.
-      return NextResponse.json({ ok: true, captured: false, warning: 'retry_later' });
+      // WAITLIST TRUTH (Wave 2, 2026-08-01): this used to return
+      // {ok:true, captured:false} with a 200 — the UI showed "you're on the
+      // list" while the record was never written. Silent data loss behind a
+      // success screen. Tell the truth: non-2xx + {ok:false} so the client
+      // can show "didn't save — try again" (the capture component handles
+      // this shape).
+      return NextResponse.json(
+        { ok: false, error: 'capture-failed' },
+        { status: 503 },
+      );
     }
 
     return NextResponse.json({ ok: true, captured: true });

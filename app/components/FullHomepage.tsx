@@ -534,7 +534,7 @@ export default function FullHomepage() {
       <Divider />
 
       {/* Mobile: keep the primary door one thumb-tap away on a page this
-          long. Same primitive /start, /map, and /wins already mount. */}
+          long. Same primitive /map and /wins already mount. */}
       {/* CONTENT-POINTER FLIP (2026-07-06 reach research): the always-visible
           mobile bar is what 40k social followers land on — and ~95% of a cold
           audience can't say yes to a $2k share as their FIRST interaction.

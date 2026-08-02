@@ -17,19 +17,26 @@
 //      subject prefix + Raw Headers)
 //   5. ALWAYS fires a loud operator signal to Telegram — even if the
 //      Airtable write fails, the distress signal is never lost.
+//   6. Acks the BUYER by email (Wave 2, GTM plan 2.1) — until now every
+//      capture point notified the operator and left the person in distress
+//      with no receipt, no reply address, no record they could return to.
 //
-// No money-path writes. Conversations + operator signal only.
+// No money-path writes. Conversations + operator signal + buyer ack only.
 
 import { NextResponse } from 'next/server';
 import { createRecord, TABLES } from '@/lib/airtable';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { resolveBuyerSession } from '@/lib/buyerAuth';
+import { sendSupportReportAck } from '@/lib/email';
 import { validateSupportReport, type SupportCategory } from '@/lib/supportIntake';
 
 export const maxDuration = 15;
 
-const SUCCESS_MESSAGE = 'We got it — a human will reply within a few hours.';
+// SLA truth (Wave 2): "within a few hours" was a promise no rail holds —
+// the report lands as one Telegram and a Conversations row a human works
+// through. "Within a day" is what the desk can actually keep.
+const SUCCESS_MESSAGE = 'We got it — a real person will reply within a day, usually sooner.';
 
 // Map the form's category onto the Conversations table's EXISTING
 // 'Objection Category' single-select options (see the schema comment in
@@ -154,6 +161,20 @@ export async function POST(request: Request) {
       // sendOperatorSignal already swallows Telegram errors; this is belt +
       // suspenders so the buyer still gets a calm success response.
       console.error('[support-report] operator signal failed:', e?.message || e);
+    }
+
+    // ── Buyer ack (Wave 2) — the receipt in THEIR inbox. Best-effort: an ack
+    // failure must never fail the report itself (record + operator signal are
+    // the load-bearing legs). Whitelisted transactional; route rate limit +
+    // honeypot above bound the volume.
+    try {
+      await sendSupportReportAck({
+        email,
+        category,
+        messageExcerpt: excerpt,
+      });
+    } catch (e: any) {
+      console.error('[support-report] buyer ack failed (non-fatal):', e?.message || e);
     }
 
     return NextResponse.json({ success: true, message: SUCCESS_MESSAGE });

@@ -39,6 +39,7 @@ import {
   legacyClosedWon,
   computeConnectFeeCaptured,
   countConnectFeePayments,
+  computeProductMargin,
 } from '@/lib/commissionStats';
 
 export const dynamic = 'force-dynamic';
@@ -184,7 +185,9 @@ export async function GET(request: Request) {
       if (rancherOrders) {
         productOrders = rancherOrders.length;
         productRevenue = round2(rancherOrders.reduce((s: number, o: any) => s + num(o['Buyer Paid']), 0));
-        productMarginBHC = round2(rancherOrders.reduce((s: number, o: any) => s + num(o['BHC Margin']), 0));
+        // Shared helper (lib/commissionStats) — same math the /admin/today
+        // cockpit uses, so the two surfaces can never disagree on shop margin.
+        productMarginBHC = computeProductMargin(rancherOrders as any[]);
         productUnshipped = rancherOrders.filter((o: any) => str(o['Status']) === 'New').length;
         productOrdersThisMonth = rancherOrders.filter((o: any) => {
           const t = o['Ordered At'];

@@ -14,6 +14,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { formatUSD } from '@/lib/formatUSD';
 
 interface BillingData {
   pricingModel: string;
@@ -91,6 +92,14 @@ export default function BillingSection({ justOnboarded }: { justOnboarded: boole
   // Add-on purchase error — kept separate from `error` (which is section-fatal and
   // swaps the whole view for an error line). Renders inline in the add-on shop.
   const [purchaseErr, setPurchaseErr] = useState('');
+  // Connect-start error (Wave 1A, 2026-08-01) — startConnect used to write the
+  // section-fatal `error` state, so ONE Stripe hiccup on the button click
+  // replaced the entire Billing view (plan card, payouts, the Connect button
+  // itself) with a single error line and no retry. Renders inline above the
+  // button instead; the button survives for a second attempt.
+  const [connectErr, setConnectErr] = useState('');
+  // Same failure mode for the Stripe billing-portal buttons — inline, not fatal.
+  const [portalErr, setPortalErr] = useState('');
   // Plan switcher (dashboard-audit rank 8) — POST /api/rancher/tier/change had
   // ZERO UI callers, so a subscribed rancher literally could not change plans
   // anywhere (tier/select 409s them toward the change route this UI now calls).
@@ -156,13 +165,14 @@ export default function BillingSection({ justOnboarded }: { justOnboarded: boole
   }, [justOnboarded, loading, data?.connectStatus]);
 
   const openPortal = async () => {
+    setPortalErr('');
     try {
       const res = await fetch('/api/rancher/tier/portal', { credentials: 'include' });
       const j = await res.json();
       if (j?.url) window.location.href = j.url;
-      else setError(j?.error || 'Portal session failed');
+      else setPortalErr(j?.error || 'Portal session failed — try again.');
     } catch (e: any) {
-      setError(e?.message);
+      setPortalErr(e?.message || 'Portal session failed — try again.');
     }
   };
 
@@ -199,13 +209,14 @@ export default function BillingSection({ justOnboarded }: { justOnboarded: boole
   };
 
   const startConnect = async () => {
+    setConnectErr('');
     try {
       const res = await fetch('/api/rancher/connect/start', { method: 'POST', credentials: 'include' });
       const j = await res.json();
       if (j?.url) window.location.href = j.url;
-      else setError(j?.error || 'Connect start failed');
+      else setConnectErr(j?.error || 'Connect start failed — try again.');
     } catch (e: any) {
-      setError(e?.message);
+      setConnectErr(e?.message || 'Connect start failed — try again.');
     }
   };
 
@@ -216,7 +227,9 @@ export default function BillingSection({ justOnboarded }: { justOnboarded: boole
     return <p className="text-sm py-4">Error: {error || 'No data'}</p>;
   }
 
-  const fmtCurrency = (cents: number) => `$${(cents / 100).toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+  // Wave 1A (2026-08-01): one rancher money format (lib/formatUSD) — whole
+  // dollars stay whole, real cents always print as two digits.
+  const fmtCurrency = (cents: number) => formatUSD(cents / 100);
   const fmtDate = (iso: string | null) => iso ? new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
   // SLICE E — 0.04 → "4", 0.075 → "7.5". One decimal max, no trailing ".0",
   // so negotiated rates (Ashcraft 4%) render exactly, never rounded to a
@@ -396,6 +409,12 @@ export default function BillingSection({ justOnboarded }: { justOnboarded: boole
             Manage payment method / cancel →
           </button>
         )}
+        {portalErr && (
+          <div className="mt-3 p-3 border-l-4 border-weathered bg-weathered/10 text-sm text-weathered flex items-center justify-between gap-3">
+            <span>{portalErr}</span>
+            <button type="button" onClick={() => setPortalErr('')} className="text-lg leading-none hover:opacity-70">×</button>
+          </div>
+        )}
       </div>
 
       {/* Connect status — "finish your payout setup". For any non-active
@@ -442,6 +461,12 @@ export default function BillingSection({ justOnboarded }: { justOnboarded: boole
             {whatsLeft && (
               <p className="text-sm text-saddle mb-3">{whatsLeft}</p>
             )}
+            {connectErr && (
+              <div className="p-3 mb-3 border-l-4 border-weathered bg-weathered/10 text-sm text-weathered flex items-center justify-between gap-3">
+                <span>{connectErr}</span>
+                <button type="button" onClick={() => setConnectErr('')} className="text-lg leading-none hover:opacity-70">×</button>
+              </div>
+            )}
             {data.connectStatus !== 'active' && canResume && (
               <button
                 onClick={startConnect}
@@ -478,28 +503,33 @@ export default function BillingSection({ justOnboarded }: { justOnboarded: boole
             No payouts yet — your first payout lands about 2 business days after your first deposit clears.
           </p>
         ) : (
-          <table className="w-full text-sm">
-            <thead className="border-b border-divider">
-              <tr className="text-left text-saddle text-xs uppercase tracking-wider">
-                <th className="pb-2 font-normal">Date</th>
-                <th className="pb-2 font-normal">Amount</th>
-                <th className="pb-2 font-normal">Status</th>
-                <th className="pb-2 font-normal">Arrives</th>
-                <th className="pb-2 font-normal">Bank</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.stripePayouts.map((p) => (
-                <tr key={p.id} className="border-b border-divider last:border-0">
-                  <td className="py-2">{fmtDate(p.createdISO)}</td>
-                  <td className="py-2">{fmtCurrency(p.amountCents)}</td>
-                  <td className="py-2 capitalize">{p.status.replace(/_/g, ' ')}</td>
-                  <td className="py-2">{fmtDate(p.arrivalDateISO)}</td>
-                  <td className="py-2 text-saddle text-xs">{p.destinationLast4 ? `••${p.destinationLast4}` : '—'}</td>
+          /* Wave 1A (2026-08-01): 5 columns overflow a 375px phone — scroll
+             inside the card instead of pushing the whole page sideways. Money
+             column is right-aligned tabular-nums so amounts line up. */
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="border-b border-divider">
+                <tr className="text-left text-saddle text-xs uppercase tracking-wider">
+                  <th className="pb-2 font-normal">Date</th>
+                  <th className="pb-2 font-normal text-right">Amount</th>
+                  <th className="pb-2 font-normal">Status</th>
+                  <th className="pb-2 font-normal">Arrives</th>
+                  <th className="pb-2 font-normal">Bank</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {data.stripePayouts.map((p) => (
+                  <tr key={p.id} className="border-b border-divider last:border-0">
+                    <td className="py-2">{fmtDate(p.createdISO)}</td>
+                    <td className="py-2 text-right tabular-nums">{fmtCurrency(p.amountCents)}</td>
+                    <td className="py-2 capitalize">{p.status.replace(/_/g, ' ')}</td>
+                    <td className="py-2">{fmtDate(p.arrivalDateISO)}</td>
+                    <td className="py-2 text-saddle text-xs">{p.destinationLast4 ? `••${p.destinationLast4}` : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
@@ -515,6 +545,10 @@ export default function BillingSection({ justOnboarded }: { justOnboarded: boole
                 <div className="text-charcoal mb-3">{fmtCurrency(a.priceCents)}</div>
                 <button
                   onClick={async () => {
+                    // Wave 1A (2026-08-01): this finalizes a REAL Stripe
+                    // invoice — it must never fire off a stray tap. Confirm
+                    // with the amount, same pattern as changeTier above.
+                    if (!window.confirm(`Purchase ${a.label} for ${fmtCurrency(a.priceCents)}? This creates a Stripe invoice you'll be taken to for payment.`)) return;
                     setPurchaseErr('');
                     const res = await fetch('/api/rancher/addons/purchase', {
                       method: 'POST',
@@ -542,26 +576,30 @@ export default function BillingSection({ justOnboarded }: { justOnboarded: boole
           {data.addOns.length > 0 && (
             <>
               <div className="text-xs text-saddle uppercase tracking-wider mb-2">Your add-on history</div>
-              <table className="w-full text-sm">
-                <thead className="border-b border-divider">
-                  <tr className="text-left text-saddle text-xs uppercase tracking-wider">
-                    <th className="pb-2 font-normal">Date</th>
-                    <th className="pb-2 font-normal">Type</th>
-                    <th className="pb-2 font-normal">Amount</th>
-                    <th className="pb-2 font-normal">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.addOns.map((a) => (
-                    <tr key={a.id} className="border-b border-divider last:border-0">
-                      <td className="py-2">{fmtDate(a.purchasedAt)}</td>
-                      <td className="py-2">{a.type}</td>
-                      <td className="py-2">{fmtCurrency(a.amountCents)}</td>
-                      <td className="py-2 capitalize">{a.status}</td>
+              {/* Wave 1A: same phone-overflow + money-column treatment as the
+                  payouts table above. */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="border-b border-divider">
+                    <tr className="text-left text-saddle text-xs uppercase tracking-wider">
+                      <th className="pb-2 font-normal">Date</th>
+                      <th className="pb-2 font-normal">Type</th>
+                      <th className="pb-2 font-normal text-right">Amount</th>
+                      <th className="pb-2 font-normal">Status</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {data.addOns.map((a) => (
+                      <tr key={a.id} className="border-b border-divider last:border-0">
+                        <td className="py-2">{fmtDate(a.purchasedAt)}</td>
+                        <td className="py-2">{a.type}</td>
+                        <td className="py-2 text-right tabular-nums">{fmtCurrency(a.amountCents)}</td>
+                        <td className="py-2 capitalize">{a.status}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </>
           )}
         </div>

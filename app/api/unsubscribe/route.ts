@@ -6,9 +6,9 @@ import { JWT_SECRET } from '@/lib/secrets';
 
 // POST /api/unsubscribe — one-click unsubscribe (RFC 8058)
 // Also handles GET for email-client List-Unsubscribe header clicks
-// Accepts either:
-//   - ?token=<JWT> (preferred, protects PII in URL)
-//   - ?email=<email> (legacy, deprecated ~2026-06-26, kept for 30d inbox link compatibility)
+// Accepts ?token=<JWT> only (protects PII in URL). The legacy ?email= query
+// param was deprecated ~2026-06-26 with a 30-day compatibility window and
+// removed 2026-08-01 after the window closed.
 export async function POST(req: NextRequest) {
   return handleUnsubscribe(req);
 }
@@ -32,14 +32,6 @@ async function handleUnsubscribe(req: NextRequest) {
     } catch (err) {
       console.warn('Token verification failed:', err instanceof Error ? err.message : err);
       return NextResponse.json({ error: 'Invalid or expired token' }, { status: 400 });
-    }
-  }
-
-  // Fallback: legacy ?email= parameter (kept for 30 days, deprecation log)
-  if (!email) {
-    email = url.searchParams.get('email');
-    if (email) {
-      console.warn(`[DEPRECATION] Legacy ?email= unsubscribe used: ${email}. Migrate to token-based links.`);
     }
   }
 
