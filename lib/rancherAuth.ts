@@ -193,7 +193,19 @@ export async function requireRancher(
 ): Promise<{ session: RancherSession } | NextResponse> {
   const session = await resolveRancherSession(request);
   if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    // Wave 2 rancher-UX: ~20 rancher routes surface this body verbatim in
+    // dashboard error banners. The bare word "Unauthorized" told a rancher
+    // nothing (and nothing to do about it); say what happened and where to
+    // go. `code`/`loginUrl` let UIs render a real login link — the message
+    // alone still reads right anywhere it lands as plain text.
+    return NextResponse.json(
+      {
+        error: 'Your session expired — log back in to keep going.',
+        code: 'session-expired',
+        loginUrl: '/rancher/login',
+      },
+      { status: 401 },
+    );
   }
   return { session };
 }

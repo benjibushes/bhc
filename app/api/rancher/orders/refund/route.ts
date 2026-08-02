@@ -82,7 +82,18 @@ export async function POST(request: Request) {
     actor = 'rancher';
   } else {
     const denied = await requireAdmin(request);
-    if (denied) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (denied) {
+      // Same session-expired shape as requireRancher — this branch is what a
+      // rancher with a dead cookie hits, and "Unauthorized" told them nothing.
+      return NextResponse.json(
+        {
+          error: 'Your session expired — log back in to keep going.',
+          code: 'session-expired',
+          loginUrl: '/rancher/login',
+        },
+        { status: 401 },
+      );
+    }
     actor = 'admin';
   }
 

@@ -257,7 +257,17 @@ export default function RancherSetupWizard() {
   const token = searchParams.get('token') || '';
 
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [error, setErrorRaw] = useState('');
+  // Wave 2 rancher-UX: a tick alongside the message so the scroll-to-banner
+  // effect refires even when the SAME error is set twice (tap Continue twice
+  // with the same missing field → identical string → no state change → the
+  // old effect would not re-scroll, resurrecting the "Continue did nothing"
+  // symptom this fixes).
+  const [errorTick, setErrorTick] = useState(0);
+  const setError = useCallback((msg: string) => {
+    setErrorRaw(msg);
+    if (msg) setErrorTick((t) => t + 1);
+  }, []);
   const [rancher, setRancher] = useState<Rancher | null>(null);
   // ONE-ROAD onboarding flow (rebuilt 2026-07-24 — see lib/onboardingFlow,
   // the single source of truth for the order):
@@ -284,10 +294,15 @@ export default function RancherSetupWizard() {
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   // P1-1 auto-save: track per-field status so we can show "saving…" → "saved"
   // micro-indicators next to long-form fields. Map key: field name (e.g.
-  // 'About Text'), value: 'idle' | 'saving' | 'saved'. 'saved' fades after 3s.
-  const [autoSaveStatus, setAutoSaveStatus] = useState<Record<string, 'idle' | 'saving' | 'saved'>>({});
+  // 'About Text'), value: 'idle' | 'saving' | 'saved' | 'error'. 'saved'
+  // fades after 3s; 'error' STAYS until retried (Wave 2 rancher-UX — a failed
+  // autosave used to silently revert to idle, so the pill just vanished and
+  // the rancher believed their paragraphs were saved).
+  const [autoSaveStatus, setAutoSaveStatus] = useState<Record<string, 'idle' | 'saving' | 'saved' | 'error'>>({});
   const autoSaveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const autoSavedFadeTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  // Last attempted value per field so the error state can offer a real retry.
+  const autoSaveLastAttempt = useRef<Record<string, { value: any; opts: { isValid?: (v: any) => boolean } }>>({});
   const [previewOpen, setPreviewOpen] = useState(false); // mobile accordion state
   const [signing, setSigning] = useState(false);
   const [signatureName, setSignatureName] = useState('');
@@ -950,6 +965,8 @@ export default function RancherSetupWizard() {
       if (isValid && !isValid(value)) {
         return;
       }
+      // Remember the attempt so the visible error state can offer a retry.
+      autoSaveLastAttempt.current[key] = { value, opts };
       autoSaveTimers.current[key] = setTimeout(async () => {
         setAutoSaveStatus((s) => ({ ...s, [key]: 'saving' }));
         try {
@@ -969,7 +986,10 @@ export default function RancherSetupWizard() {
             }
           );
           if (!res.ok) {
-            setAutoSaveStatus((s) => ({ ...s, [key]: 'idle' }));
+            // Wave 2 rancher-UX: a failed save must LOOK failed. Reverting to
+            // 'idle' here made the "saving…" pill vanish — indistinguishable
+            // from success — while the rancher's text was NOT saved.
+            setAutoSaveStatus((s) => ({ ...s, [key]: 'error' }));
             return;
           }
           setAutoSaveStatus((s) => ({ ...s, [key]: 'saved' }));
@@ -981,11 +1001,20 @@ export default function RancherSetupWizard() {
             setAutoSaveStatus((s) => ({ ...s, [key]: 'idle' }));
           }, 3000);
         } catch {
-          setAutoSaveStatus((s) => ({ ...s, [key]: 'idle' }));
+          setAutoSaveStatus((s) => ({ ...s, [key]: 'error' }));
         }
       }, 800);
     },
     [token]
+  );
+
+  // Retry a failed per-field autosave with the last attempted value.
+  const retryAutoSave = useCallback(
+    (key: string) => {
+      const attempt = autoSaveLastAttempt.current[key];
+      if (attempt) queueAutoSave(key, attempt.value, attempt.opts);
+    },
+    [queueAutoSave]
   );
 
   // Cleanup all pending timers on unmount so we don't leak / fire stale PATCH.
@@ -1007,6 +1036,151 @@ export default function RancherSetupWizard() {
     },
     [queueAutoSave]
   );
+
+  // ── Wave 2 rancher-UX: step-level autosave for steps 1 / 3 / 8 ───────────
+  // Those steps had ZERO autosave — close the tab on step 3 and every price,
+  // deposit, fee, weight, payment link and testimonial was gone (the
+  // per-field rail only covers 5 long-form text fields). This effect watches
+  // the form while one of those steps is open and PATCHes the step's VALID
+  // slice 1.5s after the last edit. Invalid/incomplete values are OMITTED
+  // from the slice (the server 400s the whole PATCH otherwise), and the
+  // autosave never nulls a deselected tier or fulfillment sub-field — those
+  // destructive semantics stay exclusive to the explicit Save & continue.
+  const stepAutoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stepAutoSaveFade = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [stepAutoSave, setStepAutoSave] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const stepAutoSaveArmed = useRef(false);
+  const lastStepRef = useRef<number>(-1);
+
+  const buildStepAutoSaveSlice = useCallback((): Record<string, any> | null => {
+    if (step === 1) {
+      const slice: Record<string, any> = {};
+      const name = String(form['Operator Name'] || '').trim();
+      if (name) slice['Operator Name'] = name;
+      const email = String(form.Email || '').trim();
+      if (email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) slice['Email'] = email;
+      if (isValidUsPhone(form.Phone)) slice['Phone'] = form.Phone;
+      if (String(form.City || '').trim()) slice['City'] = form.City;
+      if (String(form.State || '').trim()) slice['State'] = form.State;
+      if (/^\d{5}$/.test(String(form.Zip || ''))) slice['Zip'] = form.Zip;
+      slice['States Served'] = form['States Served'] ?? '';
+      slice['Beef Types'] = form['Beef Types'] ?? '';
+      return slice;
+    }
+    if (step === 3) {
+      const sells: string[] = Array.isArray(form['Tier Specialty']) ? form['Tier Specialty'] : [];
+      const slice: Record<string, any> = { 'Tier Specialty': sells };
+      for (const tier of ['Quarter', 'Half', 'Whole'] as const) {
+        // Only tiers the rancher SELLS — never null a deselected tier here.
+        if (!sells.includes(tier)) continue;
+        const priceRaw = form[`${tier} Price`];
+        const price = Number(priceRaw);
+        const priceEmpty = priceRaw === '' || priceRaw == null;
+        // A positive price below the floor is a mid-typing value ("28" on the
+        // way to "2800") — the server would 400 the whole PATCH on it.
+        const priceOk = priceEmpty || (Number.isFinite(price) && price >= MIN_TIER_PRICE);
+        if (priceOk) slice[`${tier} Price`] = priceEmpty ? '' : priceRaw;
+        const depRaw = form[`${tier} Deposit`];
+        const dep = Number(depRaw);
+        const depEmpty = depRaw === '' || depRaw == null;
+        const depOk = depEmpty || (Number.isFinite(dep) && dep > 0 && (!(price > 0) || dep <= price));
+        if (priceOk && depOk) slice[`${tier} Deposit`] = depEmpty ? '' : depRaw;
+        const feeRaw = form[`${tier} Processing Fee`];
+        const fee = Number(feeRaw);
+        if (feeRaw === '' || feeRaw == null || (Number.isFinite(fee) && fee >= 0)) {
+          slice[`${tier} Processing Fee`] = feeRaw ?? '';
+        }
+        slice[`${tier} lbs`] = form[`${tier} lbs`] ?? '';
+        slice[`${tier} Payment Link`] = form[`${tier} Payment Link`] ?? '';
+      }
+      const validTestimonials = testimonials.filter((t) => t.name.trim() && t.quote.trim());
+      if (validTestimonials.length > 0) slice['Testimonials'] = JSON.stringify(validTestimonials);
+      return slice;
+    }
+    if (step === 8) {
+      const types: string[] = Array.isArray(form['Fulfillment Types']) ? form['Fulfillment Types'] : [];
+      const slice: Record<string, any> = {};
+      if (types.length > 0) slice['Fulfillment Types'] = types;
+      if (types.includes('Local Pickup')) {
+        const c = String(form['Pickup City'] || '').trim();
+        if (c) slice['Pickup City'] = c;
+      }
+      if (types.includes('Local Delivery')) {
+        const n = Number(form['Delivery Radius Miles']);
+        if (Number.isInteger(n) && n > 0 && n <= 500) slice['Delivery Radius Miles'] = n;
+      }
+      if (types.includes('Cold-Chain Shipping')) {
+        const n = Number(form['Shipping Lead Time Days']);
+        if (Number.isInteger(n) && n > 0 && n <= 180) slice['Shipping Lead Time Days'] = n;
+      }
+      slice['Fulfillment Cost Notes'] = String(form['Fulfillment Cost Notes'] || '').trim();
+      slice['Next Processing Date'] = String(form['Next Processing Date'] || '');
+      return slice;
+    }
+    return null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, form, testimonials]);
+
+  const fireStepAutoSave = useCallback(async () => {
+    if (saving) return; // never race the explicit Save & continue PATCH
+    const slice = buildStepAutoSaveSlice();
+    if (!slice || Object.keys(slice).length === 0) return;
+    setStepAutoSave('saving');
+    try {
+      const res = await fetch(`/api/rancher/setup?token=${encodeURIComponent(token)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(slice),
+      });
+      if (!res.ok) {
+        setStepAutoSave('error');
+        return;
+      }
+      setStepAutoSave('saved');
+      if (stepAutoSaveFade.current) clearTimeout(stepAutoSaveFade.current);
+      stepAutoSaveFade.current = setTimeout(() => setStepAutoSave('idle'), 3000);
+    } catch {
+      setStepAutoSave('error');
+    }
+  }, [saving, buildStepAutoSaveSlice, token]);
+
+  useEffect(() => {
+    if (loading || !rancher) return;
+    // Entering (or leaving) a step must not fire a PATCH of unchanged data —
+    // arm only after the first real edit on the step.
+    if (lastStepRef.current !== step) {
+      lastStepRef.current = step;
+      stepAutoSaveArmed.current = false;
+      return;
+    }
+    if (step !== 1 && step !== 3 && step !== 8) return;
+    if (!stepAutoSaveArmed.current) {
+      stepAutoSaveArmed.current = true;
+    }
+    if (stepAutoSaveTimer.current) clearTimeout(stepAutoSaveTimer.current);
+    stepAutoSaveTimer.current = setTimeout(fireStepAutoSave, 1500);
+    return () => {
+      if (stepAutoSaveTimer.current) clearTimeout(stepAutoSaveTimer.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form, testimonials, step, loading, rancher]);
+
+  // ── Wave 2 rancher-UX: validation errors must be SEEN ────────────────────
+  // Every step's validation error renders in the ONE banner at the top of the
+  // page — on step 3 that is several phone-screens above the Continue button,
+  // so from where the rancher stood, Continue silently did nothing. Scroll +
+  // focus the banner whenever an error lands (FulfillmentStep's
+  // adjacent-to-the-button error already behaves; this covers the rest).
+  const errorBannerRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!error) return;
+    requestAnimationFrame(() => {
+      const el = errorBannerRef.current;
+      if (!el) return;
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.focus({ preventScroll: true });
+    });
+  }, [error, errorTick]);
 
   // Request a signing JWT (mints a fresh one + stamps Onboarding Status=Docs Sent).
   // Doesn't email — we sign inline. Returns nothing visible, just primes the
@@ -1476,9 +1650,36 @@ export default function RancherSetupWizard() {
         )}
 
         {error && rancher && (
-          <div role="alert" className="text-sm text-weathered border border-weathered/40 bg-weathered/5 p-3">
+          <div
+            ref={errorBannerRef}
+            tabIndex={-1}
+            role="alert"
+            className="text-sm text-weathered border border-weathered/40 bg-weathered/5 p-3 focus:outline-none focus:ring-2 focus:ring-weathered/40"
+          >
             {error}
           </div>
+        )}
+
+        {/* Step-level autosave status (steps 1/3/8). Failure is VISIBLE with a
+            retry — a silent revert-to-idle is indistinguishable from saved. */}
+        {stepAutoSave !== 'idle' && (
+          <p className="text-xs" aria-live="polite">
+            {stepAutoSave === 'saving' && <span className="text-saddle">Saving your changes…</span>}
+            {stepAutoSave === 'saved' && <span className="text-sage-dark">✓ Changes saved</span>}
+            {stepAutoSave === 'error' && (
+              <span className="text-weathered">
+                Autosave failed — your latest edits may not be saved.{' '}
+                <button
+                  type="button"
+                  onClick={fireStepAutoSave}
+                  className="underline underline-offset-2 font-medium hover:text-charcoal min-h-[24px]"
+                >
+                  Retry
+                </button>{' '}
+                (Save &amp; continue also re-saves everything.)
+              </span>
+            )}
+          </p>
         )}
 
         {/* Mobile preview accordion — desktop sees split-screen below; mobile
@@ -1855,7 +2056,7 @@ export default function RancherSetupWizard() {
                       {form.Tagline.length}/120 chars
                     </span>
                   )}
-                  <AutoSaveIndicator status={autoSaveStatus['Tagline']} />
+                  <AutoSaveIndicator status={autoSaveStatus['Tagline']} onRetry={() => retryAutoSave('Tagline')} />
                 </div>
                 {showTaglineTemplates && (
                   <div className="border border-dust bg-bone-warm p-3 space-y-1.5">
@@ -1918,7 +2119,7 @@ export default function RancherSetupWizard() {
                   rows={7}
                   placeholder="A few paragraphs. How you got started, what makes your operation different, what families are buying when they buy from you."
                 />
-                <AutoSaveIndicator status={autoSaveStatus['About Text']} />
+                <AutoSaveIndicator status={autoSaveStatus['About Text']} onRetry={() => retryAutoSave('About Text')} />
               </div>
 
               <div className="space-y-1">
@@ -1929,7 +2130,7 @@ export default function RancherSetupWizard() {
                   placeholder="https://youtube.com/watch?v=..."
                   type="url"
                 />
-                <AutoSaveIndicator status={autoSaveStatus['Video URL']} />
+                <AutoSaveIndicator status={autoSaveStatus['Video URL']} onRetry={() => retryAutoSave('Video URL')} />
               </div>
 
               {/* ── Gallery photos ──────────────────────────────────────────
@@ -1976,10 +2177,19 @@ export default function RancherSetupWizard() {
                                 Cover
                               </span>
                             )}
+                            {/* Wave 2 rancher-UX: always visible + 44px + confirm.
+                                The old opacity-0 group-hover reveal required a
+                                hover state that does not exist on touch — a
+                                rancher on a phone physically could not remove a
+                                wrong photo. Destructive with no undo → confirm. */}
                             <button
                               type="button"
-                              onClick={() => setPhotos(photos.filter((_, idx) => idx !== i))}
-                              className="absolute top-1 right-1 px-2 py-0.5 bg-charcoal text-bone text-xs opacity-0 group-hover:opacity-100 focus:opacity-100 transition-base"
+                              onClick={() => {
+                                if (window.confirm(`Remove photo ${i + 1}? This can't be undone.`)) {
+                                  setPhotos(photos.filter((_, idx) => idx !== i));
+                                }
+                              }}
+                              className="absolute top-1 right-1 min-w-[44px] min-h-[44px] flex items-center justify-center bg-charcoal/80 text-bone text-base hover:bg-charcoal transition-base"
                               title="Remove photo"
                               aria-label={`Remove photo ${i + 1}`}
                             >
@@ -2985,12 +3195,40 @@ export default function RancherSetupWizard() {
 // P1-1 — auto-save status pill. Three states: saving (dust), saved (sage),
 // idle (renders nothing). Small + lowercase so it doesn't fight the existing
 // micro-copy under fields. Inline so it can sit next to char counters.
-function AutoSaveIndicator({ status }: { status?: 'idle' | 'saving' | 'saved' }) {
+function AutoSaveIndicator({
+  status,
+  onRetry,
+}: {
+  status?: 'idle' | 'saving' | 'saved' | 'error';
+  onRetry?: () => void;
+}) {
   if (!status || status === 'idle') return null;
   if (status === 'saving') {
     return (
       <span className="text-xs text-dust italic ml-2" aria-live="polite">
         saving…
+      </span>
+    );
+  }
+  // Wave 2 rancher-UX: a failed autosave must LOOK failed (it used to revert
+  // to idle — the pill vanished exactly like success while the text was NOT
+  // saved). Error stays visible until a retry succeeds.
+  if (status === 'error') {
+    return (
+      <span className="text-xs text-weathered ml-2" aria-live="assertive">
+        not saved
+        {onRetry && (
+          <>
+            {' — '}
+            <button
+              type="button"
+              onClick={onRetry}
+              className="underline underline-offset-2 font-medium hover:text-charcoal"
+            >
+              retry
+            </button>
+          </>
+        )}
       </span>
     );
   }
@@ -4129,7 +4367,7 @@ function FulfillmentStep({
     value: any,
     opts?: { isValid?: (v: any) => boolean }
   ) => void;
-  autoSaveStatus: Record<string, 'idle' | 'saving' | 'saved'>;
+  autoSaveStatus: Record<string, 'idle' | 'saving' | 'saved' | 'error'>;
   saving: boolean;
   saveStep: (slice: Record<string, any>) => Promise<boolean>;
   onBack: () => void;

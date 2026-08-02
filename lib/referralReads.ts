@@ -73,6 +73,12 @@ export const REFERRAL_DASHBOARD_FIELDS = [
   // dashboard splits rancher-entered leads ('rancher-added') into the My
   // Leads CRM block and keeps them out of the routed Deals lists.
   'Referral Source',
+  // Reviews visibility (Wave 2 rancher-UX, 2026-08-02) — the buyer review
+  // trio. The public page filters to rating ≥ 4; the rancher Reviews rail
+  // (GET /api/rancher/referrals) shows ALL of them, including the low-rated
+  // ones the public page hides, so the rancher can fix the cause. The
+  // projection breaker degrades gracefully if the fields are ever renamed.
+  'Buyer Rating', 'Buyer Review', 'Review Submitted At',
 ];
 
 const READ_PATH_BREAKER_MS = 5 * 60 * 1000;

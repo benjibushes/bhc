@@ -201,26 +201,28 @@ interface Referral {
   referral_source?: string;
 }
 
-interface NetworkBenefit {
-  id: string;
-  brand_name: string;
-  product_type: string;
-  discount_offered: number;
-  description: string;
-  website: string;
-  contact_email: string;
-}
-
 // Cockpit (Wave A, 2026-06-22): 'home' is the new triage default. The spine
 // nav surfaces Home / Deals (= 'referrals') / My Page (= 'my_page') and links
 // out to Messages (/rancher/inbox).
-// 'marketing'/'earnings'/'benefits' stay reachable under the secondary "More"
-// affordance. SLICE F: the legacy 'overview' tab is gone — it duplicated
+// SLICE F: the legacy 'overview' tab is gone — it duplicated
 // Home/Deals; its capacity + pause controls live in Home's Buyer slots card.
 // Settings merge (2026-07-15): 'settings' replaces the old Money nav link —
 // one spine stop for billing (shared BillingSection, the exact
 // /rancher/billing content) + account (moved from the Earnings tail).
-type Tab = 'home' | 'referrals' | 'marketing' | 'earnings' | 'benefits' | 'my_page' | 'customers' | 'products' | 'settings';
+// Wave 2 cut (2026-08-02, GTM plan cut-list): 'marketing' (read-only brochure,
+// no action ever — its 2 useful preview links moved into My Page) and
+// 'benefits' (permanently rendered "being finalized, check back soon") are
+// DELETED. That left the "More" drawer holding only Earnings, so the drawer
+// died too and Earnings sits on the spine directly.
+type Tab = 'home' | 'referrals' | 'earnings' | 'my_page' | 'customers' | 'products' | 'settings';
+
+// Wave 2 rancher-UX: valid ?tab= values (browser Back / refresh / bookmarks).
+const TAB_KEYS: Tab[] = ['home', 'referrals', 'earnings', 'my_page', 'customers', 'products', 'settings'];
+function tabFromLocation(): Tab | null {
+  if (typeof window === 'undefined') return null;
+  const t = new URLSearchParams(window.location.search).get('tab');
+  return t && (TAB_KEYS as string[]).includes(t) ? (t as Tab) : null;
+}
 
 // WAVE 3a (2026-06-30): localStorage key for activity-feed read-state. No
 // Airtable field exists for per-rancher read receipts, so mark-as-read is
@@ -280,9 +282,32 @@ export default function RancherDashboardPage() {
   const [loading, setLoading] = useState(true);
   // Cockpit default: land on the calm triage screen, not the old stat grid.
   const [activeTab, setActiveTab] = useState<Tab>('home');
-  // Secondary nav ("More" dropdown) holds marketing / earnings / benefits so
-  // the spine stays at 5 items without deleting any tab content.
-  const [moreOpen, setMoreOpen] = useState(false);
+
+  // ── Wave 2 rancher-UX: tab state lives in the URL (?tab=) ────────────────
+  // The tab never wrote to the URL before: browser Back did nothing, refresh
+  // always dumped on Home, and no tab was bookmarkable. selectTab pushes a
+  // history entry; popstate restores on Back/Forward; the mount effect below
+  // reads ?tab= so refresh + bookmarks land on the right tab.
+  const selectTab = (tab: Tab, opts: { push?: boolean } = {}) => {
+    setActiveTab(tab);
+    if (typeof window === 'undefined') return;
+    try {
+      const url = new URL(window.location.href);
+      if (url.searchParams.get('tab') === tab) return;
+      url.searchParams.set('tab', tab);
+      // Tab moves also clear a stale #hash deep link so the two can't disagree.
+      url.hash = '';
+      if (opts.push === false) window.history.replaceState(window.history.state, '', url);
+      else window.history.pushState(window.history.state, '', url);
+    } catch {
+      /* history API unavailable — in-page state still switched */
+    }
+  };
+  useEffect(() => {
+    const onPop = () => setActiveTab(tabFromLocation() || 'home');
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
   // Set/Change-password modal. Lets a magic-link-logged-in rancher set a
   // password (stored in Supabase Auth) for next time. Email is taken from the
   // server session in the API — never sent from here.
@@ -295,6 +320,44 @@ export default function RancherDashboardPage() {
   // Stripe payouts ("you got paid $X") — fetched separately so a slow/needs-
   // Connect Stripe read never blocks the dashboard render. Null until loaded.
   const [payouts, setPayouts] = useState<PayoutsInfo | null>(null);
+  // Reviews rail (Wave 2 rancher-UX): every buyer review — INCLUDING the
+  // low-rated ones the public page hides (rating < 4). Null = not loaded yet;
+  // lazy-fetched the first time the My Page tab opens.
+  const [buyerReviews, setBuyerReviews] = useState<Array<{
+    id: string;
+    buyerName: string;
+    rating: number;
+    review: string;
+    submittedAt: string | null;
+    publiclyVisible: boolean;
+  }> | null>(null);
+  const [buyerReviewsError, setBuyerReviewsError] = useState(false);
+
+  // Reviews rail — lazy load on first My Page open (read-only side surface;
+  // never blocks the main dashboard paint).
+  useEffect(() => {
+    if (activeTab !== 'my_page' || buyerReviews !== null) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/rancher/referrals?reviews=1', { credentials: 'include' });
+        if (!res.ok) {
+          if (!cancelled) setBuyerReviewsError(true);
+          return;
+        }
+        const data = await res.json();
+        if (!cancelled && Array.isArray(data?.reviews)) {
+          setBuyerReviews(data.reviews);
+          setBuyerReviewsError(false);
+        }
+      } catch {
+        if (!cancelled) setBuyerReviewsError(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, buyerReviews]);
   // Wave C — product orders side-load (see ProductOrderSummary). Null until
   // loaded; degrades silently (badge + card simply hidden). Kept fresh by
   // ProductsTab via onOrdersChanged so marking one shipped clears the badge.
@@ -333,7 +396,6 @@ export default function RancherDashboardPage() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [referrals, setReferrals] = useState<Referral[]>([]);
   const [closeModal, setCloseModal] = useState<Referral | null>(null);
-  const [benefits, setBenefits] = useState<NetworkBenefit[]>([]);
   // lostReason: the close-deal modal's "No Sale (Lost)" path must carry a
   // structured reason like the Mark Lost modal does — codes map server-side
   // onto the Referrals 'Loss Reason' singleSelect (lib/lossReasons).
@@ -490,7 +552,13 @@ export default function RancherDashboardPage() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const hash = window.location.hash.replace('#', '').toLowerCase();
-    if (!hash) return;
+    if (!hash) {
+      // Wave 2 rancher-UX: no hash → honor ?tab= so refresh and bookmarks
+      // land on the tab the rancher was on (previously always Home).
+      const fromQuery = tabFromLocation();
+      if (fromQuery) setActiveTab(fromQuery);
+      return;
+    }
     const hashToTab: Record<string, Tab> = {
       home: 'home',
       deals: 'referrals',
@@ -499,9 +567,11 @@ export default function RancherDashboardPage() {
       customers: 'customers',
       // SLICE F: '#overview' deep-links land on Home (tab deleted).
       overview: 'home',
-      marketing: 'marketing',
+      // Wave 2 cut: Marketing tab deleted — its preview links live in My
+      // Page now; Benefits tab deleted (never had content) → Home.
+      marketing: 'my_page',
       earnings: 'earnings',
-      benefits: 'benefits',
+      benefits: 'home',
       // Products tab deep link — the monthly stock check-in email + docs
       // point ranchers at /rancher#products.
       products: 'products',
@@ -642,7 +712,6 @@ export default function RancherDashboardPage() {
       setRancherInfo(data.rancher);
       setStats(data.stats);
       setReferrals(data.referrals);
-      setBenefits(data.networkBenefits || []);
       // U11: fresh data supersedes any stale row-update error still showing.
       setUpdateError('');
       setUpdateErrorId(null);
@@ -1897,10 +1966,9 @@ export default function RancherDashboardPage() {
   const jumpToReferral = (referralId: string) => {
     // My Leads rows render in the Customers tab CRM block, not Deals.
     const target = referrals.find((r) => r.id === referralId);
-    setActiveTab(target && isMyLead(target) ? 'customers' : 'referrals');
+    selectTab(target && isMyLead(target) ? 'customers' : 'referrals');
     setSearchOpen(false);
     setSearchQuery('');
-    setMoreOpen(false);
     if (typeof window !== 'undefined' && referralId) {
       // Defer to after the tab renders, then scroll the card into view.
       setTimeout(() => {
@@ -1984,11 +2052,11 @@ export default function RancherDashboardPage() {
   const productsEligible =
     String(rancherInfo?.connectStatus || '').toLowerCase() === 'active';
 
-  // ── Cockpit nav spine (Wave A) ─────────────────────────────────────────
-  // 5 persistent items. Home / Deals / My Page are in-page tabs; Messages and
-  // Money are nav links that route to the (previously orphaned) inbox + billing
-  // pages. "More" tucks the marketing / earnings / benefits tab CONTENT — all
-  // still reachable, nothing deleted.
+  // ── Cockpit nav spine (Wave A; Wave 2 cut 2026-08-02) ──────────────────
+  // Home / Deals / Customers / Products / My Page / Earnings / Settings are
+  // in-page tabs; Messages is a nav link to the inbox page. The "More"
+  // drawer is gone: Marketing + Network Benefits were deleted (cut-list),
+  // which left it holding only Earnings — so Earnings sits on the spine.
   // Wave C — paid orders still sitting in 'New'. Drives the Products spine
   // badge + the Home Today queue rows so a paid order can't be missed.
   const newOrders = (productOrders || []).filter((o) => o.status === 'New');
@@ -2035,15 +2103,13 @@ export default function RancherDashboardPage() {
     // A revenue surface, so it earns a primary spine slot, not the More drawer.
     { key: 'products', label: `Products${newOrderCount > 0 ? ` (${newOrderCount} to ship)` : ''}` },
     { key: 'my_page', label: 'My Page' },
+    // Earnings surfaced directly (Wave 2): the More drawer that used to hold
+    // it died with the Marketing/Benefits cut.
+    { key: 'earnings', label: 'Earnings' },
     // Settings merge (2026-07-15): billing + account in one stop — replaces
     // the old Money link out to /rancher/billing (route still alive for
     // deep links + the Stripe onboarding return URL).
     { key: 'settings', label: 'Settings' },
-  ];
-  const moreTabs: { key: Tab; label: string }[] = [
-    { key: 'marketing', label: 'Marketing' },
-    { key: 'earnings', label: 'Earnings' },
-    { key: 'benefits', label: `Network Benefits${benefits.length > 0 ? ` (${benefits.length})` : ''}` },
   ];
 
   // ── Home triage signals (composition of existing data only) ─────────────
@@ -2532,7 +2598,7 @@ export default function RancherDashboardPage() {
                   price.{' '}
                   <button
                     type="button"
-                    onClick={() => setActiveTab('my_page')}
+                    onClick={() => selectTab('my_page')}
                     className="underline underline-offset-2 hover:text-charcoal"
                   >
                     set prices in my page →
@@ -2640,7 +2706,7 @@ export default function RancherDashboardPage() {
                 label: 'Set up your ranch page',
                 state: verifiedDone && pageReady ? 'done' : verifiedDone ? 'current' : 'pending',
                 cta: verifiedDone && !pageReady ? (
-                  <Link href="#my_page" onClick={() => setActiveTab('my_page')} className="text-xs text-saddle underline">Open &ldquo;My Page&rdquo; tab</Link>
+                  <Link href="#my_page" onClick={() => selectTab('my_page')} className="text-xs text-saddle underline">Open &ldquo;My Page&rdquo; tab</Link>
                 ) : undefined,
               },
               { label: 'Go live — start receiving buyers', state: 'pending' },
@@ -2800,16 +2866,16 @@ export default function RancherDashboardPage() {
           })()}
 
           {/* ── Cockpit nav spine ──────────────────────────────────────────
-              Home · Deals · Customers · Products · My Page · Settings ·
-              Messages. Big tap targets, mobile-first (wraps on narrow
-              screens). Messages routes to the inbox page; Settings (2026-07-15)
-              is the merged billing + account tab that replaced the old Money
-              link. "More" holds the marketing / earnings / benefits content. */}
+              Home · Deals · Customers · Products · My Page · Earnings ·
+              Settings · Messages. Big tap targets, mobile-first (wraps on
+              narrow screens). Messages routes to the inbox page; Settings
+              (2026-07-15) is the merged billing + account tab. The "More"
+              drawer died with the Marketing/Benefits cut (Wave 2). */}
           <div className="flex flex-wrap gap-2">
             {spineTabs.map((tab) => (
               <button
                 key={tab.key}
-                onClick={() => { setActiveTab(tab.key); setMoreOpen(false); }}
+                onClick={() => selectTab(tab.key)}
                 className={`px-4 py-2.5 min-h-[44px] text-sm font-medium tracking-wider uppercase transition-colors ${
                   activeTab === tab.key
                     ? 'bg-charcoal text-bone'
@@ -2832,39 +2898,6 @@ export default function RancherDashboardPage() {
                 </span>
               )}
             </Link>
-
-            {/* More — secondary affordance keeping marketing/earnings/benefits
-                (and the legacy Overview) reachable without crowding the spine. */}
-            <div className="relative">
-              <button
-                onClick={() => setMoreOpen((o) => !o)}
-                aria-expanded={moreOpen}
-                className={`px-4 py-2.5 min-h-[44px] text-sm font-medium tracking-wider uppercase transition-colors ${
-                  moreTabs.some((t) => t.key === activeTab)
-                    ? 'bg-charcoal text-bone'
-                    : 'border border-dust hover:bg-charcoal hover:text-bone'
-                }`}
-              >
-                More {moreOpen ? '▴' : '▾'}
-              </button>
-              {moreOpen && (
-                <div className="absolute z-20 mt-1 min-w-[200px] border border-dust bg-bone">
-                  {moreTabs.map((tab) => (
-                    <button
-                      key={tab.key}
-                      onClick={() => { setActiveTab(tab.key); setMoreOpen(false); }}
-                      className={`block w-full text-left px-4 py-3 min-h-[44px] text-sm font-medium tracking-wider uppercase transition-colors ${
-                        activeTab === tab.key
-                          ? 'bg-charcoal text-bone'
-                          : 'hover:bg-charcoal hover:text-bone'
-                      }`}
-                    >
-                      {tab.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
           </div>
 
           {/* Home Tab — cockpit triage (Wave A). Action cards (only when there
@@ -2893,9 +2926,9 @@ export default function RancherDashboardPage() {
               productRevenue={productRevenue}
               nextPayoutLabel={nextPayoutLabel}
               payoutsLoginUrl={payouts?.loginUrl || null}
-              onGoToDeals={() => setActiveTab('referrals')}
-              onGoToMyPage={() => setActiveTab('my_page')}
-              onGoToProducts={() => setActiveTab('products')}
+              onGoToDeals={() => selectTab('referrals')}
+              onGoToMyPage={() => selectTab('my_page')}
+              onGoToProducts={() => selectTab('products')}
               slotsPanel={buyerSlotsPanel}
             />
           )}
@@ -2907,7 +2940,8 @@ export default function RancherDashboardPage() {
           {activeTab === 'products' && (
             <ProductsTab
               connectActive={productsEligible}
-              onGoToMyPage={() => setActiveTab('my_page')}
+              connectStatus={String(rancherInfo?.connectStatus || '').toLowerCase()}
+              onGoToMyPage={() => selectTab('my_page')}
               onOrdersChanged={(orders) => setProductOrders(orders)}
             />
           )}
@@ -3151,11 +3185,25 @@ export default function RancherDashboardPage() {
                 </div>
               ) : (
                 <div className="space-y-3">
+                  {/* Wave 2 rancher-UX: email/phone used to render as PLAIN
+                      TEXT inside the card <button> — on a phone the rancher
+                      had to memorize and retype them. The card is now a
+                      keyboard-accessible clickable div so the contact line
+                      can hold real tel:/mailto: links (nested interactive
+                      elements inside a <button> are invalid HTML). */}
                   {filteredCustomers.map((c) => (
-                    <button
+                    <div
                       key={c.key}
+                      role="button"
+                      tabIndex={0}
                       onClick={() => jumpToReferral(c.latestReferralId)}
-                      className="block w-full text-left p-4 border border-dust bg-white hover:border-charcoal transition-colors"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          jumpToReferral(c.latestReferralId);
+                        }
+                      }}
+                      className="block w-full text-left p-4 border border-dust bg-white hover:border-charcoal transition-colors cursor-pointer"
                     >
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                         <div className="min-w-0">
@@ -3169,7 +3217,26 @@ export default function RancherDashboardPage() {
                             {c.state && <span className="text-xs text-dust">{c.state}</span>}
                           </div>
                           <p className="text-xs text-dust truncate mt-0.5">
-                            {[c.email, c.phone].filter(Boolean).join(' · ') || 'no contact on file'}
+                            {!c.email && !c.phone && 'no contact on file'}
+                            {c.email && (
+                              <a
+                                href={`mailto:${c.email}`}
+                                onClick={(e) => e.stopPropagation()}
+                                className="underline underline-offset-2 hover:text-charcoal py-2 inline-block"
+                              >
+                                {c.email}
+                              </a>
+                            )}
+                            {c.email && c.phone && ' · '}
+                            {c.phone && (
+                              <a
+                                href={`tel:${c.phone}`}
+                                onClick={(e) => e.stopPropagation()}
+                                className="underline underline-offset-2 hover:text-charcoal py-2 inline-block"
+                              >
+                                {c.phone}
+                              </a>
+                            )}
                           </p>
                           <p className="text-xs text-saddle mt-0.5">
                             {c.totalDeals} deal{c.totalDeals === 1 ? '' : 's'}
@@ -3178,13 +3245,13 @@ export default function RancherDashboardPage() {
                           </p>
                         </div>
                         <div className="text-right flex-shrink-0">
-                          <p className="font-serif text-lg text-charcoal">
+                          <p className="font-serif text-lg text-charcoal tabular-nums">
                             ${c.lifetimeValue.toLocaleString()}
                           </p>
                           <p className="text-[11px] uppercase tracking-wider text-dust">lifetime</p>
                         </div>
                       </div>
-                    </button>
+                    </div>
                   ))}
                 </div>
               )}
@@ -3204,7 +3271,19 @@ export default function RancherDashboardPage() {
                   here. Dismissible; also cleared on tab change / retry / refetch. */}
               {updateError && updateErrorId && (
                 <div className="p-3 border border-weathered/40 bg-weathered/10 text-weathered text-sm flex items-start justify-between gap-3">
-                  <span>{updateError}</span>
+                  <span>
+                    {updateError}
+                    {/* Wave 2 rancher-UX: the session-expired 401 body now says
+                        so — render an actual way back in next to it. */}
+                    {/session expired/i.test(updateError) && (
+                      <>
+                        {' '}
+                        <a href="/rancher/login" className="underline underline-offset-2 font-medium">
+                          Log back in →
+                        </a>
+                      </>
+                    )}
+                  </span>
                   <button
                     onClick={() => { setUpdateError(''); setUpdateErrorId(null); }}
                     className="text-lg leading-none hover:text-charcoal"
@@ -3536,6 +3615,11 @@ export default function RancherDashboardPage() {
                               >
                                 {invoiceSent ? 'Re-send invoice' : 'Send Final Invoice'}
                               </button>
+                              {/* Visible on touch — this consequence used to
+                                  live only in the hover tooltip above. */}
+                              <p className="text-[11px] text-saddle leading-snug sm:text-right max-w-[240px]">
+                                emails the buyer their balance — no BHC fee (card processing applies)
+                              </p>
                             </div>
                           </div>
                           {/* Wave 2 (2026-07-29) — un-gated tracker: the whole
@@ -3642,181 +3726,6 @@ export default function RancherDashboardPage() {
                     ))}
                   </div>
                 </>
-              )}
-            </div>
-          )}
-
-          {/* Marketing Tab — BUILD-6 (2026-05-29) ──────────────────────────
-              Surfaces what BHC actively runs FOR the rancher. VERIFIED claims
-              only (SLICE F): every card here maps to a shipped feature — no
-              copy-only promises. (The always-on-ads card + unimplemented tier
-              perks were removed; re-add ads with real spend data when live.)
-              Goal: rancher sees the value being generated on their behalf,
-              not just the leads. */}
-          {activeTab === 'marketing' && (
-            <div className="space-y-6">
-              <div>
-                <h2 className="font-serif text-2xl text-charcoal">marketing engine</h2>
-                <p className="text-sm text-saddle mt-1">
-                  What BHC is running on your behalf right now. We bring the buyers
-                  to your state — you close them.
-                </p>
-              </div>
-
-              {/* Traffic + reach */}
-              <div className="bg-bone-warm border border-dust p-5 md:p-6 space-y-4">
-                <p className="text-xs uppercase tracking-widest text-saddle font-semibold">
-                  Traffic &amp; reach in {rancherInfo.state || 'your state'}
-                </p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="bg-bone border border-dust p-4">
-                    <p className="text-[11px] uppercase tracking-widest text-saddle">
-                      State landing page
-                    </p>
-                    <p className="font-serif text-base text-charcoal mt-1.5 mb-2">
-                      /access/{(rancherInfo.state || 'mt').toLowerCase()}
-                    </p>
-                    <a
-                      href={`/access/${(rancherInfo.state || 'mt').toLowerCase()}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs text-saddle underline underline-offset-2 hover:text-charcoal"
-                    >
-                      Preview page →
-                    </a>
-                  </div>
-                  <div className="bg-bone border border-dust p-4">
-                    <p className="text-[11px] uppercase tracking-widest text-saddle">
-                      Public map listing
-                    </p>
-                    <p className="font-serif text-base text-charcoal mt-1.5 mb-2">
-                      Pinned in {rancherInfo.state || 'your state'}
-                    </p>
-                    <a
-                      href="/map"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs text-saddle underline underline-offset-2 hover:text-charcoal"
-                    >
-                      View map →
-                    </a>
-                  </div>
-                  {/* SLICE F: the "Paid ads — always-on in your state" card was
-                      removed — paid ads are not running yet; the card was a
-                      copy-only claim with no spend behind it. Re-add when ads
-                      are live (with real spend/impressions data, not a slogan). */}
-                </div>
-              </div>
-
-              {/* Conversion engine */}
-              <div className="bg-bone-warm border border-dust p-5 md:p-6 space-y-4">
-                <p className="text-xs uppercase tracking-widest text-saddle font-semibold">
-                  Conversion engine running for you
-                </p>
-                <ul className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 text-sm text-charcoal/90 leading-snug">
-                  <li>✓ Auto-routing — buyers in your state matched + emailed within minutes</li>
-                  <li>✓ Launch warmup — waitlist gets YES-button email when you go live</li>
-                  <li>✓ Ready-to-buy sequence — pre-engagement emails before match</li>
-                  <li>✓ Hot-lead bypass — engaged buyers route around capacity caps</li>
-                  <li>✓ Re-warm cohort — dormant buyers re-engaged automatically</li>
-                  <li>✓ Multi-state routing — if your routing states are approved</li>
-                </ul>
-              </div>
-
-              {/* Lead management */}
-              <div className="bg-bone-warm border border-dust p-5 md:p-6 space-y-4">
-                <p className="text-xs uppercase tracking-widest text-saddle font-semibold">
-                  Lead management
-                </p>
-                <ul className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 text-sm text-charcoal/90 leading-snug">
-                  <li>✓ Real-time Telegram alerts on every new lead</li>
-                  <li>✓ One-click email buttons (Won / Lost / Pass) — no login needed</li>
-                  <li>✓ AI reply triage — classifies inbound buyer responses</li>
-                  <li>✓ Auto-responses for ghosting + scheduling Qs</li>
-                  <li>✓ Capacity guard — never over-route past your max</li>
-                  <li>✓ Buyer health tracking — flags time-wasters cross-rancher</li>
-                </ul>
-              </div>
-
-              {/* Cross-promo + exposure */}
-              <div className="bg-bone-warm border border-dust p-5 md:p-6 space-y-4">
-                <p className="text-xs uppercase tracking-widest text-saddle font-semibold">
-                  Brand exposure on BHC properties
-                </p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="bg-bone border border-dust p-4 space-y-1.5">
-                    <p className="text-[11px] uppercase tracking-widest text-saddle">
-                      Founders campaign
-                    </p>
-                    <p className="text-sm text-charcoal leading-snug">
-                      Every backer email + the /founders wall mentions verified ranchers
-                    </p>
-                  </div>
-                  <div className="bg-bone border border-dust p-4 space-y-1.5">
-                    <p className="text-[11px] uppercase tracking-widest text-saddle">
-                      Brand partners
-                    </p>
-                    <p className="text-sm text-charcoal leading-snug">
-                      Partner pages (knife makers, etc) cross-link verified ranchers
-                    </p>
-                  </div>
-                  <div className="bg-bone border border-dust p-4 space-y-1.5">
-                    <p className="text-[11px] uppercase tracking-widest text-saddle">
-                      Affiliate engine
-                    </p>
-                    <p className="text-sm text-charcoal leading-snug">
-                      Your Closed Won buyers auto-enroll as affiliates — refer-a-rancher
-                    </p>
-                  </div>
-                  <div className="bg-bone border border-dust p-4 space-y-1.5">
-                    <p className="text-[11px] uppercase tracking-widest text-saddle">
-                      Wholesale funnel
-                    </p>
-                    <p className="text-sm text-charcoal leading-snug">
-                      Restaurants + butchers route through /wholesale — your state surfaces
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Compliance + ops */}
-              <div className="border border-dust p-5 md:p-6 space-y-3">
-                <p className="text-xs uppercase tracking-widest text-saddle font-semibold">
-                  Handled for you in the background
-                </p>
-                <p className="text-sm text-charcoal/85 leading-relaxed">
-                  TCPA-compliant SMS opt-in · suppression list (bounces + complaints auto-honored)
-                  · cron observability + operator escalation · JWT rotation + Redis fail-open
-                  · audit logs on every approve/reject/close action · capacity drift recovery
-                  · Stripe webhook signing · payment dispute monitoring.
-                </p>
-              </div>
-
-              {/* Want more — LEGACY ONLY (SLICE F). tier_v2 ranchers are already
-                  on the subscription model; pitching them the upgrade they
-                  already bought read as noise (or worse, as a second bill).
-                  Copy trimmed to VERIFIED perks only: priority routing is real
-                  (lib/routingPriority.ts weight + S0.2 tiebreaker) and the top
-                  tier's 0% commission is real (lib/tiers.ts operator rate 0).
-                  The old "featured ranch badge / homepage rotation / dedicated
-                  brand strategist" claims had no shipped feature behind them. */}
-              {rancherInfo.pricingModel === 'legacy' && (
-                <div className="bg-charcoal text-bone p-5 md:p-6 space-y-3">
-                  <p className="text-xs uppercase tracking-widest text-bone/70 font-semibold">
-                    Want even more visibility?
-                  </p>
-                  <p className="text-sm leading-relaxed">
-                    Paid tiers get priority routing — when a buyer in your state
-                    qualifies, you&apos;re matched ahead of non-priority ranchers.
-                    The top tier drops your commission to 0%.
-                  </p>
-                  <a
-                    href="/rancher/billing"
-                    className="inline-flex items-center gap-2 px-5 py-2.5 bg-bone text-charcoal text-xs font-medium tracking-wide uppercase hover:bg-bone-warm transition-base"
-                  >
-                    See tier options →
-                  </a>
-                </div>
               )}
             </div>
           )}
@@ -4011,63 +3920,6 @@ export default function RancherDashboardPage() {
             </div>
           )}
 
-          {/* Network Benefits Tab */}
-          {activeTab === 'benefits' && (
-            <div className="space-y-6">
-              <div>
-                <h2 className="font-serif text-2xl">network benefits</h2>
-                <p className="text-sm text-saddle mt-1">
-                  Exclusive deals and partnerships available to BuyHalfCow ranchers.
-                </p>
-              </div>
-
-              {benefits.length > 0 ? (
-                <div className="grid gap-4 md:grid-cols-2">
-                  {benefits.map((benefit) => (
-                    <div key={benefit.id} className="p-6 border border-dust bg-white space-y-3">
-                      <div className="flex items-start justify-between">
-                        <h3 className="font-serif text-lg">{benefit.brand_name}</h3>
-                        {benefit.discount_offered > 0 && (
-                          <span className="px-2 py-1 text-xs font-bold bg-sage/15 text-sage-dark">
-                            {benefit.discount_offered}% OFF
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-sm text-saddle">{benefit.product_type}</p>
-                      {benefit.description && (
-                        <p className="text-sm">{benefit.description}</p>
-                      )}
-                      <div className="flex gap-3 pt-2">
-                        {benefit.website && (
-                          <a
-                            href={benefit.website.startsWith('http') ? benefit.website : `https://${benefit.website}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="px-4 py-2 text-xs border border-charcoal hover:bg-charcoal hover:text-bone transition-colors"
-                          >
-                            Visit Website
-                          </a>
-                        )}
-                        {benefit.contact_email && (
-                          <a
-                            href={`mailto:${benefit.contact_email}`}
-                            className="px-4 py-2 text-xs border border-dust hover:bg-dust hover:text-bone transition-colors"
-                          >
-                            Contact
-                          </a>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="p-8 border border-dust text-center bg-white">
-                  <p className="text-saddle">Partner benefits are being finalized. Check back soon for exclusive deals on insurance, equipment, and more.</p>
-                </div>
-              )}
-            </div>
-          )}
-
           {/* My Page Tab */}
           {activeTab === 'my_page' && (
             <div className="space-y-8">
@@ -4089,6 +3941,73 @@ export default function RancherDashboardPage() {
                   </a>
                 )}
               </div>
+
+              {/* Where your page shows up — the two useful links folded in
+                  from the deleted Marketing tab (Wave 2 cut): the state
+                  landing page buyers arrive through, and the public map pin. */}
+              <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-saddle">
+                <span className="uppercase tracking-widest">Where buyers find you:</span>
+                <a
+                  href={`/access/${(rancherInfo.state || 'mt').toLowerCase()}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline underline-offset-2 hover:text-charcoal"
+                >
+                  your state landing page →
+                </a>
+                <a
+                  href="/map"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline underline-offset-2 hover:text-charcoal"
+                >
+                  your pin on the map →
+                </a>
+              </div>
+
+              {/* ── Buyer reviews (Wave 2 rancher-UX) ──────────────────────
+                  Read-only. The public page shows only ratings ≥ 4 — before
+                  this rail a rancher could take a 2-star review, have it
+                  silently hidden, and never know. Low-rated reviews render
+                  here with an honest "not shown publicly" tag so the rancher
+                  can fix the cause. */}
+              {(buyerReviewsError || (buyerReviews && buyerReviews.length > 0)) && (
+                <div className="p-4 bg-white border border-dust space-y-3">
+                  <div className="flex items-baseline justify-between flex-wrap gap-2">
+                    <h3 className="font-serif text-lg">buyer reviews</h3>
+                    <span className="text-xs text-saddle">
+                      only 4★ and up show on your public page — you see all of them here
+                    </span>
+                  </div>
+                  {buyerReviewsError && (
+                    <p className="text-xs text-weathered">
+                      Couldn&apos;t load your reviews just now — refresh to retry.
+                    </p>
+                  )}
+                  {(buyerReviews || []).map((rv) => (
+                    <div key={rv.id} className="border-t border-dust/60 pt-2 text-sm">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span aria-label={`${rv.rating} out of 5 stars`} className="text-amber-dark tracking-tight">
+                          {'★'.repeat(rv.rating)}
+                          <span className="text-dust">{'★'.repeat(Math.max(0, 5 - rv.rating))}</span>
+                        </span>
+                        <span className="font-medium text-charcoal">{rv.buyerName}</span>
+                        {rv.submittedAt && (
+                          <span className="text-xs text-dust">
+                            {new Date(rv.submittedAt).toLocaleDateString()}
+                          </span>
+                        )}
+                        {!rv.publiclyVisible && (
+                          <span className="text-[10px] uppercase tracking-wider bg-dust/20 text-saddle px-1.5 py-0.5">
+                            not shown publicly
+                          </span>
+                        )}
+                      </div>
+                      {rv.review && <p className="text-saddle mt-1 leading-relaxed">{rv.review}</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {/* ── Page-completeness meter + GO-LIVE GATE ──────────────────
                   Checklist of what a buyer-ready page needs. The publish action
@@ -4276,11 +4195,20 @@ export default function RancherDashboardPage() {
                             Cover
                           </span>
                         )}
+                        {/* Wave 2 rancher-UX: always visible + 44px + confirm.
+                            The old opacity-0 group-hover reveal required a hover
+                            state that does not exist on touch — a rancher on a
+                            phone physically could not remove a wrong photo. */}
                         <button
                           type="button"
-                          onClick={() => setGalleryPhotos(galleryPhotos.filter((_, idx) => idx !== i))}
-                          className="absolute top-1 right-1 px-2 py-0.5 bg-charcoal text-bone text-xs opacity-0 group-hover:opacity-100 transition-opacity"
-                          title="Remove"
+                          onClick={() => {
+                            if (window.confirm(`Remove photo ${i + 1}? This can't be undone.`)) {
+                              setGalleryPhotos(galleryPhotos.filter((_, idx) => idx !== i));
+                            }
+                          }}
+                          className="absolute top-1 right-1 min-w-[44px] min-h-[44px] flex items-center justify-center bg-charcoal/80 text-bone text-base hover:bg-charcoal transition-opacity"
+                          title="Remove photo"
+                          aria-label={`Remove photo ${i + 1}`}
                         >
                           ×
                         </button>
@@ -6911,6 +6839,39 @@ function ReferralCard({
           <p className="text-xs text-saddle basis-full pt-1">
             buyer has money down — to exit this deal the deposit must be refunded first (hello@buyhalfcow.com)
           </p>
+        )}
+        {/* Wave 2 rancher-UX: the money / irreversible consequences used to
+            live ONLY in title= tooltips — invisible on touch, where most
+            ranchers are. Every consequence now renders as visible text under
+            the buttons it describes (titles kept for desktop hover). */}
+        {(showAccept || showFinalInvoice || showConfirmPayment || !depositLockedUi) && (
+          <div className="basis-full pt-1 space-y-0.5 text-xs text-saddle leading-relaxed">
+            {showAccept && (
+              <p>
+                <strong className="text-charcoal">🔒 Accept Slot</strong> — locks the buyer in and makes
+                their deposit <strong className="text-charcoal">non-refundable</strong>.
+              </p>
+            )}
+            {showFinalInvoice && (
+              <p>
+                <strong className="text-charcoal">Send Final Invoice</strong> — emails the buyer the balance
+                (no BHC fee — card processing applies).
+              </p>
+            )}
+            {showConfirmPayment && (
+              <p>
+                <strong className="text-charcoal">Confirm payment received</strong> — closes the deal and
+                fires the commission invoice.
+              </p>
+            )}
+            {!depositLockedUi && (
+              <p>
+                <strong className="text-charcoal">Mark Lost</strong> — closes this lead for good; it won&apos;t
+                re-route. <strong className="text-charcoal">Pass on Lead</strong> — we&apos;ll auto-reassign
+                the buyer to another rancher.
+              </p>
+            )}
+          </div>
         )}
       </div>
     </div>

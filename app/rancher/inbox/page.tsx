@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import RancherSubNav from '../RancherSubNav';
 
@@ -70,9 +70,19 @@ export default function RancherInboxPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Mobile fix (Wave 2 rancher-UX): the thread list stacks ABOVE the
+  // conversation on small screens, so tapping a thread used to change state
+  // 2+ screens below the fold — it looked like nothing happened. Scroll the
+  // conversation pane into view on select; block:'nearest' makes it a no-op
+  // on desktop where the pane is already visible beside the list.
+  const conversationRef = useRef<HTMLElement | null>(null);
+
   const open = async (id: string) => {
     setOpenId(id);
     setError('');
+    requestAnimationFrame(() => {
+      conversationRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
     try {
       const j = await fetch(`/api/threads/${id}/message`, { credentials: 'include' }).then((r) => r.json());
       setMessages(j.messages || []);
@@ -190,7 +200,7 @@ export default function RancherInboxPage() {
         )}
       </aside>
 
-      <section className="md:col-span-2 border border-dust bg-white p-4">
+      <section ref={conversationRef} className="md:col-span-2 border border-dust bg-white p-4 scroll-mt-4">
         {openId ? (
           <>
             {/* Conversation context header — names the buyer + the deal so the
@@ -245,7 +255,9 @@ export default function RancherInboxPage() {
             {error && <p className="text-weathered mt-3 text-sm">{error}</p>}
           </>
         ) : (
-          <p className="text-saddle">pick a conversation on the left to open it.</p>
+          // Layout-agnostic copy: the list is LEFT on desktop but ABOVE on
+          // mobile — "on the left" pointed at nothing on a phone.
+          <p className="text-saddle">select a conversation to read and reply.</p>
         )}
       </section>
       </div>

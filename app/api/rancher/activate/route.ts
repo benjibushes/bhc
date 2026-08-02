@@ -88,11 +88,80 @@ p{color:#2A2A2A;font-size:15px;margin:14px 0;}
 .big{font-size:64px;line-height:1;margin:0 0 16px;}
 .box{background:#F8F5F0;border-left:3px solid #0E0E0E;padding:14px 18px;margin:24px 0;text-align:left;}
 .muted{color:#A7A29A;font-size:12px;margin-top:30px;}
+.cta{display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px;min-height:44px;box-sizing:border-box;}
 </style></head><body><div class="container">
 <div class="big">${opts.heading}</div>
 ${opts.body}
 <p class="muted">— Benjamin · BuyHalfCow</p>
 </div></body></html>`;
+}
+
+// ── Self-serve recovery form (Wave 2 rancher-UX) ───────────────────────────
+// Every dead-end on this route used to say "reply to the email and I'll fix
+// it" — a founder-in-the-loop rail with hours-to-days latency. The platform
+// already has the self-serve mint (/api/ranchers/resend-agreement: fresh
+// signing/go-live link by email, no login, no-enumeration 200s), so the
+// error pages now embed this small form instead of a support round-trip.
+function resendLinkFormHtml(): string {
+  return `<form id="bhc-resend" style="margin-top:20px;text-align:left;">
+  <label for="bhc-resend-email" style="display:block;font-size:13px;text-transform:uppercase;letter-spacing:1px;color:#6B4F3F;margin-bottom:6px;">Your email</label>
+  <input id="bhc-resend-email" type="email" required placeholder="you@yourranch.com" style="width:100%;padding:12px;border:1px solid #A7A29A;font-size:16px;box-sizing:border-box;" />
+  <button type="submit" style="margin-top:12px;padding:14px 32px;background:#0E0E0E;color:#F4F1EC;border:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px;cursor:pointer;width:100%;min-height:44px;">Email me a fresh link</button>
+  <p id="bhc-resend-msg" role="status" style="font-size:13px;color:#6B4F3F;margin-top:10px;"></p>
+</form>
+<script>
+(function(){
+  var f=document.getElementById('bhc-resend');
+  if(!f)return;
+  f.addEventListener('submit',function(e){
+    e.preventDefault();
+    var email=(document.getElementById('bhc-resend-email')||{}).value||'';
+    var msg=document.getElementById('bhc-resend-msg');
+    msg.textContent='Sending…';
+    fetch('/api/ranchers/resend-agreement',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email.trim()})})
+      .then(function(r){return r.json().catch(function(){return {};});})
+      .then(function(d){msg.textContent=d.message||d.error||'If that email is on file, a fresh link is on its way.';})
+      .catch(function(){msg.textContent='Could not send just now — try again in a minute.';});
+  });
+})();
+</script>`;
+}
+
+// Mints the 60-day self-serve setup-wizard link (same shape as every other
+// setup-link producer). The wizard road includes the Stripe Connect step, so
+// this one link IS the fix for every "finish your payment setup" dead-end.
+function mintSetupUrl(rancherId: string): string {
+  const setupToken = jwt.sign(
+    { type: 'rancher-setup', rancherId },
+    JWT_SECRET,
+    { expiresIn: '60d' },
+  );
+  return `${SITE_URL}/rancher/setup?token=${setupToken}`;
+}
+
+// ── Gate-code → rancher copy (Wave 2 rancher-UX) ───────────────────────────
+// The payment-path smoke test speaks in probe strings ("connect-probe: live
+// Stripe status=restricted cardPaymentsActive=false currentlyDue=3", raw SDK
+// exception slices). Those are operator diagnostics — a rancher who just
+// signed must read plain instructions. Raw detail still goes to the operator
+// Telegram (see the smoke-fail branch below).
+function humanizeSmokeFailure(f: string): string {
+  if (f.startsWith('price:')) {
+    return 'Add a price to at least one share size (quarter, half, or whole).';
+  }
+  if (f.startsWith('payment-link:')) {
+    return 'Add a payment link to at least one share you sell — that link is how buyers pay you.';
+  }
+  if (f.startsWith('connect-account:')) {
+    return 'Connect your bank account with Stripe so buyer deposits can reach you.';
+  }
+  if (f.startsWith('connect-probe-failed')) {
+    return 'We couldn’t reach Stripe to double-check your account just now. Wait a few minutes and click your activation link again.';
+  }
+  if (f.startsWith('connect-probe:')) {
+    return 'Stripe still needs a few details before your account can take payments. Finish your Stripe setup from the button below, then click your activation link again.';
+  }
+  return 'One part of your payment setup isn’t finished yet — open your setup page below to complete it.';
 }
 
 // Shared validation for GET (confirm page) + POST (activation). Returns
@@ -114,7 +183,7 @@ async function validateActivate(request: Request): Promise<
   if (!token) {
     return {
       error: new NextResponse(
-        htmlPage({ title: 'Missing token', heading: '⚠️', body: '<h1>Link incomplete</h1><p>This activation link is missing its token. Reply to the email and I\'ll send a fresh link.</p>' }),
+        htmlPage({ title: 'Missing token', heading: '⚠️', body: `<h1>Link incomplete</h1><p>This activation link is missing its token — usually a copy-paste that lost the end of the URL. Enter your email and we'll send you a fresh link right away.</p>${resendLinkFormHtml()}` }),
         { status: 400, headers: { 'Content-Type': 'text/html' } }
       ),
     };
@@ -124,7 +193,7 @@ async function validateActivate(request: Request): Promise<
   if (!payload) {
     return {
       error: new NextResponse(
-        htmlPage({ title: 'Expired link', heading: '⏰', body: '<h1>Link expired</h1><p>This activation link is older than 60 days or invalid. Reply to the email and I\'ll send a new one.</p>' }),
+        htmlPage({ title: 'Expired link', heading: '⏰', body: `<h1>Link expired</h1><p>This activation link is older than 60 days or invalid. Enter your email and we'll send you a fresh one right away — no waiting on a reply.</p>${resendLinkFormHtml()}` }),
         { status: 401, headers: { 'Content-Type': 'text/html' } }
       ),
     };
@@ -143,7 +212,7 @@ async function validateActivate(request: Request): Promise<
   if (!rancher) {
     return {
       error: new NextResponse(
-        htmlPage({ title: 'Not found', heading: '❓', body: '<h1>Ranch not found</h1><p>I couldn\'t find your record. Reply to the email and I\'ll fix it manually.</p>' }),
+        htmlPage({ title: 'Not found', heading: '❓', body: `<h1>Ranch not found</h1><p>We couldn't find your record from this link. Enter your email below and we'll send a fresh link for your account — or write <a href="mailto:hello@buyhalfcow.com">hello@buyhalfcow.com</a> if that doesn't land.</p>${resendLinkFormHtml()}` }),
         { status: 404, headers: { 'Content-Type': 'text/html' } }
       ),
     };
@@ -161,7 +230,7 @@ async function validateActivate(request: Request): Promise<
         htmlPage({
           title: 'Already live',
           heading: '✅',
-          body: `<h1>${ranchName} is already live</h1><p>You're all set, ${operatorFirst}. Leads are routing to you. If you'd like to log into your dashboard, reply to my last email and I'll send a fresh login link.</p>`,
+          body: `<h1>${ranchName} is already live</h1><p>You're all set, ${operatorFirst}. Leads are routing to you.</p><p><a class="cta" href="${SITE_URL}/rancher/login">Log into your dashboard →</a></p><p style="font-size:13px;color:#6B4F3F;">Enter your email there and we'll send you a one-tap login link.</p>`,
         }),
         { status: 200, headers: { 'Content-Type': 'text/html' } }
       ),
@@ -195,11 +264,20 @@ export async function GET(request: Request) {
     );
   } catch (error: any) {
     console.error('rancher-activate error:', error);
+    // Self-serve retry: activation is idempotent, so the same link is the fix.
+    // Link back through GET (never a form re-POST) so retry is always safe.
+    let retryHref = '';
+    try {
+      const u = new URL(request.url);
+      retryHref = `${u.pathname}${u.search}`;
+    } catch {}
     return new NextResponse(
       htmlPage({
         title: 'Something broke',
         heading: '⚠️',
-        body: '<h1>Activation hit a snag</h1><p>I got an error on the server side. Reply to the email and I\'ll activate you manually within the hour.</p>',
+        body:
+          '<h1>Activation hit a snag</h1><p>Something failed on our side — nothing was changed. Your link still works: wait a minute and tap it again. If it keeps failing, write <a href="mailto:hello@buyhalfcow.com">hello@buyhalfcow.com</a>.</p>' +
+          (retryHref ? `<p><a class="cta" href="${retryHref}">Try again now</a></p>` : ''),
       }),
       { status: 500, headers: { 'Content-Type': 'text/html' } }
     );
@@ -227,6 +305,7 @@ export async function POST(request: Request) {
     const isTierV2 = pricingModel === 'tier_v2';
     const connectStatus = String(rancher['Stripe Connect Status'] || '').toLowerCase();
     if (isTierV2 && connectStatus !== 'active') {
+      const setupUrl = mintSetupUrl(payload.rancherId);
       return new NextResponse(
         htmlPage({
           title: 'Finish Stripe Connect first',
@@ -234,8 +313,9 @@ export async function POST(request: Request) {
           body:
             `<h1>One more step, ${operatorFirst}</h1>` +
             `<p>Your agreement is in, but ${ranchName} can't go live until your Stripe Connect account is fully active — that's what lets buyers pay their deposit straight to you.</p>` +
-            `<div class="box"><p style="margin:0;">Finish (or re-open) your Stripe onboarding from your rancher dashboard, then click this link again. The moment Stripe shows you as active, you'll go live instantly.</p></div>` +
-            `<p>Reply to my email if you're stuck and I'll jump on a call to finish it with you.</p>`,
+            `<div class="box"><p style="margin:0;">Finish (or re-open) your Stripe onboarding with the button below, then click this link again. The moment Stripe shows you as active, you'll go live instantly.</p></div>` +
+            `<p style="margin-top:24px;"><a class="cta" href="${setupUrl}">Finish my Stripe setup →</a></p>` +
+            `<p>Takes about 5 minutes — Stripe walks you straight to whatever's left (usually bank details or their terms).</p>`,
         }),
         { status: 409, headers: { 'Content-Type': 'text/html' } }
       );
@@ -288,12 +368,7 @@ export async function POST(request: Request) {
       } catch (e: any) {
         console.error('[activate] agreement-only stamp failed:', e?.message);
       }
-      const setupToken = jwt.sign(
-        { type: 'rancher-setup', rancherId: payload.rancherId },
-        JWT_SECRET,
-        { expiresIn: '60d' },
-      );
-      const setupUrl = `${SITE_URL}/rancher/setup?token=${setupToken}`;
+      const setupUrl = mintSetupUrl(payload.rancherId);
       return new NextResponse(
         htmlPage({
           title: 'Almost there',
@@ -303,8 +378,8 @@ export async function POST(request: Request) {
             `<p>Your agreement is locked in — but ${ranchName} can't go live yet, because your page is missing:</p>` +
             `<div class="box">${missing.map((m) => `<p style="margin:4px 0;">• ${m}</p>`).join('')}</div>` +
             `<p>Without ${missing.length > 1 ? 'these' : 'this'}, buyers land on your page with no way to buy — and every lead we send you dead-ends.</p>` +
-            `<p style="margin-top:24px;"><a href="${setupUrl}" style="display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px;">Finish my setup →</a></p>` +
-            `<p>Takes about 5 minutes. The moment it's done, click your push-live link again and you're live instantly. Stuck? Reply to my email and I'll do it with you on a call.</p>`,
+            `<p style="margin-top:24px;"><a class="cta" href="${setupUrl}">Finish my setup →</a></p>` +
+            `<p>Takes about 5 minutes, and your progress saves as you go. The moment it's done, click your push-live link again and you're live instantly.</p>`,
         }),
         { status: 409, headers: { 'Content-Type': 'text/html' } }
       );
@@ -323,16 +398,33 @@ export async function POST(request: Request) {
       const smoke = await runPaymentPathSmoke(rancher);
       const smokeFailures = smoke.failures.filter((f) => !f.startsWith('slug:'));
       if (smokeFailures.length > 0) {
+        // Rancher sees plain instructions; the raw probe strings (Stripe
+        // status codes, requirement counts, truncated SDK exceptions) go to
+        // the operator Telegram only — they are diagnostics, not rancher copy.
+        const humanFailures = Array.from(new Set(smokeFailures.map(humanizeSmokeFailure)));
+        try {
+          await sendTelegramMessage(
+            TELEGRAM_ADMIN_CHAT_ID,
+            `🔒 <b>Push-live blocked by payment-path smoke</b>\n\n` +
+              `🏞️ ${ranchName}\n` +
+              smokeFailures.map((f) => `• ${f}`).join('\n') +
+              `\n\n<i>Rancher saw the plain-copy version + a fresh setup link.</i>`,
+          );
+        } catch (e) {
+          console.error('[activate] smoke-fail Telegram alert error:', e);
+        }
+        const setupUrl = mintSetupUrl(payload.rancherId);
         return new NextResponse(
           htmlPage({
             title: 'Payment path not ready',
             heading: '🔒',
             body:
               `<h1>One more step, ${operatorFirst}</h1>` +
-              `<p>Your agreement is in, but ${ranchName} can't go live yet — our payment-path check found:</p>` +
-              `<div class="box">${smokeFailures.map((f) => `<p style="margin:4px 0;">• ${f}</p>`).join('')}</div>` +
-              `<p>Going live now would send you buyers who literally cannot pay you. Fix the above (usually: finish or re-open Stripe onboarding from your rancher dashboard), then click this link again.</p>` +
-              `<p>Reply to my email if you're stuck and I'll jump on a call to finish it with you.</p>`,
+              `<p>Your agreement is in, but ${ranchName} can't go live yet — our payment check found:</p>` +
+              `<div class="box">${humanFailures.map((f) => `<p style="margin:4px 0;">• ${f}</p>`).join('')}</div>` +
+              `<p>Going live now would send you buyers who couldn't actually pay you — so we hold the flip until this is fixed.</p>` +
+              `<p style="margin-top:24px;"><a class="cta" href="${setupUrl}">Finish my setup →</a></p>` +
+              `<p>Then click your activation link again and you're live instantly.</p>`,
           }),
           { status: 409, headers: { 'Content-Type': 'text/html' } }
         );
@@ -437,22 +529,32 @@ export async function POST(request: Request) {
           `<h1>You're live, ${operatorFirst}.</h1>` +
           `<p>${ranchName} is now active in our network. Here's what happens next:</p>` +
           `<div class="box">` +
-          `<p style="margin:0 0 8px;"><strong>1.</strong> I'll text you within the next few hours to walk through your rancher dashboard.</p>` +
+          `<p style="margin:0 0 8px;"><strong>1.</strong> Your rancher dashboard is live right now — every lead, message, and payout lands there. Log in any time with just your email.</p>` +
           `<p style="margin:8px 0;"><strong>2.</strong> Tomorrow morning, our warmup emails go out to qualified buyers in your state — anyone who's been waiting for a rancher.</p>` +
           `<p style="margin:8px 0;"><strong>3.</strong> Within a few days you'll start getting buyer intro emails. Reply within 24 hours and you're off to the races.</p>` +
           `<p style="margin:8px 0 0;"><strong>4.</strong> First 4 closed deals are 100% yours. After deal #4, we transition to full white-glove marketing — flat retainer, we run your direct-to-consumer growth.</p>` +
           `</div>` +
+          `<p style="margin-top:24px;"><a class="cta" href="${SITE_URL}/rancher/login">Open my dashboard →</a></p>` +
           `<p>Welcome to the network. Stand by — your phone's about to start ringing.</p>`,
       }),
       { status: 200, headers: { 'Content-Type': 'text/html' } }
     );
   } catch (error: any) {
     console.error('rancher-activate error:', error);
+    // Self-serve retry: activation is idempotent, so the same link is the fix.
+    // Link back through GET (never a form re-POST) so retry is always safe.
+    let retryHref = '';
+    try {
+      const u = new URL(request.url);
+      retryHref = `${u.pathname}${u.search}`;
+    } catch {}
     return new NextResponse(
       htmlPage({
         title: 'Something broke',
         heading: '⚠️',
-        body: '<h1>Activation hit a snag</h1><p>I got an error on the server side. Reply to the email and I\'ll activate you manually within the hour.</p>',
+        body:
+          '<h1>Activation hit a snag</h1><p>Something failed on our side — nothing was changed. Your link still works: wait a minute and tap it again. If it keeps failing, write <a href="mailto:hello@buyhalfcow.com">hello@buyhalfcow.com</a>.</p>' +
+          (retryHref ? `<p><a class="cta" href="${retryHref}">Try again now</a></p>` : ''),
       }),
       { status: 500, headers: { 'Content-Type': 'text/html' } }
     );
