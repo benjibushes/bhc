@@ -5,8 +5,17 @@
 // Why: Ben opens desk, sees 30 buyers + 5 calls + 10 pending. Cognitive
 // overload. NBA collapses to "do these 3 things right now."
 //
+// SUPPLY-AWARE (Wave 1B, 2026-08-01): callers may pass the set of states with
+// an operational rancher (the 6-gate lib/rancherEligibility canon). A hot
+// buyer in a state with NO operational rancher is not a call — there is
+// nobody to route them to — so those rows are demoted below every covered-
+// state buyer and relabeled "recruit supply in <state>". Without the option
+// the engine behaves exactly as before (no supply info ⇒ no gating).
+//
 // Pure function over current desk snapshot. No side effects, no DB writes.
 // Same input → same output. Rules ordered by revenue impact descending.
+
+import { normalizeState } from './states';
 
 export interface NBAItem {
   priority: 1 | 2 | 3; // 1 = highest
@@ -57,9 +66,35 @@ interface NBAInput {
   }>;
 }
 
-export function computeNBA(input: NBAInput): NBAItem[] {
+export interface NBAOptions {
+  /**
+   * States (any casing / full names ok — normalized internally) that have an
+   * operational rancher per lib/rancherEligibility. Omit ⇒ legacy behavior:
+   * no supply gating at all. A buyer with a blank/unparseable state is never
+   * demoted — you can ask a state on the phone.
+   */
+  coveredStates?: Iterable<string>;
+}
+
+export function computeNBA(input: NBAInput, opts: NBAOptions = {}): NBAItem[] {
   const items: NBAItem[] = [];
   const now = Date.now();
+
+  const covered: Set<string> | null = opts.coveredStates
+    ? new Set(
+        Array.from(opts.coveredStates)
+          .map((s) => normalizeState(s))
+          .filter(Boolean),
+      )
+    : null;
+  const isCoveredState = (state: string | undefined): boolean => {
+    if (!covered) return true; // no supply info — never gate
+    const st = normalizeState(state);
+    if (!st) return true; // unknown state — cannot gate honestly
+    return covered.has(st);
+  };
+  /** One recruit item per state, no matter how many buyers are stranded there. */
+  const recruitEmitted = new Set<string>();
 
   // 1) Cal calls starting within 60 min — prep + show up.
   //    Fix 5: startTime is fed from `Sales Call Start At` (real call time);
@@ -82,7 +117,12 @@ export function computeNBA(input: NBAInput): NBAItem[] {
     }
   }
 
-  // 2) Hot quiz-complete buyers (score >= 70) — call within 2h
+  // 2) Hot quiz-complete buyers (score >= 70) — call within 2h.
+  //    SUPPLY GATE: a hot buyer in an uncovered state is not a call — it's a
+  //    recruiting signal, demoted below every covered-state item. Action text
+  //    fixed 2026-08-01: "send invoice on close" was the DEAD money model —
+  //    the live rail is the durable deposit link (/r/p), fee added to the
+  //    buyer at deposit (docs/BUSINESS-MODEL.md).
   const hotBuyers = input.quizComplete
     .filter((b) => (b.leadScore ?? 0) >= 70)
     .slice(0, 5);
@@ -90,12 +130,26 @@ export function computeNBA(input: NBAInput): NBAItem[] {
     const ageHrs = b.qualifiedAt
       ? (now - new Date(b.qualifiedAt).getTime()) / 3600000
       : 999;
+    if (!isCoveredState(b.state)) {
+      const st = normalizeState(b.state);
+      if (recruitEmitted.has(st)) continue;
+      recruitEmitted.add(st);
+      items.push({
+        priority: 3,
+        type: 'recruit',
+        subject: `Recruit supply in ${st}`,
+        reason: `Hot buyer (score ${b.leadScore}) waiting in ${st} — no operational rancher there`,
+        action: `Sign a rancher in ${st} — do not dial buyers you cannot route`,
+        entityType: 'rancher',
+      });
+      continue;
+    }
     items.push({
       priority: 1,
       type: 'call',
       subject: `${b.name} · ${b.state}`,
       reason: `Lead score ${b.leadScore}, qualified ${formatAge(ageHrs)} ago`,
-      action: 'Phone outreach — hot lead, send invoice on close',
+      action: 'Phone outreach — hot lead, send the deposit link on close',
       entityType: 'consumer',
       entityId: b.id,
     });
@@ -127,12 +181,17 @@ export function computeNBA(input: NBAInput): NBAItem[] {
     }
   }
 
-  // 4) Mid-warm buyers (score 40-69) — drip + qualify
+  // 4) Mid-warm buyers (score 40-69) — drip + qualify.
+  //    Same supply gate as rule 2: a Cal invite to a buyer in an uncovered
+  //    state books a call that can only end in an apology. Skipped rather
+  //    than converted — the recruit signal for that state is rule 2's job
+  //    (and the cockpit's ONE-MOVE band covers the demand cross).
   const warmBuyers = input.quizComplete
     .filter((b) => {
       const s = b.leadScore ?? 0;
       return s >= 40 && s < 70;
     })
+    .filter((b) => isCoveredState(b.state))
     .slice(0, 3);
   for (const b of warmBuyers) {
     items.push({

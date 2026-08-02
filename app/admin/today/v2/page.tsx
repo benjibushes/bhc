@@ -1,20 +1,12 @@
-// Sales-floor pivot 2026-06-09: Ben's single login screen.
-// Server-side admin gate, then renders the client desk.
+// Wave 1B (2026-08-01): /admin/today is the one cockpit now. This route
+// forwards so old bookmarks / Telegram deep-links keep working. The v2 desk
+// client components remain on disk pending the archival decision — nothing
+// routes to them.
 
 import { redirect } from 'next/navigation';
-import { cookies } from 'next/headers';
-import DeskClient from './DeskClient';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Today · BHC' };
 
-export default async function TodayV2Page() {
-  const c = await cookies();
-  const tok = c.get('bhc-admin-auth')?.value;
-  if (!tok) redirect('/admin/login?next=/admin/today/v2');
-
-  // Verify admin cookie. We trust the cookie because /api/admin/* already
-  // gates every server endpoint via requireAdmin — the page just routes
-  // the user to login if there's no cookie at all.
-  return <DeskClient />;
+export default function TodayV2Redirect() {
+  redirect('/admin/today');
 }
