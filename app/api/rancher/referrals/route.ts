@@ -36,6 +36,7 @@ import {
 } from '@/lib/airtable';
 import { requireRancher } from '@/lib/rancherAuth';
 import { isActiveDealReferral } from '@/lib/capacityCount';
+import { fetchReferralRowsForRancher } from '@/lib/referralReads';
 import {
   validateLeadInput,
   buildLeadConsumerFields,
@@ -44,6 +45,65 @@ import {
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
+
+// GET /api/rancher/referrals?reviews=1 — the rancher's buyer reviews.
+//
+// Wave 2 rancher-UX: Buyer Review / Buyer Rating / Review Submitted At live
+// on Referrals, the PUBLIC page filters to rating ≥ 4, and no rancher surface
+// projected any of it — so a rancher could take a 2-star review, have it
+// silently hidden from their page, and never be told. This read returns ALL
+// of their reviews, including the low-rated ones, so they can see (and fix)
+// the cause. Read-only; the ownership JS re-filter is the belt, same as every
+// referral read.
+export async function GET(req: Request) {
+  const r = await requireRancher(req);
+  if (r instanceof NextResponse) return r;
+  const { session } = r;
+  const rancherId = String(session.rancherId || '');
+  if (!rancherId) {
+    return NextResponse.json({ error: 'Session missing rancher id' }, { status: 401 });
+  }
+
+  let rows: any[];
+  try {
+    rows = await fetchReferralRowsForRancher(rancherId);
+  } catch (e: any) {
+    console.error('[rancher/referrals GET] read failed:', e?.message || e);
+    return NextResponse.json(
+      { error: "Couldn't load your reviews just now — try again in a moment." },
+      { status: 503 },
+    );
+  }
+
+  // Ownership belt — never trust the filter alone.
+  const mine = rows.filter((row) => {
+    const links = [
+      ...((row['Rancher'] as string[]) || []),
+      ...((row['Suggested Rancher'] as string[]) || []),
+    ];
+    return links.includes(rancherId);
+  });
+
+  const reviews = mine
+    .filter((row) => row['Review Submitted At'] || Number(row['Buyer Rating']) >= 1)
+    .map((row) => {
+      const rating = Math.min(5, Math.max(0, Number(row['Buyer Rating']) || 0));
+      return {
+        id: row.id,
+        buyerName: String(row['Buyer Name'] || 'Buyer'),
+        rating,
+        review: String(row['Buyer Review'] || '').trim(),
+        submittedAt: row['Review Submitted At'] || null,
+        // Mirrors the public-page filter (rating ≥ 4 shows on /ranchers/[slug]).
+        publiclyVisible: rating >= 4,
+      };
+    })
+    .sort(
+      (a, b) => new Date(b.submittedAt || 0).getTime() - new Date(a.submittedAt || 0).getTime(),
+    );
+
+  return NextResponse.json({ reviews });
+}
 
 export async function POST(req: Request) {
   const r = await requireRancher(req);

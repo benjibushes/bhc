@@ -228,12 +228,22 @@ export async function POST(
       commission,
       commissionRate: rate,
       invoiceUrl,
-      invoiceError: invoiceError || undefined,
+      // Raw Stripe detail stays in the Telegram alert above; the rancher-
+      // facing field carries plain copy (the payment IS confirmed — only the
+      // commission invoice needs a human follow-up).
+      invoiceError: invoiceError
+        ? 'Payment confirmed, but the commission invoice couldn’t be created automatically — the team has been alerted and will sort it out.'
+        : undefined,
     });
   } catch (error: any) {
+    // Server log keeps the raw exception; the rancher gets plain copy instead
+    // of a raw Stripe/Airtable message rendered on screen.
     console.error('confirm-payment error:', error);
     return NextResponse.json(
-      { error: error?.message || 'Internal error' },
+      {
+        error:
+          'Something failed on our side and the payment was NOT confirmed — try again in a minute. If it keeps failing, email hello@buyhalfcow.com.',
+      },
       { status: 500 },
     );
   }

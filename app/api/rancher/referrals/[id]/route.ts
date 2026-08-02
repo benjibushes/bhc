@@ -140,7 +140,9 @@ export async function PATCH(
             saleAmount,
           });
         } catch (e: any) {
-          return NextResponse.json({ error: `Couldn't close — try again. (${e?.message || 'unknown'})` }, { status: 500 });
+          // Raw detail to the server log only — this renders in row banners.
+          console.error('[rancher/referrals PATCH] recordClose(won) failed:', e?.message || e);
+          return NextResponse.json({ error: "Couldn't close the deal — nothing was changed. Try again in a moment." }, { status: 500 });
         }
         // Supplemental field outside the contract (same as quick-action).
         try {
@@ -236,7 +238,9 @@ export async function PATCH(
             extraFields: { 'Loss Reason': CRM_LOSS_REASON },
           });
         } catch (e: any) {
-          return NextResponse.json({ error: `Couldn't update — try again. (${e?.message || 'unknown'})` }, { status: 500 });
+          // Raw detail to the server log only — this renders in row banners.
+          console.error('[rancher/referrals PATCH] recordClose(lost) failed:', e?.message || e);
+          return NextResponse.json({ error: "Couldn't update the deal — nothing was changed. Try again in a moment." }, { status: 500 });
         }
         // Provenance note so the row reads honestly in Airtable.
         try {

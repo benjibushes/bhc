@@ -307,10 +307,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     paymentIntentId = result.paymentIntentId;
     checkoutSessionId = result.sessionId;
   } catch (e: any) {
+    // Server log keeps the raw Stripe detail; the rancher gets plain copy —
+    // "Stripe checkout failed: <raw SDK exception>" on screen taught them
+    // nothing except that the machine is broken.
     console.error('[final-invoice] Stripe checkout creation failed:', e?.message);
     return NextResponse.json(
-      { error: `Stripe checkout failed: ${e?.message || 'unknown'}` },
-      { status: 500 },
+      {
+        error:
+          'We couldn’t create the payment link just now — nothing was sent to the buyer. Try again in a minute; if it keeps failing, email hello@buyhalfcow.com.',
+      },
+      { status: 502 },
     );
   }
 
