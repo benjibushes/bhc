@@ -358,7 +358,7 @@ export default function ApplyForm() {
               value={form.operatorName}
               onChange={(e) => setField('operatorName', e.target.value)}
               placeholder="Jane Doe"
-              className="w-full px-3 py-2.5 border border-dust bg-bone-warm text-charcoal focus:outline-none focus:border-charcoal"
+              className="w-full px-3 py-2.5 border border-dust bg-bone-warm text-charcoal focus:border-charcoal"
             />
           </div>
           <div>
@@ -371,7 +371,7 @@ export default function ApplyForm() {
               value={form.ranchName}
               onChange={(e) => setField('ranchName', e.target.value)}
               placeholder="Doe Ranch"
-              className="w-full px-3 py-2.5 border border-dust bg-bone-warm text-charcoal focus:outline-none focus:border-charcoal"
+              className="w-full px-3 py-2.5 border border-dust bg-bone-warm text-charcoal focus:border-charcoal"
             />
           </div>
         </div>
@@ -386,7 +386,7 @@ export default function ApplyForm() {
               value={form.email}
               onChange={(e) => setField('email', e.target.value)}
               placeholder="you@yourranch.com"
-              className="w-full px-3 py-2.5 border border-dust bg-bone-warm text-charcoal focus:outline-none focus:border-charcoal"
+              className="w-full px-3 py-2.5 border border-dust bg-bone-warm text-charcoal focus:border-charcoal"
             />
           </div>
           <div>
@@ -399,7 +399,7 @@ export default function ApplyForm() {
               value={form.phone}
               onChange={(e) => setField('phone', formatPhoneInput(e.target.value))}
               placeholder="(555) 555-5555"
-              className="w-full px-3 py-2.5 border border-dust bg-bone-warm text-charcoal focus:outline-none focus:border-charcoal"
+              className="w-full px-3 py-2.5 border border-dust bg-bone-warm text-charcoal focus:border-charcoal"
             />
           </div>
         </div>
@@ -413,7 +413,7 @@ export default function ApplyForm() {
               value={form.city}
               onChange={(e) => setField('city', e.target.value)}
               placeholder="Bozeman"
-              className="w-full px-3 py-2.5 border border-dust bg-bone-warm text-charcoal focus:outline-none focus:border-charcoal"
+              className="w-full px-3 py-2.5 border border-dust bg-bone-warm text-charcoal focus:border-charcoal"
             />
           </div>
           <div className="sm:col-span-2">
@@ -424,7 +424,7 @@ export default function ApplyForm() {
               required
               value={form.state}
               onChange={(e) => setField('state', e.target.value)}
-              className="w-full px-3 py-2.5 border border-dust bg-bone-warm text-charcoal focus:outline-none focus:border-charcoal"
+              className="w-full px-3 py-2.5 border border-dust bg-bone-warm text-charcoal focus:border-charcoal"
             >
               <option value="">—</option>
               {STATES.map((s) => (
@@ -574,7 +574,7 @@ export default function ApplyForm() {
             value={form.website}
             onChange={(e) => setField('website', e.target.value)}
             placeholder="https://yourranch.com"
-            className="w-full px-3 py-2.5 border border-dust bg-bone-warm text-charcoal focus:outline-none focus:border-charcoal"
+            className="w-full px-3 py-2.5 border border-dust bg-bone-warm text-charcoal focus:border-charcoal"
           />
         </div>
 
@@ -587,7 +587,7 @@ export default function ApplyForm() {
             onChange={(e) => setField('notes', e.target.value)}
             rows={3}
             placeholder="What you raise, processing setup, who you sell to today, etc."
-            className="w-full px-3 py-2.5 border border-dust bg-bone-warm text-charcoal focus:outline-none focus:border-charcoal"
+            className="w-full px-3 py-2.5 border border-dust bg-bone-warm text-charcoal focus:border-charcoal"
           />
         </div>
       </div>

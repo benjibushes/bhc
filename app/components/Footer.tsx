@@ -31,12 +31,12 @@ export default function Footer() {
 
           <Divider />
 
-          <div className="flex flex-wrap justify-center gap-6 text-xs text-dust">
+          <div className="flex flex-wrap justify-center gap-6 text-xs text-muted">
             <a href="/terms" className="hover:text-charcoal transition-colors">Terms</a>
             <a href="/privacy" className="hover:text-charcoal transition-colors">Privacy</a>
           </div>
 
-          <div className="space-y-2 text-sm text-dust">
+          <div className="space-y-2 text-sm text-muted">
             <p>BuyHalfCow is a private, approval-only network for sourcing ranch beef direct.</p>
             <p>Kalispell, MT &middot; <a href="https://instagram.com/buyhalfcow" target="_blank" rel="noopener noreferrer" className="hover:text-charcoal transition-colors">@buyhalfcow</a></p>
           </div>

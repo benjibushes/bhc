@@ -57,7 +57,7 @@ function DeadLink() {
         <Button href="/support" fullWidth>
           get help with an order &rarr;
         </Button>
-        <p className="text-xs text-dust mt-6">&mdash; Ben, BuyHalfCow</p>
+        <p className="text-xs text-muted mt-6">&mdash; Ben, BuyHalfCow</p>
       </Card>
     </main>
   );
@@ -134,7 +134,9 @@ export default async function OrderStatusPage({ params }: { params: Promise<{ id
           </div>
           <p className="text-[14.5px] leading-relaxed">{v.statusDetail}</p>
           {v.runningLate && (
-            <p className="text-[13px] leading-relaxed text-rust mt-2">
+            // rust-dark, not rust — raw rust on white is 2.79:1, and this is
+            // the one sentence a worried buyer most needs to be able to read.
+            <p className="text-[13px] leading-relaxed text-rust-dark mt-2">
               this one is past the ship window the ranch quoted
               {v.promisedShipBy ? ` (${fmtDate(v.promisedShipBy)})` : ''}. we&rsquo;re already on it
               &mdash; and you can reply to any of our emails to reach a real person.
@@ -215,7 +217,7 @@ export default async function OrderStatusPage({ params }: { params: Promise<{ id
             tell a real person &rarr;
           </Link>
         </p>
-        <p className="text-xs text-dust mt-6">&mdash; Ben, BuyHalfCow</p>
+        <p className="text-xs text-muted mt-6">&mdash; Ben, BuyHalfCow</p>
       </div>
     </main>
   );

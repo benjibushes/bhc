@@ -266,6 +266,121 @@ export default function BuyerFunnel({
   const advanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (advanceTimer.current) clearTimeout(advanceTimer.current); }, []);
 
+  // ── FUNNEL PERSISTENCE (Wave 2 buyer UI, 2026-08-01) ──────────────────────
+  // Steps 1–3 used to live only in React state: a refresh lost every answer,
+  // and hardware Back EXITED the funnel from step 6 of 6. Two fixes:
+  //   1. sessionStorage snapshot per step (same-tab only, cleared on reveal)
+  //      — a refresh, or /access?resume=1 re-opened in the same tab, restores
+  //      the buyer to the exact step + answers they left.
+  //   2. history.pushState per step (below) — hardware/browser Back walks the
+  //      steps instead of leaving the page.
+  // Snapshot restore is fresh-mode only: resume mode is server-driven (the
+  // record already carries size/timing/contact; props carry consumerId+token).
+  const FUNNEL_SNAPSHOT_KEY = 'bhc-funnel-state-v1';
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (restoredRef.current || mode === 'resume') return;
+    restoredRef.current = true;
+    try {
+      const raw = window.sessionStorage.getItem(FUNNEL_SNAPSHOT_KEY);
+      if (!raw) return;
+      const snap = JSON.parse(raw) as Record<string, unknown>;
+      if (!snap || typeof snap !== 'object') return;
+      const str = (v: unknown) => (typeof v === 'string' ? v : '');
+      if (str(snap.tier)) setTier(str(snap.tier));
+      if (str(snap.timing)) setTiming(str(snap.timing));
+      if (str(snap.budget)) setBudget(str(snap.budget));
+      if (str(snap.storage)) setStorage(str(snap.storage));
+      if (str(snap.firstName)) setFirstName(str(snap.firstName));
+      if (str(snap.email)) setEmail(str(snap.email));
+      if (str(snap.phone)) setPhone(str(snap.phone));
+      if (str(snap.state)) setState(str(snap.state));
+      if (str(snap.zip)) setZip(str(snap.zip));
+      if (snap.smsOptIn === true) setSmsOptIn(true);
+      if (str(snap.consumerId)) setConsumerId(str(snap.consumerId));
+      if (str(snap.token)) setToken(str(snap.token));
+      const saved = str(snap.stepKey);
+      if (saved && saved !== 'reveal' && (FUNNEL_STEPS as string[]).includes(saved)) {
+        // Never land past contact without the lead identity the later POSTs
+        // need — a snapshot from a half-created session resumes AT contact.
+        const idx = STEP_INDEX[saved as StepKey];
+        const past = idx > STEP_INDEX.contact && !(str(snap.consumerId) && str(snap.token));
+        setStepKey(past ? 'contact' : (saved as StepKey));
+      }
+    } catch {
+      /* corrupt/blocked storage — start fresh, never crash the funnel */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
+
+  // Save the snapshot on every answer/step change; clear it once the buyer
+  // reaches the reveal (a finished funnel must not resurrect on next visit).
+  useEffect(() => {
+    if (!restoredRef.current && mode !== 'resume') return; // don't save before restore ran
+    try {
+      if (result) {
+        window.sessionStorage.removeItem(FUNNEL_SNAPSHOT_KEY);
+        return;
+      }
+      if (mode === 'resume') return; // server-driven — nothing to snapshot
+      window.sessionStorage.setItem(
+        FUNNEL_SNAPSHOT_KEY,
+        JSON.stringify({
+          stepKey, tier, timing, budget, storage,
+          firstName, email, phone, state, zip, smsOptIn,
+          consumerId, token,
+        }),
+      );
+    } catch {
+      /* storage blocked (private mode) — the funnel still works, just
+         without refresh-proofing */
+    }
+  }, [mode, stepKey, tier, timing, budget, storage, firstName, email, phone, state, zip, smsOptIn, consumerId, token, result]);
+
+  // ── History integration — Back walks steps, never exits mid-quiz ──────────
+  // Mount stamps the current entry; every step CHANGE pushes a new entry
+  // carrying its step. popstate (hardware/browser Back or Forward) restores
+  // the entry's step. Back from the first step leaves the page — correct.
+  const navFromPopstate = useRef(false);
+  const prevStepRef = useRef(stepKey);
+  // Popstate closes over mount-time state — mirror `result` in a ref so Back
+  // from the reveal can't re-open the commit screen (a second tap there would
+  // double-POST /api/qualify).
+  const resultRef = useRef<QualifyResult | null>(null);
+  useEffect(() => { resultRef.current = result; }, [result]);
+  useEffect(() => {
+    try {
+      window.history.replaceState(
+        { ...(window.history.state || {}), bhcFunnelStep: stepKey },
+        '',
+      );
+    } catch { /* history API blocked — Back just exits, as before */ }
+    const onPop = (e: PopStateEvent) => {
+      if (resultRef.current) return; // finished — the reveal stays put
+      const s = (e.state as Record<string, unknown> | null)?.bhcFunnelStep;
+      if (typeof s === 'string' && s !== 'reveal' && (FUNNEL_STEPS as string[]).includes(s)) {
+        navFromPopstate.current = true;
+        setError('');
+        setStepKey(s as StepKey);
+      }
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    const prev = prevStepRef.current;
+    prevStepRef.current = stepKey;
+    if (stepKey === prev) return;
+    if (navFromPopstate.current) {
+      navFromPopstate.current = false;
+      return;
+    }
+    try {
+      window.history.pushState({ bhcFunnelStep: stepKey }, '');
+    } catch { /* history API blocked */ }
+  }, [stepKey]);
+
   // ── Meta Pixel: ViewContent on /access lander mount ───────────────────────
   // No server CAPI pair needed (top-of-funnel view, low signal). event_id
   // omitted — no dedup surface to pair against.

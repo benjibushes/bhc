@@ -121,7 +121,7 @@ export default async function FoundersWall() {
           </p>
         </div>
         {titleFounders.length === 0 ? (
-          <p className="text-dust italic">
+          <p className="text-muted italic">
             10 spots open. Will be the first 10 names listed here.
           </p>
         ) : (
@@ -172,7 +172,7 @@ export default async function FoundersWall() {
                 }`}
                 title={claimed ? displayName(claimed) : `Spot #${n} — open`}
               >
-                <span className="text-[10px] text-dust">#{n}</span>
+                <span className="text-[10px] text-muted">#{n}</span>
                 {claimed && (
                   <span className="text-[10px] mt-1 px-1 truncate max-w-full">
                     {displayName(claimed).split(' ')[0]}
@@ -193,7 +193,7 @@ export default async function FoundersWall() {
           <p className="text-sm text-saddle">{stewards.length} backers</p>
         </div>
         {stewards.length === 0 ? (
-          <p className="text-dust italic">No Stewards yet.</p>
+          <p className="text-muted italic">No Stewards yet.</p>
         ) : (
           <ul className="grid sm:grid-cols-2 md:grid-cols-3 gap-3 text-sm">
             {stewards.map((r) => (
@@ -214,7 +214,7 @@ export default async function FoundersWall() {
           <p className="text-sm text-saddle">{outlaws.length} on the wall</p>
         </div>
         {outlaws.length === 0 ? (
-          <p className="text-dust italic">
+          <p className="text-muted italic">
             No public Outlaws yet. Wall placement is opt-in at checkout.
           </p>
         ) : (
@@ -239,7 +239,7 @@ export default async function FoundersWall() {
               {optedInHerd.length} opted in
             </p>
           </div>
-          <p className="text-xs text-dust">
+          <p className="text-xs text-muted">
             Herd-tier names show only if the backer opted in at checkout.
           </p>
           <ul className="flex flex-wrap gap-2 text-xs">

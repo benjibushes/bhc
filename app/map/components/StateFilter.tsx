@@ -15,7 +15,7 @@ export default function StateFilter({
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="border border-dust bg-bone px-2 py-1.5 text-xs text-charcoal focus:border-charcoal focus:outline-none"
+        className="border border-dust bg-bone px-2 py-1.5 text-xs text-charcoal focus:border-charcoal"
       >
         <option value="">All states</option>
         {options.map((s) => (

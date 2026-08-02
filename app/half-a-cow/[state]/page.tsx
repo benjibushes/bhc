@@ -323,7 +323,7 @@ export default async function HalfACowStatePage({ params }: Props) {
             <div className="grid md:grid-cols-3 gap-8">
               {STEPS.map((step, i) => (
                 <div key={step.title} className="text-center space-y-3">
-                  <p className="font-serif text-3xl text-dust">{i + 1}</p>
+                  <p className="font-serif text-3xl text-muted">{i + 1}</p>
                   <h3 className="font-serif text-xl lowercase">{step.title}</h3>
                   <p className="text-[14.5px] leading-relaxed text-saddle">{step.body(name)}</p>
                 </div>

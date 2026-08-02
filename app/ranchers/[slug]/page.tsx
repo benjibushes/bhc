@@ -864,7 +864,7 @@ export default async function RancherPage(
           creates a Referral, emails the rancher with reply-to=buyer.
          ───────────────────────────────────────────────────────────────────── */}
       {hasPricing && (
-        <section id="shares" className="py-16 md:py-20 scroll-mt-12">
+        <section id="shares" className="py-16 md:py-20 scroll-mt-20">
           <Container>
             <div className="max-w-4xl mx-auto space-y-8">
               <div className="text-center space-y-3">
@@ -918,7 +918,7 @@ export default async function RancherPage(
                 />
               )}
 
-              <p className="text-center text-xs text-dust">
+              <p className="text-center text-xs text-muted">
                 Prices in USD. Questions?{' '}
                 <Link href="/access" className="underline underline-offset-2 hover:text-charcoal">
                   Contact BuyHalfCow
@@ -996,7 +996,7 @@ export default async function RancherPage(
                     />
                   </div>
                   {operatorName && (
-                    <p className="text-xs text-dust">Interview with {operatorName}</p>
+                    <p className="text-xs text-muted">Interview with {operatorName}</p>
                   )}
                 </div>
               )}
@@ -1072,7 +1072,7 @@ export default async function RancherPage(
           Testimonial/Quote fields. Now real reviews surface here.
           ───────────────────────────────────────────────────────────────────── */}
       {buyerReviews.length > 0 && (
-        <section id="reviews" className="py-16 md:py-20 bg-bone-warm border-y border-dust/60 scroll-mt-12">
+        <section id="reviews" className="py-16 md:py-20 bg-bone-warm border-y border-dust/60 scroll-mt-20">
           <Container>
             <div className="max-w-5xl mx-auto space-y-10">
               <div className="text-center space-y-3">
@@ -1080,12 +1080,16 @@ export default async function RancherPage(
                 <h2 className="font-serif text-3xl md:text-4xl">What buyers say</h2>
                 {/* Aggregate summary mirrors the hero badge (P1 #7). */}
                 <p className="flex items-center justify-center gap-2 text-saddle">
-                  <span className="text-amber" aria-hidden>
+                  {/* amber-dark, not amber — raw amber on bone-warm is 1.49:1
+                      (invisible to low-vision buyers at the exact social-proof
+                      moment). The hero chip keeps amber: it sits on the dark
+                      cover gradient where amber is the high-contrast choice. */}
+                  <span className="text-amber-dark" aria-hidden>
                     {'★'.repeat(Math.round(avgRating))}
                     <span className="opacity-30">{'★'.repeat(5 - Math.round(avgRating))}</span>
                   </span>
                   <span className="font-semibold text-charcoal">{avgRating.toFixed(1)}</span>
-                  <span className="text-dust">·</span>
+                  <span className="text-muted">·</span>
                   <span>{reviewCount} verified {reviewCount === 1 ? 'review' : 'reviews'}</span>
                 </p>
               </div>
@@ -1108,7 +1112,7 @@ export default async function RancherPage(
                       </div>
                       <div>
                         <p className="font-semibold text-charcoal">{rev.buyerName}</p>
-                        <p className="text-xs text-dust">
+                        <p className="text-xs text-muted">
                           {rev.orderType}{rev.buyerState ? ` · ${rev.buyerState}` : ''}
                           {rev.daysAgo > 0 ? ` · ${rev.daysAgo === 1 ? '1 day ago' : rev.daysAgo < 30 ? `${rev.daysAgo} days ago` : `${Math.floor(rev.daysAgo / 30)} mo ago`}` : ''}
                         </p>
@@ -1163,7 +1167,7 @@ export default async function RancherPage(
                       )}
                       <div>
                         <p className="text-sm font-semibold text-charcoal">{t.name}</p>
-                        {t.location && <p className="text-xs text-dust">{t.location}</p>}
+                        {t.location && <p className="text-xs text-muted">{t.location}</p>}
                       </div>
                     </div>
                   </Card>

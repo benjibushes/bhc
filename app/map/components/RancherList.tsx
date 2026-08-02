@@ -92,7 +92,7 @@ export default function RancherList({ pins }: { pins: MapPin[] }) {
                   {price || p.primaryProduct}
                 </span>
               </span>
-              <span aria-hidden className="text-dust text-sm shrink-0">
+              <span aria-hidden className="text-muted text-sm shrink-0">
                 →
               </span>
             </a>

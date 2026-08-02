@@ -286,7 +286,7 @@ export default async function MapPage() {
                   states on the map
                 </span>
               </div>
-              <p className="text-xs text-dust">
+              <p className="text-xs text-muted">
                 Pipeline: {stats.onboarding} onboarding · {stats.selfSubmitted} self-submitted ·{' '}
                 {stats.prospects} prospects we&rsquo;re working to bring in.
               </p>
@@ -313,7 +313,7 @@ export default async function MapPage() {
                 <h3 className="font-serif text-xl lowercase">what the pins mean</h3>
                 <MapLegend />
               </div>
-              <p className="text-xs text-dust">
+              <p className="text-xs text-muted">
                 Are you on this map and want it removed? Use the &ldquo;remove me&rdquo; link on
                 your listing&rsquo;s page.
               </p>

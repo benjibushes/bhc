@@ -187,7 +187,7 @@ export default function CallbackRequest({
             onChange={(e) => setNote(e.target.value.slice(0, 500))}
             rows={2}
             placeholder={PLACEHOLDER[variant]}
-            className="w-full border border-dust p-2 text-sm text-charcoal bg-bone focus:outline-none focus:border-saddle"
+            className="w-full border border-dust p-2 text-sm text-charcoal bg-bone focus:border-saddle"
           />
 
           {/* Only asked for when we have no way to reach them — a callback
@@ -205,7 +205,7 @@ export default function CallbackRequest({
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
                 placeholder="your number, so ben can reach you"
-                className="mt-2 w-full border border-dust p-2 text-sm text-charcoal bg-bone focus:outline-none focus:border-saddle"
+                className="mt-2 w-full border border-dust p-2 text-sm text-charcoal bg-bone focus:border-saddle"
               />
             </>
           )}

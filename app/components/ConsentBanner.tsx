@@ -93,18 +93,21 @@ export default function ConsentBanner() {
             Privacy Policy
           </a>
         </p>
-        <div className="flex flex-shrink-0 items-center gap-4">
+        {/* 44px touch targets (WCAG 2.5.5 / mobile QA) — the old "Opt out"
+            link was ~16px tall and "OK" ~32px, on the one bar every
+            first-visit mobile buyer must dismiss. */}
+        <div className="flex flex-shrink-0 items-center gap-2">
           <button
             type="button"
             onClick={() => choose('denied')}
-            className="text-xs text-bone/70 underline underline-offset-2 transition-colors hover:text-bone"
+            className="min-h-11 px-3 flex items-center text-xs text-bone/70 underline underline-offset-2 transition-colors hover:text-bone"
           >
             Opt out
           </button>
           <button
             type="button"
             onClick={() => choose('granted')}
-            className="bg-bone px-5 py-2 text-xs font-medium uppercase tracking-wide text-charcoal transition-colors hover:bg-dust"
+            className="min-h-11 bg-bone px-6 flex items-center text-xs font-medium uppercase tracking-wide text-charcoal transition-colors hover:bg-dust"
           >
             OK
           </button>

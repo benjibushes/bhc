@@ -7,6 +7,18 @@ interface InputProps {
   onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onBlur?: (e: React.FocusEvent<HTMLInputElement>) => void;
   placeholder?: string;
+  /**
+   * Browser autofill hint (autocomplete attribute). Pass "email", "name",
+   * "tel", "postal-code", … — without it, autofill on mobile is a coin flip.
+   */
+  autoComplete?: string;
+  inputMode?: React.HTMLAttributes<HTMLInputElement>['inputMode'];
+  /**
+   * Inline validation message. When set, the field renders in its error
+   * state with the message below it (aria-live so screen readers announce
+   * it on blur-validation without a focus jump).
+   */
+  error?: string;
 }
 
 export default function Input({
@@ -17,8 +29,12 @@ export default function Input({
   value,
   onChange,
   onBlur,
-  placeholder
+  placeholder,
+  autoComplete,
+  inputMode,
+  error
 }: InputProps) {
+  const errorId = `${name}-error`;
   return (
     <div className="space-y-2">
       <label htmlFor={name} className="block text-sm font-medium">
@@ -33,10 +49,19 @@ export default function Input({
         onChange={onChange}
         onBlur={onBlur}
         placeholder={placeholder}
-        className="w-full px-4 py-3 border border-dust bg-bone text-charcoal focus:outline-none focus:border-charcoal transition-colors"
+        autoComplete={autoComplete}
+        inputMode={inputMode}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? errorId : undefined}
+        className={`w-full px-4 py-3 border bg-bone text-charcoal transition-colors ${
+          error ? 'border-weathered' : 'border-dust focus:border-charcoal'
+        }`}
       />
+      {error && (
+        <p id={errorId} role="alert" className="text-sm text-weathered">
+          {error}
+        </p>
+      )}
     </div>
   );
 }
-
-

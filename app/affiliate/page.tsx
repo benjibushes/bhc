@@ -209,11 +209,11 @@ export default function AffiliateDashboardPage() {
                   {data.referredConsumers.slice(0, 5).map((c) => (
                     <li key={c.id} className="flex justify-between">
                       <span>{c.name || 'Unknown'}</span>
-                      <span className="text-dust">{c.state}</span>
+                      <span className="text-muted">{c.state}</span>
                     </li>
                   ))}
                   {data.referredConsumers.length > 5 && (
-                    <li className="text-dust">+{data.referredConsumers.length - 5} more</li>
+                    <li className="text-muted">+{data.referredConsumers.length - 5} more</li>
                   )}
                 </ul>
               </div>
@@ -226,11 +226,11 @@ export default function AffiliateDashboardPage() {
                   {data.referredRanchers.slice(0, 5).map((r) => (
                     <li key={r.id} className="flex justify-between">
                       <span>{r.name || 'Unknown'}</span>
-                      <span className="text-dust">{r.state}</span>
+                      <span className="text-muted">{r.state}</span>
                     </li>
                   ))}
                   {data.referredRanchers.length > 5 && (
-                    <li className="text-dust">+{data.referredRanchers.length - 5} more</li>
+                    <li className="text-muted">+{data.referredRanchers.length - 5} more</li>
                   )}
                 </ul>
               </div>

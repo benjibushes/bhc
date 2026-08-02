@@ -35,7 +35,10 @@ export const dynamic = 'force-dynamic';
 
 export default function ApplyPage() {
   return (
-    <main className="min-h-screen bg-bone text-charcoal">
+    // paddingBottom: var(--consent-h) — the fixed first-visit consent banner
+    // publishes its height on <html> (see ConsentBanner); without this pad it
+    // covers the form's Submit button on mobile. 0px once a choice is made.
+    <main className="min-h-screen bg-bone text-charcoal" style={{ paddingBottom: 'var(--consent-h, 0px)' }}>
       <div className="mx-auto max-w-3xl px-5 sm:px-6 py-10 sm:py-16">
         {/* HERO */}
         <div className="max-w-2xl mb-10">

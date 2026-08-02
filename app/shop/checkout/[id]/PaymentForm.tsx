@@ -126,7 +126,9 @@ function InnerForm({
         return;
       }
       if (paymentIntent && (paymentIntent.status === 'succeeded' || paymentIntent.status === 'processing')) {
-        window.location.href = `/order/success?pid=${productId}`;
+        // Carry the PI id like Stripe's own redirect flows do — /order/success
+        // uses it (best-effort) to link the buyer's signed order-status page.
+        window.location.href = `/order/success?pid=${productId}&payment_intent=${encodeURIComponent(paymentIntent.id)}`;
       }
     } catch {
       setErr('network hiccup — nothing was charged. try again.');

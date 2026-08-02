@@ -295,7 +295,7 @@ export default async function BrandPartnersPage() {
 
           </div>
 
-          <p className="text-center text-xs text-dust mt-8">
+          <p className="text-center text-xs text-muted mt-8">
             Different need? Custom co-build, exclusive product launch, founding
             sponsor for a state expansion?{' '}
             <a

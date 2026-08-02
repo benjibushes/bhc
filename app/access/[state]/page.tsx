@@ -245,7 +245,7 @@ export default async function AccessStatePage({ params }: Props) {
                         className="object-contain max-h-32 p-4"
                       />
                     ) : (
-                      <span className="font-[family-name:var(--font-playfair)] text-3xl text-dust">
+                      <span className="font-[family-name:var(--font-playfair)] text-3xl text-muted">
                         {r.ranchName.charAt(0)}
                       </span>
                     )}
@@ -257,11 +257,11 @@ export default async function AccessStatePage({ params }: Props) {
                     {r.tagline && (
                       <p className="text-sm text-saddle line-clamp-2">{r.tagline}</p>
                     )}
-                    <p className="text-xs uppercase tracking-widest text-dust">
+                    <p className="text-xs uppercase tracking-widest text-muted">
                       {r.city ? `${r.city}, ${stateCode}` : stateNameFull}
                     </p>
                     {r.certifications && (
-                      <p className="text-xs uppercase tracking-widest text-dust pt-1">
+                      <p className="text-xs uppercase tracking-widest text-muted pt-1">
                         {r.certifications}
                       </p>
                     )}

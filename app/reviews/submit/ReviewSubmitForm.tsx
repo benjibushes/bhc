@@ -112,7 +112,7 @@ export default function ReviewSubmitForm({ token }: Props) {
                 onMouseEnter={() => setHoverRating(n)}
                 onMouseLeave={() => setHoverRating(0)}
                 className={`w-11 h-11 text-2xl leading-none transition-colors ${
-                  active ? 'text-charcoal' : 'text-dust'
+                  active ? 'text-charcoal' : 'text-muted'
                 }`}
               >
                 {active ? '★' : '☆'}
@@ -134,7 +134,7 @@ export default function ReviewSubmitForm({ token }: Props) {
           rows={4}
           maxLength={2000}
           placeholder='e.g. "freezer&apos;s full, family&apos;s fed, talked to the rancher direct."'
-          className="w-full border border-dust bg-bone p-3 text-charcoal focus:outline-none focus:border-charcoal text-sm md:text-base"
+          className="w-full border border-dust bg-bone p-3 text-charcoal focus:border-charcoal text-sm md:text-base"
         />
         <p className="mt-1 text-xs text-saddle">{review.length} / 2000</p>
       </div>

@@ -75,7 +75,7 @@ function UnsubscribeContent() {
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="your@email.com"
                   required
-                  className="w-full px-4 py-3 text-base border border-dust rounded-lg mb-4 text-charcoal placeholder-dust bg-bone focus:outline-none focus:ring-2 focus:ring-saddle"
+                  className="w-full px-4 py-3 text-base border border-dust rounded-lg mb-4 text-charcoal placeholder-dust bg-bone focus:ring-2 focus:ring-saddle"
                 />
                 <button
                   type="submit"
@@ -119,7 +119,7 @@ function UnsubscribeContent() {
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="your@email.com"
                   required
-                  className="w-full px-4 py-3 text-base border border-dust rounded-lg mb-4 text-charcoal placeholder-dust bg-bone focus:outline-none focus:ring-2 focus:ring-saddle"
+                  className="w-full px-4 py-3 text-base border border-dust rounded-lg mb-4 text-charcoal placeholder-dust bg-bone focus:ring-2 focus:ring-saddle"
                 />
                 <button
                   type="submit"

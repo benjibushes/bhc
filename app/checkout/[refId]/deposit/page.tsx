@@ -394,7 +394,7 @@ function DepositPageContent() {
           <div className="min-w-0">
             <div className="text-sm font-medium truncate">{info.rancher.name}</div>
             <div className="text-xs text-saddle">
-              {info.rancher.ranchName ? `${info.rancher.ranchName} · ` : ''}{info.rancher.state || 'Verified ranch'} · personally certified by Ben
+              {info.rancher.ranchName ? `${info.rancher.ranchName} · ` : ''}{info.rancher.state || 'Verified ranch'} · verified BuyHalfCow partner
             </div>
           </div>
         </div>
@@ -605,13 +605,16 @@ function DepositPageContent() {
             </p>
           </div>
         ) : (
-        <div className="sticky -mx-4 md:mx-0 px-4 md:px-0 pt-3 pb-4 md:pb-0 md:static bg-bone md:bg-transparent border-t border-divider md:border-0" style={{ bottom: 'var(--consent-h, 0px)' }}>
+        // pb: 1rem + env(safe-area-inset-bottom) — without the safe-area
+        // term the pay button's bottom edge sits under the iPhone home
+        // indicator when the block is stuck to the viewport bottom.
+        <div className="sticky -mx-4 md:mx-0 px-4 md:px-0 pt-3 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] md:pb-0 md:static bg-bone md:bg-transparent border-t border-divider md:border-0" style={{ bottom: 'var(--consent-h, 0px)' }}>
           {/* K3 — generic (non-terminal) POST errors land HERE, above the pay
               button and inside the sticky block so they're visible on mobile,
               while the cut selector / price / trust content stay on screen.
               Messages are the API's buyer-safe `message` strings or this
               page's own warm copy — never a raw Stripe/dev string. */}
-          {error && <p className="text-red-700 mb-2 text-sm text-center">{error}</p>}
+          {error && <p role="alert" className="text-weathered mb-2 text-sm text-center">{error}</p>}
 
           {/* honest scarcity — real processing date only, never a fake count */}
           {info.fulfillment.nextProcessingDate && (

@@ -4,6 +4,12 @@ import { useState } from 'react';
 import Input from './Input';
 import Textarea from './Textarea';
 import SmsConsentCheckbox, { TermsNotice } from './SmsConsentCheckbox';
+import {
+  emailFieldError,
+  minLengthFieldError,
+  phoneFieldError,
+  requiredFieldError,
+} from '@/lib/buyerFieldValidation';
 
 interface InquiryModalProps {
   rancher: {
@@ -29,9 +35,33 @@ export default function InquiryModal({ rancher, onClose }: InquiryModalProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [error, setError] = useState('');
+  // Per-field inline validation — set on blur, cleared on change.
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+
+  const validators: Record<string, (v: string) => string> = {
+    name: (v) => requiredFieldError(v, 'Your name'),
+    email: emailFieldError,
+    phone: phoneFieldError,
+    message: (v) => minLengthFieldError(v, 10, 'Your message'),
+  };
+
+  const validateField = (name: string, value: string) => {
+    const err = validators[name] ? validators[name](value) : '';
+    setFieldErrors((f) => ({ ...f, [name]: err }));
+    return err;
+  };
+
+  const setField = (name: string, value: string) => {
+    setFormData((f) => ({ ...f, [name]: value }));
+    if (fieldErrors[name]) setFieldErrors((f) => ({ ...f, [name]: '' }));
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const errs = Object.keys(validators).map((k) =>
+      validateField(k, (formData as Record<string, string>)[k] || ''),
+    );
+    if (errs.some(Boolean)) return;
     setIsSubmitting(true);
     setError('');
 
@@ -59,7 +89,7 @@ export default function InquiryModal({ rancher, onClose }: InquiryModalProps) {
       setTimeout(() => {
         onClose();
       }, 2000);
-    } catch (err) {
+    } catch {
       setError('Failed to send inquiry. Please try again.');
     } finally {
       setIsSubmitting(false);
@@ -92,8 +122,9 @@ export default function InquiryModal({ rancher, onClose }: InquiryModalProps) {
             </p>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="text-2xl leading-none hover:text-saddle transition-colors"
+            className="w-11 h-11 -mt-2 -mr-2 flex items-center justify-center text-2xl leading-none hover:text-saddle transition-colors"
             aria-label="Close"
           >
             ×
@@ -106,8 +137,11 @@ export default function InquiryModal({ rancher, onClose }: InquiryModalProps) {
             name="name"
             type="text"
             required
+            autoComplete="name"
             value={formData.name}
-            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+            onChange={(e) => setField('name', e.target.value)}
+            onBlur={(e) => { if (e.target.value.trim()) validateField('name', e.target.value); }}
+            error={fieldErrors.name}
           />
 
           <Input
@@ -115,8 +149,12 @@ export default function InquiryModal({ rancher, onClose }: InquiryModalProps) {
             name="email"
             type="email"
             required
+            autoComplete="email"
+            inputMode="email"
             value={formData.email}
-            onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+            onChange={(e) => setField('email', e.target.value)}
+            onBlur={(e) => { if (e.target.value.trim()) validateField('email', e.target.value); }}
+            error={fieldErrors.email}
           />
 
           <Input
@@ -124,8 +162,12 @@ export default function InquiryModal({ rancher, onClose }: InquiryModalProps) {
             name="phone"
             type="tel"
             required
+            autoComplete="tel"
+            inputMode="tel"
             value={formData.phone}
-            onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+            onChange={(e) => setField('phone', e.target.value)}
+            onBlur={(e) => { if (e.target.value.trim()) validateField('phone', e.target.value); }}
+            error={fieldErrors.phone}
           />
 
           <SmsConsentCheckbox
@@ -135,13 +177,15 @@ export default function InquiryModal({ rancher, onClose }: InquiryModalProps) {
           />
 
           <div className="space-y-2">
-            <label className="block text-sm font-medium">
+            <label htmlFor="inquiry-interest-type" className="block text-sm font-medium">
               What are you interested in? <span className="text-weathered">*</span>
             </label>
             <select
+              id="inquiry-interest-type"
+              name="interestType"
               value={formData.interestType}
               onChange={(e) => setFormData({ ...formData, interestType: e.target.value })}
-              className="w-full px-4 py-3 border border-dust bg-bone text-charcoal focus:outline-none focus:border-charcoal transition-colors"
+              className="w-full px-4 py-3 border border-dust bg-bone text-charcoal focus:border-charcoal transition-colors"
               required
             >
               <option value="half_cow">Half Cow</option>
@@ -157,12 +201,14 @@ export default function InquiryModal({ rancher, onClose }: InquiryModalProps) {
             required
             rows={6}
             value={formData.message}
-            onChange={(e) => setFormData({ ...formData, message: e.target.value })}
+            onChange={(e) => setField('message', e.target.value)}
+            onBlur={(e) => { if (e.target.value.trim()) validateField('message', e.target.value); }}
+            error={fieldErrors.message}
             placeholder="Tell the rancher what you're looking for, when you need it, and any questions you have..."
           />
 
           {error && (
-            <div className="p-4 bg-weathered/10 border border-weathered text-weathered">
+            <div role="alert" className="p-4 bg-weathered/10 border border-weathered text-weathered">
               {error}
             </div>
           )}

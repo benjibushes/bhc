@@ -50,7 +50,7 @@ export default async function OrderCancelledPage({
         ) : (
           <Button href="/shop">back to the shop &rarr;</Button>
         )}
-        <p className="text-xs text-dust mt-6">&mdash; Ben, BuyHalfCow</p>
+        <p className="text-xs text-muted mt-6">&mdash; Ben, BuyHalfCow</p>
       </Card>
     </main>
   );

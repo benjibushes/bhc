@@ -79,7 +79,7 @@ export default function ClaimForm({
           value={operatorName}
           onChange={(e) => setOperatorName(e.target.value)}
           placeholder="e.g. Cathryn Kerns"
-          className="w-full px-4 py-3 border border-dust bg-white text-sm focus:outline-none focus:border-charcoal transition-colors"
+          className="w-full px-4 py-3 border border-dust bg-white text-sm focus:border-charcoal transition-colors"
         />
       </div>
       <div>
@@ -92,19 +92,19 @@ export default function ClaimForm({
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="you@example.com"
-          className="w-full px-4 py-3 border border-dust bg-white text-sm focus:outline-none focus:border-charcoal transition-colors"
+          className="w-full px-4 py-3 border border-dust bg-white text-sm focus:border-charcoal transition-colors"
         />
       </div>
       <div>
         <label className="block text-sm font-medium mb-1">
-          Phone <span className="text-dust">(optional)</span>
+          Phone <span className="text-muted">(optional)</span>
         </label>
         <input
           type="tel"
           value={phone}
           onChange={(e) => setPhone(e.target.value)}
           placeholder="(555) 555-5555"
-          className="w-full px-4 py-3 border border-dust bg-white text-sm focus:outline-none focus:border-charcoal transition-colors"
+          className="w-full px-4 py-3 border border-dust bg-white text-sm focus:border-charcoal transition-colors"
         />
       </div>
 

@@ -51,7 +51,7 @@ export default function SmsConsentCheckbox({
 /** One-line Terms + Privacy notice for under store-form submit buttons. */
 export function TermsNotice() {
   return (
-    <p className="text-[11px] text-dust text-center">
+    <p className="text-[11px] text-muted text-center">
       By submitting you agree to our{' '}
       <a
         href="/terms"

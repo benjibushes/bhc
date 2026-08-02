@@ -11,6 +11,7 @@ import { useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import Container from '../components/Container';
+import { emailFieldError, minLengthFieldError } from '@/lib/buyerFieldValidation';
 
 const CATEGORIES = [
   { value: 'order-issue', label: 'Problem with my order' },
@@ -33,9 +34,23 @@ function SupportForm() {
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
+  // Per-field inline validation — set on blur, cleared on change.
+  const [fieldErrors, setFieldErrors] = useState<{ email?: string; message?: string }>({});
+
+  const validateField = (name: 'email' | 'message', value: string) => {
+    const err =
+      name === 'email'
+        ? emailFieldError(value)
+        : minLengthFieldError(value, 10, 'Your message');
+    setFieldErrors((f) => ({ ...f, [name]: err }));
+    return err;
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const emailErr = validateField('email', form.email);
+    const messageErr = validateField('message', form.message);
+    if (emailErr || messageErr) return;
     setSubmitting(true);
     setError('');
 
@@ -74,7 +89,7 @@ function SupportForm() {
         <p className="text-saddle text-lg">
           A real person will read your report and reply to your email within a day, usually sooner.
         </p>
-        <div className="text-sm text-dust space-y-2">
+        <div className="text-sm text-muted space-y-2">
           <p>
             What happens next: we pull up your order, reach out to your rancher if needed,
             and get back to you with a plan — not a form letter.
@@ -102,7 +117,7 @@ function SupportForm() {
       <div className="text-center space-y-2">
         <p className="text-xs uppercase tracking-widest text-saddle">Support</p>
         <h1 className="font-serif text-3xl md:text-4xl">Report a Problem</h1>
-        <p className="text-sm text-dust">
+        <p className="text-sm text-muted">
           Something wrong with your order? Tell us here — a real person reads every report
           and replies within a day.
         </p>
@@ -110,30 +125,50 @@ function SupportForm() {
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label className="block text-sm font-medium mb-1">
+          <label htmlFor="support-email" className="block text-sm font-medium mb-1">
             Email Address <span className="text-weathered">*</span>
           </label>
           <input
+            id="support-email"
+            name="email"
             type="email"
+            inputMode="email"
+            autoComplete="email"
             required
             value={form.email}
-            onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+            onChange={e => {
+              setForm(f => ({ ...f, email: e.target.value }));
+              if (fieldErrors.email) setFieldErrors(f => ({ ...f, email: '' }));
+            }}
+            onBlur={e => { if (e.target.value.trim()) validateField('email', e.target.value); }}
             placeholder="you@example.com"
-            className="w-full px-4 py-3 border border-dust bg-white text-sm focus:outline-none focus:border-charcoal transition-colors"
+            aria-invalid={fieldErrors.email ? true : undefined}
+            aria-describedby={fieldErrors.email ? 'support-email-error' : undefined}
+            className={`w-full px-4 py-3 border bg-white text-base transition-colors ${
+              fieldErrors.email ? 'border-weathered' : 'border-dust focus:border-charcoal'
+            }`}
           />
-          <p className="text-xs text-dust mt-1">
-            Use the email you ordered with so we can find your order fast.
-          </p>
+          {fieldErrors.email ? (
+            <p id="support-email-error" role="alert" className="text-sm text-weathered mt-1">
+              {fieldErrors.email}
+            </p>
+          ) : (
+            <p className="text-xs text-muted mt-1">
+              Use the email you ordered with so we can find your order fast.
+            </p>
+          )}
         </div>
 
         <div>
-          <label className="block text-sm font-medium mb-1">
+          <label htmlFor="support-category" className="block text-sm font-medium mb-1">
             What&apos;s going on? <span className="text-weathered">*</span>
           </label>
           <select
+            id="support-category"
+            name="category"
             value={form.category}
             onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
-            className="w-full px-4 py-3 border border-dust bg-white text-sm focus:outline-none focus:border-charcoal transition-colors"
+            className="w-full px-4 py-3 border border-dust bg-white text-base focus:border-charcoal transition-colors"
           >
             {CATEGORIES.map(c => (
               <option key={c.value} value={c.value}>
@@ -144,31 +179,48 @@ function SupportForm() {
         </div>
 
         <div>
-          <label className="block text-sm font-medium mb-1">
+          <label htmlFor="support-message" className="block text-sm font-medium mb-1">
             Tell us what happened <span className="text-weathered">*</span>
           </label>
           <textarea
+            id="support-message"
+            name="message"
             required
             rows={5}
-            minLength={10}
             maxLength={2000}
             value={form.message}
-            onChange={e => setForm(f => ({ ...f, message: e.target.value }))}
+            onChange={e => {
+              setForm(f => ({ ...f, message: e.target.value }));
+              if (fieldErrors.message) setFieldErrors(f => ({ ...f, message: '' }));
+            }}
+            onBlur={e => { if (e.target.value.trim()) validateField('message', e.target.value); }}
             placeholder="The more detail the better — what happened, and when?"
-            className="w-full px-4 py-3 border border-dust bg-white text-sm focus:outline-none focus:border-charcoal transition-colors resize-vertical"
+            aria-invalid={fieldErrors.message ? true : undefined}
+            aria-describedby={fieldErrors.message ? 'support-message-error' : undefined}
+            className={`w-full px-4 py-3 border bg-white text-base transition-colors resize-y ${
+              fieldErrors.message ? 'border-weathered' : 'border-dust focus:border-charcoal'
+            }`}
           />
+          {fieldErrors.message && (
+            <p id="support-message-error" role="alert" className="text-sm text-weathered mt-1">
+              {fieldErrors.message}
+            </p>
+          )}
         </div>
 
         <div>
-          <label className="block text-sm font-medium mb-1">
-            Order ID <span className="text-dust">(optional)</span>
+          <label htmlFor="support-order-id" className="block text-sm font-medium mb-1">
+            Order ID <span className="text-muted">(optional)</span>
           </label>
           <input
+            id="support-order-id"
+            name="referralId"
             type="text"
+            autoComplete="off"
             value={form.referralId}
             onChange={e => setForm(f => ({ ...f, referralId: e.target.value }))}
             placeholder="From your order emails, if handy"
-            className="w-full px-4 py-3 border border-dust bg-white text-sm focus:outline-none focus:border-charcoal transition-colors"
+            className="w-full px-4 py-3 border border-dust bg-white text-base focus:border-charcoal transition-colors"
           />
         </div>
 
@@ -200,7 +252,7 @@ function SupportForm() {
           {submitting ? 'Sending...' : 'Send Report'}
         </button>
 
-        <p className="text-xs text-dust text-center">
+        <p className="text-xs text-muted text-center">
           Prefer email? Reach us any time at{' '}
           <a href="mailto:hello@buyhalfcow.com" className="underline hover:text-charcoal transition-colors">
             hello@buyhalfcow.com
@@ -220,7 +272,7 @@ export default function SupportPage() {
           <Suspense
             fallback={
               <div className="max-w-2xl mx-auto text-center">
-                <p className="text-dust">Loading...</p>
+                <p className="text-muted">Loading...</p>
               </div>
             }
           >
@@ -231,7 +283,7 @@ export default function SupportPage() {
 
       <div className="border-t border-divider/10 py-10">
         <Container>
-          <div className="max-w-4xl mx-auto flex justify-center text-sm text-dust">
+          <div className="max-w-4xl mx-auto flex justify-center text-sm text-muted">
             <Link href="/" className="hover:text-charcoal transition-colors">
               BuyHalfCow
             </Link>

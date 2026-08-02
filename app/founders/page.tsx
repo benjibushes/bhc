@@ -391,7 +391,7 @@ export default async function FoundersPage({
               </a>
             </div>
             {earlyBirdSubline && (
-              <p className="text-xs text-dust">{earlyBirdSubline}</p>
+              <p className="text-xs text-muted">{earlyBirdSubline}</p>
             )}
           </div>
         </Container>
@@ -486,7 +486,7 @@ export default async function FoundersPage({
       </section>
 
       {/* TIERS */}
-      <section id="tiers" className="py-20">
+      <section id="tiers" className="py-20 scroll-mt-20">
         <Container>
           <div className="max-w-5xl mx-auto space-y-10">
             <div className="text-center space-y-2">
@@ -665,7 +665,7 @@ export default async function FoundersPage({
       </section>
 
       {/* WALL */}
-      <section id="wall" className="py-16 bg-white border-t border-dust">
+      <section id="wall" className="py-16 bg-white border-t border-dust scroll-mt-20">
         <Container>
           <div className="max-w-5xl mx-auto">
             <FoundersWall />
@@ -781,7 +781,7 @@ export default async function FoundersPage({
                 FAQ
               </Link>
             </div>
-            <p className="text-xs text-dust pt-4">
+            <p className="text-xs text-muted pt-4">
               <Link href="/terms" className="underline hover:text-charcoal">Terms</Link>
               {' · '}
               <Link href="/privacy" className="underline hover:text-charcoal">Privacy</Link>

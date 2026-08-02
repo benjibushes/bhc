@@ -30,7 +30,10 @@ export const metadata: Metadata = {
 
 export default function AddRancherPage() {
   return (
-    <main className="min-h-screen bg-bone text-charcoal">
+    // paddingBottom: var(--consent-h) — the fixed first-visit consent banner
+    // publishes its height on <html> (see ConsentBanner); without this pad it
+    // covers the form's Submit button on mobile. 0px once a choice is made.
+    <main className="min-h-screen bg-bone text-charcoal" style={{ paddingBottom: 'var(--consent-h, 0px)' }}>
       <section className="py-16 md:py-20 border-b border-divider/10">
         <Container>
           <div className="max-w-3xl space-y-5">

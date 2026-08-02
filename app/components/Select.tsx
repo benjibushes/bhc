@@ -4,8 +4,17 @@ interface SelectProps {
   required?: boolean;
   value: string;
   onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
+  onBlur?: (e: React.FocusEvent<HTMLSelectElement>) => void;
   options?: { value: string; label: string }[];
   children?: React.ReactNode;
+  /** Browser autofill hint (autocomplete attribute), e.g. "address-level1". */
+  autoComplete?: string;
+  /**
+   * Inline validation message. When set, the field renders in its error
+   * state with the message below it (role="alert" so screen readers
+   * announce blur-validation without a focus jump).
+   */
+  error?: string;
 }
 
 export default function Select({
@@ -14,9 +23,13 @@ export default function Select({
   required = false,
   value,
   onChange,
+  onBlur,
   options,
-  children
+  children,
+  autoComplete,
+  error
 }: SelectProps) {
+  const errorId = `${name}-error`;
   return (
     <div className="space-y-2">
       {label && (
@@ -30,7 +43,13 @@ export default function Select({
         required={required}
         value={value}
         onChange={onChange}
-        className="w-full px-4 py-3 border border-dust bg-bone text-charcoal focus:outline-none focus:border-charcoal transition-colors"
+        onBlur={onBlur}
+        autoComplete={autoComplete}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? errorId : undefined}
+        className={`w-full px-4 py-3 border bg-bone text-charcoal transition-colors ${
+          error ? 'border-weathered' : 'border-dust focus:border-charcoal'
+        }`}
       >
         {options ? (
           options.map(option => (
@@ -42,7 +61,11 @@ export default function Select({
           children
         )}
       </select>
+      {error && (
+        <p id={errorId} role="alert" className="text-sm text-weathered">
+          {error}
+        </p>
+      )}
     </div>
   );
 }
-

@@ -307,7 +307,7 @@ function DepositSuccessContent() {
               value={shareLink}
               onFocus={(e) => e.currentTarget.select()}
               aria-label="Your share link"
-              className="flex-1 min-w-0 border border-dust bg-bone px-3 py-2.5 text-sm text-charcoal font-mono truncate"
+              className="flex-1 min-w-0 border border-dust bg-bone px-3 py-2.5 text-base text-charcoal font-mono truncate"
             />
             <button
               type="button"
@@ -386,7 +386,7 @@ function DepositSuccessContent() {
           </p>
           <p>Questions? Reply to the receipt email or message {rancherName} directly.</p>
           {sessionId && (
-            <p className="text-xs text-dust mt-3 font-mono break-all">
+            <p className="text-xs text-muted mt-3 font-mono break-all">
               ref: {sessionId.slice(0, 24)}&hellip;
             </p>
           )}

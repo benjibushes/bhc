@@ -207,7 +207,7 @@ export default function FulfillmentSection({ data }: { data: FulfillmentData }) 
 
           {data.costNotes && (
             <p className="text-center text-sm text-saddle max-w-2xl mx-auto">
-              <span className="uppercase tracking-widest text-xs text-dust mr-2">
+              <span className="uppercase tracking-widest text-xs text-muted mr-2">
                 Good to know
               </span>
               {data.costNotes}
