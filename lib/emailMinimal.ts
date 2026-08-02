@@ -1,16 +1,20 @@
 // lib/emailMinimal.ts
 //
-// Sales-floor pivot 2026-06-09: BHC's entire buyer-facing email pipeline.
-// 6 transactional templates. No drip. No nurture. Cal handles re-engagement.
+// Sales-floor pivot 2026-06-09: BHC's minimal buyer-facing email pipeline.
+// Transactional templates only. No drip. No nurture.
 //
-//   1. sendBuyerSignupConfirmation     — /access signup → take the quiz
-//   2. sendQuizCompleteCalInvite       — quiz done → book Ben's Cal
+//   1. sendQuizCompleteCalInvite       — quiz done → book Ben's Cal
+//   2. sendQuizCompleteDepositInvite   — quiz done → deposit-primary invite
 //   3. sendBuyerDepositInvoice         — Ben closed on call → deposit link
-//   4. sendSlotLockedConfirmation      — rancher accepted → confirmation
-//   5. sendBuyerFinalInvoice           — (lives in lib/email.ts — reused)
-//   6. Stripe Connect Active alert     — (lives in webhook — reused)
+//   4. sendBuyerFinalInvoice           — (lives in lib/email.ts — reused)
+//   5. Stripe Connect Active alert     — (lives in webhook — reused)
 //
-// All four NEW templates route through guardedSend via lib/email.ts:sendEmail
+// (sendBuyerSignupConfirmation + sendSlotLockedConfirmation deleted
+// 2026-08-01, Wave 2 — zero callers; the signup ack is owned by
+// sendWelcomeAndReadyToBuy / sendQuizInvite and the slot-locked moment by
+// sendBuyerSlotLocked in lib/email.ts.)
+//
+// All templates route through guardedSend via lib/email.ts:sendEmail
 // so suppression list + frequency cap + Email Sends audit log all fire.
 
 import { sendEmail } from './email';
@@ -23,30 +27,6 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com
 // LIVE Cal event via CAL_API_KEY and falls back to /contact if none exists.
 // The old hardcoded /sales slug 404'd after the Cal events were deleted
 // (incident 2026-06-14).
-
-// 1. /access signup confirmation — replaces sendConsumerConfirmation as the
-//    one-shot welcome. Drops them right into the quiz.
-export async function sendBuyerSignupConfirmation(opts: {
-  to: string;
-  firstName: string;
-  quizUrl: string;
-}) {
-  return sendEmail({
-    to: opts.to,
-    subject: `got your application — one 90-second quiz to get matched`,
-    html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
-      <p>hey ${escape(opts.firstName)},</p>
-      <p>got your application. one 90-second quiz and i'll match you with a rancher in your area:</p>
-      <p style="margin:28px 0">
-        <a href="${opts.quizUrl}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#FAF8F4;text-decoration:none;font-size:15px;font-weight:600">
-          start the quiz →
-        </a>
-      </p>
-      <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow<br><em>Connecting every household to a ranch they trust.</em></p>
-    </div>`,
-    templateName: 'buyer_signup_confirmation',
-  });
-}
 
 // 2. Quiz complete → book Cal w/ Ben. Replaces auto-matching/suggest auto-intro.
 //    Ben does the matching on the sales call.
@@ -307,28 +287,6 @@ export async function sendStillLookingReconfirm(opts: {
   });
 }
 
-// 4. Stripe webhook fires after rancher hits "Accept Slot" — buyer gets
-//    "you're locked in" notification w/ processing date.
-export async function sendSlotLockedConfirmation(opts: {
-  to: string;
-  firstName: string;
-  rancherName: string;
-  processingDate: string;
-}) {
-  return sendEmail({
-    to: opts.to,
-    subject: `slot locked — ${opts.rancherName} processing ${opts.processingDate}`,
-    html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
-      <p>hey ${escape(opts.firstName)},</p>
-      <p><strong>${escape(opts.rancherName)}</strong> accepted your reservation. your beef will be processed on <strong>${escape(opts.processingDate)}</strong>.</p>
-      <p>a few days before pickup, ${escape(opts.rancherName)} will send your final invoice for the balance — paid through BuyHalfCow, straight to them.</p>
-      <p>see you at pickup.</p>
-      <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow<br><em>Connecting every household to a ranch they trust.</em></p>
-    </div>`,
-    templateName: 'slot_locked_confirmation',
-  });
-}
-
 function escape(s: string): string {
   return String(s)
     .replace(/&/g, '&amp;')
@@ -484,6 +442,49 @@ export async function sendBuyerOrderDelayNotice(opts: {
         <p style="font-size:15px;line-height:1.6;">We've gone straight to ${ranch} about it and someone here is watching it. You don't need to do anything — we'll email you the moment it moves.</p>
         ${statusLink ? `<p style="font-size:15px;line-height:1.6;"><a href="${statusLink}" style="color:#26251E;">See your order &rarr;</a></p>` : ''}
         <p style="font-size:15px;line-height:1.6;">If you'd rather just have your money back, reply to this email and say so — we'll refund you, no argument and no forms.</p>
+        <p style="font-size:15px;">&mdash; Ben, BuyHalfCow</p>
+      </div>`,
+  });
+}
+
+// ── Buyer "your rancher is slower than usual" deposit notice (Wave 2, GTM 2.3) ──
+//
+// The $50 shop rail got sendBuyerOrderDelayNotice above; the $2,000 SHARE
+// deposit rail stayed silent. A buyer pays a deposit, is told the rancher
+// reaches out "usually the same day", the rancher never taps Accept — and the
+// deposit-accept-sla cron re-pinged the RANCHER and rang the operator while
+// the buyer heard nothing, ever. This is the mirror.
+//
+// ONE honest note per referral, ever. The Referrals table has no free field
+// for a stamp (no new Airtable fields allowed), so the one-shot throttle is
+// the cron's Redis claimOnce (SET NX, long TTL) — the same pattern the
+// settlement rails use. Copy rules match buyer_order_delay: no excuses, no
+// blaming the ranch, the refund exit offered up front. The deposit at this
+// stage is still fully refundable (pre-accept), so "your deposit is safe" and
+// the refund offer are both literally true.
+export async function sendBuyerDepositDelayNotice(opts: {
+  buyerEmail: string;
+  buyerName: string;
+  rancherName: string;
+  /** e.g. 'Quarter' | 'Half Beef' — display only; blank falls back to 'share'. */
+  cutLabel?: string;
+  hoursSinceDeposit: number;
+}) {
+  const first = (opts.buyerName || '').trim().split(/\s+/)[0] || 'there';
+  const ranch = escape(opts.rancherName || 'your rancher');
+  const cut = escape(String(opts.cutLabel || '').trim() || 'share');
+  const days = Math.max(1, Math.round(opts.hoursSinceDeposit / 24));
+  const dayWord = days === 1 ? 'a day' : `${days} days`;
+  return sendEmail({
+    to: opts.buyerEmail,
+    subject: `about your ${String(opts.cutLabel || 'share').toLowerCase()} deposit`,
+    templateName: 'buyer_deposit_delay',
+    html: `
+      <div style="font-family:Georgia,serif;max-width:560px;margin:0 auto;color:#26251E;">
+        <p style="font-size:20px;">hey ${escape(first)} — quick straight update.</p>
+        <p style="font-size:15px;line-height:1.6;">Your deposit on a <strong>${cut}</strong> with ${ranch} landed ${dayWord} ago, and they haven't confirmed your slot yet. ${ranch} is being slower than usual — that's on us to chase, not you.</p>
+        <p style="font-size:15px;line-height:1.6;">Your deposit is safe: it stays fully refundable until the rancher accepts your slot. We've already gone back to ${ranch} and a real person here is watching this one — you don't need to do anything.</p>
+        <p style="font-size:15px;line-height:1.6;">Want us to step in — push harder, find you a different rancher, or just refund the deposit? Reply to this email and say so. No forms, no argument.</p>
         <p style="font-size:15px;">&mdash; Ben, BuyHalfCow</p>
       </div>`,
   });
