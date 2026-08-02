@@ -231,17 +231,29 @@ function SignAgreementInner() {
               </p>
             </section>
 
+            {/* LOCKED MONEY MODEL (2026-08-02): buyer-pays-on-top. This section
+                must always agree with commissionCopyFor (lib/onboardingPaths) and
+                docs/BUSINESS-MODEL.md — the wizard's inline SignStep already
+                renders that copy; both surfaces POST to the same sign endpoint,
+                so the two contracts can never diverge again. */}
             <section className="space-y-3">
-              <h2 className="font-serif text-xl">2. Commission Structure</h2>
-              <p>BuyHalfCow earns a <strong>10% commission</strong> on all verified referred sales. This applies to:</p>
-              <ul className="list-disc pl-6 space-y-1 text-saddle">
-                <li>One-time bulk purchases</li>
-                <li>Repeat purchases from referred buyers</li>
-                <li>Subscription-based agreements from referred buyers</li>
-              </ul>
-              <p><strong>Commission term:</strong> 24 months from the date of first referral introduction.</p>
-              <p><strong>No upfront fees.</strong> Buyers pay you directly — you control your own pricing.</p>
-              <p>BuyHalfCow invoices monthly for commission on closed, referred sales.</p>
+              <h2 className="font-serif text-xl">2. Service Fee Structure</h2>
+              <p>
+                <strong>You keep 100% of your price.</strong> You set your prices; every dollar of
+                them is yours.
+              </p>
+              <p>
+                BuyHalfCow&rsquo;s service fee is <strong>paid by the buyer, on top of your
+                price</strong>, at the rate set by your plan: free plan 10% &middot; Pasture 7%
+                &middot; Ranch 3% &middot; Operator 0%. It is charged with the buyer&rsquo;s
+                deposit, only when a deal actually closes &mdash; nothing on inquiries, nothing on
+                no-shows. It is never deducted from your price and you are never invoiced for it.
+              </p>
+              <p><strong>No upfront fees, no listing fees.</strong></p>
+              <p className="text-saddle text-sm">
+                Ranchers who joined on the legacy referral model (before June 2026) remain governed
+                by their original agreement terms, including its 10% post-close commission.
+              </p>
             </section>
 
             <section className="space-y-3">
@@ -339,9 +351,11 @@ function SignAgreementInner() {
                   className="w-5 h-5 mt-0.5 flex-shrink-0"
                 />
                 <span className="text-sm">
-                  I have read and agree to the BuyHalfCow Commission Agreement terms outlined above,
-                  including the 10% commission on referred sales for a 24-month term, verification via references and social proof,
-                  and rancher expectations. I understand that all fulfillment and product liability remain my responsibility.
+                  I have read and agree to the BuyHalfCow Partner Agreement terms outlined above,
+                  including the service-fee structure (paid by the buyer on top of my price, at my
+                  plan&rsquo;s rate), verification via references and social proof, and rancher
+                  expectations. I understand that all fulfillment and product liability remain my
+                  responsibility.
                 </span>
               </label>
 
