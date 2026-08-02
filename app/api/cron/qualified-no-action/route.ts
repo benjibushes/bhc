@@ -30,9 +30,13 @@ import { getAllRecords, getRecordById, updateRecord, TABLES } from '@/lib/airtab
 import {
   NUDGE_WINDOW_MIN_MS,
   NUDGE_WINDOW_MAX_MS,
+  SAME_DAY_INVITE_SUPPRESS_MS,
+  NO_ACTION_NUDGE_AT_FIELD,
   buildNudgeReferralFormula,
+  buildRecentQuizInviteFormula,
   isNudgeEligibleReferral,
   isNudgeEligibleConsumer,
+  hasSameDayQuizInvite,
 } from '@/lib/noActionNudge';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { isRancherOnConnect } from '@/lib/rancherEligibility';
@@ -99,7 +103,7 @@ function buildEmailHtml(args: {
   <div style="text-align:center;margin:24px 0;">
     <a href="${args.ctaUrl}" style="display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:bold;font-size:13px;letter-spacing:1px;text-transform:uppercase;">${esc(args.ctaLabel)} →</a>
   </div>
-  <p style="font-size:13px;color:#6B4F3F;">— Benjamin, BuyHalfCow</p>
+  <p style="font-size:13px;color:#6B4F3F;">— Ben, BuyHalfCow</p>
 </div>
 </body></html>`;
   return { subject, html };
@@ -140,8 +144,31 @@ async function realHandler(_request: Request): Promise<CronResult> {
     return { status: 'success', recordsTouched: 0, notes: 'no intro-sent-no-deposit referrals in window' };
   }
 
+  // Day-0 stack fix (email-hygiene 2026-08-02): ONE Email Sends read per run —
+  // buyers who got a quiz-complete deposit/cal invite in the last 24h already
+  // heard the exact same ask; nudging them again the same day is noise. The
+  // referral-side 'Deposit Invite Sent At' stamp covers the deposit variant
+  // even if this read fails (fail-open: an Airtable blip must not kill the
+  // whole nudge run).
+  let recentInviteEmails: ReadonlySet<string> = new Set();
+  try {
+    const sinceISO = new Date(now - SAME_DAY_INVITE_SUPPRESS_MS).toISOString();
+    const inviteRows = (await getAllRecords(
+      TABLES.EMAIL_SENDS,
+      buildRecentQuizInviteFormula(sinceISO),
+    )) as any[];
+    recentInviteEmails = new Set(
+      inviteRows
+        .map((r) => String(r['Recipient Email'] || '').trim().toLowerCase())
+        .filter(Boolean),
+    );
+  } catch (e: any) {
+    console.warn('[qualified-no-action] recent-invite read failed (fail-open):', e?.message);
+  }
+
   let nudgedEmail = 0;
   let nudgedSms = 0;
+  let skippedSameDayInvite = 0;
   let claimed = 0; // buyers claimed (stamp written → send attempted) this run
   const failures: string[] = [];
   // A buyer with multiple in-window referrals gets at most ONE nudge per run
@@ -172,6 +199,21 @@ async function realHandler(_request: Request): Promise<CronResult> {
     // an old (other-referral) stamp is still eligible for THIS intro.
     if (!isNudgeEligibleConsumer(c, { referralId: String(ref.id || ''), nowMs: now })) continue;
 
+    // Day-0 stack fix: the quiz-complete invite (deposit or cal variant)
+    // already made this exact ask to this buyer today — skip, don't stamp
+    // (the 4h window will close on its own; this nudge is same-day noise).
+    if (
+      hasSameDayQuizInvite({
+        depositInviteSentAt: ref['Deposit Invite Sent At'],
+        email: c['Email'],
+        recentInviteEmails,
+        nowMs: now,
+      })
+    ) {
+      skippedSameDayInvite++;
+      continue;
+    }
+
     const email = String(c['Email'] || '').trim();
     const firstName = String(c['Full Name'] || '').split(' ')[0] || 'there';
     const state = String(c['State'] || '');
@@ -200,7 +242,11 @@ async function realHandler(_request: Request): Promise<CronResult> {
     try {
       const existing = String(c['Notes'] || '');
       // Marker carries the REFERRAL id → dedup is per-intro, not per-buyer.
+      // Durable twin (email-hygiene 2026-08-02): the dateTime field survives
+      // the Notes `.slice(0, 2000)` truncation that used to erase the marker
+      // on chatty records and restart the nudge; the selector reads BOTH.
       await updateRecord(TABLES.CONSUMERS, buyerId, {
+        [NO_ACTION_NUDGE_AT_FIELD]: new Date().toISOString(),
         'Notes': `[no-action-nudge ${ref.id} ${new Date().toISOString().slice(0, 10)}] ${existing}`.slice(0, 2000),
       });
     } catch (e: any) {
@@ -273,7 +319,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
   return {
     status,
     recordsTouched: nudgedEmail + nudgedSms,
-    notes: `refsInWindow=${candidateRefs.length} claimed=${claimed}/${MAX_SENDS_PER_RUN} email=${nudgedEmail} sms=${nudgedSms} failures=${failures.length}`,
+    notes: `refsInWindow=${candidateRefs.length} claimed=${claimed}/${MAX_SENDS_PER_RUN} email=${nudgedEmail} sms=${nudgedSms} sameDayInviteSkips=${skippedSameDayInvite} failures=${failures.length}`,
   };
 }
 

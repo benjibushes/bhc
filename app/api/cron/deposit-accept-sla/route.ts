@@ -12,7 +12,10 @@
 //
 // Idempotent: stamps `Rancher Re-pinged At` and dedupes on it (selectSlaEligible
 // skips anything re-pinged within the cooldown), so re-running the hourly cron
-// re-pings each stuck deposit at most ~once/day.
+// re-pings each stuck deposit at most ~once/day — and at most 3 times TOTAL
+// (email-hygiene 2026-08-02: the re-ping window closes at slaHours + 3×cooldown,
+// derived purely from Deposit Paid At; after 72h the rancher goes quiet and a
+// one-shot loud operator escalation takes over — see the escalation pass below).
 //
 // Mirrors awaiting-payment-nudge: CRON_SECRET auth wrapper + withCronRun +
 // maintenance gate + throttle-stamp-BEFORE-side-effect ordering.
@@ -39,8 +42,15 @@ import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 import { notifyRancherDepositPaid } from '@/lib/rancherNotify';
 import { claimOnce } from '@/lib/rancherCapacity';
+import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { sendBuyerDepositDelayNotice } from '@/lib/emailMinimal';
-import { selectSlaEligible, hoursSinceDeposit, DEFAULT_SLA_HOURS } from '@/lib/depositSla';
+import {
+  selectSlaEligible,
+  selectEscalationDue,
+  hoursSinceDeposit,
+  DEFAULT_SLA_HOURS,
+  ESCALATION_AFTER_HOURS,
+} from '@/lib/depositSla';
 
 export const maxDuration = 60;
 
@@ -55,6 +65,14 @@ const MAX_PER_RUN = 25;
 const BUYER_DELAY_HOURS = 24;
 // One per referral EVER (bounded by the claim TTL).
 const BUYER_DELAY_CLAIM_TTL_SEC = 365 * 24 * 60 * 60;
+// Email-hygiene 2026-08-02: past 72h the rancher re-ping rail is DONE (the
+// selector's time-derived cap already stopped emailing them at ~3 pings) and
+// a human takes over — ONE loud operator escalation per referral, ever.
+// Same one-shot pattern as the buyer delay notice: Redis claimOnce keyed on
+// the referral (no free Referrals field), claim taken BEFORE the send, with
+// sendOperatorSignal's own dedupeKey as the belt.
+const ESCALATION_CLAIM_TTL_SEC = 365 * 24 * 60 * 60;
+const MAX_ESCALATIONS_PER_RUN = 10;
 
 async function realHandler(
   _request: Request,
@@ -219,10 +237,52 @@ async function realHandler(
     }
   }
 
+  // ── 72h+: ONE loud operator escalation per referral (email-hygiene) ────────
+  // The rancher heard from us ~3 times and never tapped Accept — more email is
+  // noise. Hand the deal to a human, loudly, exactly once. claimOnce fires
+  // BEFORE the send so a crashed run costs one escalation, never a repeat;
+  // sendOperatorSignal's dedupeKey backstops the local-dev no-Redis case.
+  let escalationsSent = 0;
+  const escalationDue = selectEscalationDue(candidates, { now });
+  for (const ref of escalationDue.slice(0, MAX_ESCALATIONS_PER_RUN)) {
+    const refId = ref.id;
+    try {
+      const won = await claimOnce(`deposit-sla-escalation:${refId}`, ESCALATION_CLAIM_TTL_SEC);
+      if (!won) continue;
+      const hrs = hoursSinceDeposit(ref, now);
+      // Best-effort rancher name for the card — a lookup failure never blocks
+      // the escalation itself.
+      let rancherLabel = 'the rancher';
+      try {
+        const rIds: string[] = ref['Rancher'] || ref['Suggested Rancher'] || [];
+        const rId = Array.isArray(rIds) ? rIds[0] : null;
+        if (rId) {
+          const rancher: any = await getRecordById(TABLES.RANCHERS, rId);
+          rancherLabel = rancher?.['Operator Name'] || rancher?.['Ranch Name'] || rancherLabel;
+        }
+      } catch {}
+      await sendOperatorSignal({
+        urgency: 'loud',
+        kind: 'stuck-rancher',
+        summary: `paid deposit unaccepted ${hrs}h — manual intervention needed`,
+        detail:
+          `${String(ref['Buyer Name'] || 'A buyer')} paid a deposit ${hrs}h ago and ${rancherLabel} ` +
+          `still hasn't tapped Accept Slot. The rancher has had 3 email pings — automated chasing is DONE ` +
+          `for this deal. Call ${rancherLabel}, re-route the buyer, or refund. This alert fires once.`,
+        refs: [{ type: 'referral', id: String(refId) }],
+        dedupeKey: `deposit-sla-escalation:${refId}`,
+        dedupeWindowMs: 7 * 24 * 60 * 60 * 1000,
+      });
+      escalationsSent++;
+    } catch (e: any) {
+      errors.push(`${refId}: escalation failed (${e?.message?.slice(0, 80)})`);
+    }
+  }
+
   return {
     status: errors.length ? 'partial' : 'success',
-    recordsTouched: pinged + buyersTold,
-    notes: `candidates=${candidates.length} eligible=${eligible.length} pinged=${pinged} buyersTold=${buyersTold} slaHrs=${slaHours} buyerDelayHrs=${BUYER_DELAY_HOURS} errs=${errors.length}${errors.length ? ' err1=' + errors[0].slice(0, 80) : ''}`,
+    recordsTouched: pinged + buyersTold + escalationsSent,
+    notes: `candidates=${candidates.length} eligible=${eligible.length} pinged=${pinged} buyersTold=${buyersTold} escalated=${escalationsSent}/${escalationDue.length} slaHrs=${slaHours} buyerDelayHrs=${BUYER_DELAY_HOURS} escHrs=${ESCALATION_AFTER_HOURS} errs=${errors.length}${errors.length ? ' err1=' + errors[0].slice(0, 80) : ''}`,
   };
 }
 

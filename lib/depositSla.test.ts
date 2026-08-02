@@ -5,8 +5,13 @@ import {
   selectSlaEligible,
   hoursSinceDeposit,
   isRefundedOrDisputed,
+  isEscalationDue,
+  selectEscalationDue,
+  repingWindowHours,
   DEFAULT_SLA_HOURS,
   DEFAULT_REPING_COOLDOWN_HOURS,
+  DEFAULT_MAX_RANCHER_PINGS,
+  ESCALATION_AFTER_HOURS,
 } from './depositSla';
 
 const NOW = Date.parse('2026-06-27T12:00:00.000Z');
@@ -245,4 +250,120 @@ test('selectSlaEligible filters out a refunded row in a mixed list', () => {
     { id: 'disputed', 'Deposit Paid At': hoursAgo(6), Status: 'Awaiting Payment', __payment: { 'Dispute Status': 'needs_response' } },
   ];
   assert.deepEqual(selectSlaEligible(refs, { now: NOW }).map((r) => r.id), ['clean']);
+});
+
+// ── Email-hygiene 2026-08-02: max 3 rancher pings + one-shot escalation ──────
+
+test('ping cap: window closes at slaHours + 3×cooldown (64h default)', () => {
+  assert.equal(
+    repingWindowHours(),
+    DEFAULT_SLA_HOURS + DEFAULT_MAX_RANCHER_PINGS * DEFAULT_REPING_COOLDOWN_HOURS,
+  );
+  assert.equal(repingWindowHours(), 64);
+});
+
+test('ping cap: deposit past the re-ping window is NOT eligible even if never pinged', () => {
+  assert.equal(
+    isSlaEligible({ 'Deposit Paid At': hoursAgo(65), Status: 'Awaiting Payment' }, { now: NOW }),
+    false,
+  );
+  // Way past — the old forever-loop case.
+  assert.equal(
+    isSlaEligible({ 'Deposit Paid At': hoursAgo(200), Status: 'Awaiting Payment' }, { now: NOW }),
+    false,
+  );
+});
+
+test('ping cap: boundary — just inside the window is eligible, exactly at it is not', () => {
+  const window = repingWindowHours();
+  const justInside = new Date(NOW - (window * HOUR - 1000)).toISOString();
+  assert.equal(isSlaEligible({ 'Deposit Paid At': justInside, Status: 'Awaiting Payment' }, { now: NOW }), true);
+  assert.equal(
+    isSlaEligible({ 'Deposit Paid At': hoursAgo(window), Status: 'Awaiting Payment' }, { now: NOW }),
+    false,
+  );
+});
+
+test('ping cap: third ping (~44h, cooldown elapsed) still fires', () => {
+  assert.equal(
+    isSlaEligible(
+      {
+        'Deposit Paid At': hoursAgo(44),
+        'Rancher Re-pinged At': hoursAgo(DEFAULT_REPING_COOLDOWN_HOURS + 1),
+        Status: 'Awaiting Payment',
+      },
+      { now: NOW },
+    ),
+    true,
+  );
+});
+
+test('ping cap: simulated hourly cron sends at most 3 pings over 5 days', () => {
+  // Drive the real selector the way the cron does: hourly ticks, stamping
+  // Rancher Re-pinged At whenever eligible. The FOREVER bug this fix kills
+  // would count ~5 pings in 120h; the cap must hold it to exactly 3.
+  const ref: Record<string, unknown> = {
+    'Deposit Paid At': new Date(NOW).toISOString(),
+    Status: 'Awaiting Payment',
+  };
+  let pings = 0;
+  for (let h = 0; h <= 120; h++) {
+    const tick = NOW + h * HOUR;
+    if (isSlaEligible(ref, { now: tick })) {
+      pings++;
+      ref['Rancher Re-pinged At'] = new Date(tick).toISOString();
+    }
+  }
+  assert.equal(pings, DEFAULT_MAX_RANCHER_PINGS);
+});
+
+test('escalation: due at 72h+ unaccepted, not before', () => {
+  assert.equal(
+    isEscalationDue({ 'Deposit Paid At': hoursAgo(ESCALATION_AFTER_HOURS + 1), Status: 'Awaiting Payment' }, { now: NOW }),
+    true,
+  );
+  assert.equal(
+    isEscalationDue({ 'Deposit Paid At': hoursAgo(ESCALATION_AFTER_HOURS), Status: 'Awaiting Payment' }, { now: NOW }),
+    true, // exactly at the threshold fires — a deal this old must not wait another hour
+  );
+  assert.equal(
+    isEscalationDue({ 'Deposit Paid At': hoursAgo(ESCALATION_AFTER_HOURS - 1), Status: 'Awaiting Payment' }, { now: NOW }),
+    false,
+  );
+});
+
+test('escalation: never fires on accepted / terminal / refunded / disputed deals', () => {
+  const old = hoursAgo(100);
+  assert.equal(
+    isEscalationDue({ 'Deposit Paid At': old, 'Rancher Accepted At': hoursAgo(1), Status: 'Slot Locked' }, { now: NOW }),
+    false,
+  );
+  assert.equal(isEscalationDue({ 'Deposit Paid At': old, Status: 'Closed Won' }, { now: NOW }), false);
+  assert.equal(isEscalationDue({ 'Deposit Paid At': old, Status: 'Refunded' }, { now: NOW }), false);
+  assert.equal(
+    isEscalationDue(
+      { 'Deposit Paid At': old, Status: 'Awaiting Payment', __payment: { 'Refunded At': hoursAgo(2) } },
+      { now: NOW },
+    ),
+    false,
+  );
+  assert.equal(
+    isEscalationDue(
+      { 'Deposit Paid At': old, Status: 'Awaiting Payment', __payment: { 'Dispute Status': 'needs_response' } },
+      { now: NOW },
+    ),
+    false,
+  );
+  assert.equal(isEscalationDue({ Status: 'Awaiting Payment' }, { now: NOW }), false);
+});
+
+test('selectEscalationDue filters a mixed list; ping-eligibility and escalation never overlap', () => {
+  const refs = [
+    { id: 'fresh', 'Deposit Paid At': hoursAgo(6), Status: 'Awaiting Payment' },        // ping territory
+    { id: 'gone-dark', 'Deposit Paid At': hoursAgo(90), Status: 'Awaiting Payment' },   // escalation territory
+    { id: 'accepted', 'Deposit Paid At': hoursAgo(90), 'Rancher Accepted At': hoursAgo(1), Status: 'Slot Locked' },
+  ];
+  assert.deepEqual(selectEscalationDue(refs, { now: NOW }).map((r) => r.id), ['gone-dark']);
+  // The escalation-due row must NOT also be ping-eligible (rancher goes quiet).
+  assert.deepEqual(selectSlaEligible(refs, { now: NOW }).map((r) => r.id), ['fresh']);
 });

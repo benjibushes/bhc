@@ -172,3 +172,102 @@ test('per-referral dedup: suppression trio still blocks regardless of referral',
     false,
   );
 });
+
+// ── durable dedup stamp (email-hygiene 2026-08-02) ──────────────────────────
+// The Notes marker dies to the per-write `.slice(0, 2000)` on chatty records —
+// the nudge then restarted. 'No Action Nudge At' (dateTime) is the
+// truncation-proof twin; recent stamp blocks even when Notes carries nothing.
+
+const { hasSameDayQuizInvite, NO_ACTION_STAMP_SUPPRESS_MS, SAME_DAY_INVITE_SUPPRESS_MS, buildRecentQuizInviteFormula } =
+  nudge as any;
+
+test('TRUNCATION FIX: recent No Action Nudge At blocks even with a marker-less Notes', () => {
+  const c = consumerFields({
+    'Notes': 'x'.repeat(1990), // marker sliced away
+    'No Action Nudge At': new Date(NOW - 3 * HOUR).toISOString(),
+  });
+  assert.equal(isNudgeEligibleConsumer(c, { referralId: 'recAAA', nowMs: NOW }), false);
+  // Legacy no-referral-context path blocks too.
+  assert.equal(isNudgeEligibleConsumer(c, { nowMs: NOW }), false);
+});
+
+test('stale No Action Nudge At (>48h) does not block a future re-match', () => {
+  const c = consumerFields({
+    'No Action Nudge At': new Date(NOW - NO_ACTION_STAMP_SUPPRESS_MS - HOUR).toISOString(),
+  });
+  assert.equal(isNudgeEligibleConsumer(c, { referralId: 'recBBB', nowMs: NOW }), true);
+});
+
+test('either source blocks: Notes marker OR the field (transition safety)', () => {
+  // Field empty, marker present → still blocked (old behavior preserved).
+  assert.equal(
+    isNudgeEligibleConsumer(
+      consumerFields({ 'Notes': '[no-action-nudge recAAA 2026-07-02] x', 'No Action Nudge At': '' }),
+      { referralId: 'recAAA', nowMs: NOW },
+    ),
+    false,
+  );
+  // Garbage field value degrades to Notes-only behavior, never throws.
+  assert.equal(
+    isNudgeEligibleConsumer(consumerFields({ 'No Action Nudge At': 'not-a-date' }), {
+      referralId: 'recAAA',
+      nowMs: NOW,
+    }),
+    true,
+  );
+});
+
+// ── day-0 stack fix: same-day quiz-complete invite suppresses the nudge ─────
+
+test('referral Deposit Invite Sent At inside 24h suppresses the nudge', () => {
+  assert.equal(
+    hasSameDayQuizInvite({
+      depositInviteSentAt: new Date(NOW - 2 * HOUR).toISOString(),
+      email: 'buyer@example.com',
+      recentInviteEmails: new Set<string>(),
+      nowMs: NOW,
+    }),
+    true,
+  );
+});
+
+test('deposit invite older than 24h does NOT suppress', () => {
+  assert.equal(
+    hasSameDayQuizInvite({
+      depositInviteSentAt: new Date(NOW - SAME_DAY_INVITE_SUPPRESS_MS - HOUR).toISOString(),
+      email: 'buyer@example.com',
+      recentInviteEmails: new Set<string>(),
+      nowMs: NOW,
+    }),
+    false,
+  );
+});
+
+test('Email Sends recipient match suppresses (covers the cal-invite variant, case-insensitive)', () => {
+  const recent = new Set(['buyer@example.com']);
+  assert.equal(
+    hasSameDayQuizInvite({ email: 'Buyer@Example.COM', recentInviteEmails: recent, nowMs: NOW }),
+    true,
+  );
+  assert.equal(
+    hasSameDayQuizInvite({ email: 'other@example.com', recentInviteEmails: recent, nowMs: NOW }),
+    false,
+  );
+});
+
+test('no invite signals at all → nudge proceeds', () => {
+  assert.equal(hasSameDayQuizInvite({ nowMs: NOW }), false);
+  assert.equal(
+    hasSameDayQuizInvite({ depositInviteSentAt: 'garbage', email: '', nowMs: NOW }),
+    false,
+  );
+});
+
+test('recent-invite formula targets both quiz-complete templates, sent-only, windowed', () => {
+  const since = new Date(NOW - SAME_DAY_INVITE_SUPPRESS_MS).toISOString();
+  const f: string = buildRecentQuizInviteFormula(since);
+  assert.ok(f.includes('{Template Name}="quiz_complete_deposit_invite"'));
+  assert.ok(f.includes('{Template Name}="quiz_complete_cal_invite"'));
+  assert.ok(f.includes('{Status}="sent"'));
+  assert.ok(f.includes(`{Sent At} > "${since}"`));
+});

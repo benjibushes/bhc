@@ -35,6 +35,8 @@ export interface DigestLead {
   orderType: string;
   budgetRange: string;
   daysSinceIntro: number;
+  /** Intro Sent At in epoch ms — drives the new-leads gate below. */
+  introAtMs: number;
 }
 
 /**
@@ -80,10 +82,34 @@ export function buildDigestLeads(
       orderType: String(r['Order Type'] || ''),
       budgetRange: String(r['Budget Range'] || ''),
       daysSinceIntro: days,
+      introAtMs: introMs,
     });
   }
   leads.sort((a, b) => b.daysSinceIntro - a.daysSinceIntro);
   return leads;
+}
+
+/**
+ * NEW-LEADS GATE (email-hygiene 2026-08-02): the 24h throttle alone meant a
+ * rancher sitting on the same 3 stale leads got the identical digest EVERY
+ * DAY FOREVER — daily repetition of a list they've already ignored trains
+ * them to ignore the channel. Send only when something is NEW since the last
+ * digest: a lead counts as new when it crossed the 2-day visibility threshold
+ * (introAt + DIGEST_MIN_LEAD_AGE_DAYS) after the last send. First digest ever
+ * (no lastSentAt) always sends; an unparseable stamp fails open the same way.
+ * The unresponsive-rancher chase past that lives with the operator rails
+ * (stalled-nudge + Monday bundle), not daily email repetition.
+ */
+export function hasLeadsNewToDigest(
+  leads: DigestLead[],
+  lastSentAt: string | undefined | null,
+): boolean {
+  if (leads.length === 0) return false;
+  if (!lastSentAt) return true;
+  const lastMs = new Date(lastSentAt).getTime();
+  if (Number.isNaN(lastMs)) return true;
+  const visibilityLagMs = DIGEST_MIN_LEAD_AGE_DAYS * DAY_MS;
+  return leads.some((l) => l.introAtMs + visibilityLagMs > lastMs);
 }
 
 /** "3 buyers waiting: Richard 12d, Christine 5d, Ana 2d" — subject helper. */

@@ -76,6 +76,17 @@ const str = (v: any): string => {
   return String(v);
 };
 
+// Buyer/rancher-supplied strings go into email HTML — escape them
+// (email-hygiene 2026-08-02; matches lib/email.ts esc()). Subjects stay raw.
+function esc(s: string): string {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 async function realHandler(_request: Request): Promise<CronResult> {
   if (isMaintenanceMode()) {
     return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
@@ -193,14 +204,14 @@ async function realHandler(_request: Request): Promise<CronResult> {
           ? Math.max(2, Math.floor((now - new Date(ref.introSentAt).getTime()) / DAY_MS))
           : 2;
         const callLink = buyerPhoneE164
-          ? `<p style="margin:16px 0 4px 0;text-align:center;"><a href="${telHref(buyerPhoneE164)}" style="display:inline-block;padding:12px 24px;background:#0E0E0E;color:#FFFFFF!important;text-decoration:none;font-weight:600;font-size:14px;">call ${buyerFirst} — ${formatPhonePretty(buyerPhoneE164)}</a></p>`
+          ? `<p style="margin:16px 0 4px 0;text-align:center;"><a href="${telHref(buyerPhoneE164)}" style="display:inline-block;padding:12px 24px;background:#0E0E0E;color:#FFFFFF!important;text-decoration:none;font-weight:600;font-size:14px;">call ${esc(buyerFirst)} — ${formatPhonePretty(buyerPhoneE164)}</a></p>`
           : '';
         await sendEmail({
           to: rancherEmail,
           subject: `quick nudge — ${buyerFirst} is still waiting on your first call`,
           html: `<div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;">
-            <p>Hi ${str(rancher['Operator Name']) || str(rancher['Ranch Name']) || 'there'},</p>
-            <p>${buyerFirst}${buyerState ? ` in ${buyerState}` : ''} matched with you ${days} days ago${cut ? ` looking for a ${cut.toLowerCase()}` : ''} — and hasn't heard from you yet.</p>
+            <p>Hi ${esc(str(rancher['Operator Name']) || str(rancher['Ranch Name']) || 'there')},</p>
+            <p>${esc(buyerFirst)}${buyerState ? ` in ${esc(buyerState)}` : ''} matched with you ${days} days ago${cut ? ` looking for a ${esc(cut.toLowerCase())}` : ''} — and hasn't heard from you yet.</p>
             <p>A two-minute first call is what keeps these deals alive. Even "got your info, here's my next processing date" works.</p>
             ${callLink}
             ${buyerPhoneE164 ? `<p style="font-size:13px;color:#6B4F3F;text-align:center;">or text them: ${formatPhonePretty(buyerPhoneE164)}</p>` : ''}

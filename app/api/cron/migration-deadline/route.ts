@@ -63,6 +63,18 @@ interface NudgeEmailArgs {
   rancherId?: string;
 }
 
+// Rancher-supplied names go straight into email HTML — escape them
+// (email-hygiene 2026-08-02; matches lib/email.ts esc()). Subjects are
+// plain-text headers and stay raw.
+function esc(s: string): string {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 function buildNudgeEmail({ firstName, ranchName, daysLeft, setupUrl, bookUrl, fullName, email, rancherId }: NudgeEmailArgs) {
   const first = firstName || 'there';
   const urgency = daysLeft <= 1 ? 'tomorrow' : daysLeft <= 2 ? 'in 2 days' : `in ${daysLeft} days`;
@@ -71,8 +83,8 @@ function buildNudgeEmail({ firstName, ranchName, daysLeft, setupUrl, bookUrl, fu
       ? `${first} — ${ranchName} payout upgrade deadline ${urgency}`
       : `${first} — ${daysLeft} days left to upgrade ${ranchName} payouts`;
   const html = `<!DOCTYPE html><html><body style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;background:#F4F1EC;color:#0E0E0E;">
-<h1 style="font-family:Georgia,serif;margin:0 0 16px 0;">${first}, ${urgency} on the payout upgrade</h1>
-<p>Quick reminder — you've got <strong>${daysLeft} day${daysLeft === 1 ? '' : 's'}</strong> left to switch ${ranchName} to the new platform-collected deposit flow. After the deadline, the system pauses new lead routing to your page until you finish.</p>
+<h1 style="font-family:Georgia,serif;margin:0 0 16px 0;">${esc(first)}, ${urgency} on the payout upgrade</h1>
+<p>Quick reminder — you've got <strong>${daysLeft} day${daysLeft === 1 ? '' : 's'}</strong> left to switch ${esc(ranchName)} to the new platform-collected deposit flow. After the deadline, the system pauses new lead routing to your page until you finish.</p>
 <p><strong>5-min DIY path:</strong> open your wizard, pick tier, Stripe Connect, set deposits. Done.</p>
 <div style="text-align:center;margin:24px 0;">
   <a href="${setupUrl}" style="display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:bold;font-size:13px;letter-spacing:1px;text-transform:uppercase;">Finish the upgrade →</a>
@@ -82,7 +94,7 @@ function buildNudgeEmail({ firstName, ranchName, daysLeft, setupUrl, bookUrl, fu
   <a href="${addCalPrefill(bookUrl, { name: fullName, email, metadata: { rancherId } })}" style="display:inline-block;padding:12px 28px;background:#FFFFFF;color:#0E0E0E;text-decoration:none;font-weight:bold;font-size:13px;letter-spacing:1px;text-transform:uppercase;border:1px solid #0E0E0E;">Book your 15-min call →</a>
 </div>
 <p style="font-size:13px;color:#6B4F3F;">Reply to this email if you hit any snag — I'll respond same-day.</p>
-<p style="font-size:13px;color:#6B4F3F;">— Benjamin, BuyHalfCow</p>
+<p style="font-size:13px;color:#6B4F3F;">— Ben, BuyHalfCow</p>
 </body></html>`;
   return { subject, html };
 }

@@ -1245,12 +1245,7 @@ export async function sendPostPurchaseWelcome(data: {
   <div class="box">
     <p style="margin:0;"><strong>Pickup day:</strong> ${esc(lbsApprox)} of vacuum-sealed beef goes from ranch processor straight to your freezer. Stack it in flat — easier to find cuts later.</p>
   </div>
-  <p style="margin-top:24px;"><strong>What I'm sending you over the next month:</strong></p>
-  <ul style="color:#2A2A2A;line-height:2;">
-    <li>In ~2 weeks: cuts education + first-cook playbook (most people get a quarter and don't know what to do with the oxtail)</li>
-    <li>Monthly check-ins from me on what's happening across the network</li>
-    <li>~5 months from now: I'll ping you about reserving the next ${tier} from ${esc(data.rancherName)} or the next rancher in your area</li>
-  </ul>
+  <p style="margin-top:24px;">One more thing from me down the road: around the 5-month mark — about when most families run low — I'll ping you about reserving the next ${tier} from ${esc(data.rancherName)} or the next rancher in your area. Until then, no noise from me.</p>
   <p>Track your order anytime: <a href="${SITE_URL}/member" style="color:#0E0E0E;">buyhalfcow.com/member</a>.</p>
   <p>Reply anytime. I read every reply.</p>
   <p style="margin-top:32px;">— Ben</p>
@@ -1284,7 +1279,10 @@ export async function sendRancherDepositPaid(data: {
   isReminder?: boolean;
 }): Promise<{ success: boolean; suppressed?: boolean; reason?: string }> {
   const rFirst = data.rancherFirstName || 'there';
-  const buyer = esc(data.buyerFirstName || 'A buyer');
+  // Raw name for SUBJECTS (plain-text header — esc there renders a literal
+  // &#039; for O'Brien); esc'd twin for HTML interpolation.
+  const buyerRaw = data.buyerFirstName || 'A buyer';
+  const buyer = esc(buyerRaw);
   const cut = (data.cut || '').trim() || 'beef share';
   const where = data.state ? ` in ${esc(data.state)}` : '';
   const amtStr =
@@ -1293,8 +1291,8 @@ export async function sendRancherDepositPaid(data: {
       : '';
   const dashUrl = `${SITE_URL}/rancher`;
   const subject = data.isReminder
-    ? `still waiting — ${buyer} paid a deposit and needs your call`
-    : `💰 ${buyer} just paid a deposit — they're expecting your call`;
+    ? `still waiting — ${buyerRaw} paid a deposit and needs your call`
+    : `💰 ${buyerRaw} just paid a deposit — they're expecting your call`;
   const leadIn = data.isReminder
     ? `Quick nudge — ${buyer}${where} paid a deposit for a ${esc(cut)}${amtStr ? ` (${amtStr} in)` : ''} and hasn't heard from you yet. They're waiting on a call.`
     : `${buyer}${where} just paid a deposit for a ${esc(cut)}${amtStr ? ` (${amtStr} in)` : ''}. The money's in your Stripe account. They're expecting to hear from you today.`;
@@ -1412,7 +1410,10 @@ export async function sendRancherFulfillmentNudge(data: {
   kind?: 'confirm' | 'schedule' | 'invoice';
 }): Promise<{ success: boolean; suppressed?: boolean; reason?: string }> {
   const rFirst = data.rancherFirstName || 'there';
-  const buyer = esc(data.buyerFirstName || 'your buyer');
+  // Raw name for SUBJECTS (plain-text header — esc there renders a literal
+  // &#039; for O'Brien); esc'd twin for HTML interpolation.
+  const buyerRaw = data.buyerFirstName || 'your buyer';
+  const buyer = esc(buyerRaw);
   const cut = (data.cut || '').trim() || 'beef share';
   const procDate = data.processingDate ? new Date(String(data.processingDate)) : null;
   const procStr =
@@ -1428,7 +1429,7 @@ export async function sendRancherFulfillmentNudge(data: {
     // Gentle "pick a date" — the deal is accepted but has no Handoff Date and
     // no Processing Date, so neither the buyer nor the chase clock has
     // anything to hold on to.
-    subject = `when does ${buyer} get their ${esc(cut)}?`;
+    subject = `when does ${buyerRaw} get their ${cut}?`;
     bodyHtml = `
   <h1>One small thing, ${esc(rFirst)}.</h1>
   <p>${buyer}'s ${esc(cut)} is locked in — deposit paid, slot accepted. The only thing missing is a date: there's no pickup/delivery date on the order yet, so ${buyer} doesn't know when to expect their beef.</p>
@@ -1439,7 +1440,7 @@ export async function sendRancherFulfillmentNudge(data: {
   } else if (kind === 'invoice') {
     // "Send the final invoice" — accepted 7d+ with no Final Invoice Sent At.
     // This is the rancher's own money sitting uncollected.
-    subject = `time to send ${buyer}'s final invoice`;
+    subject = `time to send ${buyerRaw}'s final invoice`;
     bodyHtml = `
   <h1>Don't leave money on the table, ${esc(rFirst)}.</h1>
   <p>${buyer}'s ${esc(cut)} deposit is paid and the slot is locked — but the final balance hasn't been invoiced yet. That's your money sitting uncollected.</p>
@@ -1449,8 +1450,8 @@ export async function sendRancherFulfillmentNudge(data: {
   <p style="font-size:13px;color:#6B4F3F;margin-top:24px;">Thanks for taking care of your buyers. — Ben, BuyHalfCow</p>`;
   } else {
     subject = data.isSecondNudge
-      ? `still showing unconfirmed — ${buyer}'s ${esc(cut)}`
-      : `quick check — how did ${buyer}'s processing go?`;
+      ? `still showing unconfirmed — ${buyerRaw}'s ${cut}`
+      : `quick check — how did ${buyerRaw}'s processing go?`;
     const leadIn = data.isSecondNudge
       ? `Following up on my last note — ${buyer}'s ${esc(cut)}${procStr ? ` (processing was set for ${procStr})` : ''} still shows unconfirmed on our side. If it's been handed off, one tap closes the loop. If something's holding it up, just reply and we'll figure it out together.`
       : `Hope processing week went smooth. ${buyer}'s ${esc(cut)}${procStr ? ` had a processing date of ${procStr}` : ''} and I don't see a delivery confirmation yet — no worries if it's done and the button just didn't get tapped. Ranch life is busy.`;
@@ -1761,18 +1762,16 @@ export async function sendBuyerIntroNotification(data: {
   </div>`;
   }
 
-  const contactBlock = data.rancherSlug
-    ? `<div class="contact-box">
-    <p><strong>${esc(data.rancherName)}</strong></p>
-    <p style="margin-top:12px;">
-      <a href="${utm(`${SITE_URL}/ranchers/${data.rancherSlug}/contact`, 'intro-notification', 'contact-rancher')}" style="display:inline-block;padding:10px 22px;background:#F4F1EC;color:#0E0E0E!important;border:1px solid #6B4F3F;text-decoration:none;font-weight:600;font-size:13px;">Message ${esc(data.rancherName)}</a>
-    </p>
-  </div>`
-    : `<div class="contact-box">
-    <p><strong>${esc(data.rancherName)}</strong></p>
-    <p>Email: <a href="mailto:${esc(data.rancherEmail)}" style="color:#0E0E0E;">${esc(data.rancherEmail)}</a></p>
-    ${data.rancherPhone ? `<p>Phone: <a href="tel:${esc(data.rancherPhone)}" style="color:#0E0E0E;">${esc(data.rancherPhone)}</a></p>` : ''}
-  </div>`;
+  // ≤2 CTAs (email-hygiene 2026-08-02): this email used to stack five asks —
+  // view-ranch, deposit, login, a boxed contact button, and sms. Five buttons
+  // split intent; deposits pay the bills. Primary stays the reserve CTA
+  // (deposit / tap-tier / dashboard, per the existing tier branching below);
+  // secondary stays text-the-rancher. The contact details + dashboard link
+  // fold into this QUIET footer line — same URLs as before, just no longer
+  // competing buttons.
+  const contactFooter = data.rancherSlug
+    ? `Prefer to write first? <a href="${utm(`${SITE_URL}/ranchers/${data.rancherSlug}/contact`, 'intro-notification', 'contact-rancher')}" style="color:#6B4F3F;">Message ${esc(data.rancherName)}</a>. Your match also lives in <a href="${data.loginUrl}" style="color:#6B4F3F;">your member dashboard</a>.`
+    : `Prefer to write first? Email ${esc(data.rancherName)} at <a href="mailto:${esc(data.rancherEmail)}" style="color:#6B4F3F;">${esc(data.rancherEmail)}</a>${data.rancherPhone ? ` or call <a href="tel:${esc(data.rancherPhone)}" style="color:#6B4F3F;">${esc(data.rancherPhone)}</a>` : ''}. Your match also lives in <a href="${data.loginUrl}" style="color:#6B4F3F;">your member dashboard</a>.`;
 
   // Cal.com booking CTA — branches on rancher tier:
   //   - Operator tier ($500/mo, 0% commission): BHC handles every sales call.
@@ -1925,7 +1924,8 @@ export async function sendBuyerIntroNotification(data: {
     <p style="margin:8px 0 0 0;font-size:12px;color:#6B4F3F;text-align:center;">reading on a computer? their number is ${esc(formatPhonePretty(data.rancherPhone))} &mdash; text from your phone.</p>
   </div>`
     : '';
-  const introSubject = `${readyPrefix}Meet your rancher — ${esc(data.rancherName)}`;
+  // Plain-text header — never esc() a subject (renders literal &#039; for J&L).
+  const introSubject = `${readyPrefix}Meet your rancher — ${data.rancherName}`;
   return guardedSend({
     templateName: 'sendBuyerIntroNotification',
     recipientEmail: data.email,
@@ -1962,8 +1962,6 @@ export async function sendBuyerIntroNotification(data: {
   ${brandBlock}
   ${expectBlock}
   ${textNowBlock}
-  <p style="font-size:13px;color:#6B4F3F;margin-bottom:4px;">Prefer to reach ${rancherFirst} first? Here's their info:</p>
-  ${contactBlock}
   ${pricingBlock}
   ${hasMagicLink
     ? `${reserveBlock}${calBlock}`
@@ -1977,6 +1975,7 @@ export async function sendBuyerIntroNotification(data: {
   <p>${rancherFirst} will walk you through cuts, pricing, and timing. This is a direct relationship between you and your rancher — they'll take it from here.</p>
   <div class="divider"></div>
   <p style="font-size:13px;">If you don't hear back within 48 hours, reply to this email and I'll follow up on my end.</p>
+  <p style="font-size:12px;color:#6B4F3F;">${contactFooter}</p>
   <div class="footer">
     <p>— Ben<br>BuyHalfCow</p>  </div>
 </div></body></html>`;
@@ -2987,7 +2986,10 @@ export async function sendFoundingHerdWelcome(data: {
   founderNumber?: number;
   amountPaid: number;
 }): Promise<{ success: boolean; error?: any }> {
-  const first = esc(data.firstName || 'there');
+  // Raw first name for SUBJECTS (plain-text header — esc() there renders a
+  // literal &#039; on apostrophe names); esc'd twin for HTML interpolation.
+  const firstRaw = data.firstName || 'there';
+  const first = esc(firstRaw);
   const dollars = `$${(data.amountPaid || 0).toLocaleString('en-US', {
     maximumFractionDigits: 0,
   })}`;
@@ -3004,7 +3006,7 @@ export async function sendFoundingHerdWelcome(data: {
 
   switch (data.tier) {
     case 'Herd':
-      subject = `welcome to the founding herd, ${first}`;
+      subject = `welcome to the founding herd, ${firstRaw}`;
       dynamicBlock = `
         <p>You're in at <strong>Herd</strong> tier — ${dollars} a year toward
         building something that puts ranchers back in front of families. Quiet
@@ -3016,25 +3018,25 @@ export async function sendFoundingHerdWelcome(data: {
       `;
       break;
     case 'Outlaw':
-      subject = `welcome to the founding herd, outlaw ${first}`;
+      subject = `welcome to the founding herd, outlaw ${firstRaw}`;
       dynamicBlock = `
         <p>You're in at <strong>Outlaw</strong> tier — ${dollars}. The name
         fits: people backing this from a place of conviction, not convenience.</p>
         <p>What you get: everything Herd gets, plus your name on the public
-        Founders Wall, quarterly behind-the-scenes drops by email, and first
-        dibs on any limited rancher batches that come through.</p>
+        Founders Wall, first dibs on any limited rancher batches that come
+        through, and word from me when there's something real to share —
+        never on a fake schedule.</p>
       `;
       break;
     case 'Steward':
-      subject = `welcome to the founding herd, steward ${first}`;
+      subject = `welcome to the founding herd, steward ${firstRaw}`;
       dynamicBlock = `
         <p>You're in at <strong>Steward</strong> tier — ${dollars}. This is
         the level where you start showing up in my decision-making. A
         Steward's vote weighs more than a survey response.</p>
-        <p>What you get: Outlaw perks plus a quarterly office-hours video
-        call (small group, real questions), public placement on the Founders
-        Wall, and a direct email line to me — flag a rancher to add or a
-        state to prioritize and I'll act on it.</p>
+        <p>What you get: Outlaw perks plus public placement on the Founders
+        Wall and a direct email line to me — flag a rancher to add or a
+        state to prioritize, hit reply, and I'll act on it.</p>
       `;
       break;
     case 'Founding 100':
@@ -3047,12 +3049,13 @@ export async function sendFoundingHerdWelcome(data: {
         lifetime priority routing on every rancher we onboard in your state,
         a first-print BuyHalfCow patch with your number on it, and a 30-min
         call with me when you're ready to use it (calendar below).</p>
-        <p>Practical: you don't need to do anything else right now. I'll
-        ship the patch within ~3 weeks. The wall placement is live tonight.</p>
+        <p>Practical: you don't need to do anything else right now. The wall
+        placement is live tonight, and your numbered patch rides the first
+        print run (see the p.s. below for where that stands).</p>
       `;
       break;
     case 'Title Founder':
-      subject = `welcome to the founding herd, title founder ${first}`;
+      subject = `welcome to the founding herd, title founder ${firstRaw}`;
       dynamicBlock = `
         <p>You're a <strong>Title Founder — ${numberLine}</strong> ${dollars}
         one-time. There are 10 of these. You're one of them.</p>
@@ -3545,6 +3548,10 @@ export async function sendBroadcastEmail(data: {
           html: cleanHtml,
         });
       }
+      // Plain-message fallback path (email-hygiene 2026-08-02): mirror the
+      // sanitized htmlBody sibling above — esc() the operator-supplied CTA
+      // text/link and only render the button for a real http(s) URL, so a
+      // pasted `javascript:`/typo link can never ship under buyhalfcow.com.
       return resend.emails.send({
         from: getFromEmail(),
         to: data.to,
@@ -3572,9 +3579,9 @@ export async function sendBroadcastEmail(data: {
             <div class="message">
               <p>${formattedMessage}</p>
             </div>
-            ${data.includeCTA ? `
+            ${data.includeCTA && /^https?:\/\//i.test(String(data.ctaLink || '').trim()) ? `
               <div class="divider"></div>
-              <a href="${data.ctaLink}" class="button">${data.ctaText}</a>
+              <a href="${esc(String(data.ctaLink).trim())}" class="button">${esc(data.ctaText)}</a>
             ` : ''}
           </div>
         </body>
@@ -3736,7 +3743,7 @@ p { color: #6B4F3F; margin: 12px 0; }
   <p>Hi ${esc(data.firstName)},</p>
   <p>You're in. I'm working on lining up a ranch near you in <strong>${esc(data.state)}</strong> right now. Some states move fast, some take a little longer depending on which ranchers have room, and I'll be straight with you either way.</p>
   <div class="highlight">
-    The moment a ranch is ready in your state, I'll email you and make the introduction myself, usually within a day. Nothing you need to do right now.
+    You'll get one email from me when your area opens — that's the whole promise. Nothing you need to do right now.
   </div>
   <p><strong>While you wait, here's what you can do:</strong></p>
   <ul style="color: #6B4F3F; line-height: 2;">
@@ -3979,9 +3986,15 @@ export async function sendPipelineUpdateEmail(data: {
   signingLink?: string;
   dashboardLink?: string;
 }) {
-  const esc = (s: string) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  const firstName = esc(data.operatorName.split(' ')[0]);
-  const ranchName = esc(data.ranchName);
+  // Email-hygiene 2026-08-02: this function used to shadow the module-level
+  // esc() with a weak local copy (no quote/apostrophe escaping) AND then
+  // double-escape it in the bodies (esc(esc(x)) → "&amp;amp;" for J&L).
+  // Raw values feed SUBJECTS (plain-text headers — esc there renders literal
+  // entities); the module esc() feeds HTML exactly once.
+  const firstNameRaw = data.operatorName.split(' ')[0];
+  const ranchNameRaw = data.ranchName;
+  const firstName = esc(firstNameRaw);
+  const ranchName = esc(ranchNameRaw);
   const status = data.onboardingStatus || '';
 
   // One-click magic login fallback for the dashboard CTA. Legacy passwordless
@@ -4019,11 +4032,11 @@ export async function sendPipelineUpdateEmail(data: {
 
   if (!status || status === 'Call Scheduled' || status === 'Call Complete') {
     // Haven't received docs yet — send them the agreement link
-    subject = `${firstName}, let's get ${ranchName} live on BuyHalfCow`;
+    subject = `${firstNameRaw}, let's get ${ranchNameRaw} live on BuyHalfCow`;
     headline = 'Your Spot Is Waiting';
     bodyHtml = `
-      <p>Hi ${esc(firstName)},</p>
-      <p>We spoke about getting <strong>${esc(ranchName)}</strong> listed on BuyHalfCow — a private network connecting independent ranchers directly with qualified beef buyers.</p>
+      <p>Hi ${firstName},</p>
+      <p>We spoke about getting <strong>${ranchName}</strong> listed on BuyHalfCow — a private network connecting independent ranchers directly with qualified beef buyers.</p>
       <p>We have buyers actively looking for ranch-direct beef in your area. Here's what's needed to get you live:</p>
       <div class="step"><strong>1. Sign the partner agreement</strong> — you keep 100% of the price you set, our 10% is added on top and paid by the buyer, no upfront fees</div>
       <div class="step"><strong>2. Set up your ranch page</strong> — Logo, pricing, about text (about 15 minutes end to end)</div>
@@ -4035,11 +4048,11 @@ export async function sendPipelineUpdateEmail(data: {
     ctaUrl = data.signingLink || `${SITE_URL}/rancher/sign-agreement`;
   } else if (status === 'Docs Sent') {
     // Docs sent but haven't signed — nudge to sign
-    subject = `${firstName}, your agreement is ready to sign`;
+    subject = `${firstNameRaw}, your agreement is ready to sign`;
     headline = 'One Signature Away';
     bodyHtml = `
-      <p>Hi ${esc(firstName)},</p>
-      <p>Just checking in — your BuyHalfCow Commission Agreement for <strong>${esc(ranchName)}</strong> is still waiting for your signature.</p>
+      <p>Hi ${firstName},</p>
+      <p>Just checking in — your BuyHalfCow Commission Agreement for <strong>${ranchName}</strong> is still waiting for your signature.</p>
       <p><strong>Quick recap:</strong></p>
       <ul style="color: #6B4F3F; line-height: 2;">
         <li>You keep 100% of the price you set — our 10% is added on top and paid by the buyer, only on a closed sale</li>
@@ -4053,10 +4066,10 @@ export async function sendPipelineUpdateEmail(data: {
     ctaUrl = data.signingLink || `${SITE_URL}/rancher/sign-agreement`;
   } else if (status === 'Agreement Signed') {
     // Signed but not verified — push them to set up page + start verification
-    subject = `${firstName}, set up your ranch page while we verify`;
+    subject = `${firstNameRaw}, set up your ranch page while we verify`;
     headline = 'Agreement Signed — Let\'s Get You Live';
     bodyHtml = `
-      <p>Hi ${esc(firstName)},</p>
+      <p>Hi ${firstName},</p>
       <p>Your agreement is signed and on file — great! While we handle verification, you can get a head start on your ranch page.</p>
       <p><strong>What you can do right now:</strong></p>
       <div class="step step-done">✅ <strong>Agreement signed</strong> — Done</div>
@@ -4069,11 +4082,11 @@ export async function sendPipelineUpdateEmail(data: {
     ctaUrl = dashboardCta();
   } else if (status === 'Verification Pending') {
     // Waiting on verification — reassure and push page setup
-    subject = `${firstName}, verification update for ${ranchName}`;
+    subject = `${firstNameRaw}, verification update for ${ranchNameRaw}`;
     headline = 'Verification In Progress';
     bodyHtml = `
-      <p>Hi ${esc(firstName)},</p>
-      <p>Quick update — we're reviewing the verification materials for <strong>${esc(ranchName)}</strong>. We'll let you know as soon as it's complete.</p>
+      <p>Hi ${firstName},</p>
+      <p>Quick update — we're reviewing the verification materials for <strong>${ranchName}</strong>. We'll let you know as soon as it's complete.</p>
       <p><strong>In the meantime:</strong> Make sure your ranch page is fully set up with testimonials, photos, and pricing so we can go live the moment verification clears.</p>
       <div class="step step-done">✅ Agreement signed</div>
       <div class="step">🖥️ <strong>Finish your ranch page</strong> — pricing, photos, testimonials, about text</div>
@@ -4085,11 +4098,11 @@ export async function sendPipelineUpdateEmail(data: {
     ctaUrl = dashboardCta();
   } else {
     // Fallback
-    subject = `${firstName}, update from BuyHalfCow`;
+    subject = `${firstNameRaw}, update from BuyHalfCow`;
     headline = 'Quick Update';
     bodyHtml = `
-      <p>Hi ${esc(firstName)},</p>
-      <p>Just checking in on <strong>${esc(ranchName)}</strong>. Log in to your dashboard to see your current status and next steps.</p>
+      <p>Hi ${firstName},</p>
+      <p>Just checking in on <strong>${ranchName}</strong>. Log in to your dashboard to see your current status and next steps.</p>
     `;
     ctaText = 'GO TO DASHBOARD';
     ctaUrl = dashboardCta();
@@ -4148,7 +4161,8 @@ export async function sendTrackedContactEmail(data: {
   buyerPhone: string;
   message: string;
 }) {
-  const trackedSubject = `New message from ${esc(data.buyerName)} via BuyHalfCow`;
+  // Plain-text header — never esc() a subject.
+  const trackedSubject = `New message from ${data.buyerName} via BuyHalfCow`;
   return guardedSend({
     templateName: 'sendTrackedContactEmail',
     recipientEmail: data.rancherEmail,
@@ -4385,7 +4399,8 @@ export async function sendMonthlyCommissionInvoice(data: {
       )
       .join('');
 
-  const monthlyInvoiceSubject = `Commission Invoice — ${esc(data.monthYear)} — BuyHalfCow`;
+  // Plain-text header — never esc() a subject.
+  const monthlyInvoiceSubject = `Commission Invoice — ${data.monthYear} — BuyHalfCow`;
   return guardedSend({
     templateName: 'sendMonthlyCommissionInvoice',
     recipientEmail: data.email,
@@ -4611,7 +4626,11 @@ export async function sendAbandonedRecoveryEmail(data: {
 }) {
   const firstName = (data.firstName || '').trim();
   const greeting = firstName ? `Hi ${esc(firstName)},` : 'Hey,';
-  const accessUrl = utm(`${SITE_URL}/access?email=${encodeURIComponent(data.email)}`, 'abandoned-recovery', `stage-${data.stage}`);
+  // Email-hygiene 2026-08-02: the buyer's email address used to ride the URL
+  // query (PII in links, logs, and referrer headers) — and /access never even
+  // read it. ?resume=1 gives the honest "welcome back" banner instead; the
+  // funnel collects the email fresh.
+  const accessUrl = utm(`${SITE_URL}/access?resume=1`, 'abandoned-recovery', `stage-${data.stage}`);
 
   const subject = data.stage === 1
     ? 'You started something on BuyHalfCow — finish in 60 seconds?'
@@ -4624,7 +4643,7 @@ export async function sendAbandonedRecoveryEmail(data: {
       <p>${greeting}</p>
       <p>You started signing up for BuyHalfCow but didn't finish. No pressure — I just wanted to leave the door open.</p>
       <p>If you tell us what you're looking for (Quarter, Half, or Whole; budget; state), I'll send a one-click "ready to buy?" prompt right after — and the moment you tap YES, you get matched with a verified rancher in your state.</p>
-      <p>Takes about 60 seconds. We saved your email so you don't have to retype it.</p>`
+      <p>Takes about 60 seconds, start to finish.</p>`
     : data.stage === 2
       ? `
       <p>${greeting}</p>
@@ -4954,7 +4973,9 @@ export async function sendRancherOnboardingDripDay2(data: {
   state?: string;    // when present → state-specific urgency line
 }): Promise<{ success: boolean; error?: any }> {
   const first = (data.operatorName || '').split(' ')[0] || 'there';
-  const subject = `Re: ${data.ranchName} on the map`;
+  // No fake "Re:" — faking a reply thread is a spam-filter trigger and a
+  // trust burn the moment the rancher notices (email-hygiene 2026-08-02).
+  const subject = `${data.ranchName} on the map — still a yellow pin`;
   const buyersLine = data.state
     ? `families in ${esc(data.state)} are searching BuyHalfCow for a half or whole cow right now`
     : `families near you are searching BuyHalfCow for a half or whole cow right now`;
@@ -5249,8 +5270,8 @@ export async function sendIncompleteProfileAsk(data: {
  * NO_BUDGET_FOUNDER_PITCH segment — buyer signed up wanting BHC beef but
  * their budget is under share-cost (<$500). They care about the mission
  * but can't drop $1k+ on a Quarter this year. Pitch them the Founding
- * Herd — back the platform for $100, get a numbered patch, quarterly
- * ledger, founders-wall placement. Works in any state.
+ * Herd — back the platform for $100, get a numbered patch and
+ * founders-wall placement. Works in any state.
  *
  * Cadence: 1 lifetime send, then monthly community letter.
  */
@@ -5282,7 +5303,6 @@ export async function sendNoBudgetFounderPitch(data: {
   <p><strong>The Founding Herd.</strong> 100 numbered spots. Back the platform from $100 (Herd) to $1k (Outlaw+) to $15k (Title Founder). You get:</p>
   <ul style="color:#6B4F3F;padding-left:20px;">
     <li>Numbered embroidered patch shipped to your door</li>
-    <li>Quarterly expense ledger in your inbox — see exactly where every dollar went</li>
     <li>Name on the public Founders Wall (opt-in)</li>
     <li>First-pick access when a rancher comes online in your state</li>
   </ul>
@@ -5383,8 +5403,8 @@ export async function sendStateWaitlistLetter(data: {
   <h1>We're scouting ${esc(data.buyerState)}</h1>
   <p>Hi ${esc(first)},</p>
   <p>Thanks for signing up. Straight read: we don't have a verified rancher in ${esc(data.buyerState)} yet. You're on the waitlist.</p>
-  <p>I cold-email D2C ranchers in uncovered states every week. ${esc(data.buyerState)} is on the list. When one signs the agreement + goes live, you're one of the first I match them to.</p>
-  <p>I'll email when it happens. In the meantime you may hear from me now and then with what's actually useful — never a blast, and every email has an unsubscribe link that works.</p>
+  <p>I'm recruiting D2C ranchers in uncovered states every week, and ${esc(data.buyerState)} is on the list. When your area opens, you'll get one email from me — that's the whole promise.</p>
+  <p>In the meantime you may hear from me now and then with what's actually useful — never a blast, and every email has an unsubscribe link that works.</p>
   <p>You can check your spot on the list anytime at <a href="${SITE_URL}/member" style="color:#6B4F3F;">buyhalfcow.com/member</a> — we'll email you a sign-in link, no password needed.</p>
   <p>Thanks for being patient w/ a small platform doing it right.</p>
   <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
@@ -5430,7 +5450,6 @@ export async function sendBuyerFulfillmentConfirmation(data: {
   <p><strong>What now:</strong></p>
   <ul style="color:#2A2A2A;line-height:2;">
     <li>Stack the vacuum-sealed packs flat in your freezer — easier to find cuts later.</li>
-    <li>In ~2 weeks I'll send you a cuts education email — what to do with the oxtail, the shanks, the trim that becomes burger.</li>
     <li>Around the 5-month mark I'll ping you about reserving the next share — from ${esc(data.rancherName)} again or another rancher in your area if their next harvest fits your timing better.</li>
   </ul>
   <p>Track your order anytime: <a href="${SITE_URL}/member" style="color:#0E0E0E;">buyhalfcow.com/member</a>.</p>
@@ -5847,10 +5866,10 @@ export async function sendNurtureEducation(data: { firstName: string; email: str
         inner: `
   <p>Hi ${esc(data.firstName)},</p>
   <p>While we line up your rancher in ${esc(data.state)}, here's the thing most folks ask first: what does this actually cost?</p>
-  <div class="highlight">A share is priced per pound, cut how you want it, straight from one animal. Most families find a quarter fills a standard freezer drawer set; a half runs a chest freezer. The free guide walks the exact math — price per pound, freezer space, and how the deposit works.</div>
+  <div class="highlight">A share is priced per pound, cut how you want it, straight from one animal. Most families find a quarter fills a standard freezer drawer set; a half runs a chest freezer. The guide walks the exact math — price per pound, freezer space, and how the deposit works.</div>
   <p>Ten minutes of reading and you'll know more than 99% of grocery shoppers ever will about where beef prices come from.</p>`,
         ctaHref: `${SITE_URL}/guide`,
-        ctaLabel: 'read the free guide',
+        ctaLabel: 'read the guide',
       }),
     }),
   });

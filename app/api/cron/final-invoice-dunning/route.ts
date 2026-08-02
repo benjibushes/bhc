@@ -70,6 +70,17 @@ import {
 } from '@/lib/finalInvoiceDunning';
 import { mintFinalInvoiceLinkToken, isDurableFinalInvoiceUrl } from '@/lib/finalInvoiceLink';
 
+// Buyer/rancher names are user-supplied and land in email HTML — escape them
+// (email-hygiene 2026-08-02; matches lib/email.ts esc()).
+function escHtml(s: string): string {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 export const maxDuration = 60;
 
 const DAY_MS = 86_400_000;
@@ -525,8 +536,10 @@ async function realHandler(_request: Request): Promise<DunningResult> {
               html:
                 `<!DOCTYPE html><html><body style="font-family:-apple-system,Segoe UI,sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;padding:20px;">` +
                 `<div style="max-width:600px;margin:0 auto;background:#fff;padding:36px;border:1px solid #A7A29A;">` +
-                `<p>Hi ${rancherFirst},</p>` +
-                `<p><strong>${buyerName}</strong>'s final balance of <strong>$${balanceAmount.toFixed(2)}</strong> is still unpaid ${sentDays} days after you sent the invoice. We've reminded them ${priorCount + 1} times.</p>` +
+                // esc: buyer/rancher names are user-supplied and land in HTML
+                // (email-hygiene 2026-08-02); the SUBJECT above stays raw.
+                `<p>Hi ${escHtml(rancherFirst)},</p>` +
+                `<p><strong>${escHtml(buyerName)}</strong>'s final balance of <strong>$${balanceAmount.toFixed(2)}</strong> is still unpaid ${sentDays} days after you sent the invoice. We've reminded them ${priorCount + 1} times.</p>` +
                 `<p>If you've already collected it another way, log into your dashboard and mark it paid. If the buyer has gone quiet, you can close the deal out there too.</p>` +
                 `<p style="text-align:center;margin:24px 0;"><a href="${SITE_URL}/rancher" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1px;font-size:13px;">Open Dashboard &rarr;</a></p>` +
                 `<p style="margin-top:28px;">— Ben</p>` +

@@ -17,11 +17,17 @@
 // (≈ days 0 / 2 / 6 / 13). Copy escalates: invite → reminder → scarcity →
 // last call. After 4 touches (or aging out of the window) the buyer stops.
 //
-// Progress is tracked WITHOUT a new schema field: each send stamps Notes with
-// `[quiz-nudge YYYY-MM-DD tN]`. We count those stamps to know how many touches
-// were sent and read the most-recent date for spacing. Legacy
+// Progress tracking (email-hygiene 2026-08-02): stage truth lives in the
+// dedicated Consumers field `Quiz Nudge Log` (`t1:2026-08-02;t2:2026-08-04`).
+// The old Notes markers (`[quiz-nudge YYYY-MM-DD tN]`) were the ONLY state,
+// and the per-send `.slice(0, 2000)` on Notes deleted the oldest markers on
+// chatty records — the drip forgot its touches and restarted from t1 forever.
+// Dedup now reads the UNION of Notes markers + the log (a buyer with a marker
+// but an empty log must not restart) and writes the log going forward; the
+// Notes marker is still written as human-readable history only. Legacy
 // `[abandoned-quiz-nudge YYYY-MM-DD]` stamps also contain "quiz-nudge", so
-// buyers already nudged by the old single-shot cron continue mid-drip.
+// buyers nudged by the old single-shot cron continue mid-drip. Pure logic in
+// lib/quizNudgeLog.ts.
 //
 // Schedule: hourly. Conservative — at most one touch per buyer per day.
 
@@ -36,15 +42,14 @@ import { requireCron } from '@/lib/cronAuth';
 import { JWT_SECRET } from '@/lib/secrets';
 import { isRancherOperationalForBuyers, getOperationalServedStates } from '@/lib/rancherEligibility';
 import { normalizeState } from '@/lib/states';
+import { decideQuizNudge, appendQuizNudgeLog, QUIZ_NUDGE_LOG_FIELD } from '@/lib/quizNudgeLog';
 
 export const maxDuration = 120;
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
-// Days to wait BEFORE each touch, indexed by touches-already-sent.
-// [0,2,4,7] → touch1 immediately, touch2 +2d after touch1, etc. Length = max touches.
-const CADENCE_SPACING_DAYS = [0, 2, 4, 7];
-const MAX_TOUCHES = CADENCE_SPACING_DAYS.length;
+// Cadence constants live in lib/quizNudgeLog.ts (pure, tested) — the cron
+// only owns the window + per-run pacing.
 const MAX_NUDGE_DAYS = Number(process.env.QUIZ_NUDGE_MAX_DAYS) || 21;
 // Per-run send cap — paces a backlog over multiple hourly runs instead of one
 // spike (deliverability + avoids a spam-filter trip on a suddenly-widened drip).
@@ -197,24 +202,16 @@ async function realHandler(_request: Request): Promise<CronResult> {
     if (touched >= MAX_SENDS_PER_RUN) break; // pace: drain the rest next run
 
     const notes = String(c['Notes'] || '');
+    const nudgeLog = String(c[QUIZ_NUDGE_LOG_FIELD] || '');
 
-    // One touch per buyer per day, max.
-    if (notes.includes(`quiz-nudge ${today}`)) { skipped++; continue; }
+    // Durable dedup (email-hygiene 2026-08-02): one touch/day, 4 lifetime,
+    // [0,2,4,7]-day spacing — counted from the UNION of the durable log field
+    // and any surviving Notes markers, so Notes truncation can never restart
+    // the drip. Pure + tested in lib/quizNudgeLog.ts.
+    const decision = decideQuizNudge({ notes, log: nudgeLog, today });
+    if (decision.action === 'skip') { skipped++; continue; }
 
-    // Count prior touches + find the most-recent nudge date (matches both the
-    // new `[quiz-nudge …]` and legacy `[abandoned-quiz-nudge …]` stamps).
-    const dates = [...notes.matchAll(/quiz-nudge (\d{4}-\d{2}-\d{2})/g)].map((m) => m[1]).sort();
-    const touchesSent = dates.length;
-    if (touchesSent >= MAX_TOUCHES) { skipped++; continue; } // drip exhausted
-
-    // Spacing: enough days since the last touch before firing the next one.
-    if (touchesSent > 0) {
-      const lastDate = dates[dates.length - 1];
-      const daysSinceLast = Math.floor((Date.parse(today) - Date.parse(lastDate)) / 86_400_000);
-      if (daysSinceLast < CADENCE_SPACING_DAYS[touchesSent]) { skipped++; continue; }
-    }
-
-    const touchNum = touchesSent + 1;
+    const touchNum = decision.touchNum;
     const firstName = String(c['Full Name'] || '').split(' ')[0] || 'there';
     const state = String(c['State'] || 'your state');
     const email = String(c['Email'] || '').toLowerCase();
@@ -236,8 +233,11 @@ async function realHandler(_request: Request): Promise<CronResult> {
       // Claim BEFORE sending so a crash between the send + the stamp can't
       // double-send this touch on the next hourly run. A failed send after the
       // claim just burns one drip touch (acceptable for a multi-touch drip);
-      // a duplicate send is worse.
+      // a duplicate send is worse. The log field is the durable dedup truth;
+      // the Notes marker is human-readable history only (its slice can no
+      // longer reset the drip).
       await updateRecord(TABLES.CONSUMERS, c.id, {
+        [QUIZ_NUDGE_LOG_FIELD]: appendQuizNudgeLog(nudgeLog, touchNum, today),
         Notes: `[quiz-nudge ${today} t${touchNum}] sent. ${notes}`.slice(0, 2000),
       });
       const { subject, html } = buildEmail(touchNum, firstName, quizUrl, state);

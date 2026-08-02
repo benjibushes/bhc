@@ -43,6 +43,17 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com
 // Matches existing caps on buyer-pulse + email-sequences.
 const MAX_PER_RUN = 25;
 
+// Rancher-supplied names/emails go into email HTML AND Telegram HTML
+// (parse_mode HTML) — escape both (email-hygiene 2026-08-02).
+function esc(s: string): string {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 function mintSetupUrl(rancherId: string): string {
   const token = jwt.sign({ type: 'rancher-setup', rancherId }, JWT_SECRET, { expiresIn: '60d' });
   return `${SITE_URL}/rancher/setup?token=${token}`;
@@ -71,14 +82,14 @@ function emailHtml(name: string, missing: string[], setupUrl: string, dayBucket:
       ? `<p><strong>This is your final automated nudge.</strong> If now isn't the right time, just reply STOP and we'll close your account cleanly.</p>`
       : `<p>5 minutes and you're live + receiving buyer leads.</p>`;
   return `<!DOCTYPE html><html><body style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;background:#F4F1EC;color:#0E0E0E;">
-<h1 style="font-family:Georgia,serif;margin:0 0 18px 0;">${name.split(' ')[0]} — you're almost live</h1>
+<h1 style="font-family:Georgia,serif;margin:0 0 18px 0;">${esc(name.split(' ')[0])} — you're almost live</h1>
 <p>You started your BuyHalfCow setup but haven't finished. We've got buyers in your area waiting.</p>
 ${missing.length ? `<p><strong>To go live, we still need:</strong></p>${list}` : ''}
 <div style="text-align:center;margin:32px 0;">
   <a href="${setupUrl}" style="display:inline-block;padding:16px 40px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:bold;font-size:14px;letter-spacing:1px;text-transform:uppercase;">Finish Setup</a>
 </div>
 ${urgency}
-<p style="font-size:14px;color:#6B4F3F;margin-top:24px;">Questions? Reply to this email.<br>— Benjamin, BuyHalfCow</p>
+<p style="font-size:14px;color:#6B4F3F;margin-top:24px;">Questions? Reply to this email.<br>— Ben, BuyHalfCow</p>
 </body></html>`;
 }
 
@@ -250,7 +261,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
       try {
         await sendTelegramMessage(
           TELEGRAM_ADMIN_CHAT_ID,
-          `🚨 <b>STUCK ONBOARDING (14d)</b>\n\n${name}\n${email}\nBucket: ${bucketLabel}\nMissing: ${missing.join('; ') || '(see record)'}\n\n<i>Bot has nudged 3x with no progress. Call them or close the loop manually. This is the ONE escalation for this rancher/bucket — no repeats.</i>`
+          `🚨 <b>STUCK ONBOARDING (14d)</b>\n\n${esc(name)}\n${esc(email)}\nBucket: ${esc(bucketLabel)}\nMissing: ${esc(missing.join('; ') || '(see record)')}\n\n<i>Bot has nudged 3x with no progress. Call them or close the loop manually. This is the ONE escalation for this rancher/bucket — no repeats.</i>`
         );
         escalated++;
         // Stamp throttle + terminal marker. 'Stuck Escalated At' /

@@ -44,7 +44,23 @@ export interface NudgeConsumerFields {
   ['Bounced']?: unknown;
   ['Complained']?: unknown;
   ['Notes']?: unknown;
+  // Durable dedup stamp (email-hygiene 2026-08-02) — dateTime, UTC ISO.
+  // The Notes marker dies to the per-write `.slice(0, 2000)` on chatty
+  // records; this field is truncation-proof. Written alongside the marker.
+  ['No Action Nudge At']?: unknown;
 }
+
+/** Exact Airtable field name on Consumers (created 2026-08-02, exists in prod). */
+export const NO_ACTION_NUDGE_AT_FIELD = 'No Action Nudge At';
+
+/**
+ * How long the durable `No Action Nudge At` stamp suppresses another nudge.
+ * The nudge window itself is only 30min–4h post-intro, so 48h fully covers
+ * every re-run/truncation case while never blocking a genuine future
+ * re-match (those happen weeks-to-months later). Mirrors the 48h belt the
+ * legacy id-less Notes stamp already uses.
+ */
+export const NO_ACTION_STAMP_SUPPRESS_MS = 48 * 60 * 60 * 1000;
 
 function toMs(value: unknown): number | null {
   if (typeof value !== 'string' || !value.trim()) return null;
@@ -88,6 +104,14 @@ export function isNudgeEligibleConsumer(
   if (consumer['Unsubscribed'] === true) return false;
   if (consumer['Bounced'] === true) return false;
   if (consumer['Complained'] === true) return false;
+  // Durable stamp first (email-hygiene 2026-08-02): the Notes marker below is
+  // best-effort history — long Notes get sliced and the marker vanishes,
+  // which used to re-nudge the buyer. The dateTime field survives truncation.
+  const stampMs = toMs(String(consumer[NO_ACTION_NUDGE_AT_FIELD] ?? ''));
+  if (stampMs !== null) {
+    const nowMs = opts.nowMs ?? Date.now();
+    if (nowMs - stampMs < NO_ACTION_STAMP_SUPPRESS_MS) return false;
+  }
   const notes = String(consumer['Notes'] || '');
   if (opts.referralId) {
     if (notes.includes(`[no-action-nudge ${opts.referralId}`)) return false;
@@ -115,4 +139,51 @@ export function buildNudgeReferralFormula(cutoffStartISO: string, cutoffEndISO: 
     IS_AFTER({Intro Sent At}, '${cutoffStartISO}'),
     IS_BEFORE({Intro Sent At}, '${cutoffEndISO}')
   )`.replace(/\s+/g, ' ');
+}
+
+// ── Day-0 stack fix (email-hygiene 2026-08-02) ──────────────────────────────
+// A fresh buyer's day 0 stacked 4 emails in ~4h: welcome → quiz-complete
+// deposit/cal invite → intro → THIS nudge. The quiz-complete invite already
+// made the exact same ask ("reserve your share") hours earlier — the same-day
+// nudge is pure noise. Suppress the nudge when a quiz-complete invite went to
+// this buyer inside the last 24h, detected two ways:
+//   1. the Referral's own 'Deposit Invite Sent At' stamp (written by
+//      /api/qualify when quiz_complete_deposit_invite fires), and
+//   2. an Email Sends row for quiz_complete_deposit_invite OR
+//      quiz_complete_cal_invite to the same recipient (the cal variant stamps
+//      nothing on the Referral — the send log is its only trace). The cron
+//      does ONE Email Sends read per run and passes the recipient set here.
+
+export const SAME_DAY_INVITE_SUPPRESS_MS = 24 * 60 * 60 * 1000;
+
+export const QUIZ_INVITE_TEMPLATE_NAMES = [
+  'quiz_complete_deposit_invite',
+  'quiz_complete_cal_invite',
+] as const;
+
+/** Airtable formula for the one-per-run Email Sends read (recent quiz invites). */
+export function buildRecentQuizInviteFormula(sinceISO: string): string {
+  const templateOr = QUIZ_INVITE_TEMPLATE_NAMES.map((t) => `{Template Name}="${t}"`).join(', ');
+  return `AND({Sent At} > "${sinceISO}", {Status}="sent", OR(${templateOr}))`;
+}
+
+/**
+ * Did this buyer already get the quiz-complete invite (the same ask) within
+ * the suppress window? Pure — the route supplies the referral stamp + the
+ * recipient set from its single Email Sends read.
+ */
+export function hasSameDayQuizInvite(opts: {
+  /** Referral field 'Deposit Invite Sent At'. */
+  depositInviteSentAt?: unknown;
+  /** The buyer's email (any case — normalized here). */
+  email?: unknown;
+  /** Lowercased recipient emails of quiz-complete invites sent in-window. */
+  recentInviteEmails?: ReadonlySet<string>;
+  nowMs: number;
+}): boolean {
+  const inviteMs = toMs(String(opts.depositInviteSentAt ?? ''));
+  if (inviteMs !== null && opts.nowMs - inviteMs < SAME_DAY_INVITE_SUPPRESS_MS) return true;
+  const email = String(opts.email || '').trim().toLowerCase();
+  if (email && opts.recentInviteEmails?.has(email)) return true;
+  return false;
 }
