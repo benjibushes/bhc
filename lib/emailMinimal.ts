@@ -105,8 +105,10 @@ export async function sendQuizCompleteDepositInvite(opts: {
   const shareLabel = rancher ? `your share from ${escape(rancher)}` : 'your share';
   return sendEmail({
     to: opts.to,
+    // Plain-text header — never escape() a subject (renders a literal &#39;
+    // for O'Brien Ranch; the HTML body below still escapes).
     subject: rancher
-      ? `you qualified — reserve your share from ${escape(rancher)}`
+      ? `you qualified — reserve your share from ${rancher}`
       : `you qualified — reserve your share`,
     html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
       <p>hey ${escape(opts.firstName)},</p>

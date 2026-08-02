@@ -17,6 +17,17 @@ export const maxDuration = 60;
 // Matches existing caps on buyer-pulse + email-sequences.
 const MAX_PER_RUN = 25;
 
+// Rancher-supplied names go straight into email HTML — escape them
+// (email-hygiene 2026-08-02; matches lib/email.ts esc()).
+function esc(s: string): string {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 // Runs daily 15 UTC. Two paths inside this handler with different cadences:
 //
 //   1. Stale-lead nudge to ranchers about pending referrals — MONDAY ONLY
@@ -167,6 +178,11 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
 
       // Per-rancher throttle for new-applicant path so daily cron doesn't spam.
       // Telegram-to-admin AND email-to-prospect both honor the same stamp.
+      // CROSS-RAIL DEDUP (email-hygiene 2026-08-02): rancher-onboarding-drip
+      // now stamps this SAME field on its own sends, so a self-submit rancher
+      // the drip touched <48h ago is skipped here — the day-2 "finish your
+      // setup" double-send is dead. Symmetric: the drip defers its step when
+      // this rail stamped within 48h.
       if (isNewApplicant) {
         const lastNudge = rancher['Last Onboarding Nudge At'];
         if (lastNudge) {
@@ -289,10 +305,12 @@ ${stageEmoji[stage] || '⏳'} Stage: <b>${stage}</b>
           const setupToken = jwt.sign({ type: 'rancher-setup', rancherId: rancher.id }, JWT_SECRET, { expiresIn: '60d' });
           const setupUrl = `${SITE_URL}/rancher/setup?token=${setupToken}`;
           const isMapProspect = !!rancher['Self-Submitted At'];
+          // esc() for HTML only — the subject is a plain-text header and
+          // stays raw (esc there renders literal &#039; for O'Brien Ranch).
           const introHtml = isMapProspect
-            ? `<p>Just a quick check-in &mdash; <strong>${ranchName}</strong> has been on the BuyHalfCow map for a couple days now. Yellow pin, visible to buyers, but not yet routed customers.</p>
+            ? `<p>Just a quick check-in &mdash; <strong>${esc(ranchName)}</strong> has been on the BuyHalfCow map for a couple days now. Yellow pin, visible to buyers, but not yet routed customers.</p>
   <p>The fastest way to flip from "visible" to "getting leads" is finishing your setup &mdash; prices, a short Stripe bank connection so deposits land in your own account, one e-signature. About 10 minutes.</p>`
-            : `<p>Just a quick check-in &mdash; <strong>${ranchName}</strong> is approved, but your setup isn't finished yet, so buyers can't route to you.</p>
+            : `<p>Just a quick check-in &mdash; <strong>${esc(ranchName)}</strong> is approved, but your setup isn't finished yet, so buyers can't route to you.</p>
   <p>Picking up where you left off takes about 10 minutes &mdash; prices, a short Stripe bank connection, one e-signature &mdash; and your page goes live the moment you're done.</p>`;
           try {
             await sendEmail({
@@ -300,7 +318,7 @@ ${stageEmoji[stage] || '⏳'} Stage: <b>${stage}</b>
               subject: `${first}, ${ranchName} is almost live — finish your setup`,
               html: `<!DOCTYPE html><html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px;">
 <div style="max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A;">
-  <h1 style="font-family:Georgia,serif;font-size:24px;margin:0 0 18px;">Hey ${first},</h1>
+  <h1 style="font-family:Georgia,serif;font-size:24px;margin:0 0 18px;">Hey ${esc(first)},</h1>
   ${introHtml}
   <div style="text-align:center;margin:30px 0;">
     <a href="${setupUrl}" style="display:inline-block;padding:14px 30px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px;">Finish your setup</a>

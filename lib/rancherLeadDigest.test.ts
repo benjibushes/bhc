@@ -6,6 +6,7 @@ import {
   buildDigestLeads,
   digestSubject,
   shouldSendLeadDigest,
+  hasLeadsNewToDigest,
 } from './rancherLeadDigest';
 
 const NOW = new Date('2026-07-28T12:00:00Z').getTime();
@@ -115,5 +116,48 @@ describe('digestSubject', () => {
     );
     assert.ok(digestSubject(leads).startsWith('4 buyers waiting on you:'));
     assert.ok(digestSubject(leads).endsWith('…'));
+  });
+});
+
+// ── new-leads gate (email-hygiene 2026-08-02) ───────────────────────────────
+// The 24h throttle alone let the SAME stale-lead list email the rancher every
+// day forever. The gate: send only when a lead became digest-visible (crossed
+// the 2-day age threshold) after the last digest went out.
+
+describe('hasLeadsNewToDigest', () => {
+  it('first digest ever always sends', () => {
+    const leads = buildDigestLeads([ref({ 'Intro Sent At': daysAgo(3) })], NOW);
+    assert.equal(hasLeadsNewToDigest(leads, undefined), true);
+    assert.equal(hasLeadsNewToDigest(leads, null), true);
+    assert.equal(hasLeadsNewToDigest(leads, ''), true);
+  });
+
+  it('FOREVER BUG: same stale leads, digest sent yesterday → NO email today', () => {
+    // Lead intro'd 10d ago became visible 8d ago — the digest sent 24h ago
+    // already listed it. Nothing new = nothing sent, today or any later day.
+    const leads = buildDigestLeads([ref({ 'Intro Sent At': daysAgo(10) })], NOW);
+    assert.equal(hasLeadsNewToDigest(leads, hoursAgo(24)), false);
+    assert.equal(hasLeadsNewToDigest(leads, daysAgo(5)), false);
+  });
+
+  it('a lead that crossed the 2-day threshold since the last digest re-arms it', () => {
+    const leads = buildDigestLeads(
+      [
+        ref({ id: 'recEEEEEEEEEEEEE1', 'Intro Sent At': daysAgo(10) }), // old news
+        ref({ id: 'recEEEEEEEEEEEEE2', 'Intro Sent At': daysAgo(2) }),  // became visible today
+      ],
+      NOW,
+    );
+    assert.equal(hasLeadsNewToDigest(leads, hoursAgo(24)), true);
+  });
+
+  it('no visible leads → nothing to send regardless of stamp', () => {
+    assert.equal(hasLeadsNewToDigest([], undefined), false);
+    assert.equal(hasLeadsNewToDigest([], hoursAgo(48)), false);
+  });
+
+  it('garbage stamp fails open (send rather than silently strand a digest)', () => {
+    const leads = buildDigestLeads([ref({ 'Intro Sent At': daysAgo(10) })], NOW);
+    assert.equal(hasLeadsNewToDigest(leads, 'not-a-date'), true);
   });
 });

@@ -10,6 +10,17 @@ import { requireCron } from '@/lib/cronAuth';
 
 export const maxDuration = 60;
 
+// Rancher-supplied names land in email HTML — escape them
+// (email-hygiene 2026-08-02; matches lib/email.ts esc()).
+function esc(s: string): string {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 async function realHandler(_request: Request): Promise<{ status: 'success' | 'maintenance-blocked' | 'error'; recordsTouched: number; notes: string }> {
   if (isMaintenanceMode()) {
     return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
@@ -109,7 +120,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
         <body>
           <div class="container">
             <h1>Monthly Sales Report</h1>
-            <p>Hi ${name},</p>
+            <p>Hi ${esc(name)},</p>
             <p>Please report any sales from BuyHalfCow referrals last month.</p>
             <p>Simply reply to this email with:</p>
             <ul style="color: #6B4F3F;">
@@ -120,7 +131,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
             <p>If no sales were made through BuyHalfCow referrals, reply <strong>"No sales"</strong>.</p>
             <p>This helps us track commissions and improve the matching process.</p>
             <div class="footer">
-              <p>— Benjamin, BuyHalfCow</p>
+              <p>— Ben, BuyHalfCow</p>
             </div>
           </div>
         </body>

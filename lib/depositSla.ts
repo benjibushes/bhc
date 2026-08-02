@@ -13,6 +13,30 @@ export const DEFAULT_SLA_HOURS = 4;
 // doesn't skip a day due to minor drift, while still never double-pinging
 // within the same business day.
 export const DEFAULT_REPING_COOLDOWN_HOURS = 20;
+// Email-hygiene 2026-08-02: the re-ping used to repeat every ~20h FOREVER on
+// an unresponsive rancher. Cap it at 3 rancher pings total, derived purely
+// from time-since-deposit (no new Airtable fields): with slaHours=4 and a 20h
+// cooldown the pings land at ~4h / ~24h / ~44h, and the window closes at
+// slaHours + 3×cooldown = 64h — the 4th ping (~64h) can never fire.
+export const DEFAULT_MAX_RANCHER_PINGS = 3;
+// After this many hours unaccepted, the machine stops emailing the rancher
+// and hands the deal to a human: ONE loud operator escalation per referral
+// (cron-side claimOnce + sendOperatorSignal dedupe).
+export const ESCALATION_AFTER_HOURS = 72;
+
+/**
+ * Hours after Deposit Paid At beyond which NO further rancher re-ping fires.
+ * Time-derived ping cap: first ping ≥ slaHours, each subsequent ping ≥
+ * cooldown later, so age < slaHours + maxPings×cooldown bounds the total
+ * pings at maxPings even under hourly-cron drift.
+ */
+export function repingWindowHours(
+  slaHours: number = DEFAULT_SLA_HOURS,
+  cooldownHours: number = DEFAULT_REPING_COOLDOWN_HOURS,
+  maxPings: number = DEFAULT_MAX_RANCHER_PINGS,
+): number {
+  return slaHours + maxPings * cooldownHours;
+}
 
 // Terminal / already-resolved statuses that must never be re-pinged.
 // Refunded / Cancelled / Expired added (review fix): a refund/cancel/expire
@@ -78,6 +102,8 @@ export interface SlaOptions {
   slaHours?: number;
   /** Min hours between re-pings for the same referral. Default 20. */
   repingCooldownHours?: number;
+  /** Max rancher pings total (time-derived — see repingWindowHours). Default 3. */
+  maxRancherPings?: number;
   /** Injectable clock for tests. Default Date.now(). */
   now?: number;
 }
@@ -98,10 +124,13 @@ function toMs(v: unknown): number {
  *   4. The deposit was NOT refunded or disputed (Referral OR Payments row).
  *   5. The deposit landed more than `slaHours` ago.
  *   6. Not re-pinged within the last `repingCooldownHours` (dedupe).
+ *   7. Still inside the re-ping window (max ~3 pings total — after that the
+ *      rancher goes quiet and the operator escalation takes over).
  */
 export function isSlaEligible(ref: SlaReferralLike, opts: SlaOptions = {}): boolean {
   const slaHours = opts.slaHours ?? DEFAULT_SLA_HOURS;
   const cooldownHours = opts.repingCooldownHours ?? DEFAULT_REPING_COOLDOWN_HOURS;
+  const maxPings = opts.maxRancherPings ?? DEFAULT_MAX_RANCHER_PINGS;
   const now = opts.now ?? Date.now();
   const HOUR = 3_600_000;
 
@@ -120,14 +149,56 @@ export function isSlaEligible(ref: SlaReferralLike, opts: SlaOptions = {}): bool
   // Won), so without this it would re-ping the rancher forever.
   if (isRefundedOrDisputed(ref)) return false;
 
+  const age = now - depositPaidAt;
+
   // Not old enough yet.
-  if (now - depositPaidAt < slaHours * HOUR) return false;
+  if (age < slaHours * HOUR) return false;
+
+  // Ping cap (email-hygiene 2026-08-02): past the re-ping window the rancher
+  // has had their ~3 pings — emailing them again is noise. The operator
+  // escalation (isEscalationDue) owns the deal from here.
+  if (age >= repingWindowHours(slaHours, cooldownHours, maxPings) * HOUR) return false;
 
   // Already re-pinged recently — wait out the cooldown.
   const lastReping = toMs(ref['Rancher Re-pinged At']);
   if (lastReping && now - lastReping < cooldownHours * HOUR) return false;
 
   return true;
+}
+
+export interface EscalationOptions {
+  /** Hours unaccepted before the one-shot operator escalation. Default 72. */
+  escalationAfterHours?: number;
+  /** Injectable clock for tests. Default Date.now(). */
+  now?: number;
+}
+
+/**
+ * Past ESCALATION_AFTER_HOURS unaccepted, the machine stops emailing the
+ * rancher and a HUMAN takes over: this predicate says "this referral needs the
+ * one loud operator escalation". Same hard exclusions as the re-ping (terminal
+ * status, refunded/disputed, accepted) — the cron dedupes the actual send per
+ * referral (claimOnce + sendOperatorSignal dedupeKey), so this returning true
+ * on every run after 72h is safe by design.
+ */
+export function isEscalationDue(ref: SlaReferralLike, opts: EscalationOptions = {}): boolean {
+  const afterHours = opts.escalationAfterHours ?? ESCALATION_AFTER_HOURS;
+  const now = opts.now ?? Date.now();
+
+  const depositPaidAt = toMs(ref['Deposit Paid At']);
+  if (!depositPaidAt) return false;
+  if (ref['Rancher Accepted At']) return false;
+  if (SLA_EXCLUDED_STATUSES.has(String(ref.Status || ''))) return false;
+  if (isRefundedOrDisputed(ref)) return false;
+  return now - depositPaidAt >= afterHours * 3_600_000;
+}
+
+/** Filter a list of referrals to the escalation-due ones. Pure. */
+export function selectEscalationDue<T extends SlaReferralLike>(
+  refs: T[],
+  opts: EscalationOptions = {},
+): T[] {
+  return (refs || []).filter((r) => isEscalationDue(r, opts));
 }
 
 /**

@@ -32,6 +32,18 @@ export const maxDuration = 120;
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
+// Buyer/product names come off the order row and go into email HTML —
+// escape them (email-hygiene 2026-08-02; matches lib/email.ts esc()).
+// Subjects are plain-text headers and stay raw.
+function esc(s: string): string {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 interface SlaResult {
   status: 'success' | 'partial' | 'error';
   recordsTouched: number;
@@ -196,24 +208,26 @@ async function realHandler(_request: Request): Promise<SlaResult> {
         // Wave C — kind-specific copy. A deposit order must NEVER be told to
         // "ship it" (the settle email said the opposite); a pickup order's
         // next step is setting the pickup time, not tracking numbers.
+        const buyerHtml = esc(buyer);
+        const productHtml = esc(product);
         const nudge =
           d.kind === 'deposit'
             ? {
                 subject: `⏰ ${buyer}'s ${product} deposit is waiting on you`,
-                headline: `quick heads up — <strong>${buyer}</strong> put a deposit down on <strong>${product}</strong> ${d.ageDays} days ago and it's still sitting untouched.`,
+                headline: `quick heads up — <strong>${buyerHtml}</strong> put a deposit down on <strong>${productHtml}</strong> ${d.ageDays} days ago and it's still sitting untouched.`,
                 body: `Reach out to confirm their size and settle the remaining balance — do NOT ship anything yet. Their contact info is on the order:`,
                 footer: `Already talked to them? Great — once the balance settles the order moves along on its own. Problem with the order? Reply here — a real person reads it.`,
               }
             : d.kind === 'pickup'
               ? {
                   subject: `⏰ ${buyer}'s ${product} pickup still isn't scheduled`,
-                  headline: `quick heads up — <strong>${buyer}</strong> paid for <strong>${product}</strong> ${d.ageDays} days ago and the order is still marked New.`,
+                  headline: `quick heads up — <strong>${buyerHtml}</strong> paid for <strong>${productHtml}</strong> ${d.ageDays} days ago and the order is still marked New.`,
                   body: `They're picking this one up — reach out and set the pickup time, then mark the order complete once they've come by:`,
                   footer: `Already handed it over? Just mark it complete so our records match. Problem with the order? Reply here — a real person reads it.`,
                 }
               : {
                   subject: `⏰ ${buyer}'s ${product} order is waiting to ship`,
-                  headline: `quick heads up — <strong>${buyer}</strong> paid for <strong>${product}</strong> ${d.ageDays} days ago and the order is still marked New.`,
+                  headline: `quick heads up — <strong>${buyerHtml}</strong> paid for <strong>${productHtml}</strong> ${d.ageDays} days ago and the order is still marked New.`,
                   body: `They're expecting it. When it ships, add the tracking number in your dashboard and we'll tell them automatically:`,
                   footer: `Already shipped it? Just mark it Shipped so the buyer gets their tracking. Problem with the order? Reply here — a real person reads it.`,
                 };

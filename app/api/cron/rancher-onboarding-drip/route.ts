@@ -125,8 +125,28 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
         send: () => Promise<unknown>,
         label: string,
       ): Promise<void> => {
+        // CROSS-RAIL DEDUP (email-hygiene 2026-08-02): rancher-followup's
+        // daily new-applicant "finish your setup" nudge and this drip had no
+        // cross-read — a self-submit rancher with blank Onboarding Status got
+        // BOTH on day 2. Both rails now honor the shared Ranchers stamp
+        // 'Last Onboarding Nudge At': if ANY onboarding nudge touched this
+        // rancher in the last 48h, skip this run WITHOUT advancing the stage
+        // (the step simply retries on a later daily run), and stamp it on our
+        // own sends (below) so rancher-followup's ≥2-day throttle backs off
+        // in the other direction too.
+        const lastNudgeMs = new Date(String(r['Last Onboarding Nudge At'] || '')).getTime();
+        if (isFinite(lastNudgeMs) && now - lastNudgeMs < 48 * 60 * 60 * 1000) {
+          console.info(`[drip] ${r.id} (${ranchName}) nudged by another rail <48h ago — deferring ${label}`);
+          return;
+        }
         try {
-          await updateRecord(TABLES.RANCHERS, r.id, { 'Self-Submit Drip Stage': nextStage });
+          await updateRecord(TABLES.RANCHERS, r.id, {
+            'Self-Submit Drip Stage': nextStage,
+            // Shared cross-rail stamp — kept even if the send below fails and
+            // the stage rolls back (conservative: suppressing a nudge for 48h
+            // beats double-mailing the rancher).
+            'Last Onboarding Nudge At': new Date().toISOString(),
+          });
         } catch (stampErr) {
           // Couldn't advance the stage — do NOT send (sending now would
           // re-send next run since the stage never moved). Skip this run.

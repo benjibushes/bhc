@@ -6,7 +6,7 @@ import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, sendTelegramUpdate, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { callClaude } from '@/lib/ai';
 import { sendEmail, sendRancherLeadDigest } from '@/lib/email';
-import { buildDigestLeads, digestSubject, shouldSendLeadDigest } from '@/lib/rancherLeadDigest';
+import { buildDigestLeads, digestSubject, shouldSendLeadDigest, hasLeadsNewToDigest } from '@/lib/rancherLeadDigest';
 import { withCronRun } from '@/lib/cronRun';
 import { shouldDecrementOnClose } from '@/lib/refundLifecycle';
 import { isReferralOnHold } from '@/lib/referralHold';
@@ -374,6 +374,14 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
             continue;
           }
           if (!shouldSendLeadDigest(rancher['Lead Digest Sent At'], now)) continue;
+          // NEW-LEADS GATE (email-hygiene 2026-08-02): no new lead crossed the
+          // 2-day threshold since the last digest → the rancher would get the
+          // exact list they already ignored, daily, forever. No new leads = no
+          // email; the operator rails own the unresponsive-rancher chase.
+          if (!hasLeadsNewToDigest(leads, rancher['Lead Digest Sent At'])) {
+            skipReasons['digest-no-new-leads'] = (skipReasons['digest-no-new-leads'] || 0) + 1;
+            continue;
+          }
 
           // Stamp-first, both levels (P0 pattern 2026-06-23): the rancher
           // stamp is the digest throttle; the per-referral stamps keep these
