@@ -51,6 +51,7 @@ function run(
     activeReferrals?: any[];
     cap?: number;
     windowEnforcedUpstream?: boolean;
+    coveredStates?: Set<string>;
   } = {},
 ) {
   const consumersById = new Map<string, Record<string, any>>();
@@ -62,6 +63,7 @@ function run(
     nowMs: NOW,
     cap: opts.cap,
     windowEnforcedUpstream: opts.windowEnforcedUpstream ?? false,
+    coveredStates: opts.coveredStates,
   });
 }
 
@@ -162,6 +164,52 @@ test("selector: Couldn't reach buyer → reengage with cut + sms flag", () => {
   assert.equal(c.firstName, 'Amie');
   assert.equal(c.email, 'amie@example.com');
   assert.equal(sel.reasonCounts["Couldn't reach buyer"], 1);
+});
+
+// ── selector: supply gate (2026-08-02 flip condition) ───────────────────────
+
+test('supply gate: reengage SKIPPED when buyer state has no operational rancher', () => {
+  // TX buyer, coverage only in CO — reengage would invite them back into a
+  // state with zero supply. Skip, no Recovery Sent At burn (stays eligible).
+  const sel = run([lostRef()], { coveredStates: new Set(['CO']) });
+  assert.equal(sel.planned.length, 0);
+  assert.equal(sel.skips['reengage-no-supply'], 1);
+});
+
+test('supply gate: reengage sent when buyer state IS covered (normalized)', () => {
+  // Full state name on the buyer row still matches the normalized set.
+  const sel = run([lostRef()], {
+    consumers: [buyer({ State: 'Texas' })],
+    coveredStates: new Set(['TX', 'CO']),
+  });
+  assert.equal(sel.planned.length, 1);
+  assert.equal(sel.planned[0].action, 'reengage');
+});
+
+test('supply gate: fails closed — empty set skips every reengage', () => {
+  const sel = run([lostRef()], { coveredStates: new Set() });
+  assert.equal(sel.planned.length, 0);
+  assert.equal(sel.skips['reengage-no-supply'], 1);
+});
+
+test('supply gate: downsell and nurture are NOT gated (shop ships nationwide; nurture is a stamp)', () => {
+  const down = run([lostRef({ 'Loss Reason': 'Price too high' })], {
+    coveredStates: new Set(), // zero coverage anywhere
+  });
+  assert.equal(down.planned.length, 1);
+  assert.equal(down.planned[0].action, 'downsell');
+  const nur = run([lostRef({ 'Loss Reason': 'Timing — buying later' })], {
+    consumers: [buyer({ Status: 'Approved' })],
+    coveredStates: new Set(),
+  });
+  assert.equal(nur.planned.length, 1);
+  assert.equal(nur.planned[0].action, 'nurture');
+});
+
+test('supply gate: omitted coveredStates leaves reengage ungated (back-compat)', () => {
+  const sel = run([lostRef()]);
+  assert.equal(sel.planned.length, 1);
+  assert.equal(sel.planned[0].action, 'reengage');
 });
 
 test('selector: Price too high → downsell (never sms)', () => {
