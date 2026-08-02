@@ -93,6 +93,20 @@ test('month-to-date counts only Closed Won closed this calendar month', () => {
   assert.equal(out.commission, 350.5);
 });
 
+test('month-to-date prefers BHC Fee Cents (Connect/broker fee truth) over the legacy receivable', () => {
+  const refs = [
+    // Connect row: legacy receivable deliberately $0, real fee stamped in cents.
+    { Status: 'Closed Won', 'Closed At': '2026-07-05T10:00:00.000Z', 'Commission Due': 0, 'BHC Fee Cents': 22707 },
+    // Legacy row: no fee stamp, receivable is the truth.
+    { Status: 'Closed Won', 'Closed At': '2026-07-10T10:00:00.000Z', 'Commission Due': 150 },
+    // Written-0 fee stamp falls through to the receivable (never masks legacy money).
+    { Status: 'Closed Won', 'Closed At': '2026-07-12T10:00:00.000Z', 'Commission Due': 80, 'BHC Fee Cents': 0 },
+  ];
+  const out = aggregateMonthToDate(refs, NOW);
+  assert.equal(out.wins, 3);
+  assert.equal(out.commission, 227.07 + 150 + 80);
+});
+
 test('month-to-date is empty-safe and bad-data-safe', () => {
   assert.deepEqual(aggregateMonthToDate([], NOW), { wins: 0, commission: 0 });
   const out = aggregateMonthToDate(

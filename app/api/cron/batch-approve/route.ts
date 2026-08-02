@@ -39,7 +39,7 @@ function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// Runs daily at 9 UTC (3 AM MT, before daily-digest at 14 UTC) — processes
+// Runs daily at 9 UTC (3 AM MT, before daily-health-digest at 15:05 UTC) — processes
 // pending consumers who qualify for auto-approval and kicks off rancher
 // matching for approved Beef Buyers.
 //

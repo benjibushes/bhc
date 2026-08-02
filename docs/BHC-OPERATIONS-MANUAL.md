@@ -352,7 +352,7 @@ Closed Won ─→ ensureBuyerAffiliate ─→ magic-link login ─→ /a/[code] 
 | `0 5` | 23:00 (prior) | nightly-rancher-audit | Per-rancher pipeline + capacity drift |
 | `0 13` | 07:00 | healthcheck | Ping Airtable/Resend/Telegram/AI, post Telegram |
 | `30 13` | 07:30 | rancher-launch-warmup | Drain waitlisted buyers when rancher goes live in state |
-| `0 14` | 08:00 | daily-digest | AI-curated morning brief |
+| — | — | daily-digest | DELETED 2026-08-02 (#532): merged into daily-health-digest 15:05 UTC |
 | `0 14 1 *` | 08:00 1st-of-month | backer-monthly-letter | Monthly founder letter to all backers (I-4) |
 | `0 14 * 6` | 08:00 Saturday | spam-audit | Weekly review of last-7d sends + Telegram digest |
 | `15 9` | 03:15 | compliance-reminders | Overdue rancher doc reminders (F6 staggered from 09:00) |

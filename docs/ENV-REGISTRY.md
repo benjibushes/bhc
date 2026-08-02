@@ -48,7 +48,7 @@
 
 | Var | Purpose | Fails | Owner |
 |---|---|---|---|
-| `ANTHROPIC_API_KEY` | Claude calls: Telegram bot brain, inbound-reply classification, AI scraper; lib/ai falls back Groq→Ollama, aiSearch throws if no provider at all | fail-open | set-once |
+| `ANTHROPIC_API_KEY` | Claude calls: Telegram bot brain, inbound-reply classification, AI scraper; lib/ai falls back Groq→Ollama (aiSearch deleted 2026-08-02 #529) | fail-open | set-once |
 | `BANDWIDTH_ACCOUNT_ID` | SMS adapter (only when `SMS_PROVIDER=bandwidth`) — {accountId} path segment; any Bandwidth var missing → adapter warns + returns ok:false, send skipped | fail-silent | set-once |
 | `BANDWIDTH_API_SECRET` | Bandwidth Basic-auth password (legacy scheme — see docs/SMS-PROVIDER-SETUP.md OAuth caveat) | fail-silent | set-once |
 | `BANDWIDTH_API_TOKEN` | Bandwidth Basic-auth username | fail-silent | set-once |

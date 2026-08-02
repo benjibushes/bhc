@@ -84,7 +84,18 @@ export function aggregateMonthToDate(
     const closed = new Date(String(r?.['Closed At'] || 0)).getTime();
     if (!Number.isFinite(closed) || closed < monthStart) continue;
     wins++;
-    commission += Number(r?.['Commission Due']) || 0;
+    // Fee truth (audit-D fix, 2026-08-02): 'Commission Due' is the DEPRECATED
+    // legacy-invoice receivable — $0 on every Connect and broker row, which is
+    // every current-model deal. The fee those rails actually captured is
+    // stamped in 'BHC Fee Cents'. Prefer it when a real fee exists; fall back
+    // to the legacy receivable (same semantics as referralFeeDollars on the
+    // rancher dashboard — a written 0 falls through so a legacy receivable is
+    // never masked).
+    const feeCents = Number(r?.['BHC Fee Cents']);
+    commission +=
+      Number.isFinite(feeCents) && feeCents > 0
+        ? Math.round(feeCents) / 100
+        : Number(r?.['Commission Due']) || 0;
   }
   return { wins, commission };
 }

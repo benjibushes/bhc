@@ -17,10 +17,23 @@ export interface WaitlistRowLike {
   Email?: unknown;
   'Full Name'?: unknown;
   State?: unknown;
+  Notes?: unknown;
   Unsubscribed?: unknown;
   Bounced?: unknown;
   Complained?: unknown;
 }
+
+/**
+ * Durable once-ever marker (audit-D fix, 2026-08-02). The cron appends this
+ * into the consumer row's Notes after a send (or a send-layer suppression), and
+ * selection skips any row carrying it. This is the repo's hard-rule-2 anchor —
+ * send truth persisted on the record — and it fixes BOTH audit findings at
+ * once: (a) cap starvation — notified rows leave the eligible pool, so the
+ * per-run cap walks the tail instead of re-selecting the same first 50 forever;
+ * (b) the Redis claimOnce belt degrades OPEN and expires at 365d — the Notes
+ * stamp neither errors nor expires.
+ */
+export const AREA_OPENED_MARKER = '[AREA-OPENED';
 
 export interface StateCoverageTarget {
   consumerId: string;
@@ -41,11 +54,14 @@ export const DEFAULT_NOTIFY_CAP = 50;
  *   - Unsubscribed / Bounced / Complained rows are excluded (the send-side
  *     suppression list is the belt; this keeps them out of the claim loop
  *     entirely so a suppressed buyer never burns a Redis claim);
- *   - capped at `cap` per run (default 50) — the rest ride the next run.
+ *   - rows already stamped with AREA_OPENED_MARKER in Notes are excluded
+ *     (the durable once-ever anchor — see the marker's doc block);
+ *   - capped at `cap` per run (default 50) — because notified rows leave the
+ *     pool via the Notes stamp, the cap now genuinely walks the tail.
  *
- * Per-buyer once-ever dedupe is NOT here: it is the cron's Redis claimOnce
- * (Consumers has no free field to stamp and new Airtable fields are not an
- * option). This function must stay deterministic and side-effect free.
+ * The cron's Redis claimOnce remains as a same-run/racing-runs belt; the
+ * Notes stamp is the durable anchor. This function stays deterministic and
+ * side-effect free.
  */
 export function selectStateCoverageTargets(
   rows: WaitlistRowLike[],
@@ -57,6 +73,9 @@ export function selectStateCoverageTargets(
     if (out.length >= cap) break;
     if (!row || !row.id) continue;
     if (row.Unsubscribed || row.Bounced || row.Complained) continue;
+    // Already notified (durable Notes stamp) — out of the pool forever, so
+    // buyers past the cap are reached on subsequent runs.
+    if (String(row.Notes || '').includes(AREA_OPENED_MARKER)) continue;
 
     const email = String(row.Email || '').trim().toLowerCase();
     if (!email || !email.includes('@')) continue;
