@@ -166,7 +166,17 @@ export function estimateDealValue(row: CloseQueueRow): number {
   return DEFAULT_DEAL_VALUE;
 }
 
-/** BHC's cut of a deal — a flat 10% added on top of the buyer's price. */
+/**
+ * BHC's cut of a deal — a flat 10% added on top of the buyer's price.
+ *
+ * ESTIMATE ONLY, deliberately not lib/commission.calcCommissionForRancher:
+ * the canonical function needs the rancher record (per-rancher locked rates —
+ * Operator-tier ranchers sit at 0%), but this module is pure and ranks from
+ * CloseQueueRow, which carries no rancher record. Wiring the rate through
+ * would mean changing the row shape and its only feeder (/admin/desk) for a
+ * display-only number. So: flat platform default, OVERSTATED for 0%-rate
+ * ranchers, and every surface that shows it must label it "est.".
+ */
 export function estimateBhcFee(dealValue: number): number {
   return round2(toNum(dealValue) * BHC_FEE_RATE);
 }
@@ -202,7 +212,7 @@ function reasonSentence(
 
   switch (key) {
     case 'dealValue':
-      return `Biggest cheque on the board — ${money(estValue)} deal, ${money(estFee)} to BHC.`;
+      return `Biggest cheque on the board — ${money(estValue)} deal, est. ${money(estFee)} to BHC.`;
     case 'stage':
       if (row.status === 'Awaiting Payment') return 'Balance is due — collect it.';
       if (row.status === 'Negotiation') return 'In negotiation — closest to a yes.';

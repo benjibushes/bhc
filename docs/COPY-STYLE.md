@@ -1,6 +1,6 @@
 # BHC Copy Style Guide
 
-Canonical brand-voice rules for every customer-facing string. Distilled from `docs/BHC.md` (marketing throttle reference). Used by the full-site audit (`docs/superpowers/plans/2026-05-20-fullsite-audit-and-remediation.md`).
+Canonical brand-voice rules for every customer-facing string. Distilled from `docs/BHC.md` (marketing throttle reference). Used by the full-site audit (`docs/archive/superpowers/plans/2026-05-20-fullsite-audit-and-remediation.md`).
 
 ## Voice rules
 

@@ -85,9 +85,9 @@ d21 long-haul). First report ~16:30 UTC daily; after one sane report say
   nurture-drip cron replaced it (see armed switches above).
 - `NATIONWIDE_ROUTING_ENABLED` — strategy lock: local-first until supply.
 - `CAMPAIGN_LIVE` / `CAMPAIGN_ROUTER_ENABLED` — drop-day levers.
-- `CAPACITY_LIBERATOR_ENABLED` — overlaps stale-hold expiry (would
-  double-act on the same rows with a different terminal state). Stays
-  report-only unless expiry proves insufficient.
+- `CAPACITY_LIBERATOR_ENABLED` — OBSOLETE: the capacity-liberator cron was
+  deleted in #506 (it overlapped stale-hold expiry). The env var has no
+  readers; remove it from Vercel if still set.
 
 **Blocked on Ben (values only Ben has):**
 - Meta pixel ID + CAPI token (3 envs) → flip after the test buy.

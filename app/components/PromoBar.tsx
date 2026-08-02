@@ -23,7 +23,7 @@ export default function PromoBar() {
       // money surfaces are clean BY CONSTRUCTION: the bar renders only on
       // content/browse surfaces, and any future page defaults to no-bar.
       const p = window.location.pathname;
-      const CONTENT_SURFACES = ['/gear', '/news', '/wins', '/map', '/faq', '/about'];
+      const CONTENT_SURFACES = ['/gear', '/wins', '/map', '/faq', '/about'];
       if (!CONTENT_SURFACES.some((s) => p === s || p.startsWith(s + '/'))) return;
       const dismissed = localStorage.getItem(STORAGE_KEY);
       if (!dismissed) setHidden(false);

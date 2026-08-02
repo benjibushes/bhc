@@ -174,27 +174,9 @@ export async function POST(request: Request) {
         break;
       }
 
-      if (metaType === 'white_glove') {
-        // F8 — $497 white glove onboarding paid. Stamps Rancher record.
-        try {
-          const rancherId = session.metadata?.rancher_id as string | undefined;
-          if (rancherId) {
-            const { updateRecord, TABLES } = await import('@/lib/airtable');
-            await updateRecord(TABLES.RANCHERS, rancherId, {
-              'White Glove Paid At': new Date().toISOString(),
-              'White Glove Session Id': String(session.id || ''),
-            });
-            const { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } = await import('@/lib/telegram');
-            await sendTelegramMessage(
-              TELEGRAM_ADMIN_CHAT_ID,
-              `🧤 <b>White Glove sold</b>\n\n${session.metadata?.ranch_name || session.customer_email || rancherId} — $${((session.amount_total || 0) / 100).toFixed(0)}\n\nTake the next 3 buyers end-to-end.`
-            ).catch(() => {});
-          }
-        } catch (err: any) {
-          console.error('[stripe webhook] white_glove handler failed:', err?.message);
-        }
-        break;
-      }
+      // (white_glove branch removed 2026-08-01: lib/whiteGlove.ts had zero
+      // importers, so nothing could ever mint a session with that metadata —
+      // lib + receiving branch deleted together.)
 
       // ── BROKER RAIL (the THIRD money model) ──────────────────────────────
       // Stripe delivers BOTH checkout.session.completed and
