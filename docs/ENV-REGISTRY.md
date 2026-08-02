@@ -54,7 +54,7 @@
 | `BANDWIDTH_API_TOKEN` | Bandwidth Basic-auth username | fail-silent | set-once |
 | `BANDWIDTH_APPLICATION_ID` | Bandwidth messaging application bound to the from number; required in every send body | fail-silent | set-once |
 | `BANDWIDTH_FROM` | Bandwidth sending number (E.164) | fail-silent | set-once |
-| `BLOB_READ_WRITE_TOKEN` | Vercel Blob token for rancher photo uploads; unset → upload route 500s with clear detail | fail-loud | set-once |
+| `BLOB_READ_WRITE_TOKEN` | Vercel Blob token: rancher photo uploads (unset → upload route 500s) AND the nightly encrypted entity backup (log-retention leg; unset → backup skips, run goes partial) | fail-loud | set-once |
 | `CAL_API_KEY` | Cal.com booking resolution + event-type setup; unset → booking falls back to /contact page (degraded but not broken) | fail-open | set-once |
 | `CAL_OAUTH_CLIENT_ID` | Cal managed-user OAuth (rancher calendars) | unknown | set-once |
 | `CAL_OAUTH_CLIENT_SECRET` | Cal OAuth pair | unknown | set-once |
