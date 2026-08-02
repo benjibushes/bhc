@@ -228,7 +228,7 @@ no action) · `buyer-pulse` (intro sent 5+ days, "did your rancher reach out?").
 | `capacity-drift-check` | 6:00a | Reconcile Redis ↔ Airtable capacity | active |
 | `healthcheck` | 7:00a | Ping /api/health → Telegram | active |
 | `rancher-launch-warmup` | 7:30a | Warm waitlisted buyers per live rancher | active |
-| `daily-digest` | 8:00a | Morning ops + AI brief to Ben | active |
+| `daily-digest` | — | DELETED 2026-08-02 (#532) — merged into daily-health-digest (15:05 UTC) | removed |
 | `backer-monthly-letter` | 8:00a (1st) | Monthly founder letter to backers | active |
 | `rancher-trust-promotion` | 8:45a | Flip Trust Mode at ≥5 closes | active |
 | `stuck-buyer-recovery` | 8:30a | Retry matching for stuck READY buyers | active |

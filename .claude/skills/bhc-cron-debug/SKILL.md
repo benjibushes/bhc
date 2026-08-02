@@ -23,7 +23,7 @@ recent run status, common failure patterns, and (if asked) a fix plan.
 Cron names live in `vercel.json` + `app/api/cron/<name>/route.ts`. Full
 list:
 
-- compliance-reminders · send-scheduled · daily-digest · batch-approve
+- compliance-reminders · send-scheduled · daily-health-digest · batch-approve
 - rancher-followup · email-sequences · referral-chasup · commission-invoices
 - healthcheck · rancher-launch-warmup · nightly-rancher-audit
 - rancher-onboarding-drip · rancher-trust-promotion · stuck-buyer-recovery

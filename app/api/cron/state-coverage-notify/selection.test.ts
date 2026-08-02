@@ -1,8 +1,29 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { selectStateCoverageTargets, DEFAULT_NOTIFY_CAP } from './selection';
+import { selectStateCoverageTargets, DEFAULT_NOTIFY_CAP, AREA_OPENED_MARKER } from './selection';
 
 const MT = new Set(['MT']);
+
+test('skips rows already stamped with the AREA-OPENED Notes marker (durable once-ever)', () => {
+  const rows = [
+    { id: 'rec1', Email: 'a@example.com', State: 'MT', Notes: `[WAITLIST 2026-07-01] captured\n${AREA_OPENED_MARKER} 2026-08-02] area-opened email sent (state-coverage-notify)` },
+    { id: 'rec2', Email: 'b@example.com', State: 'MT', Notes: '[WAITLIST 2026-07-02] captured' },
+  ];
+  const targets = selectStateCoverageTargets(rows, MT);
+  assert.equal(targets.length, 1);
+  assert.equal(targets[0].consumerId, 'rec2');
+});
+
+test('cap walks the tail once notified rows are stamped (starvation fix)', () => {
+  // 3 eligible, cap 2: run 1 takes the first two; once stamped, run 2 reaches
+  // the third instead of re-selecting the same head.
+  const mk = (n: number, notes = '') => ({ id: `rec${n}`, Email: `b${n}@example.com`, State: 'MT', Notes: notes });
+  const run1 = selectStateCoverageTargets([mk(1), mk(2), mk(3)], MT, 2);
+  assert.deepEqual(run1.map((t) => t.consumerId), ['rec1', 'rec2']);
+  const stamped = `${AREA_OPENED_MARKER} 2026-08-02] area-opened email sent (state-coverage-notify)`;
+  const run2 = selectStateCoverageTargets([mk(1, stamped), mk(2, stamped), mk(3)], MT, 2);
+  assert.deepEqual(run2.map((t) => t.consumerId), ['rec3']);
+});
 
 test('selects a waitlist buyer whose state is now covered', () => {
   const targets = selectStateCoverageTargets(
