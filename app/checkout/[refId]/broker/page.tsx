@@ -20,6 +20,14 @@
 // the brand system and carries the SAME trust blocks as the Connect deposit
 // page (BHCPromiseBadge, REFUND_POLICY_SHORT, the secured-by-stripe line).
 // Money logic, amounts, and the POST flow are untouched.
+//
+// FULFILLMENT TRANSPARENCY (2026-08-03) — DISCLOSURE ONLY, no arithmetic change.
+// Not every represented ranch is a two-party deal: some sell the animal and hand
+// the buyer to a separate processor who bills the buyer DIRECTLY on top of the
+// share price. Until that was disclosed here, such a buyer paid a deposit and
+// then met a bill they were never shown. Both new blocks below come from the
+// ranch's own fields through the existing GET projection, and both render
+// nothing when the ranch has nothing extra to say.
 
 import { Suspense, useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
@@ -39,6 +47,10 @@ interface BrokerInfo {
   rancher: { name: string; ranchName: string; state: string };
   rail: string;
   balanceNote: string;
+  /** Buyer-facing "what happens next", one step per entry. Commonly empty. */
+  fulfillmentSteps?: string[];
+  /** Money owed to a THIRD PARTY on top of the share price. '' = price is all-in. */
+  additionalCosts?: string;
   cuts: BrokerCut[];
 }
 
@@ -141,6 +153,11 @@ function BrokerCheckoutInner() {
   }
 
   const cut = info.cuts.find((c) => c.slug === selected) || null;
+  // Both default to "nothing to say" so an all-in ranch renders exactly the page
+  // that shipped before this block existed — no empty heading, no placeholder.
+  const steps = Array.isArray(info.fulfillmentSteps) ? info.fulfillmentSteps.filter(Boolean) : [];
+  const additionalCosts = String(info.additionalCosts || '').trim();
+  const ranchLabel = info.rancher.ranchName || info.rancher.name;
 
   return (
     <main className="min-h-screen bg-bone text-charcoal">
@@ -194,10 +211,51 @@ function BrokerCheckoutInner() {
             </div>
             <p className="mt-3 text-sm text-saddle leading-relaxed">
               Your deposit counts toward your share price. You pay the remaining{' '}
-              {usd(cut.balanceCents)} directly to{' '}
-              {info.rancher.ranchName || info.rancher.name}, not to BuyHalfCow. {info.balanceNote}
+              {usd(cut.balanceCents)} directly to {ranchLabel}, not to BuyHalfCow. {info.balanceNote}
             </p>
           </div>
+        )}
+
+        {/* THIRD-PARTY COST DISCLOSURE — deliberately loud and deliberately
+            ABOVE the pay button. Some represented ranches sell the animal and
+            hand the buyer to a separate processor who bills the buyer directly;
+            without this block the buyer meets that bill only AFTER paying. It
+            sits immediately under the price so it reads as part of the price
+            picture, and it is styled as a warm callout rather than fine print.
+            Renders only when the ranch actually has such a cost. */}
+        {additionalCosts && (
+          <section
+            aria-labelledby="broker-extra-cost"
+            className="mt-6 rounded-sm border-2 border-tallow-deep bg-tallow/20 p-5"
+          >
+            <h2 id="broker-extra-cost" className="font-serif text-lg text-charcoal">
+              One more cost, paid separately
+            </h2>
+            <p className="mt-2 whitespace-pre-line text-charcoal leading-relaxed">
+              {additionalCosts}
+            </p>
+            <p className="mt-3 text-sm text-charcoal/85 leading-relaxed">
+              You pay this directly to the third party who does that work. It is{' '}
+              <strong>not</strong> included in the{' '}
+              {cut ? `${usd(cut.dueNowCents)} deposit` : 'deposit'} you&apos;re paying today
+              {cut ? `, and it is not part of the ${usd(cut.balanceCents)} balance you pay ${ranchLabel}` : ''}.
+            </p>
+          </section>
+        )}
+
+        {/* "How this works" — the ranch's own next-steps script, so the buyer
+            leaves this page knowing the shape of the whole handoff. */}
+        {steps.length > 0 && (
+          <section aria-labelledby="broker-how-it-works" className="mt-6 rounded-sm border border-dust bg-white p-5">
+            <h2 id="broker-how-it-works" className="font-serif text-lg text-charcoal">
+              How this works
+            </h2>
+            <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm text-saddle leading-relaxed marker:text-charcoal marker:font-medium">
+              {steps.map((step, i) => (
+                <li key={i}>{step}</li>
+              ))}
+            </ol>
+          </section>
         )}
 
         {/* The same platform trust floor the Connect deposit page carries —

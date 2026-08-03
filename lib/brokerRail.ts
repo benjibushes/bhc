@@ -68,6 +68,9 @@ export const CUT_LABELS: Record<Cut, string> = {
 // hard rule #1). Verified against the live schema 2026-07-31.
 export const BROKER_RAIL_FIELD = 'Broker Rail';               // checkbox, Ranchers
 export const BROKER_BALANCE_NOTE_FIELD = 'Broker Balance Note'; // multilineText, Ranchers
+// Verified against the live schema 2026-08-03.
+export const BROKER_FULFILLMENT_STEPS_FIELD = 'Broker Fulfillment Steps'; // multilineText, Ranchers
+export const BROKER_ADDITIONAL_COSTS_FIELD = 'Broker Additional Costs';   // multilineText, Ranchers
 
 const CUT_PRICE_FIELD: Record<Cut, string> = {
   quarter: 'Quarter Price',
@@ -158,6 +161,61 @@ export const BROKER_BALANCE_NOTE_FALLBACK =
 export function brokerBalanceNote(rancher: any): string {
   const note = String(rancher?.[BROKER_BALANCE_NOTE_FIELD] || '').trim();
   return note || BROKER_BALANCE_NOTE_FALLBACK;
+}
+
+// ---------------------------------------------------------------------------
+// Fulfillment transparency — what happens after the deposit, and what else the
+// buyer will be asked to pay
+// ---------------------------------------------------------------------------
+//
+// A represented ranch's process is NOT uniform. Some hand the buyer a box at the
+// gate for the balance and nothing else; some sell the animal and hand the buyer
+// off to a separate processor who bills the buyer directly for cutting and
+// wrapping. That second shape means a real cost the buyer owes to someone who is
+// neither the ranch nor BuyHalfCow — and until it is disclosed BEFORE payment,
+// the buyer meets it as a surprise bill after they have already committed.
+//
+// Both fields are per-rancher free text because the shape varies by ranch; both
+// are OPTIONAL and blank is the common case. Blank must render NOTHING (not an
+// empty heading, not a fallback sentence) — an all-in ranch has no extra steps
+// and no extra costs, and inventing copy for one would be its own lie.
+//
+// UNLIKE brokerBalanceNote these have NO fallback: the balance always exists and
+// so always needs an instruction, whereas "there is nothing else to pay" is
+// correctly expressed by silence.
+
+/** Hard cap on rendered steps. A checkout page is not a manual; a ranch that
+ *  needs more than this should shorten the list rather than have it truncated
+ *  mid-story on a phone. */
+export const BROKER_FULFILLMENT_STEPS_MAX = 8;
+
+/**
+ * The buyer-facing "what happens next" script, one step per line.
+ *
+ * Returns [] for unset/blank/non-string values so every caller can render with
+ * a plain `.length` check. Leading list markers the rancher may have typed
+ * ("1.", "2)", "-", "•") are stripped: the surfaces render an ORDERED list, so
+ * a hand-typed number would double up as "1. 1. Call the ranch".
+ */
+export function brokerFulfillmentSteps(rancher: any): string[] {
+  const raw = rancher?.[BROKER_FULFILLMENT_STEPS_FIELD];
+  if (typeof raw !== 'string') return [];
+  return raw
+    .split(/\r?\n/)
+    .map((line) => line.trim().replace(/^(?:[-–—*•]|\d{1,2}[.)])\s+/, '').trim())
+    .filter(Boolean)
+    .slice(0, BROKER_FULFILLMENT_STEPS_MAX);
+}
+
+/**
+ * Money the buyer pays a THIRD PARTY on top of the share price — a processor's
+ * cut-and-wrap bill, a hauler, a locker fee. NOT the ranch balance (that is
+ * brokerBalanceNote) and never anything owed to BuyHalfCow.
+ *
+ * '' means the share price is all-in. Callers MUST treat '' as "render nothing".
+ */
+export function brokerAdditionalCosts(rancher: any): string {
+  return String(rancher?.[BROKER_ADDITIONAL_COSTS_FIELD] || '').trim();
 }
 
 // ---------------------------------------------------------------------------
