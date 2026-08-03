@@ -28,9 +28,21 @@ function facts(over: Partial<BrokerOrderFacts> = {}): BrokerOrderFacts {
     depositCents: 40000,
     balanceCents: 140000,
     balanceNote: 'Cash or check at pickup.',
+    fulfillmentSteps: [
+      'The ranch calls you within two business days.',
+      'You choose your cuts with the butcher.',
+      'You pick up your beef when it is ready.',
+    ],
+    additionalCosts:
+      'Cutting and wrapping is billed by the butcher, about $400 to $500 on a half, paid when you pick up.',
     orderRef: 'BHC-abc123',
     ...over,
   };
+}
+
+/** The common shape: an all-in ranch that set neither optional field. */
+function plainFacts(over: Partial<BrokerOrderFacts> = {}): BrokerOrderFacts {
+  return facts({ fulfillmentSteps: [], additionalCosts: '', ...over });
 }
 
 test('money: formats cents as dollars with two decimals and thousands separators', () => {
@@ -58,6 +70,36 @@ test('buildBrokerOrderFacts: pulls contact truth from the referral, falling back
   assert.equal(f.buyerPhone, '512-555-0199'); // fell back to the consumer row
   assert.equal(f.buyerZip, '78704');
   assert.equal(f.balanceCents, 140000);
+});
+
+test('buildBrokerOrderFacts: carries the fulfillment fields off the RANCHER record', () => {
+  const f = buildBrokerOrderFacts({
+    rancher: {
+      'Ranch Name': 'Cedar Draw Beef',
+      'Broker Fulfillment Steps': 'The ranch calls you.\n\nYou choose your cuts.\n',
+      'Broker Additional Costs': '  Cutting and wrapping is billed by the butcher.  ',
+    },
+    referral: {},
+    cutLabel: 'Half Cow',
+    priceCents: 180000,
+    depositCents: 40000,
+    orderRef: 'BHC-abc123',
+  });
+  assert.deepEqual(f.fulfillmentSteps, ['The ranch calls you.', 'You choose your cuts.']);
+  assert.equal(f.additionalCosts, 'Cutting and wrapping is billed by the butcher.');
+});
+
+test('buildBrokerOrderFacts: an all-in ranch gets [] and "" — never placeholder copy', () => {
+  const f = buildBrokerOrderFacts({
+    rancher: { 'Ranch Name': 'Cedar Draw Beef' },
+    referral: {},
+    cutLabel: 'Half Cow',
+    priceCents: 180000,
+    depositCents: 40000,
+    orderRef: 'BHC-abc123',
+  });
+  assert.deepEqual(f.fulfillmentSteps, []);
+  assert.equal(f.additionalCosts, '');
 });
 
 test('buildBrokerOrderFacts: never renders a NEGATIVE balance on malformed money', () => {
@@ -114,6 +156,54 @@ test('RANCHER email: subject leads with the money he collects', () => {
   assert.ok(built.subject.includes('Half Cow'));
 });
 
+test('RANCHER email: echoes the buyer script so both sides work from the same words', () => {
+  const built = buildBrokerRancherEmail(facts());
+  for (const needed of [
+    'The ranch calls you within two business days.',
+    'You pick up your beef when it is ready.',
+    'about $400 to $500 on a half',
+  ]) {
+    assert.ok(built.html.includes(needed), `rancher email missing: ${needed}`);
+    assert.ok(built.text.includes(needed), `rancher text missing: ${needed}`);
+  }
+  assert.ok(built.html.includes('What your buyer was told'));
+  assert.ok(built.text.includes('WHAT YOUR BUYER WAS TOLD'));
+});
+
+test('RANCHER email: the buyer script does NOT weaken the money paragraph', () => {
+  // The deposit-is-our-commission truth is load-bearing. Adding disclosure
+  // sections must never displace or soften it.
+  const built = buildBrokerRancherEmail(facts());
+  const body = built.html.toLowerCase();
+  assert.ok(body.includes("buyhalfcow's commission"));
+  assert.ok(body.includes('we keep it'));
+  assert.ok(body.includes('do not invoice you'));
+  assert.ok(built.html.includes('your net on this share is <strong>$1,400.00</strong>'));
+  assert.ok(built.text.includes('YOU COLLECT FROM THE BUYER: $1,400.00'));
+});
+
+test('RANCHER email: an all-in ranch renders NO buyer-script section at all', () => {
+  const built = buildBrokerRancherEmail(plainFacts());
+  assert.ok(!built.html.includes('What your buyer was told'));
+  assert.ok(!built.text.includes('WHAT YOUR BUYER WAS TOLD'));
+  assert.ok(!built.html.includes('<ol'), 'no empty ordered list may be emitted');
+  // Everything that shipped before still ships.
+  assert.ok(built.html.includes('$1,400.00'));
+  assert.ok(built.html.includes('Cash or check at pickup.'));
+});
+
+test('RANCHER email: steps only, or cost only, each render alone', () => {
+  const stepsOnly = buildBrokerRancherEmail(plainFacts({ fulfillmentSteps: ['Call the ranch.'] }));
+  assert.ok(stepsOnly.html.includes('What your buyer was told'));
+  assert.ok(stepsOnly.html.includes('Call the ranch.'));
+  assert.ok(!stepsOnly.html.includes('pay a third party'));
+
+  const costOnly = buildBrokerRancherEmail(plainFacts({ additionalCosts: 'Hauling is billed by the driver.' }));
+  assert.ok(costOnly.html.includes('What your buyer was told'));
+  assert.ok(costOnly.html.includes('Hauling is billed by the driver.'));
+  assert.ok(!costOnly.html.includes('<ol'), 'no empty ordered list when there are no steps');
+});
+
 test('RANCHER email: degrades honestly when buyer contact fields are blank', () => {
   const built = buildBrokerRancherEmail(
     facts({ buyerName: '', buyerPhone: '', fulfillmentPref: '', buyerState: '', buyerZip: '' }),
@@ -163,6 +253,66 @@ test('BUYER receipt: the buyer total equals the full share price — unchanged v
 test('BUYER receipt: survives a ranch with no contact details on file', () => {
   const built = buildBrokerBuyerReceipt(facts({ rancherEmail: '', rancherPhone: '' }));
   assert.ok(built.html.includes('Contact details will come with their first message.'));
+});
+
+test('BUYER receipt: restates the third-party cost beside the balance — no surprise bill', () => {
+  // The whole point: the receipt must repeat what they saw before paying.
+  const built = buildBrokerBuyerReceipt(facts());
+  assert.ok(built.html.includes('Paid separately, not to the ranch'));
+  assert.ok(built.html.includes('about $400 to $500 on a half'));
+  assert.ok(built.text.includes('THE COST PAID SEPARATELY'));
+  assert.ok(built.text.includes('about $400 to $500 on a half'));
+  // It is named as separate from BOTH numbers they already know.
+  assert.ok(built.html.includes('separate from your $400.00 deposit'));
+  assert.ok(built.html.includes('$1,400.00 balance you pay Cedar Draw Beef'));
+});
+
+test('BUYER receipt: lists what happens next', () => {
+  const built = buildBrokerBuyerReceipt(facts());
+  assert.ok(built.html.includes('What happens next'));
+  assert.ok(built.html.includes('<li style="margin:6px 0;">You choose your cuts with the butcher.</li>'));
+  assert.ok(built.text.includes('WHAT HAPPENS NEXT'));
+  assert.ok(built.text.includes('1. The ranch calls you within two business days.'));
+});
+
+test('BUYER receipt: an all-in ranch renders EXACTLY the pre-existing receipt', () => {
+  const built = buildBrokerBuyerReceipt(plainFacts());
+  for (const forbidden of [
+    'What happens next',
+    'Paid separately',
+    'The cost paid separately',
+    'WHAT HAPPENS NEXT',
+    'THE COST PAID SEPARATELY',
+    '<ol',
+  ]) {
+    assert.ok(!built.html.includes(forbidden), `blank fields must not render: ${forbidden}`);
+    assert.ok(!built.text.includes(forbidden), `blank fields must not render in text: ${forbidden}`);
+  }
+  // The money lines that always existed are untouched.
+  assert.ok(built.html.includes('Balance due to the ranch'));
+  assert.ok(built.html.includes('$1,400.00'));
+  assert.ok(built.html.includes('$400.00'));
+  assert.ok(built.html.includes('$1,800.00'));
+});
+
+test('BUYER receipt: steps only, or cost only, each render alone', () => {
+  const stepsOnly = buildBrokerBuyerReceipt(plainFacts({ fulfillmentSteps: ['Pick up at the ranch.'] }));
+  assert.ok(stepsOnly.html.includes('What happens next'));
+  assert.ok(!stepsOnly.html.includes('Paid separately'));
+
+  const costOnly = buildBrokerBuyerReceipt(plainFacts({ additionalCosts: 'Hauling is billed by the driver.' }));
+  assert.ok(costOnly.html.includes('Paid separately, not to the ranch'));
+  assert.ok(costOnly.html.includes('Hauling is billed by the driver.'));
+  assert.ok(!costOnly.html.includes('What happens next'));
+  assert.ok(!costOnly.html.includes('<ol'));
+});
+
+test('BUYER receipt: a multiline third-party cost keeps its line breaks and stays escaped', () => {
+  const built = buildBrokerBuyerReceipt(
+    facts({ additionalCosts: 'Cutting & wrapping: about $450.\n<b>Paid at pickup.</b>' }),
+  );
+  assert.ok(built.html.includes('Cutting &amp; wrapping: about $450.<br>&lt;b&gt;Paid at pickup.&lt;/b&gt;'));
+  assert.ok(!built.html.includes('<b>Paid at pickup.</b>'));
 });
 
 test('emails escape HTML in user-supplied values (a quote in a ranch name cannot break markup)', () => {

@@ -4,6 +4,11 @@ import {
   isBrokerRancher,
   rancherHasConnectAccount,
   brokerBalanceNote,
+  brokerFulfillmentSteps,
+  brokerAdditionalCosts,
+  BROKER_FULFILLMENT_STEPS_FIELD,
+  BROKER_ADDITIONAL_COSTS_FIELD,
+  BROKER_FULFILLMENT_STEPS_MAX,
   assertBrokerEligible,
   isBrokerRailMetadata,
   referralRailForRancher,
@@ -269,6 +274,92 @@ test('brokerBalanceNote: uses the rancher note, else honest fallback copy', () =
   );
   assert.equal(brokerBalanceNote({ 'Broker Balance Note': '   ' }), BROKER_BALANCE_NOTE_FALLBACK);
   assert.equal(brokerBalanceNote({}), BROKER_BALANCE_NOTE_FALLBACK);
+});
+
+// ---------------------------------------------------------------------------
+// Fulfillment transparency
+// ---------------------------------------------------------------------------
+
+test('field constants match the live Airtable schema exactly', () => {
+  assert.equal(BROKER_FULFILLMENT_STEPS_FIELD, 'Broker Fulfillment Steps');
+  assert.equal(BROKER_ADDITIONAL_COSTS_FIELD, 'Broker Additional Costs');
+});
+
+test('brokerFulfillmentSteps: splits on newlines, trims, and drops blank lines', () => {
+  const steps = brokerFulfillmentSteps({
+    [BROKER_FULFILLMENT_STEPS_FIELD]:
+      '  The ranch calls you within two days.\n\n   You choose your cuts.  \r\n\r\nYou pick up your beef.\n   ',
+  });
+  assert.deepEqual(steps, [
+    'The ranch calls you within two days.',
+    'You choose your cuts.',
+    'You pick up your beef.',
+  ]);
+});
+
+test('brokerFulfillmentSteps: strips hand-typed list markers so an ordered list never doubles up', () => {
+  const steps = brokerFulfillmentSteps({
+    [BROKER_FULFILLMENT_STEPS_FIELD]: '1. Call the ranch\n2) Choose your cuts\n- Pick up\n• Enjoy',
+  });
+  assert.deepEqual(steps, ['Call the ranch', 'Choose your cuts', 'Pick up', 'Enjoy']);
+});
+
+test('brokerFulfillmentSteps: a step that only LOOKS numeric keeps its text', () => {
+  // "12 lbs per box" must not lose its leading number — only a marker followed
+  // by whitespace ("12. " / "12) ") is a list marker.
+  assert.deepEqual(
+    brokerFulfillmentSteps({ [BROKER_FULFILLMENT_STEPS_FIELD]: '12 lbs per box' }),
+    ['12 lbs per box'],
+  );
+});
+
+test('brokerFulfillmentSteps: caps the list rather than printing a manual', () => {
+  const many = Array.from({ length: 20 }, (_, i) => `Step ${i + 1}`).join('\n');
+  const steps = brokerFulfillmentSteps({ [BROKER_FULFILLMENT_STEPS_FIELD]: many });
+  assert.equal(steps.length, BROKER_FULFILLMENT_STEPS_MAX);
+  assert.equal(steps[0], 'Step 1');
+});
+
+test('brokerFulfillmentSteps: unset / blank / non-string all yield [] — never a fallback sentence', () => {
+  assert.deepEqual(brokerFulfillmentSteps({}), []);
+  assert.deepEqual(brokerFulfillmentSteps(undefined), []);
+  assert.deepEqual(brokerFulfillmentSteps(null), []);
+  assert.deepEqual(brokerFulfillmentSteps({ [BROKER_FULFILLMENT_STEPS_FIELD]: '' }), []);
+  assert.deepEqual(brokerFulfillmentSteps({ [BROKER_FULFILLMENT_STEPS_FIELD]: '  \n \n ' }), []);
+  assert.deepEqual(brokerFulfillmentSteps({ [BROKER_FULFILLMENT_STEPS_FIELD]: 42 }), []);
+  assert.deepEqual(brokerFulfillmentSteps({ [BROKER_FULFILLMENT_STEPS_FIELD]: ['a'] }), []);
+});
+
+test('brokerAdditionalCosts: returns the trimmed text, and "" when the price is all-in', () => {
+  assert.equal(
+    brokerAdditionalCosts({ [BROKER_ADDITIONAL_COSTS_FIELD]: '  Processing is billed by the butcher.  ' }),
+    'Processing is billed by the butcher.',
+  );
+  // Multiline text survives intact (only the outer edges are trimmed).
+  assert.equal(
+    brokerAdditionalCosts({ [BROKER_ADDITIONAL_COSTS_FIELD]: 'Line one\nLine two' }),
+    'Line one\nLine two',
+  );
+  assert.equal(brokerAdditionalCosts({}), '');
+  assert.equal(brokerAdditionalCosts(undefined), '');
+  assert.equal(brokerAdditionalCosts({ [BROKER_ADDITIONAL_COSTS_FIELD]: '   ' }), '');
+  // Never the literal string "undefined" — that would print as buyer-facing copy.
+  assert.equal(brokerAdditionalCosts({ [BROKER_ADDITIONAL_COSTS_FIELD]: undefined }), '');
+});
+
+test('fulfillment fields do NOT affect eligibility or the money', () => {
+  // Disclosure is disclosure. A ranch with a third-party cost is still sellable,
+  // and the quote is byte-identical to the same ranch without one.
+  const plain = assertBrokerEligible(brokerRancher(), 'half');
+  const withExtras = assertBrokerEligible(
+    brokerRancher({
+      [BROKER_FULFILLMENT_STEPS_FIELD]: 'Call the ranch\nPick up your beef',
+      [BROKER_ADDITIONAL_COSTS_FIELD]: 'Processing runs about $450 on a half.',
+    }),
+    'half',
+  );
+  assert.ok(plain.ok && withExtras.ok);
+  assert.deepEqual(withExtras.quote, plain.quote);
 });
 
 // ---------------------------------------------------------------------------

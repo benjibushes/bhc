@@ -15,8 +15,16 @@
 //   • BUYER receipt says "deposit toward your share" and "balance paid to the
 //     ranch". It never mentions BHC keeping anything. The buyer's TOTAL is
 //     identical to buying direct, so the split is not their transaction.
+//
+// FULFILLMENT TRANSPARENCY (2026-08-03). Some represented ranches sell the
+// animal and hand the buyer to a separate processor who bills the buyer
+// DIRECTLY on top of the share price. Both emails now carry the ranch's own
+// next-steps script, and the buyer receipt restates any such third-party cost
+// beside the balance line — the same words the buyer read on the checkout page
+// before paying, so the receipt can never be the first place they learn of it.
+// Both are optional per ranch; blank renders NOTHING, not an empty heading.
 
-import { brokerBalanceNote } from '@/lib/brokerRail';
+import { brokerBalanceNote, brokerFulfillmentSteps, brokerAdditionalCosts } from '@/lib/brokerRail';
 
 /** Everything both emails need. Assembled by the settlement layer from the
  *  referral + rancher + consumer rows; no lookups happen in here. */
@@ -49,6 +57,19 @@ export interface BrokerOrderFacts {
   balanceCents: number;
   /** Rancher's own instruction for collecting the balance. */
   balanceNote: string;
+  /**
+   * The ranch's buyer-facing "what happens next" script, one step per entry.
+   * EMPTY IS NORMAL and must render nothing — not a heading with no list under
+   * it. Shown to the buyer as their next steps and echoed to the rancher as
+   * what the buyer was told, so both sides work from one script.
+   */
+  fulfillmentSteps: string[];
+  /**
+   * Money the buyer pays a THIRD PARTY on top of the share price — a processor's
+   * cut-and-wrap bill, a hauler. Distinct from `balanceNote`, which is money to
+   * the RANCH. '' means the share price is all-in; render nothing.
+   */
+  additionalCosts: string;
   orderRef: string;
 }
 
@@ -59,6 +80,11 @@ export function money(cents: number): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
+}
+
+/** Escape, then honour the line breaks a rancher typed into a multiline field. */
+function escMultiline(str: unknown): string {
+  return esc(str).replace(/\r?\n/g, '<br>');
 }
 
 function esc(str: unknown): string {
@@ -109,6 +135,11 @@ export function buildBrokerOrderFacts(args: {
     // a negative balance on a rancher's fulfillment sheet.
     balanceCents: Math.max(0, priceCents - depositCents),
     balanceNote: brokerBalanceNote(rancher),
+    // Read from the rancher record (not the referral): these describe how THIS
+    // ranch fulfills, and the receipt must repeat what the buyer already saw on
+    // the checkout page, which read the same two fields.
+    fulfillmentSteps: brokerFulfillmentSteps(rancher),
+    additionalCosts: brokerAdditionalCosts(rancher),
     orderRef: String(args.orderRef || '').trim(),
   };
 }
@@ -142,6 +173,48 @@ export function buildBrokerRancherEmail(f: BrokerOrderFacts): BuiltEmail {
         `<tr><td style="padding:4px 16px 4px 0;color:#6B4F3F;white-space:nowrap;">${esc(k)}</td><td style="padding:4px 0;font-weight:600;">${esc(v)}</td></tr>`,
     )
     .join('');
+
+  // WHAT THE BUYER WAS TOLD — the same script the buyer read at checkout and on
+  // their receipt, echoed here so ranch and buyer never contradict each other on
+  // the first call. Purely informational; it does not touch the money paragraph
+  // above it. Omitted entirely when this ranch set neither field.
+  const hasBuyerScript = f.fulfillmentSteps.length > 0 || !!f.additionalCosts;
+  const buyerScriptHtml = hasBuyerScript
+    ? `
+    <h2>What your buyer was told</h2>
+    ${
+      f.fulfillmentSteps.length
+        ? `<p class="muted">These are the next steps we showed them before they paid — work from the same script:</p>
+    <ol style="margin:12px 0;padding-left:20px;color:#3A3A3A;">${f.fulfillmentSteps
+      .map((s) => `<li style="margin:6px 0;">${esc(s)}</li>`)
+      .join('')}</ol>`
+        : ''
+    }
+    ${
+      f.additionalCosts
+        ? `<p class="muted"><strong>They were also shown this cost, which they pay a third party on top of the share price:</strong><br>${escMultiline(f.additionalCosts)}</p>`
+        : ''
+    }`
+    : '';
+
+  const buyerScriptText = hasBuyerScript
+    ? [
+        '',
+        'WHAT YOUR BUYER WAS TOLD',
+        ...(f.fulfillmentSteps.length
+          ? [
+              '  These are the next steps we showed them before they paid:',
+              ...f.fulfillmentSteps.map((s, i) => `  ${i + 1}. ${s}`),
+            ]
+          : []),
+        ...(f.additionalCosts
+          ? [
+              '  They were also shown this cost, which they pay a third party on top of the share price:',
+              ...f.additionalCosts.split(/\r?\n/).map((l) => `  ${l}`),
+            ]
+          : []),
+      ]
+    : [];
 
   const html = `<!DOCTYPE html>
 <html>
@@ -179,7 +252,7 @@ export function buildBrokerRancherEmail(f: BrokerOrderFacts): BuiltEmail {
 
     <h2>Collecting your balance</h2>
     <p>${esc(f.balanceNote)}</p>
-
+${buyerScriptHtml}
     <h2>What to do now</h2>
     <p>Contact the buyer to confirm timing, cut sheet, and pickup or delivery. Collect the ${money(f.balanceCents)} balance yourself at fulfillment. If anything about this order is wrong, reply to this email.</p>
 
@@ -203,6 +276,7 @@ export function buildBrokerRancherEmail(f: BrokerOrderFacts): BuiltEmail {
     '',
     'COLLECTING YOUR BALANCE',
     `  ${f.balanceNote}`,
+    ...buyerScriptText,
     '',
     `Order reference: ${f.orderRef}`,
   ].join('\n');
@@ -221,6 +295,25 @@ export function buildBrokerBuyerReceipt(f: BrokerOrderFacts): BuiltEmail {
     f.rancherEmail ? `<tr><td style="padding:4px 16px 4px 0;color:#6B4F3F;">Email</td><td style="padding:4px 0;font-weight:600;">${esc(f.rancherEmail)}</td></tr>` : '',
     f.rancherPhone ? `<tr><td style="padding:4px 16px 4px 0;color:#6B4F3F;">Phone</td><td style="padding:4px 0;font-weight:600;">${esc(f.rancherPhone)}</td></tr>` : '',
   ].join('');
+
+  // THIRD-PARTY COST — restated immediately under the balance line, because the
+  // buyer saw exactly this before they paid and the receipt must not shrink back
+  // to "balance due to the ranch" and nothing else. Blank renders no row at all.
+  const extraCostRow = f.additionalCosts
+    ? `<tr><td colspan="2" style="padding-top:12px;">
+          <div style="border-top:1px solid #A7A29A;padding-top:12px;">
+            <div style="font-weight:700;">Paid separately, not to the ranch</div>
+            <div style="color:#3A3A3A;margin-top:4px;">${escMultiline(f.additionalCosts)}</div>
+          </div>
+        </td></tr>`
+    : '';
+
+  const stepsHtml = f.fulfillmentSteps.length
+    ? `<h2>What happens next</h2>
+    <ol style="margin:12px 0;padding-left:20px;color:#3A3A3A;">${f.fulfillmentSteps
+      .map((s) => `<li style="margin:6px 0;">${esc(s)}</li>`)
+      .join('')}</ol>`
+    : '';
 
   const html = `<!DOCTYPE html>
 <html>
@@ -250,11 +343,22 @@ export function buildBrokerBuyerReceipt(f: BrokerOrderFacts): BuiltEmail {
         <tr><td>Total price for your share</td><td align="right">${money(f.priceCents)}</td></tr>
         <tr><td>Deposit paid today</td><td align="right">${money(f.depositCents)}</td></tr>
         <tr><td class="balance">Balance due to the ranch</td><td align="right" class="balance">${money(f.balanceCents)}</td></tr>
+        ${extraCostRow}
       </table>
     </div>
 
     <h2>Paying the balance</h2>
     <p>The remaining <strong>${money(f.balanceCents)}</strong> is paid <strong>directly to ${esc(f.ranchName)}</strong> — not to BuyHalfCow. ${esc(f.balanceNote)}</p>
+${
+  f.additionalCosts
+    ? `
+    <h2>The cost paid separately</h2>
+    <p>${escMultiline(f.additionalCosts)}</p>
+    <p class="muted">You pay that directly to the third party who does that work. It is separate from your ${money(f.depositCents)} deposit and from the ${money(f.balanceCents)} balance you pay ${esc(f.ranchName)}.</p>
+`
+    : ''
+}
+    ${stepsHtml}
 
     <h2>Your ranch</h2>
     <p>${esc(f.operatorName)} will be in touch to arrange your cut sheet and pickup or delivery. You can reach them directly:</p>
@@ -278,6 +382,17 @@ export function buildBrokerBuyerReceipt(f: BrokerOrderFacts): BuiltEmail {
     'PAYING THE BALANCE',
     `  The remaining ${money(f.balanceCents)} is paid directly to ${f.ranchName}, not to BuyHalfCow.`,
     `  ${f.balanceNote}`,
+    ...(f.additionalCosts
+      ? [
+          '',
+          'THE COST PAID SEPARATELY',
+          ...f.additionalCosts.split(/\r?\n/).map((l) => `  ${l}`),
+          `  You pay that directly to the third party who does that work. It is separate from your ${money(f.depositCents)} deposit and from the ${money(f.balanceCents)} balance you pay ${f.ranchName}.`,
+        ]
+      : []),
+    ...(f.fulfillmentSteps.length
+      ? ['', 'WHAT HAPPENS NEXT', ...f.fulfillmentSteps.map((s, i) => `  ${i + 1}. ${s}`)]
+      : []),
     '',
     'YOUR RANCH',
     `  ${f.operatorName}`,

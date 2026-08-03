@@ -21,6 +21,8 @@ import { recordBrokerDeposit } from '@/lib/contracts/payments';
 import {
   assertBrokerEligible,
   brokerBalanceNote,
+  brokerFulfillmentSteps,
+  brokerAdditionalCosts,
   referralRailForRancher,
   CUT_LABELS,
   type Cut,
@@ -332,6 +334,11 @@ export async function GET(req: Request) {
     },
     rail: 'broker',
     balanceNote: brokerBalanceNote(rancher),
+    // Fulfillment transparency, projected from the SAME already-fetched rancher
+    // record — no second round trip. Both are commonly empty ([] / ''), and the
+    // page renders nothing at all in that case.
+    fulfillmentSteps: brokerFulfillmentSteps(rancher),
+    additionalCosts: brokerAdditionalCosts(rancher),
     cuts,
   });
 }
