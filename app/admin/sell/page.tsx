@@ -7,14 +7,31 @@
 //   2. LEFT column  — SHARES: deposit-capable ranchers serving that state
 //      (in-state first, then nationwide shippers). tap a tier → mints the
 //      1-tap deposit link (/r/d/<token>, the campaign-reserve rail).
+//      Underneath, a SEPARATE, differently-labeled group: REPRESENTED ranches
+//      (the broker rail) → mints /r/b/<token>. See the money note below.
 //   3. RIGHT column — SMALLER TICKET: every sellable marketplace product
 //      (all ship nationwide). tap → mints a Stripe checkout link via the
 //      existing admin rail (POST /api/checkout/product).
 //   4. result bar: the link + copy + a prefilled text in Ben's voice.
 //
-// Everything money-side is reused rails: campaign-reserve tokens (referral-
-// scoped grant, never a member session) and the operator product checkout.
-// This page is just the phone-call cockpit gluing them together.
+// THREE MONEY MODELS, NEVER BLURRED (docs/BUSINESS-MODEL.md)
+// ----------------------------------------------------------
+// The two share groups are rendered apart, labeled apart, and post DIFFERENT
+// parameters, because they pay out differently:
+//   • CONNECT ("shares")     — posts `rancherSlug`. The buyer pays the deposit
+//     plus BHC's fee ON TOP; the rancher keeps 100% of the price.
+//   • BROKER ("represented") — posts `rancherId` (a represented ranch has no
+//     slug by design). The buyer's deposit goes 100% to BHC and IS the whole
+//     commission; the ranch collects price − deposit direct.
+// The mint endpoint refuses both parameters at once rather than guessing, so
+// the operator's rail choice here must always be an explicit tap, never
+// inferred. The per-cut "you keep / ranch collects" lines come straight from
+// the rail's own quote (lib/brokerRail via /api/admin/sell-options) — nothing
+// on this page re-derives money.
+//
+// Everything money-side is reused rails: campaign/broker reserve tokens
+// (referral-scoped grant, never a member session) and the operator product
+// checkout. This page is just the phone-call cockpit gluing them together.
 
 import { useEffect, useState } from 'react';
 import { US_STATES } from '@/lib/states';
@@ -23,8 +40,23 @@ interface Tier { cut: string; label: string; price: number; deposit: number }
 interface SellRancher { slug: string; name: string; state: string; inState: boolean; nationwide: boolean; tiers: Tier[] }
 interface SellProduct { id: string; name: string; rancher: string; price: number; depositStyle: boolean; priceRange: string; shelfStable: boolean }
 
+// BROKER rail. `sellable:false` cuts are rendered DISABLED with `reason` —
+// never a button that 400s. The deposit is never derived on this rail, so a
+// cut missing a price OR a deposit simply is not sellable yet.
+interface BrokerCut {
+  cut: string;
+  label: string;
+  sellable: boolean;
+  price: number;
+  deposit: number;
+  bhcKeeps: number;
+  ranchCollects: number;
+  reason: string;
+}
+interface BrokerRancher { id: string; name: string; state: string; inState: boolean; cuts: BrokerCut[] }
+
 interface SellResult {
-  kind: 'deposit' | 'product';
+  kind: 'deposit' | 'broker' | 'product';
   url: string;
   headline: string; // "half share — Foodstead · $600 deposit"
   sms: string;
@@ -47,6 +79,7 @@ export default function AdminSellPage() {
   const [buyerName, setBuyerName] = useState('');
 
   const [ranchers, setRanchers] = useState<SellRancher[]>([]);
+  const [brokerRanchers, setBrokerRanchers] = useState<BrokerRancher[]>([]);
   const [products, setProducts] = useState<SellProduct[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadErr, setLoadErr] = useState('');
@@ -95,6 +128,7 @@ export default function AdminSellPage() {
         if (!res.ok) throw new Error(data?.error || `load failed (${res.status})`);
         if (cancelled) return;
         setRanchers(data.ranchers || []);
+        setBrokerRanchers(data.brokerRanchers || []);
         setProducts(data.products || []);
       } catch (e: any) {
         if (!cancelled) setLoadErr(e?.message || 'could not load options');
@@ -135,6 +169,50 @@ export default function AdminSellPage() {
       });
     } catch (e: any) {
       setGenErr(e?.message || 'could not mint the deposit link');
+    } finally {
+      setMinting('');
+    }
+  }
+
+  // BROKER rail mint. Posts `rancherId` and NEVER `rancherSlug` — a represented
+  // ranch has no slug, and the two parameters select different money models
+  // (the endpoint refuses both at once rather than guessing).
+  async function sendBrokerDeposit(r: BrokerRancher, c: BrokerCut) {
+    if (!ready) { setGenErr('enter the buyer email first.'); return; }
+    const key = `broker-${r.id}-${c.cut}`;
+    setMinting(key);
+    setGenErr('');
+    setCopied(false);
+    try {
+      const res = await fetch('/api/admin/sell-links', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rancherId: r.id,
+          cut: c.cut,
+          buyerEmail: buyerEmail.trim(),
+          buyerName: buyerName.trim(),
+          buyerState,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      // Surface the API's refusal VERBATIM — it names the ranch and the exact
+      // missing number, which is what the operator needs to go fix.
+      if (!res.ok) throw new Error(data?.error || `failed (${res.status})`);
+      setResult({
+        kind: 'broker',
+        url: data.url,
+        // Operator money truth, straight off the response — the deposit IS the
+        // commission on this rail, so `bhcTake` and `rancherNets` are stated
+        // rather than re-derived here.
+        headline: `${data.cutLabel} — ${data.rancher} (represented) · ${money(data.deposit)} deposit · you keep ${money(data.bhcTake ?? data.deposit)} · ranch collects ${money(data.rancherNets ?? data.tierPrice - data.deposit)}`,
+        // Buyer-facing copy: the deposit is theirs toward the share and the
+        // balance is settled with the ranch. Their TOTAL is the same either
+        // way, so how BHC and the ranch split it is not stated to them.
+        sms: `Hey${first ? ' ' + first : ''} — Ben from BuyHalfCow. Here's your link for the ${data.cutLabel} from ${data.rancher}: ${data.url} — ${money(data.deposit)} today holds your share (${money(data.tierPrice)} total), and you settle the ${money(data.tierPrice - data.deposit)} balance directly with the ranch.`,
+      });
+    } catch (e: any) {
+      setGenErr(e?.message || 'could not mint the represented-ranch link');
     } finally {
       setMinting('');
     }
@@ -365,6 +443,76 @@ export default function AdminSellPage() {
               ),
             )}
             {ranchers.length === 0 && <p className="text-sm text-saddle">no deposit-capable ranchers found.</p>}
+
+            {/* ── REPRESENTED RANCHES (broker rail) ──────────────────────────
+                A DIFFERENT money model, so a visually separate group with its
+                own heading, its own badge and its own money lines. These
+                ranches are not on Connect, have no public page and no slug —
+                they are deliberately invisible to the marketplace, the map and
+                routing, which is why they cannot appear in the list above. The
+                operator sells them by phone; this is the only place to do it. */}
+            {brokerRanchers.length > 0 && (
+              <div className="mt-8 border-l-4 border-tallow pl-4">
+                <h3 className="font-serif text-lg mb-1">represented ranches — broker links</h3>
+                <p className="text-[12px] text-saddle mb-3 max-w-md">
+                  different rail: the deposit is <strong>yours in full</strong> (it is the whole
+                  commission), and the ranch collects the rest directly from the buyer. the
+                  buyer&rsquo;s total is the same either way. deposits are never derived here — a
+                  cut with no price or no deposit set is not sellable yet.
+                </p>
+                <div className="space-y-2">
+                  {brokerRanchers.map((r) => (
+                    <div key={r.id} className="border border-tallow bg-bone p-3">
+                      <div className="flex items-baseline gap-2 mb-2 flex-wrap">
+                        <span className="font-serif text-[15px]">{r.name}</span>
+                        {r.state && <span className="text-xs text-saddle">{r.state}</span>}
+                        <span className="text-[10px] uppercase tracking-wider border border-tallow text-saddle px-1.5 py-0.5">
+                          represented ranch
+                        </span>
+                        {r.inState && <span className="text-[10px] uppercase tracking-wider text-sage">in their state</span>}
+                      </div>
+                      <div className="space-y-1.5">
+                        {r.cuts.map((c) =>
+                          c.sellable ? (
+                            <div key={c.cut} className="flex items-center gap-3 flex-wrap border-t border-dust pt-1.5">
+                              <div className="flex-1 min-w-[170px]">
+                                <div className="text-[13px]">
+                                  {c.label} · {money(c.price)} · <strong>{money(c.deposit)} deposit</strong>
+                                </div>
+                                <div className="text-[11.5px] text-saddle tabular-nums">
+                                  you keep {money(c.bhcKeeps)} · ranch collects {money(c.ranchCollects)}
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => sendBrokerDeposit(r, c)}
+                                disabled={!ready || minting === `broker-${r.id}-${c.cut}`}
+                                title={ready ? '' : 'enter buyer email first'}
+                                className="px-3 py-2 border border-charcoal text-xs cursor-pointer transition-base hover:bg-charcoal hover:text-bone disabled:opacity-40 disabled:cursor-not-allowed"
+                              >
+                                {minting === `broker-${r.id}-${c.cut}` ? 'minting…' : 'broker link →'}
+                              </button>
+                            </div>
+                          ) : (
+                            <div key={c.cut} className="flex items-center gap-3 flex-wrap border-t border-dust pt-1.5 opacity-70">
+                              <div className="flex-1 min-w-[170px]">
+                                <div className="text-[13px] text-saddle">{c.label}</div>
+                                <div className="text-[11.5px] text-weathered">{c.reason}</div>
+                              </div>
+                              <button
+                                disabled
+                                className="px-3 py-2 border border-dust text-xs text-saddle cursor-not-allowed"
+                              >
+                                not sellable
+                              </button>
+                            </div>
+                          ),
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </section>
 
           {/* ── SMALLER TICKET ── */}
