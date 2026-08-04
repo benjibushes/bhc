@@ -69,8 +69,19 @@ export interface Customer {
   // The referral ids backing this customer, newest-first — so the UI can link
   // to the buyer's deal(s)/thread.
   referralIds: string[];
-  // The single newest referral id (the one to jump to on click).
+  // The single newest referral id (the one to jump to on click). '' for a
+  // customer known only from shop orders (no referral exists yet).
   latestReferralId: string;
+  // ── SHOP-CUSTOMER DEALS (2026-08-03) — optional shop-order annotations ──
+  // Set by mergeOrderBuyersIntoCustomers when this buyer has Rancher Orders
+  // rows. A customer with orders but NO referrals is the "Track as deal"
+  // case: she bought through the ranch's shop/site and has no Deals-tab row.
+  orderCount?: number;
+  latestOrderId?: string;
+  latestOrderRef?: string;
+  // ISO date of the newest order — display + recency-sort fallback for
+  // order-only customers (whose lastDealDate is '').
+  lastOrderDate?: string;
 }
 
 // Normalize a buyer identity key. Email is the strongest signal; fall back to
@@ -148,6 +159,103 @@ export function groupReferralsByBuyer(referrals: CrmReferral[]): Customer[] {
     );
   });
   return customers;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// 1b. SHOP-CUSTOMER DEALS (2026-08-03) — fold Rancher Orders buyers into the
+// customers list.
+//
+// A buyer who purchased through the ranch's own shop/site writes a Rancher
+// Orders row, never a Referral — so she was invisible to the CRM grouping
+// above and the rancher had no row to promote into a trackable deal. This
+// merges order buyers into the SAME Customer list: an existing customer
+// (matched by email, else name — orders carry no phone) gets order
+// annotations; a buyer with no referrals becomes a new order-only Customer
+// row (referralIds [], latestReferralId '') that the dashboard can offer
+// "Track as deal" on. Pure; refunded orders are skipped (not a customer to
+// chase); money aggregates (lifetimeValue) stay referral-only so a promoted
+// + closed-won deal never double-counts the same sale.
+// ──────────────────────────────────────────────────────────────────────────
+
+export interface CrmOrder {
+  id: string;
+  buyerName?: string;
+  buyerEmail?: string;
+  orderedAt?: string;
+  /** Order Ref, e.g. "Quarter Beef — Test Buyer" */
+  ref?: string;
+  status?: string;
+}
+
+// Identity key for an order buyer — SAME keyspace as buyerKey so merges with
+// referral-derived customers line up (email wins, orders have no phone).
+export function orderBuyerKey(o: CrmOrder): string {
+  const email = String(o.buyerEmail || '').trim().toLowerCase();
+  if (email) return `e:${email}`;
+  const name = String(o.buyerName || '').trim().toLowerCase();
+  if (name) return `n:${name}`;
+  return '';
+}
+
+export function mergeOrderBuyersIntoCustomers(
+  customers: Customer[],
+  orders: CrmOrder[],
+): Customer[] {
+  const merged: Customer[] = customers.map((c) => ({ ...c }));
+  const byKey = new Map<string, Customer>(merged.map((c) => [c.key, c]));
+
+  // Newest order first so latestOrder* wins deterministically.
+  const usable = (orders || [])
+    .filter((o) => String(o?.status || '').trim() !== 'Refunded')
+    .sort((a, b) => String(b?.orderedAt || '').localeCompare(String(a?.orderedAt || '')));
+
+  for (const o of usable) {
+    const key = orderBuyerKey(o);
+    if (!key) continue; // identity-less order — not a customer row
+    let c = byKey.get(key);
+    if (!c) {
+      c = {
+        key,
+        name:
+          String(o.buyerName || '').trim() ||
+          String(o.buyerEmail || '').trim().toLowerCase() ||
+          'unknown buyer',
+        email: String(o.buyerEmail || '').trim().toLowerCase(),
+        phone: '',
+        state: '',
+        totalDeals: 0,
+        closedWonDeals: 0,
+        lifetimeValue: 0,
+        isRepeat: false,
+        lastDealDate: '',
+        referralIds: [],
+        latestReferralId: '',
+        orderCount: 0,
+      };
+      merged.push(c);
+      byKey.set(key, c);
+    }
+    c.orderCount = (c.orderCount || 0) + 1;
+    if (!c.latestOrderId) {
+      c.latestOrderId = o.id;
+      c.latestOrderRef = String(o.ref || '');
+      const t = new Date(String(o.orderedAt || '')).getTime();
+      c.lastOrderDate = isNaN(t) || t <= 0 ? '' : new Date(t).toISOString();
+    }
+  }
+
+  // Same comparator as groupReferralsByBuyer, with order recency backing up
+  // lastDealDate so a fresh shop buyer doesn't sink to the bottom.
+  const recencyMs = (c: Customer): number => {
+    const deal = new Date(c.lastDealDate || 0).getTime();
+    const order = new Date(c.lastOrderDate || 0).getTime();
+    return Math.max(isNaN(deal) ? 0 : deal, isNaN(order) ? 0 : order);
+  };
+  merged.sort((a, b) => {
+    if (b.lifetimeValue !== a.lifetimeValue) return b.lifetimeValue - a.lifetimeValue;
+    return recencyMs(b) - recencyMs(a);
+  });
+  return merged;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
