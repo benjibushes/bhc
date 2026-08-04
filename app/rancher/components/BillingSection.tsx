@@ -276,7 +276,12 @@ export default function BillingSection({ justOnboarded }: { justOnboarded: boole
     return <p className="text-saddle text-sm py-4">Loading billing…</p>;
   }
   if (error || !data) {
-    return <p className="text-sm py-4">Error: {error || 'No data'}</p>;
+    return (
+      <div className="border border-weathered/40 bg-weathered/10 p-4 text-sm text-weathered">
+        We couldn&rsquo;t load your billing details just now{error ? ` (${error})` : ''} — refresh in a
+        minute. Your money isn&rsquo;t affected.
+      </div>
+    );
   }
 
   // Wave 1A (2026-08-01): one rancher money format (lib/formatUSD) — whole
@@ -358,33 +363,33 @@ export default function BillingSection({ justOnboarded }: { justOnboarded: boole
             <table className="w-full text-sm">
               <thead className="border-b border-divider">
                 <tr className="text-left text-saddle text-xs uppercase tracking-wider">
-                  <th className="pb-2 font-normal">Deal</th>
-                  <th className="pb-2 font-normal">Closed</th>
-                  <th className="pb-2 font-normal text-right">Sale</th>
-                  <th className="pb-2 font-normal text-right">Commission</th>
+                  <th className="pb-2 pr-4 font-normal">Deal</th>
+                  <th className="pb-2 pr-4 font-normal">Closed</th>
+                  <th className="pb-2 pr-4 font-normal text-right">Sale</th>
+                  <th className="pb-2 pr-4 font-normal text-right">Commission</th>
                   <th className="pb-2 font-normal"></th>
                 </tr>
               </thead>
               <tbody>
                 {data.commissionOwed.rows.map((row) => (
                   <tr key={row.referralId} className="border-b border-divider last:border-0">
-                    <td className="py-2">
+                    <td className="py-2 pr-4">
                       {row.buyerName}
                       <span className="text-saddle text-xs"> · {row.orderType}</span>
                     </td>
-                    <td className="py-2 text-saddle">
+                    <td className="py-2 pr-4 text-saddle">
                       {fmtDate(row.closedAt)}
                       {row.ageDays > 0 && (
                         <span className="text-xs"> ({row.ageDays}d ago)</span>
                       )}
                     </td>
-                    <td className="py-2 text-right tabular-nums text-saddle">{formatUSD(row.saleAmount)}</td>
-                    <td className="py-2 text-right tabular-nums font-semibold">{formatUSD(row.commissionDue)}</td>
+                    <td className="py-2 pr-4 text-right tabular-nums text-saddle">{formatUSD(row.saleAmount)}</td>
+                    <td className="py-2 pr-4 text-right tabular-nums font-semibold">{formatUSD(row.commissionDue)}</td>
                     <td className="py-2 text-right">
                       <button
                         onClick={() => payCommission(row)}
                         disabled={payingRef !== null}
-                        className="bg-charcoal text-bone px-4 py-1.5 uppercase tracking-wider text-xs disabled:opacity-50"
+                        className="bg-charcoal text-bone px-4 py-1.5 min-h-[44px] uppercase tracking-wider text-xs disabled:opacity-50"
                       >
                         {payingRef === row.referralId ? 'Opening…' : 'Pay →'}
                       </button>
@@ -630,22 +635,25 @@ export default function BillingSection({ justOnboarded }: { justOnboarded: boole
              column is right-aligned tabular-nums so amounts line up. */
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
+              {/* Polish pass 2026-08-04: the right-aligned Amount column sat
+                  flush against Status with zero gutter — "$610" + "In Transit"
+                  rendered as "$610In Transit". pr-4 gutters on every column. */}
               <thead className="border-b border-divider">
                 <tr className="text-left text-saddle text-xs uppercase tracking-wider">
-                  <th className="pb-2 font-normal">Date</th>
-                  <th className="pb-2 font-normal text-right">Amount</th>
-                  <th className="pb-2 font-normal">Status</th>
-                  <th className="pb-2 font-normal">Arrives</th>
+                  <th className="pb-2 pr-4 font-normal">Date</th>
+                  <th className="pb-2 pr-4 font-normal text-right">Amount</th>
+                  <th className="pb-2 pr-4 font-normal">Status</th>
+                  <th className="pb-2 pr-4 font-normal">Arrives</th>
                   <th className="pb-2 font-normal">Bank</th>
                 </tr>
               </thead>
               <tbody>
                 {data.stripePayouts.map((p) => (
                   <tr key={p.id} className="border-b border-divider last:border-0">
-                    <td className="py-2">{fmtDate(p.createdISO)}</td>
-                    <td className="py-2 text-right tabular-nums">{fmtCurrency(p.amountCents)}</td>
-                    <td className="py-2 capitalize">{p.status.replace(/_/g, ' ')}</td>
-                    <td className="py-2">{fmtDate(p.arrivalDateISO)}</td>
+                    <td className="py-2 pr-4">{fmtDate(p.createdISO)}</td>
+                    <td className="py-2 pr-4 text-right tabular-nums">{fmtCurrency(p.amountCents)}</td>
+                    <td className="py-2 pr-4 capitalize">{p.status.replace(/_/g, ' ')}</td>
+                    <td className="py-2 pr-4">{fmtDate(p.arrivalDateISO)}</td>
                     <td className="py-2 text-saddle text-xs">{p.destinationLast4 ? `••${p.destinationLast4}` : '—'}</td>
                   </tr>
                 ))}
@@ -682,7 +690,7 @@ export default function BillingSection({ justOnboarded }: { justOnboarded: boole
                     if (j?.invoiceUrl) window.location.href = j.invoiceUrl;
                     else setPurchaseErr(j?.error || 'Purchase failed');
                   }}
-                  className="text-saddle text-sm underline hover:text-charcoal"
+                  className="text-saddle text-sm underline hover:text-charcoal inline-flex items-center min-h-[44px]"
                 >
                   Purchase →
                 </button>
@@ -704,18 +712,18 @@ export default function BillingSection({ justOnboarded }: { justOnboarded: boole
                 <table className="w-full text-sm">
                   <thead className="border-b border-divider">
                     <tr className="text-left text-saddle text-xs uppercase tracking-wider">
-                      <th className="pb-2 font-normal">Date</th>
-                      <th className="pb-2 font-normal">Type</th>
-                      <th className="pb-2 font-normal text-right">Amount</th>
+                      <th className="pb-2 pr-4 font-normal">Date</th>
+                      <th className="pb-2 pr-4 font-normal">Type</th>
+                      <th className="pb-2 pr-4 font-normal text-right">Amount</th>
                       <th className="pb-2 font-normal">Status</th>
                     </tr>
                   </thead>
                   <tbody>
                     {data.addOns.map((a) => (
                       <tr key={a.id} className="border-b border-divider last:border-0">
-                        <td className="py-2">{fmtDate(a.purchasedAt)}</td>
-                        <td className="py-2">{a.type}</td>
-                        <td className="py-2 text-right tabular-nums">{fmtCurrency(a.amountCents)}</td>
+                        <td className="py-2 pr-4">{fmtDate(a.purchasedAt)}</td>
+                        <td className="py-2 pr-4">{a.type}</td>
+                        <td className="py-2 pr-4 text-right tabular-nums">{fmtCurrency(a.amountCents)}</td>
                         <td className="py-2 capitalize">{a.status}</td>
                       </tr>
                     ))}

@@ -581,7 +581,9 @@ export default function ProductsTab({
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <div>
-          <h2 className="font-serif text-2xl">Products</h2>
+          {/* lowercase to match every other tab heading (deals / customers /
+              earnings / my page) — this was the one capitalized outlier. */}
+          <h2 className="font-serif text-2xl">products</h2>
           <p className="text-sm text-saddle mt-1 max-w-xl">
             list a product once — it goes live on{' '}
             <a href="/shop" target="_blank" className="underline hover:text-charcoal">
@@ -1034,17 +1036,17 @@ export default function ProductsTab({
               <div className="flex items-baseline gap-2 flex-wrap">
                 <span className="font-serif text-[15px]">{o.productName}</span>
                 {o.depositStyle && (
-                  <span className="text-[10px] uppercase tracking-wider bg-rust text-bone px-1.5 py-0.5">
+                  <span className="text-[11px] uppercase tracking-wider bg-rust text-bone px-1.5 py-0.5">
                     deposit — confirm size + balance first
                   </span>
                 )}
                 {o.pickup && (
-                  <span className="text-[10px] uppercase tracking-wider bg-saddle text-bone px-1.5 py-0.5">
+                  <span className="text-[11px] uppercase tracking-wider bg-saddle text-bone px-1.5 py-0.5">
                     pickup
                   </span>
                 )}
                 <span
-                  className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 ${
+                  className={`text-[11px] uppercase tracking-wider px-1.5 py-0.5 ${
                     o.status === 'Shipped'
                       ? 'bg-sage text-bone'
                       : o.status === 'Refunded' || o.status === 'Cancelled'
@@ -1078,15 +1080,17 @@ export default function ProductsTab({
                       <>
                         <input
                           type="text"
-                          placeholder="carrier (UPS, FedEx, USPS…)"
+                          placeholder="carrier — UPS, FedEx…"
+                          aria-label="Shipping carrier"
                           value={carrierDraft[o.id] || ''}
                           onChange={(e) => setCarrierDraft((d) => ({ ...d, [o.id]: e.target.value }))}
                           maxLength={60}
-                          className="w-[170px] p-2.5 border border-dust bg-bone-warm text-sm"
+                          className="w-[180px] p-2.5 border border-dust bg-bone-warm text-sm"
                         />
                         <input
                           type="text"
                           placeholder="tracking number"
+                          aria-label="Tracking number"
                           value={trackingDraft[o.id] || ''}
                           onChange={(e) => setTrackingDraft((d) => ({ ...d, [o.id]: e.target.value }))}
                           className="flex-1 min-w-[160px] p-2.5 border border-dust bg-bone-warm text-sm"
@@ -1287,7 +1291,7 @@ export default function ProductsTab({
                   <a
                     href={`/shop/${p.id}`}
                     target="_blank"
-                    className="text-xs underline text-saddle hover:text-charcoal px-1 py-2"
+                    className="text-xs underline text-saddle hover:text-charcoal px-1 py-2 min-h-[44px] inline-flex items-center"
                   >
                     view
                   </a>
@@ -1324,7 +1328,7 @@ export default function ProductsTab({
                   <button
                     onClick={() => saveStock(p)}
                     disabled={stockSavingId === p.id || (stockDraft[p.id] ?? '') === ''}
-                    className="text-xs uppercase tracking-wider border border-dust px-2 py-2 hover:bg-charcoal hover:text-bone transition-colors disabled:opacity-40"
+                    className="text-xs uppercase tracking-wider border border-dust px-2 py-2 min-h-[44px] hover:bg-charcoal hover:text-bone transition-colors disabled:opacity-40"
                   >
                     {stockSavingId === p.id ? '…' : 'set'}
                   </button>
@@ -1333,7 +1337,7 @@ export default function ProductsTab({
                   onClick={() => startEdit(p)}
                   disabled={p.depositStyle}
                   title={p.depositStyle ? 'deposit-style product — text ben to change details or pricing; update stock with the box to the left' : ''}
-                  className="text-xs uppercase tracking-wider border border-dust px-3 py-2 hover:bg-charcoal hover:text-bone transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="text-xs uppercase tracking-wider border border-dust px-3 py-2 min-h-[44px] hover:bg-charcoal hover:text-bone transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   edit
                 </button>
@@ -1348,7 +1352,7 @@ export default function ProductsTab({
                   <button
                     onClick={() => startDuplicate(p)}
                     title="start a new product prefilled from this one (photo carries over)"
-                    className="text-xs uppercase tracking-wider border border-dust px-3 py-2 hover:bg-charcoal hover:text-bone transition-colors"
+                    className="text-xs uppercase tracking-wider border border-dust px-3 py-2 min-h-[44px] hover:bg-charcoal hover:text-bone transition-colors"
                   >
                     duplicate
                   </button>
@@ -1357,7 +1361,7 @@ export default function ProductsTab({
                   onClick={() => toggleActive(p)}
                   disabled={togglingId === p.id}
                   title={p.active ? 'hide from the marketplace and your ranch page (buyers can\'t see or buy it)' : ''}
-                  className="text-xs uppercase tracking-wider border border-dust px-3 py-2 hover:bg-charcoal hover:text-bone transition-colors disabled:opacity-50"
+                  className="text-xs uppercase tracking-wider border border-dust px-3 py-2 min-h-[44px] hover:bg-charcoal hover:text-bone transition-colors disabled:opacity-50"
                 >
                   {togglingId === p.id ? '…' : p.active ? 'hide' : 'show'}
                 </button>
@@ -1366,7 +1370,7 @@ export default function ProductsTab({
                     onClick={() => deleteProduct(p)}
                     disabled={togglingId === p.id}
                     title="delete for good (a hidden product keeps its info — delete can't be undone)"
-                    className="text-xs uppercase tracking-wider border border-weathered/40 text-weathered px-3 py-2 hover:bg-weathered hover:text-bone transition-colors disabled:opacity-50"
+                    className="text-xs uppercase tracking-wider border border-weathered/40 text-weathered px-3 py-2 min-h-[44px] hover:bg-weathered hover:text-bone transition-colors disabled:opacity-50"
                   >
                     delete
                   </button>

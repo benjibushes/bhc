@@ -352,7 +352,7 @@ export default function AdminSellPage() {
           </span>
           {ctx.consumer?.state && <span className="text-saddle">{ctx.consumer.state}</span>}
           {ctx.consumer?.stage && (
-            <span className="text-[10px] uppercase tracking-wider border border-dust px-1.5 py-0.5 text-saddle">
+            <span className="text-[11px] uppercase tracking-wider border border-dust px-1.5 py-0.5 text-saddle">
               {ctx.consumer.stage}
             </span>
           )}
@@ -375,6 +375,12 @@ export default function AdminSellPage() {
       )}
       {ctx && !ctx.found && ready && (
         <p className="text-xs text-saddle mb-6">new lead — first touch. the link you send creates their record.</p>
+      )}
+
+      {!ready && (
+        <p className="text-xs text-saddle mb-4">
+          enter the buyer&rsquo;s email above to unlock the tap-to-send links below.
+        </p>
       )}
 
       {/* ── Result bar — pinned above the columns so it's always visible ── */}
@@ -419,7 +425,7 @@ export default function AdminSellPage() {
                         <div className="flex items-baseline gap-2 mb-2">
                           <span className="font-serif text-[15px]">{r.name}</span>
                           <span className="text-xs text-saddle">{r.state}</span>
-                          {r.nationwide && <span className="text-[10px] uppercase tracking-wider text-sage">ships nationwide</span>}
+                          {r.nationwide && <span className="text-[11px] uppercase tracking-wider text-sage">ships nationwide</span>}
                         </div>
                         <div className="flex gap-2 flex-wrap">
                           {r.tiers.map((t) => (
@@ -428,7 +434,7 @@ export default function AdminSellPage() {
                               onClick={() => sendDeposit(r, t)}
                               disabled={!ready || minting === `${r.slug}-${t.cut}`}
                               title={ready ? '' : 'enter buyer email first'}
-                              className="px-3 py-2 border border-charcoal text-xs cursor-pointer transition-base hover:bg-charcoal hover:text-bone disabled:opacity-40 disabled:cursor-not-allowed"
+                              className="px-3 py-2 min-h-[44px] border border-charcoal text-xs cursor-pointer transition-base hover:bg-charcoal hover:text-bone disabled:opacity-40 disabled:cursor-not-allowed"
                             >
                               {minting === `${r.slug}-${t.cut}` ? 'minting…' : (
                                 <>{t.label} · {money(t.price)} → <strong>{money(t.deposit)} dep</strong></>
@@ -466,10 +472,10 @@ export default function AdminSellPage() {
                       <div className="flex items-baseline gap-2 mb-2 flex-wrap">
                         <span className="font-serif text-[15px]">{r.name}</span>
                         {r.state && <span className="text-xs text-saddle">{r.state}</span>}
-                        <span className="text-[10px] uppercase tracking-wider border border-tallow text-saddle px-1.5 py-0.5">
+                        <span className="text-[11px] uppercase tracking-wider border border-tallow text-saddle px-1.5 py-0.5">
                           represented ranch
                         </span>
-                        {r.inState && <span className="text-[10px] uppercase tracking-wider text-sage">in their state</span>}
+                        {r.inState && <span className="text-[11px] uppercase tracking-wider text-sage">in their state</span>}
                       </div>
                       <div className="space-y-1.5">
                         {r.cuts.map((c) =>
@@ -479,7 +485,7 @@ export default function AdminSellPage() {
                                 <div className="text-[13px]">
                                   {c.label} · {money(c.price)} · <strong>{money(c.deposit)} deposit</strong>
                                 </div>
-                                <div className="text-[11.5px] text-saddle tabular-nums">
+                                <div className="text-xs text-saddle tabular-nums">
                                   you keep {money(c.bhcKeeps)} · ranch collects {money(c.ranchCollects)}
                                 </div>
                               </div>
@@ -487,7 +493,7 @@ export default function AdminSellPage() {
                                 onClick={() => sendBrokerDeposit(r, c)}
                                 disabled={!ready || minting === `broker-${r.id}-${c.cut}`}
                                 title={ready ? '' : 'enter buyer email first'}
-                                className="px-3 py-2 border border-charcoal text-xs cursor-pointer transition-base hover:bg-charcoal hover:text-bone disabled:opacity-40 disabled:cursor-not-allowed"
+                                className="px-3 py-2 min-h-[44px] border border-charcoal text-xs cursor-pointer transition-base hover:bg-charcoal hover:text-bone disabled:opacity-40 disabled:cursor-not-allowed"
                               >
                                 {minting === `broker-${r.id}-${c.cut}` ? 'minting…' : 'broker link →'}
                               </button>
@@ -496,11 +502,11 @@ export default function AdminSellPage() {
                             <div key={c.cut} className="flex items-center gap-3 flex-wrap border-t border-dust pt-1.5 opacity-70">
                               <div className="flex-1 min-w-[170px]">
                                 <div className="text-[13px] text-saddle">{c.label}</div>
-                                <div className="text-[11.5px] text-weathered">{c.reason}</div>
+                                <div className="text-xs text-weathered">{c.reason}</div>
                               </div>
                               <button
                                 disabled
-                                className="px-3 py-2 border border-dust text-xs text-saddle cursor-not-allowed"
+                                className="px-3 py-2 min-h-[44px] border border-dust text-xs text-saddle cursor-not-allowed"
                               >
                                 not sellable
                               </button>
@@ -536,7 +542,7 @@ export default function AdminSellPage() {
                     onClick={() => sendProduct(p)}
                     disabled={!ready || minting === p.id}
                     title={ready ? '' : 'enter buyer email first'}
-                    className="px-3.5 py-2 bg-charcoal text-bone text-xs uppercase tracking-wider cursor-pointer transition-base hover:bg-saddle disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="px-3.5 py-2 min-h-[44px] bg-charcoal text-bone text-xs uppercase tracking-wider cursor-pointer transition-base hover:bg-saddle disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     {minting === p.id ? 'minting…' : p.depositStyle ? 'reserve link →' : 'checkout link →'}
                   </button>
@@ -582,7 +588,7 @@ export default function AdminSellPage() {
                 </span>
                 <button
                   onClick={() => copyPitch(r.state, r.pitch)}
-                  className="ml-auto px-3 py-1.5 border border-dust text-[11.5px] uppercase tracking-wider cursor-pointer transition-base hover:bg-charcoal hover:text-bone"
+                  className="ml-auto px-3 py-1.5 min-h-[44px] border border-dust text-xs uppercase tracking-wider cursor-pointer transition-base hover:bg-charcoal hover:text-bone"
                 >
                   {pitchCopied === r.state ? 'copied ✓' : 'copy pitch'}
                 </button>

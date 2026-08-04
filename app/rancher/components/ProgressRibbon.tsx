@@ -157,7 +157,7 @@ export default function ProgressRibbon({
                     ? 'bg-sage text-bone'
                     : step.key === next?.key
                       ? 'bg-amber text-charcoal'
-                      : 'bg-bone-deep text-dust'
+                      : 'bg-bone-deep text-muted'
                 }`}
               >
                 {step.done ? '✓' : i + 1}
@@ -168,7 +168,7 @@ export default function ProgressRibbon({
                     ? 'text-saddle'
                     : step.key === next?.key
                       ? 'font-medium text-charcoal'
-                      : 'text-dust'
+                      : 'text-muted'
                 }`}
               >
                 {step.label}

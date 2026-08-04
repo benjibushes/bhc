@@ -110,7 +110,7 @@ function Metric({
     <div className="p-3 border border-dust bg-white">
       <div className={`font-[family-name:var(--font-serif)] text-2xl ${valueColor}`}>{value}</div>
       <div className="text-xs text-saddle mt-1">{label}</div>
-      {sub && <div className="text-xs text-dust mt-0.5">{sub}</div>}
+      {sub && <div className="text-xs text-muted mt-0.5">{sub}</div>}
     </div>
   );
 }
@@ -120,9 +120,9 @@ function Metric({
 function PendingMetric({ label, hint }: { label: string; hint: string }) {
   return (
     <div className="p-3 border border-dashed border-dust bg-bone-deep/40">
-      <div className="font-[family-name:var(--font-serif)] text-2xl text-dust">—</div>
+      <div className="font-[family-name:var(--font-serif)] text-2xl text-muted">—</div>
       <div className="text-xs text-saddle mt-1">{label}</div>
-      <div className="text-xs text-dust mt-0.5 italic">{hint}</div>
+      <div className="text-xs text-muted mt-0.5 italic">{hint}</div>
     </div>
   );
 }
@@ -149,7 +149,7 @@ function SectionShell({
 
 function Unavailable({ label }: { label: string }) {
   return (
-    <p className="text-xs text-dust italic p-3 border border-dashed border-dust bg-bone-deep/40">
+    <p className="text-xs text-muted italic p-3 border border-dashed border-dust bg-bone-deep/40">
       {label} data unavailable right now.
     </p>
   );
@@ -192,7 +192,7 @@ export default function CommandCenter() {
   if (errored || !data) {
     return (
       <div className="p-4 border border-dust bg-white">
-        <p className="text-xs text-dust italic">
+        <p className="text-xs text-muted italic">
           Command Center overview is temporarily unavailable. Detail views below are unaffected.
         </p>
       </div>
@@ -205,7 +205,7 @@ export default function CommandCenter() {
     <div className="border-2 border-charcoal/20 bg-white">
       <div className="px-5 py-4 border-b border-dust flex items-center justify-between flex-wrap gap-2">
         <h2 className="font-[family-name:var(--font-serif)] text-xl">Command Center</h2>
-        <span className="text-xs text-dust">
+        <span className="text-xs text-muted">
           The lifeblood at a glance · updated {new Date(data.generatedAt).toLocaleTimeString()}
         </span>
       </div>
@@ -337,7 +337,7 @@ export default function CommandCenter() {
                     <div key={st.key} className="flex items-stretch gap-1">
                       {i > 0 && (
                         <div className="flex flex-col justify-center px-1">
-                          <span className={`text-xs ${isDrop ? 'text-amber-dark font-bold' : 'text-dust'}`}>
+                          <span className={`text-xs ${isDrop ? 'text-amber-dark font-bold' : 'text-muted'}`}>
                             {st.convFromPrev == null ? '·' : `${st.convFromPrev}%`}
                           </span>
                         </div>
@@ -406,14 +406,14 @@ export default function CommandCenter() {
                         <td className="py-2 px-2 text-right">{intc(s.closes)}</td>
                         <td className="py-2 px-2 text-right">{usd(s.commission)}</td>
                         <td className="py-2 pl-2 text-right">
-                          {s.roas == null ? <span className="text-dust">—</span> : `${s.roas}x`}
+                          {s.roas == null ? <span className="text-muted">—</span> : `${s.roas}x`}
                         </td>
                       </tr>
                     );
                   })}
                 </tbody>
               </table>
-              <p className="text-xs text-dust mt-2">
+              <p className="text-xs text-muted mt-2">
                 ROAS shows once ad spend is logged for a source. Sorted by commission.
               </p>
             </div>
@@ -493,7 +493,7 @@ export default function CommandCenter() {
                 </div>
                 <p className="text-xs text-saddle">Qualified buyers in states with no live rancher — recruit here.</p>
                 {unlock.uncoveredDemand.length === 0 ? (
-                  <p className="text-xs text-dust italic">Every state with qualified demand is covered.</p>
+                  <p className="text-xs text-muted italic">Every state with qualified demand is covered.</p>
                 ) : (
                   <ul className="space-y-1">
                     {unlock.uncoveredDemand.map((d) => (
@@ -513,7 +513,7 @@ export default function CommandCenter() {
                 <h4 className="text-sm font-bold">Idle ranchers</h4>
                 <p className="text-xs text-saddle">Live but 0 active referrals — push leads or check why they&apos;re not receiving.</p>
                 {unlock.stalledRanchers.length === 0 ? (
-                  <p className="text-xs text-dust italic">No idle live ranchers.</p>
+                  <p className="text-xs text-muted italic">No idle live ranchers.</p>
                 ) : (
                   <ul className="space-y-1">
                     {unlock.stalledRanchers.map((r) => (
@@ -533,7 +533,7 @@ export default function CommandCenter() {
                 <h4 className="text-sm font-bold">Near capacity</h4>
                 <p className="text-xs text-saddle">≥80% full — recruit backfill before they cap out.</p>
                 {unlock.nearCapacity.length === 0 ? (
-                  <p className="text-xs text-dust italic">No ranchers near capacity.</p>
+                  <p className="text-xs text-muted italic">No ranchers near capacity.</p>
                 ) : (
                   <ul className="space-y-1">
                     {unlock.nearCapacity.map((r) => (
