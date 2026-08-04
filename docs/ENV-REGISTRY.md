@@ -62,6 +62,7 @@
 | `DEPLOY_DRIFT_GITHUB_TOKEN` | Alternate name for the drift-check token | fail-silent | set-once |
 | `GITHUB_TOKEN` | Deploy-drift cron GitHub API auth (falls back to DEPLOY_DRIFT_GITHUB_TOKEN); unset → drift check can't compare main vs deployed | fail-silent | set-once |
 | `GROQ_API_KEY` | Free-tier LLM path + Whisper call-recording transcription; unset → falls to Anthropic (cost) or transcription skipped | fail-open | set-once |
+| `INBOUND_BACKFILL_ENABLED` | Arms POST /api/admin/backfill-inbound-bodies (recovers blind envelope-only Conversations rows from Resend's received-emails store); anything but `1` → route returns 403. Deliberately a dead-man latch: set to `1` only while running the backfill, then unset | fail-closed | operator-toggled |
 | ⚠️ `MANYCHAT_WEBHOOK_SECRET` | IG DM funnel webhook auth; unset in prod → fail-CLOSED, all ManyChat requests refused with only a console.error — IG funnel dead silently | fail-silent | set-once |
 | ⚠️ `META_CAPI_ACCESS_TOKEN` | Meta CAPI auth; same silent skip | fail-silent | set-once |
 | ⚠️ `META_PIXEL_ID` | Server-side Meta CAPI events (Purchase attribution); missing → fireCapi warns+returns, ad attribution silently dead while ad spend runs | fail-silent | set-once |

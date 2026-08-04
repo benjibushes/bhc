@@ -3,8 +3,12 @@
 // FLOW:
 //   1. BHC sends outbound with Reply-To: ref-recXXX@replies.buyhalfcow.com
 //   2. Buyer/rancher hits Reply → email lands at replies.buyhalfcow.com MX
-//   3. Resend Inbound parses + POSTs the email here
-//   4. We parse the To address back into a (type, recordId) context
+//   3. Resend Inbound POSTs the `email.received` event here — ENVELOPE ONLY
+//      (email_id/from/to/subject/message_id; NO body, NO headers)
+//   3b. We fetch the body + headers from GET /emails/receiving/{email_id}
+//       (5s timeout, fail-soft: envelope row + visible marker on failure)
+//   4. We parse the To address back into a (type, recordId) context; with no
+//      token we fall back to From-matching Referrals, then Consumers/Ranchers
 //   5. AI classifies the body (objection category, sentiment, action needed)
 //   6. We log everything to the Conversations Airtable table
 //   7. If signal is strong (e.g. "we just bought"), we propose Closed Won
@@ -44,13 +48,24 @@
 //     - Action Needed (singleSelect: none, ben-eyes, auto-respond, propose-close-won)
 //     - AI Summary (longtext) — one-line AI summary
 //     - Raw Headers (longtext) — for forensic threading
+//     - Message Id (text) — RFC Message-Id, dedup/backfill key
 
 import { NextResponse } from 'next/server';
 import { createRecord, getRecordById, findReferralByBuyerEmail, TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
-import { callClaude } from '@/lib/ai';
 import { findReplyContext, type ReplyContext } from '@/lib/replyAddressing';
 import { logAuditEntry } from '@/lib/auditLog';
+import { classifyInboundReply } from '@/lib/inboundClassify';
+import {
+  fetchReceivedEmailContent,
+  headerValue,
+  CONTENT_FETCH_FAILED_MARKER,
+} from '@/lib/inboundContent';
+import {
+  matchSenderByEmail,
+  applyIdentityFallback,
+  type IdentityMatch,
+} from '@/lib/inboundIdentity';
 
 export const maxDuration = 30;
 
@@ -97,91 +112,18 @@ function pluck(payload: ResendInboundPayload) {
     text: d.text || '',
     html: d.html || '',
     headers: (d as any).headers || {},
+    // Resend's `email.received` event does NOT carry the body content —
+    // only this id, which the content-resolution step below fetches by.
+    emailId: String((d as any).email_id || '').trim(),
+    // Envelope-level RFC Message-Id (present on the event even though
+    // headers are not) — restores the mid-based dedup paths downstream.
+    envelopeMessageId: String((d as any).message_id || '').trim(),
   };
 }
 
-interface Classification {
-  senderType: 'buyer' | 'rancher' | 'unknown';
-  objectionCategory:
-    | 'price' | 'distance' | 'timing' | 'cut' | 'ghost'
-    | 'ready-to-buy' | 'scheduling' | 'capacity' | 'quality'
-    | 'other' | 'none';
-  sentiment: 'positive' | 'neutral' | 'blocking';
-  actionNeeded: 'none' | 'ben-eyes' | 'auto-respond' | 'propose-close-won';
-  summary: string;
-}
-
-const FALLBACK_CLASSIFICATION: Classification = {
-  senderType: 'unknown',
-  objectionCategory: 'other',
-  sentiment: 'neutral',
-  actionNeeded: 'ben-eyes',
-  summary: 'AI classification unavailable — Ben to review.',
-};
-
-async function classifyReply(opts: {
-  from: string;
-  subject: string;
-  body: string;
-  context: ReplyContext | null;
-}): Promise<Classification> {
-  // Truncate to keep Claude prompt small + fast.
-  const body = (opts.body || '').slice(0, 4000);
-  const context = opts.context
-    ? `Reply context: ${opts.context.type}=${opts.context.recordId}.`
-    : 'Reply context: unknown — sender may have replied to an old or stripped Reply-To address.';
-
-  const system = `You are an inbound-email triage classifier for BuyHalfCow,
-a marketplace connecting buyers to verified ranchers for whole/half/quarter
-cow purchases. You will be shown one inbound email reply.
-
-Output STRICT JSON ONLY with these keys:
-- senderType: "buyer" | "rancher" | "unknown"
-- objectionCategory: one of: price, distance, timing, cut, ghost, ready-to-buy,
-  scheduling, capacity, quality, other, none
-- sentiment: "positive" | "neutral" | "blocking"
-- actionNeeded: one of: none, ben-eyes, auto-respond, propose-close-won
-- summary: one sentence under 25 words
-
-Rules:
-- "ready-to-buy" only if sender explicitly indicates intent to purchase NOW.
-- "propose-close-won" only if message strongly implies the deal already closed
-  (e.g. "we picked up last week", "thanks for the meat", "freezer is full").
-- "ghost" if sender says they never heard back from the rancher.
-- Default to "ben-eyes" when uncertain — you do not auto-respond on shaky reads.
-
-Return JSON only — no preamble, no markdown fences.`;
-
-  const user = `${context}
-
-From: ${opts.from}
-Subject: ${opts.subject}
-
-Body:
-${body}`;
-
-  try {
-    const raw = await callClaude({
-      model: 'claude-haiku-4-5-20251001', // cheap+fast for classification
-      system,
-      user,
-      maxTokens: 400,
-    });
-    // Strip code fences if model added them
-    const cleaned = raw.replace(/```json|```/g, '').trim();
-    const parsed = JSON.parse(cleaned);
-    return {
-      senderType: parsed.senderType || 'unknown',
-      objectionCategory: parsed.objectionCategory || 'other',
-      sentiment: parsed.sentiment || 'neutral',
-      actionNeeded: parsed.actionNeeded || 'ben-eyes',
-      summary: (parsed.summary || '').toString().slice(0, 200),
-    };
-  } catch (e: any) {
-    console.error('[resend-inbound] classify failed:', e?.message || e);
-    return FALLBACK_CLASSIFICATION;
-  }
-}
+// Classification + classifyReply moved VERBATIM to lib/inboundClassify.ts
+// (2026-08-03) so the admin backfill re-runs the exact same classifier on
+// recovered bodies. This route imports classifyInboundReply above.
 
 async function resolveLinks(context: ReplyContext | null): Promise<{
   referralId?: string;
@@ -278,14 +220,51 @@ export async function POST(request: Request) {
     }
 
     // For DEFENSE: accept only requests with the expected payload shape.
-    const { from, to, subject, text, html, headers } = pluck(payload);
+    const plucked = pluck(payload);
+    const { from, to, subject, emailId, envelopeMessageId } = plucked;
+    let { text, html, headers } = plucked;
 
     if (!from && !text && !html) {
       return NextResponse.json({ ok: true, skipped: 'empty payload' });
     }
 
+    // ── CONTENT RESOLUTION ────────────────────────────────────────────────
+    // Resend's `email.received` event carries ONLY the envelope (email_id,
+    // from, to, subject, message_id) — text/html/headers are NOT in the
+    // payload and must be fetched from GET /emails/receiving/{email_id}.
+    // Before this fix every real reply logged an envelope-only row (empty
+    // Body/Body Plain, Raw Headers '{}') and the classifier read an empty
+    // string → the entire reply machine was blind. Timeout-guarded (5s) and
+    // fail-soft: on fetch failure we still write the envelope row, with a
+    // visible marker in Body Plain instead of silent emptiness.
+    let contentFetched = false;
+    let contentFetchFailed = false;
+    if (!String(text).trim() && !String(html).trim() && emailId) {
+      const fetched = await fetchReceivedEmailContent(emailId);
+      if (fetched.ok) {
+        text = fetched.content.text;
+        html = fetched.content.html;
+        if (!headers || Object.keys(headers).length === 0) {
+          headers = fetched.content.headers;
+        }
+        contentFetched = true;
+      } else {
+        contentFetchFailed = true;
+        console.error(
+          `[resend-inbound] CONTENT FETCH FAILED for received email ${emailId}: ${fetched.error} — writing envelope-only row with marker`,
+        );
+      }
+    }
+    // The payload's own headers are empty on real events, which silently
+    // disabled every Message-Id dedup path below. Restore visibility: inject
+    // the best-known Message-Id (fetched headers > envelope field) when the
+    // headers lack one.
+    if (!headerValue(headers, 'message-id') && envelopeMessageId) {
+      headers = { ...headers, 'message-id': envelopeMessageId };
+    }
+
     const context = findReplyContext(to);
-    const links = await resolveLinks(context);
+    let links = await resolveLinks(context);
 
     // ── FROM-EMAIL FALLBACK ───────────────────────────────────────────────
     // The tagged Reply-To path (ref-<id>@replies...) almost never fires: most
@@ -315,8 +294,31 @@ export async function POST(request: Request) {
       }
     }
 
+    // ── IDENTITY FALLBACK (second blindness) ──────────────────────────────
+    // No token, no referral match → the row used to land as a fully unknown
+    // sender. Last rung: match the bare From address against Consumers, then
+    // Ranchers, to link + type the sender before classifying. The token path
+    // stays PRIMARY — applyIdentityFallback is a pure guard that refuses to
+    // touch token-derived context or any already-resolved link, so the
+    // fallback can only fill a blank, never overwrite.
+    let identityMatch: IdentityMatch | null = null;
+    let identityApplied = false;
+    if (!context && !links.referralId && !links.threadId && !links.consumerId && !links.rancherId) {
+      const fromAddr = bareEmail(from);
+      if (fromAddr && fromAddr.includes('@')) {
+        try {
+          identityMatch = await matchSenderByEmail(fromAddr);
+        } catch (e: any) {
+          console.warn('[resend-inbound] identity fallback lookup failed:', e?.message);
+        }
+        const fb = applyIdentityFallback({ context, links, match: identityMatch });
+        links = fb.links;
+        identityApplied = fb.applied;
+      }
+    }
+
     const bodyForClassify = text || html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-    const classification = await classifyReply({
+    const classification = await classifyInboundReply({
       from,
       subject,
       body: bodyForClassify,
@@ -333,6 +335,21 @@ export async function POST(request: Request) {
     // close by hand. (isBuyer below also excludes it, belt-and-suspenders.)
     const isProspect = context?.type === 'prp';
     if (isProspect) classification.senderType = 'rancher';
+
+    // ── IDENTITY FALLBACK typing ──────────────────────────────────────────
+    // A From-address match against a known record is deterministic identity
+    // (same rationale as the prp guard above: the address IS who they are).
+    // Resolve an AI 'unknown' to the matched type; and never let a matched
+    // RANCHER be treated as a buyer — that's the dangerous direction (buyer
+    // objection copy addressed to the rancher). A token context always wins:
+    // identityApplied is only ever true when there was no token.
+    if (identityApplied && identityMatch) {
+      if (classification.senderType === 'unknown') {
+        classification.senderType = identityMatch.senderType;
+      } else if (identityMatch.senderType === 'rancher' && classification.senderType === 'buyer') {
+        classification.senderType = 'rancher';
+      }
+    }
 
     // ── BUYER SALES ARM ───────────────────────────────────────────────────
     // For buyer replies that aren't blocking, either escalate (ready-to-buy →
@@ -663,6 +680,9 @@ export async function POST(request: Request) {
     }
 
     // Build the Conversations row. Fields that are linked records use arrays.
+    // When the content fetch failed, Body Plain carries a VISIBLE marker
+    // instead of silent emptiness — the operator (and the backfill's
+    // pending-row scan) can tell a blind row from an empty reply.
     const row: Record<string, unknown> = {
       'Timestamp': new Date().toISOString(),
       'Direction': 'inbound',
@@ -670,13 +690,17 @@ export async function POST(request: Request) {
       'To': Array.isArray(to) ? to.join(', ') : to,
       'Subject': subject,
       'Body': html || text,
-      'Body Plain': text || bodyForClassify,
+      'Body Plain':
+        contentFetchFailed && !bodyForClassify ? CONTENT_FETCH_FAILED_MARKER : (text || bodyForClassify),
       'Sender Type': classification.senderType,
       'Objection Category': classification.objectionCategory,
       'Sentiment': classification.sentiment,
       'Action Needed': classification.actionNeeded,
       'AI Summary': classification.summary,
       'Raw Headers': JSON.stringify(headers || {}),
+      // Verified field on the live Conversations schema (ManyChat already
+      // writes it). Keys retries/backfills going forward.
+      'Message Id': headerValue(headers, 'message-id') || envelopeMessageId || '',
     };
     // Buyer-arm staging: an assisted-mode template answer is stored on the row
     // so Ben (or a console one-tap) can send it. Fields are optional — if the
@@ -897,7 +921,16 @@ export async function POST(request: Request) {
         tool: 'resend-inbound',
         targetType: links.threadId ? 'Thread' : links.referralId ? 'Referral' : links.consumerId ? 'Consumer' : links.rancherId ? 'Rancher' : 'Other',
         targetId: links.threadId || links.referralId || links.consumerId || links.rancherId || 'unknown',
-        args: { from, to, subject, hadContext: !!context, matchedByFromEmail },
+        args: {
+          from,
+          to,
+          subject,
+          hadContext: !!context,
+          matchedByFromEmail,
+          contentFetched,
+          contentFetchFailed,
+          identityFallback: identityApplied ? identityMatch?.senderType : undefined,
+        },
         result: { classification, conversationId },
         reverseAction: { type: 'noop', reason: 'inbound capture is read-only' },
       });
@@ -937,11 +970,18 @@ export async function POST(request: Request) {
         `${senderEmoji} <b>Inbound reply</b> ${sentimentEmoji}\n\n` +
         `<b>From:</b> ${esc(from)}\n` +
         `<b>Subject:</b> ${esc(subject)}\n` +
-        (context ? `<b>Threaded to:</b> ${esc(context.type)}=${esc(context.recordId)}\n` : `<b>No thread:</b> reply hit catch-all\n`) +
+        (context
+          ? `<b>Threaded to:</b> ${esc(context.type)}=${esc(context.recordId)}\n`
+          : identityApplied && identityMatch
+          ? `<b>No thread:</b> From-matched a known ${identityMatch.senderType === 'buyer' ? 'consumer' : 'rancher'} record (identity fallback)\n`
+          : `<b>No thread:</b> reply hit catch-all\n`) +
         `<b>Category:</b> ${esc(classification.objectionCategory)}\n\n` +
         `<i>${esc(classification.summary)}</i>` +
         actionLine +
         autoReplyLine +
+        (contentFetchFailed
+          ? '\n\n⚠️ <b>BODY MISSING</b> — Resend content fetch failed, envelope-only row written. Read the reply in the admin inbox; the backfill route can recover it later.'
+          : '') +
         // Silent stamp failure is the one partial-failure Ben could mistake
         // for "handled" — say it out loud so he can halt follow-ups by hand.
         (prospectStampFailed
