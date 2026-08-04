@@ -6,7 +6,7 @@ import { sendTelegramUpdate, sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID, sendTe
 import { sendRerouteNotification, sendPilotUpsellEmail, sendInstantCommissionInvoice } from '@/lib/email';
 import { isQualifiedForRouting } from '@/lib/qualification';
 import { createCommissionInvoice } from '@/lib/stripe-commission';
-import { calcCommission, calcCommissionForRancher, hasLockedCommissionRate, getRancherCommissionRate, referralRail } from '@/lib/commission';
+import { calcCommission, calcCommissionForRancher, hasLockedCommissionRate, getRancherCommissionRate, isPostCloseInvoiceRail } from '@/lib/commission';
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { shouldDecrementOnClose } from '@/lib/refundLifecycle';
 import jwt from 'jsonwebtoken';
@@ -158,9 +158,11 @@ export async function PATCH(
         // locked rate; tier_v2 deposit-rail rows can never reach this branch.
         let stripeInvoiceUrl = '';
         try {
-          const skipLegacyInvoice = referralRail(referral) === 'tier_v2';
+          // RAIL-MATRIX (2026-08-04): also skips BROKER rows (paid or not) — a
+          // represented rancher is never invoiced; the deposit is the whole fee.
+          const skipLegacyInvoice = !isPostCloseInvoiceRail(referral);
           if (skipLegacyInvoice) {
-            console.log(`[my-leads won] ${id} rode the deposit rail — commission taken at deposit, skipping post-close invoice`);
+            console.log(`[my-leads won] ${id} did not ride the legacy invoice rail (deposit-rail or broker) — skipping post-close invoice`);
           }
           if (!skipLegacyInvoice && rancherForRate?.['Email']) {
             try {
@@ -1032,9 +1034,10 @@ export async function PATCH(
             // A tier_v2 rancher who closes OFF-RAIL (on a call, no deposit
             // ever paid) still owes commission and MUST be invoiced — the old
             // `pricingModel === 'tier_v2'` skip silently ate that commission.
-            const skipLegacyInvoice = referralRail(referral) === 'tier_v2';
+            // RAIL-MATRIX (2026-08-04): also skips BROKER rows — never invoiced.
+            const skipLegacyInvoice = !isPostCloseInvoiceRail(referral);
             if (skipLegacyInvoice) {
-              console.log(`[referrals/close] ${id} rode the deposit rail — commission taken at deposit, skipping post-close invoice`);
+              console.log(`[referrals/close] ${id} did not ride the legacy invoice rail (deposit-rail or broker) — skipping post-close invoice`);
             }
             if (invoiceEmail && !skipLegacyInvoice) {
               try {

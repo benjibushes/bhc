@@ -10,7 +10,7 @@ import { requireRancher } from '@/lib/rancherAuth';
 
 export const maxDuration = 60;
 
-import { getRancherCommissionRate, lockedCommissionRateFor, netEarningsFor, referralRail } from '@/lib/commission';
+import { getRancherCommissionRate, lockedCommissionRateFor, netEarningsFor, referralRail, isBrokerReferralRow } from '@/lib/commission';
 
 // Pure: total commission the rancher still owes BHC on closed-won deals.
 // tier_v2 ranchers NEVER owe a post-close invoice — BHC's cut was taken at
@@ -31,8 +31,11 @@ export function computeUnpaidCommission(
   // closes (call-closed, no deposit) as owed, which previously leaked (the
   // old `if (pricingModel === 'tier_v2') return 0` zeroed the whole rancher).
   // The pricingModel arg is retained for call-site compat but ignored.
+  // RAIL-MATRIX belt (2026-08-04): broker rows are excluded outright — a
+  // represented-era deal never owes an invoice, paid deposit or not, so a
+  // Commission Due written on one by a hand-close is a phantom, never a debt.
   return closedWon
-    .filter((r) => referralRail(r) === 'legacy' && !r['Commission Paid'])
+    .filter((r) => referralRail(r) === 'legacy' && !isBrokerReferralRow(r) && !r['Commission Paid'])
     .reduce((sum, r) => sum + (Number(r['Commission Due']) || 0), 0);
 }
 
@@ -406,11 +409,20 @@ export async function GET(request: Request) {
         netEarnings: closedWon.reduce(
           (sum: number, r: any) =>
             sum +
-            netEarningsFor(
-              referralRail(r),
-              Number(r['Sale Amount']) || 0,
-              Number(r['Commission Due']) || 0,
-            ),
+            // RAIL-MATRIX (2026-08-04): a BROKER-era row is a THIRD economics —
+            // the rancher nets Sale Amount − the deposit BHC kept ('BHC Fee
+            // Cents', via referralFeeDollars). Its Deposit Paid At stamp made
+            // referralRail read 'tier_v2' (net = full sale), overstating a
+            // migrated ex-represented rancher's earnings by the whole deposit.
+            // netEarningsFor's non-tier_v2 branch (rev − fee) is exactly the
+            // broker truth, so route broker rows through it with the fee stamp.
+            (isBrokerReferralRow(r)
+              ? netEarningsFor('broker', Number(r['Sale Amount']) || 0, referralFeeDollars(r))
+              : netEarningsFor(
+                  referralRail(r),
+                  Number(r['Sale Amount']) || 0,
+                  Number(r['Commission Due']) || 0,
+                )),
           0,
         ),
         // Lead Quality metrics — recent-window summary so ranchers can see

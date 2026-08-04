@@ -332,3 +332,47 @@ test('operator card: states BHC take and the rancher-direct balance separately',
   assert.ok(card.includes('$1,400.00'));
   assert.ok(card.includes('No Connect, no payout, no invoice.'));
 });
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RAIL-MATRIX (2026-08-04) — boundary D: the broker refund story.
+// Mechanically, a broker refund comes out of BuyHalfCow's OWN Stripe balance
+// (the deposit never touched the ranch), and there is no dashboard Accept /
+// slot-locked email on this rail. The receipt must promise exactly that —
+// refundable until the RANCH CONFIRMS the animal, refunded BY BUYHALFCOW —
+// and must never echo the Connect rail's "until your rancher accepts your
+// slot" machinery.
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('BUYER receipt: carries the broker refund truth — until the ranch confirms, refunded by BuyHalfCow', () => {
+  const built = buildBrokerBuyerReceipt(facts());
+  for (const body of [built.html, built.text]) {
+    assert.ok(
+      body.includes('fully refundable until Cedar Draw Beef confirms your animal'),
+      'refund window must be tied to the RANCH confirming the animal',
+    );
+    assert.ok(
+      body.includes('BuyHalfCow refunds it in full'),
+      'the refund must come from BuyHalfCow — the ranch never held this money',
+    );
+  }
+});
+
+test('BUYER receipt: never promises the Connect refund machinery (accept / slot-locked)', () => {
+  const built = buildBrokerBuyerReceipt(facts());
+  const all = `${built.html} ${built.text}`.toLowerCase();
+  for (const connectOnly of ['accepts your slot', 'slot locked', 'slot-locked']) {
+    assert.ok(!all.includes(connectOnly), `broker receipt must not mention "${connectOnly}"`);
+  }
+});
+
+test('refund line keeps the split silent — the forbidden-words pin still holds with it present', () => {
+  // Belt on the belt: the new refund sentence must not have introduced any
+  // of the words the split-silence test forbids.
+  const built = buildBrokerBuyerReceipt(facts());
+  const all = `${built.html} ${built.text}`.toLowerCase();
+  assert.ok(all.includes('refundable'));
+  for (const forbidden of ['commission', 'we keep', 'our fee', 'service fee', 'brokerage']) {
+    assert.ok(!all.includes(forbidden), `refund copy leaked "${forbidden}"`);
+  }
+});

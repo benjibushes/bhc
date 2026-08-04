@@ -33,7 +33,7 @@ import { Suspense, useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import BHCPromiseBadge from '@/app/components/BHCPromiseBadge';
-import { REFUND_POLICY_SHORT } from '@/lib/refundPolicy';
+import { BROKER_REFUND_POLICY_SHORT } from '@/lib/refundPolicy';
 
 interface BrokerCut {
   slug: string;
@@ -258,10 +258,13 @@ function BrokerCheckoutInner() {
           </section>
         )}
 
-        {/* The same platform trust floor the Connect deposit page carries —
-            refund window, cold-chain guarantee, mediation. */}
+        {/* The platform trust floor, in its BROKER shape (RAIL-MATRIX
+            2026-08-04): on this rail there is no dashboard Accept and no
+            slot-locked email — the ranch confirms the animal off-platform,
+            and a refund comes from BuyHalfCow's own account. The Connect
+            variant promised machinery this rail doesn't have. */}
         <div className="mt-6">
-          <BHCPromiseBadge />
+          <BHCPromiseBadge variant="broker" />
         </div>
 
         <label className="mt-6 flex items-start gap-3 text-sm text-charcoal/85 leading-relaxed cursor-pointer">
@@ -276,7 +279,7 @@ function BrokerCheckoutInner() {
             <Link href="/terms" className="underline underline-offset-2 hover:text-saddle">
               Terms of Service
             </Link>{' '}
-            and the refund policy: {REFUND_POLICY_SHORT}. My deposit reserves this share, with the
+            and the refund policy: {BROKER_REFUND_POLICY_SHORT}. My deposit reserves this share, with the
             balance paid directly to the ranch.
           </span>
         </label>
@@ -299,7 +302,7 @@ function BrokerCheckoutInner() {
         {/* Security line — directly under the pay button, where deposit
             anxiety peaks (same placement as the Connect deposit page). */}
         <p className="mt-2 text-center text-xs text-saddle leading-relaxed">
-          {REFUND_POLICY_SHORT} · secured by Stripe · we don&apos;t store card data
+          {BROKER_REFUND_POLICY_SHORT} · secured by Stripe · we don&apos;t store card data
         </p>
       </div>
     </main>

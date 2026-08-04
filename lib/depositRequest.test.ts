@@ -172,3 +172,40 @@ test('isCutTier guards bad input', () => {
   assert.equal(isCutTier(''), false);
   assert.equal(isCutTier(undefined), false);
 });
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RAIL-MATRIX (2026-08-04) — boundary A: dual-flag ranchers.
+// A rancher flagged `Broker Rail` must never self-serve a Connect deposit
+// request, even with a FULL Connect footprint (the ambiguous/dual-flag data
+// error). The Connect charge route now refuses the same rancher at pay time;
+// refusing at request time means the buyer is never emailed a link that
+// bounces.
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('broker-flagged rancher → 422, even with a full active Connect footprint', () => {
+  const res = decideDepositRequest(baseInput({ rancher: eligibleRancher({ 'Broker Rail': true }) }));
+  assert.equal(res.ok, false);
+  if (!res.ok) {
+    assert.equal(res.status, 422);
+    assert.ok(res.error.includes('represented'), 'refusal names the represented rail');
+  }
+});
+
+test('broker refusal wins over every later gate (fires before tier/pricing checks)', () => {
+  // Broker flag + NO tier_v2 + NO Connect: the broker refusal must be the one
+  // returned, not the generic tier error — the operator needs to know WHICH
+  // misconfiguration to fix.
+  const res = decideDepositRequest(
+    baseInput({
+      rancher: eligibleRancher({
+        'Broker Rail': true,
+        'Pricing Model': '',
+        'Stripe Connect Status': '',
+        'Stripe Connect Account Id': '',
+      }),
+    }),
+  );
+  assert.equal(res.ok, false);
+  if (!res.ok) assert.ok(res.error.includes('represented'));
+});

@@ -3612,7 +3612,7 @@ Output ONLY the email body. First line should be the subject line prefixed with 
 
           // Gate: rancher must have a locked commission rate. Refuse the close
           // until the rate is set on the rancher's record.
-          const { hasLockedCommissionRate, calcCommissionForRancher, getRancherCommissionRate, referralRail } = await import('@/lib/commission');
+          const { hasLockedCommissionRate, calcCommissionForRancher, getRancherCommissionRate, isPostCloseInvoiceRail } = await import('@/lib/commission');
           if (!hasLockedCommissionRate(rancher)) {
             await sendTelegramMessage(
               chatId,
@@ -3706,9 +3706,10 @@ Output ONLY the email body. First line should be the subject line prefixed with 
           // application_fee_amount. A tier_v2 rancher closing OFF-RAIL (on a
           // call, no deposit ever paid) still owes commission — the old
           // per-rancher `pricingModel === 'tier_v2'` skip silently ate it.
-          const skipLegacyInvoice = referralRail(ref) === 'tier_v2';
+          // RAIL-MATRIX (2026-08-04): also skips BROKER rows — never invoiced.
+          const skipLegacyInvoice = !isPostCloseInvoiceRail(ref);
           if (skipLegacyInvoice) {
-            console.log(`[telegram close-reply won] ${refId} rode the deposit rail — commission taken at deposit, skipping post-close invoice`);
+            console.log(`[telegram close-reply won] ${refId} did not ride the legacy invoice rail (deposit-rail or broker) — skipping post-close invoice`);
           }
           const { createCommissionInvoice } = await import('@/lib/stripe-commission');
           let stripeInvoiceUrl = '';

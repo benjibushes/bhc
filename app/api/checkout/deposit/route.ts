@@ -25,6 +25,7 @@ import { absorbStripeFee } from '@/lib/feeMath';
 import { isDepositAlreadyPaid } from '@/lib/depositPaidState';
 import { hasServiceZipGate, buyerZipServedBy } from '@/lib/exclusiveZip';
 import { ZIP_OUT_OF_AREA_MESSAGE } from '@/lib/buyerZip';
+import { referralRailForRancher } from '@/lib/brokerRail';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -134,6 +135,42 @@ export async function POST(req: Request) {
     rancher = await getRecordById(TABLES.RANCHERS, rancherId);
   } catch {
     return NextResponse.json({ error: 'Rancher not found' }, { status: 404 });
+  }
+
+  // ── RAIL GATE (RAIL-MATRIX 2026-08-04) — this route charges CONNECT
+  // economics only (deposit + BHC fee ON TOP via application_fee on the
+  // rancher's connected account). It must therefore refuse any rancher whose
+  // rail is not unambiguously Connect, mirroring the broker route's mirror-
+  // image gates:
+  //   'ambiguous' — flagged Broker Rail AND carrying a Connect footprint. The
+  //     broker route refuses this as a data error a human resolves; without
+  //     this check the CONNECT route silently won the conflict and charged the
+  //     buyer a fee on top for a rancher Ben may be representing. Refuse — a
+  //     coin flip with money is not code's call.
+  //   'broker' — a represented ranch. Its deposit is BHC's whole commission on
+  //     BHC's own account; charging it here would route the money to a Connect
+  //     account it doesn't have (and the legacy branch below would emit a
+  //     broken /ranchers/ redirect, since a represented ranch has no slug).
+  //     Redirect to the broker checkout, which re-gates everything.
+  const railForRancher = referralRailForRancher(rancher);
+  if (railForRancher === 'ambiguous') {
+    console.error(
+      `[checkout/deposit] AMBIGUOUS RAIL for rancher ${rancherId} — flagged Broker Rail AND carrying a Stripe Connect footprint. Refusing to charge.`,
+    );
+    return NextResponse.json(
+      { error: 'ambiguous_rail', message: 'This ranch is misconfigured — we can\'t take a payment for it. Please contact us.' },
+      { status: 409 },
+    );
+  }
+  if (railForRancher === 'broker') {
+    return NextResponse.json(
+      {
+        error: 'not_connect_rail',
+        redirectUrl: `/checkout/${referralId}/broker`,
+        message: 'This ranch checks out through our represented-seller flow.',
+      },
+      { status: 409 },
+    );
   }
 
   // Legacy rancher? Redirect buyer to their landing page payment links
@@ -663,6 +700,28 @@ export async function GET(req: Request) {
   }
   if (!rancher) {
     return NextResponse.json({ error: 'load_failed' }, { status: 503 });
+  }
+
+  // RAIL GATE — mirror of the POST gate above. The deposit PAGE must never
+  // render Connect pricing (deposit + fee on top) for a rancher whose rail is
+  // broker or ambiguous; the POST would refuse the charge anyway, but showing
+  // the wrong money first is its own lie.
+  const railForRancherGet = referralRailForRancher(rancher);
+  if (railForRancherGet === 'ambiguous') {
+    return NextResponse.json(
+      { error: 'ambiguous_rail', message: 'This ranch is misconfigured — we can\'t take a payment for it. Please contact us.' },
+      { status: 409 },
+    );
+  }
+  if (railForRancherGet === 'broker') {
+    return NextResponse.json(
+      {
+        error: 'not_connect_rail',
+        redirectUrl: `/checkout/${referralId}/broker`,
+        message: 'This ranch checks out through our represented-seller flow.',
+      },
+      { status: 409 },
+    );
   }
 
   const pricingModel = String(rancher['Pricing Model'] || 'legacy');

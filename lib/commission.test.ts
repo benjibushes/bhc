@@ -25,7 +25,10 @@ import {
   calcCommissionForRancher,
   partitionUnpaidByRail,
   shouldWriteLegacyCommissionDue,
+  isBrokerReferralRow,
+  isPostCloseInvoiceRail,
 } from './commission';
+import { BROKER_MATCH_TYPE } from './brokerRail';
 
 test('referralRail: deposit paid → tier_v2 rail (net = full, nothing to invoice)', () => {
   assert.equal(referralRail({ 'Deposit Paid At': '2026-07-01T00:00:00Z' }), 'tier_v2');
@@ -298,4 +301,152 @@ test('shouldWriteLegacyCommissionDue agrees with partitionUnpaidByRail row-for-r
     depositRail.map((r) => r.id),
     rows.filter((r) => !shouldWriteLegacyCommissionDue(r)).map((r) => r.id),
   );
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RAIL-MATRIX (2026-08-04) — cross-rail adversarial pins.
+//
+// Boundary B of the rail matrix: a commission INVOICE may only ever exist on
+// the legacy lead-send rail. The Connect rail's fee was buyer-paid at deposit
+// (invoicing = double-charge) and the BROKER rail's fee IS the deposit BHC
+// kept (invoicing = charging a model the represented rancher never signed).
+// These tests construct the data-error rows a human could realistically
+// produce and pin the refusal.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── isBrokerReferralRow ─────────────────────────────────────────────────────
+
+test('isBrokerReferralRow: exact Match Type match, raw / shaped / {name} object forms', () => {
+  assert.equal(isBrokerReferralRow({ 'Match Type': BROKER_MATCH_TYPE }), true);
+  assert.equal(isBrokerReferralRow({ 'Match Type': `  ${BROKER_MATCH_TYPE}  ` }), true);
+  assert.equal(isBrokerReferralRow({ match_type: BROKER_MATCH_TYPE }), true);
+  assert.equal(isBrokerReferralRow({ 'Match Type': { name: BROKER_MATCH_TYPE } }), true);
+});
+
+test('isBrokerReferralRow: everything else is NOT broker (fail closed toward normal rails)', () => {
+  assert.equal(isBrokerReferralRow({ 'Match Type': 'Direct (Rancher Page) — Deposit' }), false);
+  assert.equal(isBrokerReferralRow({ 'Match Type': 'Manual' }), false);
+  assert.equal(isBrokerReferralRow({ 'Match Type': '' }), false);
+  assert.equal(isBrokerReferralRow({}), false);
+  assert.equal(isBrokerReferralRow(null), false);
+  assert.equal(isBrokerReferralRow(undefined), false);
+});
+
+// ── isPostCloseInvoiceRail — the ONE question every close-time invoice asks ──
+
+test('isPostCloseInvoiceRail: legacy off-rail row → invoiceable', () => {
+  assert.equal(isPostCloseInvoiceRail({ 'Status': 'Closed Won', 'Commission Due': 120 }), true);
+});
+
+test('isPostCloseInvoiceRail: Connect deposit-paid row → NEVER (fee was buyer-paid at deposit)', () => {
+  assert.equal(
+    isPostCloseInvoiceRail({ 'Deposit Paid At': '2026-08-01T00:00:00Z', 'Commission Due': 120 }),
+    false,
+  );
+});
+
+test('isPostCloseInvoiceRail: broker row → NEVER, deposit paid or not', () => {
+  // Paid broker close — Deposit Paid At + Match Type both stamped at settle.
+  assert.equal(
+    isPostCloseInvoiceRail({
+      'Match Type': BROKER_MATCH_TYPE,
+      'Deposit Paid At': '2026-08-01T00:00:00Z',
+    }),
+    false,
+  );
+  // THE HOLE THIS PINS: buyer never paid the broker link, the deal closed at
+  // the ranch anyway, and a hand-close wrote Sale Amount + Commission Due.
+  // Without the Match Type belt this row read 'legacy' and fired an invoice
+  // at a represented rancher.
+  assert.equal(
+    isPostCloseInvoiceRail({
+      'Match Type': BROKER_MATCH_TYPE,
+      'Status': 'Closed Won',
+      'Sale Amount': 1800,
+      'Commission Due': 180,
+    }),
+    false,
+  );
+});
+
+// ── partitionUnpaidByRail — broker bucket ───────────────────────────────────
+
+test('partitionUnpaidByRail: PAID broker row → depositRail (fee captured at settle; stamp is true)', () => {
+  const { depositRail, brokerUnpaid, invoiceEligible } = partitionUnpaidByRail([
+    { id: 'b1', 'Match Type': BROKER_MATCH_TYPE, 'Deposit Paid At': '2026-08-01T00:00:00Z' },
+  ]);
+  assert.deepEqual(depositRail.map((r: any) => r.id), ['b1']);
+  assert.deepEqual(brokerUnpaid, []);
+  assert.deepEqual(invoiceEligible, []);
+});
+
+test('partitionUnpaidByRail: UNPAID broker Closed Won with a phantom Commission Due → brokerUnpaid, never invoiceEligible', () => {
+  const { depositRail, brokerUnpaid, invoiceEligible } = partitionUnpaidByRail([
+    {
+      id: 'b2',
+      'Match Type': BROKER_MATCH_TYPE,
+      'Status': 'Closed Won',
+      'Sale Amount': 1800,
+      'Commission Due': 180, // data error — a hand-close wrote the receivable
+    },
+  ]);
+  assert.deepEqual(brokerUnpaid.map((r: any) => r.id), ['b2']);
+  assert.deepEqual(depositRail, []);
+  assert.deepEqual(invoiceEligible, []);
+});
+
+test('partitionUnpaidByRail: Connect row with a phantom Commission Due (data error) stays depositRail', () => {
+  // Adversarial: someone typed a Commission Due onto a Connect deal whose fee
+  // was already buyer-paid at deposit. The nonzero receivable must not drag it
+  // into the invoice run — Deposit Paid At wins.
+  const { depositRail, invoiceEligible } = partitionUnpaidByRail([
+    { id: 'c1', 'Deposit Paid At': '2026-08-01T00:00:00Z', 'Commission Due': 299.9 },
+  ]);
+  assert.deepEqual(depositRail.map((r: any) => r.id), ['c1']);
+  assert.deepEqual(invoiceEligible, []);
+});
+
+// ── RAIL-PER-ROW under migration (#356) — the rancher's CURRENT model is ────
+// irrelevant; the row settles under the rail it was OPENED on.
+
+test('mid-migration pin: rows carry their own rail — rancher Pricing Model junk on the row is ignored', () => {
+  // A legacy rancher mid-migration to tier_v2: the OLD open deal (no deposit
+  // ever paid) still owes the post-close invoice even though the rancher is
+  // now tier_v2 — and a deposit-paid row stays skimmed even if the rancher is
+  // flipped BACK to legacy. Neither helper may consult a Pricing Model field.
+  const legacyOpened = { id: 'old', 'Pricing Model': 'tier_v2', 'Commission Due': 150 };
+  const connectOpened = { id: 'new', 'Pricing Model': 'legacy', 'Deposit Paid At': '2026-08-01T00:00:00Z' };
+  const { depositRail, invoiceEligible } = partitionUnpaidByRail([legacyOpened, connectOpened]);
+  assert.deepEqual(invoiceEligible.map((r: any) => r.id), ['old']);
+  assert.deepEqual(depositRail.map((r: any) => r.id), ['new']);
+  assert.equal(isPostCloseInvoiceRail(legacyOpened), true);
+  assert.equal(isPostCloseInvoiceRail(connectOpened), false);
+});
+
+// ── shouldWriteLegacyCommissionDue — broker belt ────────────────────────────
+
+test('shouldWriteLegacyCommissionDue: broker row → never write, paid or not (null still fails open)', () => {
+  assert.equal(shouldWriteLegacyCommissionDue({ 'Match Type': BROKER_MATCH_TYPE }), false);
+  assert.equal(
+    shouldWriteLegacyCommissionDue({
+      'Match Type': BROKER_MATCH_TYPE,
+      'Deposit Paid At': '2026-08-01T00:00:00Z',
+    }),
+    false,
+  );
+  // The fail-open contract for an unreadable referral is untouched.
+  assert.equal(shouldWriteLegacyCommissionDue(null), true);
+});
+
+// ── broker net-earnings truth (rancher dashboard, boundary C) ───────────────
+
+test('broker row net: sale − the deposit BHC kept, via netEarningsFor non-tier_v2 branch', () => {
+  // A migrated ex-represented rancher's dashboard: the broker-era row has
+  // Deposit Paid At (reads tier_v2 → net = full sale = WRONG, overstated by
+  // the whole deposit). The dashboard now routes broker rows through the
+  // rev − fee branch with the BHC Fee Cents stamp as the fee.
+  const sale = 1800;
+  const feeDollars = 400; // BHC Fee Cents 40000 — the whole deposit
+  assert.equal(netEarningsFor('broker', sale, feeDollars), 1400); // price − deposit
 });
