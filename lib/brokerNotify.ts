@@ -349,6 +349,7 @@ export function buildBrokerBuyerReceipt(f: BrokerOrderFacts): BuiltEmail {
 
     <h2>Paying the balance</h2>
     <p>The remaining <strong>${money(f.balanceCents)}</strong> is paid <strong>directly to ${esc(f.ranchName)}</strong> — not to BuyHalfCow. ${esc(f.balanceNote)}</p>
+    <p class="muted">Changed your plans? Your deposit is fully refundable until ${esc(f.ranchName)} confirms your animal — email hello@buyhalfcow.com and BuyHalfCow refunds it in full.</p>
 ${
   f.additionalCosts
     ? `
@@ -382,6 +383,7 @@ ${
     'PAYING THE BALANCE',
     `  The remaining ${money(f.balanceCents)} is paid directly to ${f.ranchName}, not to BuyHalfCow.`,
     `  ${f.balanceNote}`,
+    `  Changed your plans? Your deposit is fully refundable until ${f.ranchName} confirms your animal — email hello@buyhalfcow.com and BuyHalfCow refunds it in full.`,
     ...(f.additionalCosts
       ? [
           '',

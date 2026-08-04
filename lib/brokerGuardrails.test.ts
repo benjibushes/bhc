@@ -141,3 +141,42 @@ test('GUARDRAIL formula: the exclusion fragment is valid Airtable and checkbox-c
   // keeps unchecked rows (which read as blank/0) in the result set.
   assert.equal(BROKER_RAIL_EXCLUSION_FORMULA, 'NOT({Broker Rail} = 1)');
 });
+
+
+// ---------------------------------------------------------------------------
+// RAIL-MATRIX (2026-08-04) — DUAL-FLAG precedence. A rancher flagged Broker
+// Rail while ALSO carrying a full active Connect footprint is a data error.
+// The precedence rule pinned here: the broker flag wins EVERYWHERE a buyer
+// could be exposed (routing dark, coverage empty), and both CHARGE paths
+// refuse ('ambiguous' — resolved by a human, never by a coin flip with money).
+// ---------------------------------------------------------------------------
+
+test('GUARDRAIL dual-flag: broker + full active Connect footprint is dark for routing AND coverage', () => {
+  const dual = otherwisePerfectRancher({
+    'Broker Rail': true,
+    'Pricing Model': 'tier_v2',
+    'Stripe Connect Status': 'active',
+    'Stripe Connect Account Id': 'acct_dualflag01',
+    Slug: 'cedar-draw-beef',
+  });
+  assert.equal(isRancherOperationalForBuyers(dual), false);
+  assert.deepEqual(getOperationalServedStates(dual), []);
+});
+
+test('GUARDRAIL dual-flag: both charge rails classify the rancher as ambiguous and refuse', async () => {
+  const { referralRailForRancher, assertBrokerEligible } = await import('./brokerRail');
+  const dual = otherwisePerfectRancher({
+    'Broker Rail': true,
+    'Pricing Model': 'tier_v2',
+    'Stripe Connect Status': 'active',
+    'Stripe Connect Account Id': 'acct_dualflag01',
+    'Half Price': 2000,
+    'Half Deposit': 400,
+  });
+  // The shared classifier both checkout routes now gate on:
+  assert.equal(referralRailForRancher(dual), 'ambiguous');
+  // And the broker rail's own money gate refuses the Connect footprint:
+  const gate = assertBrokerEligible(dual, 'half');
+  assert.equal(gate.ok, false);
+  if (!gate.ok) assert.equal(gate.code, 'connect_rancher');
+});

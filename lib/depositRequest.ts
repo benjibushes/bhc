@@ -8,6 +8,9 @@
 // MONEY SAFETY: every gate here is a hard stop. The route must never create a
 // Stripe Checkout Session unless decideDepositRequest returns { ok: true }.
 
+// Hermetic import — lib/brokerRail imports only lib/pricing, so no cycle.
+import { isBrokerRancher } from '@/lib/brokerRail';
+
 export type CutTier = 'Quarter' | 'Half' | 'Whole';
 
 // $25 floor — a deposit below this isn't worth the Stripe processing + makes a
@@ -79,6 +82,19 @@ export function decideDepositRequest(input: DepositRequestInput): DepositRequest
   // 2. ELIGIBILITY — tier_v2 + Connect active + Connect acct present. Legacy or
   //    non-active ranchers cannot take card deposits through BHC; they close
   //    off-platform. Reject rather than create an un-chargeable session.
+  //
+  //    RAIL-MATRIX belt (2026-08-04): a rancher flagged `Broker Rail` is
+  //    refused OUTRIGHT, even with a full Connect footprint (the dual-flag /
+  //    ambiguous case). The Connect deposit route now refuses that rancher at
+  //    pay time; refusing here too means the buyer is never emailed a link
+  //    that bounces. Same fail-closed answer as referralRailForRancher.
+  if (isBrokerRancher(input.rancher)) {
+    return {
+      ok: false,
+      status: 422,
+      error: 'this account is set up as a represented ranch — deposits for it are handled by BuyHalfCow directly',
+    };
+  }
   const pricingModel = String(input.rancher['Pricing Model'] || '').toLowerCase();
   if (pricingModel !== 'tier_v2') {
     return {

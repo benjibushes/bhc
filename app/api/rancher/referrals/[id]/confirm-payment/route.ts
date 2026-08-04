@@ -5,7 +5,7 @@ import {
   calcCommissionForRancher,
   hasLockedCommissionRate,
   getRancherCommissionRate,
-  referralRail,
+  isPostCloseInvoiceRail,
 } from '@/lib/commission';
 import { createCommissionInvoice } from '@/lib/stripe-commission';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
@@ -170,9 +170,11 @@ export async function POST(
     // Payment row confirmed cash-received here with NO deposit ever paid is
     // legacy economics even under a tier_v2 rancher and MUST be invoiced —
     // the old per-rancher `pricingModel === 'tier_v2'` skip silently ate it.
-    const skipLegacyInvoice = referralRail(ref) === 'tier_v2';
+    // RAIL-MATRIX (2026-08-04): also skips BROKER rows (paid or not) — a
+    // represented rancher is never invoiced; the deposit is the whole fee.
+    const skipLegacyInvoice = !isPostCloseInvoiceRail(ref);
     if (skipLegacyInvoice) {
-      console.log(`[confirm-payment] ${id} rode the deposit rail — commission taken at deposit, skipping post-close invoice`);
+      console.log(`[confirm-payment] ${id} did not ride the legacy invoice rail (deposit-rail or broker) — skipping post-close invoice`);
     }
     let invoiceUrl = '';
     let invoiceId = '';

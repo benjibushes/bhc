@@ -35,7 +35,7 @@
  * lib/commissionOwed.test.ts.
  */
 
-import { referralRail } from '@/lib/commission';
+import { referralRail, isBrokerReferralRow } from '@/lib/commission';
 
 export interface CommissionOwedRow {
   referralId: string;
@@ -75,6 +75,12 @@ export function isCommissionOwedRow(ref: any): boolean {
   if (ref?.['Commission Paid']) return false;
   // Deposit-rail rows had the fee skimmed at deposit — nothing owed, ever.
   if (referralRail(ref) === 'tier_v2') return false;
+  // BROKER rows are never owed, paid deposit or not (RAIL-MATRIX 2026-08-04):
+  // the represented rancher's whole agreement is deposit-as-commission, no
+  // invoice. A PAID broker row is already caught by the tier_v2 check above
+  // (settlement stamps Deposit Paid At); this belt catches the unpaid one a
+  // hand-close turned into a phantom receivable.
+  if (isBrokerReferralRow(ref)) return false;
   return (Number(ref?.['Commission Due']) || 0) > 0;
 }
 
@@ -129,6 +135,12 @@ export function commissionInvoiceEligibility(
   if (referralRail(ref) === 'tier_v2') {
     // Buyer already paid the fee at deposit — an invoice here double-bills.
     return { eligible: false, reason: 'deposit-rail-nothing-owed' };
+  }
+  if (isBrokerReferralRow(ref)) {
+    // Broker rail: the deposit IS the whole commission; the represented
+    // rancher is never invoiced (RAIL-MATRIX 2026-08-04). Minting here would
+    // bill him on a model he never agreed to.
+    return { eligible: false, reason: 'broker-rail-never-invoiced' };
   }
   if ((Number(ref['Commission Due']) || 0) <= 0) {
     return { eligible: false, reason: 'nothing-due' };

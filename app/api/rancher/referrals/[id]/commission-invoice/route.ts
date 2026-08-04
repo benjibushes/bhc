@@ -49,6 +49,8 @@ export async function POST(
         'already-paid': 'This commission is already settled — nothing owed here.',
         'deposit-rail-nothing-owed':
           'This deal collected the platform fee at deposit — you owe nothing on it.',
+        'broker-rail-never-invoiced':
+          'This deal was handled directly by BuyHalfCow — you owe nothing on it.',
         'nothing-due': 'No commission is due on this deal.',
       };
       return NextResponse.json(

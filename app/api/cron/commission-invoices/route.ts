@@ -56,7 +56,12 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
   // deposit via application_fee_amount: stamp those paid so they drop out of
   // future runs. Everything else — including tier_v2 off-rail closes — flows
   // into the monthly invoice below.
-  const { depositRail, invoiceEligible } = partitionUnpaidByRail(allUnpaid);
+  // brokerUnpaid (RAIL-MATRIX 2026-08-04): broker referrals whose deposit was
+  // never paid. NEVER invoiced (the represented rancher's agreement is
+  // deposit-as-commission, no invoice — billing him here charges a model he
+  // never signed) and NOT stamped Commission Paid (nothing was collected;
+  // whether to chase the ranch by phone is a human call). Counted + surfaced.
+  const { depositRail, brokerUnpaid, invoiceEligible } = partitionUnpaidByRail(allUnpaid);
   let depositRailStamped = 0;
   for (const r of depositRail) {
     try {
@@ -71,6 +76,9 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
   }
   if (depositRail.length > 0) {
     console.log(`[commission-invoices] ${depositRailStamped}/${depositRail.length} deposit-rail referrals stamped Commission Paid (taken at deposit — nothing to invoice)`);
+  }
+  if (brokerUnpaid.length > 0) {
+    console.log(`[commission-invoices] ${brokerUnpaid.length} broker referral(s) skipped — represented ranchers are never invoiced (deposit IS the commission; these rows have no paid deposit)`);
   }
 
   // Group invoice-eligible unpaid referrals by rancher ID
@@ -263,6 +271,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
       detail: [
         ...summaryLines,
         depositRailStamped > 0 ? `💳 ${depositRailStamped} deposit-rail referral(s) stamped paid (taken at deposit)` : '',
+        brokerUnpaid.length > 0 ? `🤝 ${brokerUnpaid.length} broker referral(s) skipped — never invoiced; deposit not collected, follow up by hand` : '',
         stripeMinted > 0 ? `🧾 ${stripeMinted} Stripe invoice(s) minted for previously-unpayable rows` : '',
         stripeMintErrors > 0 ? `⚠️ ${stripeMintErrors} Stripe invoice mint failure(s)` : '',
         errors > 0 ? `⚠️ ${errors} error(s)` : '',
@@ -277,7 +286,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
   return {
     status: errors + stripeMintErrors > 0 ? 'partial' : 'success',
     recordsTouched: invoicesSent + stripeMinted,
-    notes: `${monthYear}: invoices=${invoicesSent} unpaid=${allUnpaid.length} depositRailStamped=${depositRailStamped} stripeMinted=${stripeMinted} mintErrors=${stripeMintErrors} errors=${errors}`,
+    notes: `${monthYear}: invoices=${invoicesSent} unpaid=${allUnpaid.length} depositRailStamped=${depositRailStamped} brokerSkipped=${brokerUnpaid.length} stripeMinted=${stripeMinted} mintErrors=${stripeMintErrors} errors=${errors}`,
   };
 }
 

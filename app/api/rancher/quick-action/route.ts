@@ -8,7 +8,7 @@ import {
 } from '@/lib/airtable';
 import { JWT_SECRET } from '@/lib/secrets';
 import { fetchReferralRowsForRancher } from '@/lib/referralReads';
-import { calcCommission, calcCommissionForRancher, hasLockedCommissionRate, referralRail } from '@/lib/commission';
+import { calcCommission, calcCommissionForRancher, hasLockedCommissionRate, isPostCloseInvoiceRail } from '@/lib/commission';
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import {
   sendTelegramMessage,
@@ -520,9 +520,11 @@ async function applyAction(
     let stripeInvoiceUrl = '';
     try {
       const rancher: any = await getRecordById(TABLES.RANCHERS, decoded.rancherId);
-      const skipLegacyInvoice = referralRail(referral) === 'tier_v2';
+      // RAIL-MATRIX (2026-08-04): also skips BROKER rows (paid or not) — a
+      // represented rancher is never invoiced; the deposit is the whole fee.
+      const skipLegacyInvoice = !isPostCloseInvoiceRail(referral);
       if (skipLegacyInvoice) {
-        console.log(`[quick-action won] ${decoded.referralId} rode the deposit rail — commission taken at deposit, skipping post-close invoice`);
+        console.log(`[quick-action won] ${decoded.referralId} did not ride the legacy invoice rail (deposit-rail or broker) — skipping post-close invoice`);
       }
       if (rancher && rancher['Email'] && !skipLegacyInvoice) {
         try {

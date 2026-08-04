@@ -173,3 +173,87 @@ test('email CTA: no hosted URL → dashboard billing pay path, NEVER a reply loo
     assert.equal(cta.url, 'https://www.buyhalfcow.com/rancher/billing');
   }
 });
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RAIL-MATRIX (2026-08-04) — boundary B adversarial rows.
+// A data-entry error must never be able to bill a rancher twice (Connect) or
+// at all (broker). BROKER_MATCH_TYPE is stamped at referral creation, so the
+// belt holds even when the deposit was never paid.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const BROKER_MATCH_TYPE = 'Broker — Deposit'; // literal on purpose — the test below
+// pins the canonical constant to it; a drift would silently un-protect every
+// historical broker row stamped with the old value.
+
+test('BROKER_MATCH_TYPE literal matches the canonical lib/brokerRail constant', async () => {
+  const { BROKER_MATCH_TYPE: canonical } = await import('./brokerRail');
+  assert.equal(canonical, BROKER_MATCH_TYPE);
+});
+
+test('NOT owed: PAID broker row (Match Type + Deposit Paid At from settlement)', () => {
+  assert.equal(
+    isCommissionOwedRow(
+      row({
+        'Match Type': BROKER_MATCH_TYPE,
+        'Deposit Paid At': '2026-08-01T00:00:00Z',
+        'Commission Due': 400, // even a phantom receivable cannot make it owed
+      }),
+    ),
+    false,
+  );
+});
+
+test('NOT owed: UNPAID broker Closed Won with a phantom Commission Due (the hand-close hole)', () => {
+  // Buyer never paid the broker link; the deal closed at the ranch anyway and
+  // a hand-close wrote Sale Amount + Commission Due. Without the Match Type
+  // belt this row read as legacy-owed and would surface a Pay button / flow
+  // into the monthly invoice — billing a represented rancher on a model he
+  // never agreed to.
+  assert.equal(
+    isCommissionOwedRow(
+      row({ 'Match Type': BROKER_MATCH_TYPE, 'Commission Due': 180, 'Sale Amount': 1800 }),
+    ),
+    false,
+  );
+});
+
+test('NOT owed: Connect row with a phantom Commission Due (Deposit Paid At wins)', () => {
+  assert.equal(
+    isCommissionOwedRow(
+      row({ 'Deposit Paid At': '2026-08-01T00:00:00Z', 'Commission Due': 299.9 }),
+    ),
+    false,
+  );
+});
+
+test('mint gate: broker rows refuse with broker-rail-never-invoiced, paid or not', () => {
+  const unpaidBroker = row({ 'Match Type': BROKER_MATCH_TYPE, 'Commission Due': 180 });
+  const gate = commissionInvoiceEligibility(unpaidBroker, RANCHER);
+  assert.deepEqual(gate, { eligible: false, reason: 'broker-rail-never-invoiced' });
+
+  // A PAID broker row hits the deposit-rail refusal first — either way, no invoice.
+  const paidBroker = row({
+    'Match Type': BROKER_MATCH_TYPE,
+    'Deposit Paid At': '2026-08-01T00:00:00Z',
+  });
+  const paidGate = commissionInvoiceEligibility(paidBroker, RANCHER);
+  assert.equal(paidGate.eligible, false);
+});
+
+test('selection: broker rows never render in the Commission owed block', () => {
+  const rows = [
+    row({ id: 'legit', 'Commission Due': 150 }),
+    row({ id: 'broker', 'Match Type': BROKER_MATCH_TYPE, 'Commission Due': 400 }),
+  ];
+  const selected = selectCommissionOwedRows(rows, RANCHER);
+  assert.deepEqual(selected.map((r) => r.referralId), ['legit']);
+});
+
+test('cron mint backfill: broker rows are never minted even when unstamped', () => {
+  const rows = [
+    row({ id: 'legit', 'Commission Due': 150 }),
+    row({ id: 'broker', 'Match Type': BROKER_MATCH_TYPE, 'Commission Due': 400 }),
+  ];
+  assert.deepEqual(rowsNeedingInvoiceMint(rows).map((r: any) => r.id), ['legit']);
+});

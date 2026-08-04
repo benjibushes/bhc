@@ -15,6 +15,10 @@
  * directly.
  */
 
+// lib/brokerRail is hermetic (imports only lib/pricing), so this import can
+// never close a cycle — same reasoning as lib/rancherEligibility's import.
+import { BROKER_MATCH_TYPE } from './brokerRail';
+
 const DEFAULT_RATE = 0.1;
 
 export function getCommissionRate(): number {
@@ -208,6 +212,49 @@ export function referralRail(ref: any): 'tier_v2' | 'legacy' {
 }
 
 /**
+ * Is this referral a BROKER-rail row? — RAIL-MATRIX belt (2026-08-04).
+ *
+ * THE HOLE THIS CLOSES: `referralRail` discriminates on `Deposit Paid At`
+ * alone, which is stamped by settleBrokerDeposit at payment — so a PAID broker
+ * row reads as tier_v2 and correctly drops out of every invoice path. But a
+ * broker referral whose buyer never paid the link (closed at the ranch anyway,
+ * marked Closed Won by hand with a Sale Amount → Commission Due written) has
+ * NO Deposit Paid At, reads as 'legacy', and would flow into the monthly
+ * commission invoice — billing a REPRESENTED rancher on the legacy 10% model
+ * he never agreed to. His agreement (/partner/represent) is "the deposit is
+ * the commission, you are never invoiced"; an unpaid deposit means BHC earned
+ * nothing on the deal, and chasing that is a phone call, never a Stripe
+ * invoice.
+ *
+ * The discriminator is `Match Type = 'Broker — Deposit'`, stamped at referral
+ * CREATION (lib/brokerReferral) — present before, during, and after payment,
+ * so this belt holds in the exact window where Deposit Paid At does not.
+ * Tolerates the shaped dashboard read (`match_type`) and Airtable's
+ * `{name}` singleSelect object form.
+ */
+export function isBrokerReferralRow(ref: any): boolean {
+  const raw = ref?.['Match Type'] ?? ref?.match_type ?? ref?.matchType ?? '';
+  const value =
+    raw && typeof raw === 'object' && 'name' in raw ? String((raw as any).name || '') : String(raw || '');
+  return value.trim() === BROKER_MATCH_TYPE;
+}
+
+/**
+ * May THIS row ever fire a post-close commission invoice? — the ONE rail
+ * question every close-time `createCommissionInvoice` site must ask
+ * (confirm-payment, dashboard my-leads close, quick-action, Telegram close).
+ *
+ *   legacy row, not broker  → true  (invoice is how the fee is collected)
+ *   tier_v2 row             → false (fee was buyer-paid at deposit — invoicing
+ *                                    would double-bill)
+ *   broker row, paid or not → false (the deposit IS the whole commission;
+ *                                    a represented rancher is NEVER invoiced)
+ */
+export function isPostCloseInvoiceRail(ref: any): boolean {
+  return referralRail(ref) === 'legacy' && !isBrokerReferralRow(ref);
+}
+
+/**
  * RAIL-PER-ROW for the monthly commission-invoices cron (2026-07-15).
  *
  * The cron used to decide per-RANCHER: tier_v2 → skip invoicing AND stamp
@@ -219,19 +266,32 @@ export function referralRail(ref: any): 'tier_v2' | 'legacy' {
  *   depositRail     — Deposit Paid At stamped; commission was skimmed at
  *                     deposit via application_fee_amount. Nothing to invoice;
  *                     safe to stamp Commission Paid so it drops out of runs.
+ *                     (A PAID broker row lands here too — its whole deposit
+ *                     was captured as the fee at settlement, so the stamp is
+ *                     equally true.)
+ *   brokerUnpaid    — RAIL-MATRIX belt (2026-08-04): a broker referral with
+ *                     NO paid deposit (Match Type 'Broker — Deposit', blank
+ *                     Deposit Paid At). Must NEVER be invoiced — the
+ *                     represented rancher's agreement is deposit-as-commission,
+ *                     never an invoice — and must NOT be stamped Commission
+ *                     Paid either (nothing was collected; a human decides).
  *   invoiceEligible — legacy economics (including tier_v2 off-rail closes);
  *                     MUST flow into the monthly invoice.
  */
 export function partitionUnpaidByRail<T>(rows: T[]): {
   depositRail: T[];
+  brokerUnpaid: T[];
   invoiceEligible: T[];
 } {
   const depositRail: T[] = [];
+  const brokerUnpaid: T[] = [];
   const invoiceEligible: T[] = [];
   for (const r of rows) {
-    (referralRail(r) === 'tier_v2' ? depositRail : invoiceEligible).push(r);
+    if (referralRail(r) === 'tier_v2') depositRail.push(r);
+    else if (isBrokerReferralRow(r)) brokerUnpaid.push(r);
+    else invoiceEligible.push(r);
   }
-  return { depositRail, invoiceEligible };
+  return { depositRail, brokerUnpaid, invoiceEligible };
 }
 
 /**
@@ -259,5 +319,10 @@ export function partitionUnpaidByRail<T>(rows: T[]): {
  */
 export function shouldWriteLegacyCommissionDue(ref: any): boolean {
   if (ref === null || ref === undefined) return true;
+  // RAIL-MATRIX belt (2026-08-04): a broker row must never grow the legacy
+  // receivable, paid or not — the represented rancher owes nothing by invoice,
+  // ever. (The fail-open null branch above is untouched: an unreadable read
+  // still over-states rather than destroys, and the billing gates re-check.)
+  if (isBrokerReferralRow(ref)) return false;
   return referralRail(ref) === 'legacy';
 }
