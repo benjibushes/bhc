@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { getAllRecords, getRecordById, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { partitionUnpaidByRail } from '@/lib/commission';
+import { rowsNeedingInvoiceMint } from '@/lib/commissionOwed';
+import { createCommissionInvoice } from '@/lib/stripe-commission';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { shouldSendCronReport } from '@/lib/cronReportGate';
@@ -99,6 +101,8 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
 
   let invoicesSent = 0;
   let errors = 0;
+  let stripeMinted = 0;
+  let stripeMintErrors = 0;
   const summaryLines: string[] = [];
 
   for (const [rancherId, group] of Object.entries(byRancher)) {
@@ -113,11 +117,61 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
         continue;
       }
 
+      // GAP CLOSURE (ticket 2026-08-03): this cron used to send a statement
+      // ABOUT money owed with no payable link behind it — the Pay button was
+      // gated on the unset COMMISSION_PAYMENT_URL env and no Stripe invoice
+      // was ever created here, so rows whose close-time invoice failed (or
+      // predated the RAIL-PER-ROW fix) stayed unpayable forever. Now: before
+      // the statement goes out, mint the hosted Stripe invoice for every
+      // unpaid invoice-eligible row that lacks one, and stamp it on the
+      // Referral. Safe on retries — createCommissionInvoice carries the
+      // per-referral idempotencyKey `invoice-${referralId}`, and rows already
+      // stamped are filtered out by rowsNeedingInvoiceMint. Runs BEFORE the
+      // email-dedup skip so a rerun still backfills invoices even when the
+      // month's statement was already sent.
+      for (const row of rowsNeedingInvoiceMint(group.allUnpaid)) {
+        try {
+          const minted = await createCommissionInvoice({
+            rancher: {
+              id: rancherId,
+              operatorName,
+              ranchName,
+              email: rancherEmail,
+              stripeCustomerId: rancher['Stripe Customer ID'] || undefined,
+            },
+            referral: {
+              id: row.id,
+              buyerName: row['Buyer Name'] || 'Buyer',
+              orderType: row['Order Type'] || 'Beef order',
+              saleAmount: Number(row['Sale Amount']) || 0,
+              commissionDue: Number(row['Commission Due']) || 0,
+            },
+          });
+          // Stamp Airtable AND the in-memory row so this run's line items
+          // carry the fresh pay link (money-path truth gets persisted).
+          row['Stripe Invoice ID'] = minted.invoiceId;
+          row['Stripe Invoice URL'] = minted.invoiceUrl;
+          await updateRecord(TABLES.REFERRALS, row.id, {
+            'Stripe Invoice ID': minted.invoiceId,
+            'Stripe Invoice URL': minted.invoiceUrl,
+          });
+          stripeMinted++;
+        } catch (mintErr: any) {
+          // createCommissionInvoice's own guards (floor/ceiling/ratio) fire
+          // loud operator signals before throwing — don't double-alert, just
+          // count it and keep the statement flowing (its line still renders,
+          // payable via the dashboard's lazy-mint path).
+          stripeMintErrors++;
+          console.error(`[commission-invoices] Stripe mint failed for ${row.id}:`, mintErr?.message);
+        }
+      }
+
       const lineItems = group.thisMonth.map(r => ({
         buyerName: r['Buyer Name'] || 'Unknown Buyer',
         orderType: r['Order Type'] || 'Beef Order',
         saleAmount: Number(r['Sale Amount']) || 0,
         commissionDue: Number(r['Commission Due']) || 0,
+        stripeInvoiceUrl: String(r['Stripe Invoice URL'] || '').trim() || null,
       }));
 
       const totalCommissionDue = lineItems.reduce((sum, item) => sum + item.commissionDue, 0);
@@ -134,6 +188,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
           orderType: '—',
           saleAmount: 0,
           commissionDue: 0,
+          stripeInvoiceUrl: null,
         });
       }
 
@@ -200,7 +255,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
   // where every unpaid row was deposit-rail-stamped stay in the Cron Runs
   // note). Rides sendOperatorSignal so a dead bot token falls back instead of
   // silently swallowing a money report. Content unchanged.
-  if (shouldSendCronReport({ workDone: invoicesSent + depositRailStamped, failures: errors })) {
+  if (shouldSendCronReport({ workDone: invoicesSent + depositRailStamped + stripeMinted, failures: errors + stripeMintErrors })) {
     await sendOperatorSignal({
       urgency: 'normal',
       kind: 'other',
@@ -208,6 +263,8 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
       detail: [
         ...summaryLines,
         depositRailStamped > 0 ? `💳 ${depositRailStamped} deposit-rail referral(s) stamped paid (taken at deposit)` : '',
+        stripeMinted > 0 ? `🧾 ${stripeMinted} Stripe invoice(s) minted for previously-unpayable rows` : '',
+        stripeMintErrors > 0 ? `⚠️ ${stripeMintErrors} Stripe invoice mint failure(s)` : '',
         errors > 0 ? `⚠️ ${errors} error(s)` : '',
       ]
         .filter(Boolean)
@@ -218,9 +275,9 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
   }
 
   return {
-    status: errors > 0 ? 'partial' : 'success',
-    recordsTouched: invoicesSent,
-    notes: `${monthYear}: invoices=${invoicesSent} unpaid=${allUnpaid.length} depositRailStamped=${depositRailStamped} errors=${errors}`,
+    status: errors + stripeMintErrors > 0 ? 'partial' : 'success',
+    recordsTouched: invoicesSent + stripeMinted,
+    notes: `${monthYear}: invoices=${invoicesSent} unpaid=${allUnpaid.length} depositRailStamped=${depositRailStamped} stripeMinted=${stripeMinted} mintErrors=${stripeMintErrors} errors=${errors}`,
   };
 }
 

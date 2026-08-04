@@ -549,6 +549,24 @@ async function applyAction(
           });
         } catch (e: any) {
           console.error('[quick-action won] stripe invoice error:', e?.message);
+          // Parity with the dashboard close path (ticket 2026-08-03): a
+          // silent Stripe failure here meant the instant email went out with
+          // no hosted invoice URL and NOBODY knew — the rancher's only path
+          // was replying to ask for a link. The email now falls back to the
+          // dashboard pay path (which lazily mints the invoice), but the
+          // operator still needs to see the failure.
+          try {
+            const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+            await sendOperatorSignal({
+              urgency: 'loud',
+              kind: 'system-error',
+              summary: `Stripe invoice creation FAILED on quick-action Closed Won ${decoded.referralId}`,
+              detail: `Error: ${e?.message || 'unknown'}\nThe rancher can still self-serve via the dashboard's Commission owed block (lazy mint), but check Stripe.`,
+              refs: [{ type: 'referral', id: decoded.referralId, label: referral['Buyer Name'] || decoded.referralId }],
+              dedupeKey: `quick-action-invoice-fail-${decoded.referralId}`,
+              dedupeWindowMs: 60 * 60 * 1000,
+            });
+          } catch {}
         }
 
         try {

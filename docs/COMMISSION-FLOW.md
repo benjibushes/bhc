@@ -99,6 +99,31 @@ There is **no** `/confirmpaid` Telegram command (it was never built, and the dea
 7. `sendInvoice` emails the rancher
 8. Webhook flips `Commission Paid=true` on `invoice.paid` event
 
+## How a rancher PAYS owed commission (2026-08-03)
+
+Born from a real ticket: a rancher had 2 unpaid invoices whose close-time
+Stripe invoice never got created (off-rail closes predating the RAIL-PER-ROW
+fix) — every email they received carried only a reply-for-a-link fallback, and
+the dashboard had no commission surface. Three payment surfaces now exist, all
+terminating at the same Stripe hosted invoice:
+
+1. **Dashboard — Settings → Billing → "Commission owed"** (`app/rancher/components/BillingSection.tsx`,
+   data from `/api/rancher/billing/data`). Selection is per-ROW
+   (`lib/commissionOwed.ts::selectCommissionOwedRows`): Closed Won + unpaid +
+   no `Deposit Paid At` + `Commission Due` > 0. Deposit-rail rows NEVER appear
+   (fee was buyer-paid at deposit), so Connect-only ranchers never see the
+   block. Each row's Pay button uses the stamped `Stripe Invoice URL`, or
+   lazily mints one via `POST /api/rancher/referrals/[id]/commission-invoice`
+   (idempotent — Stripe idempotencyKey `invoice-${referralId}`).
+2. **Instant close email** (`sendInstantCommissionInvoice`) — Pay CTA is the
+   hosted invoice URL when stamped, else the dashboard billing page. The
+   "reply and I'll resend it" fallback is gone.
+3. **Monthly statement** (`commission-invoices` cron) — before sending, the
+   cron mints hosted invoices for any unpaid invoice-eligible row missing one
+   (`rowsNeedingInvoiceMint`) and stamps them; each line item carries its own
+   Pay link, and the big button links to the dashboard (or
+   `COMMISSION_PAYMENT_URL` when that env override is set).
+
 ## Failure modes blocked as of 2026-05-20
 
 - ❌ Tap "Won" in Telegram → Status flipped without sale (**BLOCKED**: text-reply intercept)

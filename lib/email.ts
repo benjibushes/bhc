@@ -8,6 +8,7 @@ import {
   OPERATOR_BOOKING_FALLBACK_URL,
 } from './calBooking';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from './telegram';
+import { commissionPayCta } from './commissionOwed';
 import { cacheIncrWithTtl } from './sharedCache';
 // TEXT-YOUR-RANCHER-NOW (close-the-loop 2026-07-15): pure phone helpers —
 // the buyer intro email's "text them now" CTA shares its sms: link + body
@@ -4301,12 +4302,24 @@ export async function sendInstantCommissionInvoice(data: {
   commissionDue: number;
   closedAt: string; // ISO date string
   /**
-   * Stripe-hosted invoice URL. If present, the email surfaces a one-click
-   * "Pay this invoice" CTA pointing at the hosted page instead of the
-   * legacy reply-for-a-payment-link fallback (all collection is Stripe — card or ACH).
+   * Stripe-hosted invoice URL. When present the Pay CTA is the hosted page
+   * (one click, card or ACH). When absent the CTA points at the rancher
+   * dashboard's Commission-owed block, which mints the hosted invoice on
+   * demand — there is NO reply-for-a-link mode anymore (ticket 2026-08-03:
+   * a rancher sat on 2 unpaid invoices because every email they got carried
+   * only the reply-loop fallback).
    */
   stripeInvoiceUrl?: string;
 }) {
+  const payCta = commissionPayCta({ stripeInvoiceUrl: data.stripeInvoiceUrl, siteUrl: SITE_URL });
+  if (payCta.kind === 'dashboard') {
+    // Flag it loudly — a send without a hosted URL means the close-time
+    // Stripe invoice failed or was skipped; the dashboard CTA keeps the
+    // rancher payable, but the gap should be visible in logs.
+    console.error(
+      `[email] sendInstantCommissionInvoice firing WITHOUT a hosted Stripe invoice URL — CTA falls back to the dashboard pay path`,
+    );
+  }
   const first = (data.operatorName || '').split(' ')[0] || 'there';
   const closedDateLabel = new Date(data.closedAt).toLocaleDateString('en-US', {
     month: 'long',
@@ -4356,11 +4369,12 @@ th{font-size:11px;text-transform:uppercase;letter-spacing:1.5px;color:#6B4F3F;fo
     </tbody>
   </table>
   ${
-    data.stripeInvoiceUrl
-      ? `<div style="text-align:center;margin:28px 0;"><a href="${esc(data.stripeInvoiceUrl)}" style="display:inline-block;padding:14px 36px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px;">Pay invoice</a></div>
+    payCta.kind === 'hosted'
+      ? `<div style="text-align:center;margin:28px 0;"><a href="${esc(payCta.url)}" style="display:inline-block;padding:14px 36px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px;">Pay invoice</a></div>
   <p style="font-size:13px;color:#6B4F3F;text-align:center;">Pay by card or ACH on the hosted Stripe invoice. Due in 30 days.</p>
   <p style="font-size:13px;color:#6B4F3F;text-align:center;margin-top:8px;">Stripe also sent you the invoice email directly — same link, either works.</p>`
-      : `<p style="font-size:14px;">Your Stripe invoice link is on its way — reply to this email and I'll resend it. Pay by card or ACH, due in 30 days.</p>`
+      : `<div style="text-align:center;margin:28px 0;"><a href="${esc(payCta.url)}" style="display:inline-block;padding:14px 36px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px;">Pay in your dashboard</a></div>
+  <p style="font-size:13px;color:#6B4F3F;text-align:center;">Your invoice is under Settings → Billing → Commission owed — pay by card or ACH. Due in 30 days.</p>`
   }
   <p style="font-size:13px;color:#6B4F3F;">This is sent automatically when you mark a deal Closed Won. Monthly statement still arrives on the 1st as a rollup of any unpaid balance.</p>
   <p style="font-size:12px;color:#A7A29A;">— Ben<br>BuyHalfCow</p>
@@ -4378,7 +4392,10 @@ export async function sendMonthlyCommissionInvoice(data: {
   ranchName: string;
   email: string;
   monthYear: string;
-  lineItems: { buyerName: string; orderType: string; saleAmount: number; commissionDue: number }[];
+  // stripeInvoiceUrl (ticket 2026-08-03): each line's hosted Stripe invoice —
+  // the cron mints missing ones before sending, so a statement about money
+  // owed always carries payable links, not just numbers.
+  lineItems: { buyerName: string; orderType: string; saleAmount: number; commissionDue: number; stripeInvoiceUrl?: string | null }[];
   totalCommissionDue: number;
   runningTotalUnpaid: number;
 }) {
@@ -4389,10 +4406,20 @@ export async function sendMonthlyCommissionInvoice(data: {
             <td style="padding:10px 12px;border-bottom:1px solid #E8E5E0;color:#6B4F3F;">${esc(item.buyerName)}</td>
             <td style="padding:10px 12px;border-bottom:1px solid #E8E5E0;color:#6B4F3F;">${esc(item.orderType)}</td>
             <td style="padding:10px 12px;border-bottom:1px solid #E8E5E0;color:#6B4F3F;text-align:right;">$${item.saleAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
-            <td style="padding:10px 12px;border-bottom:1px solid #E8E5E0;color:#0E0E0E;text-align:right;font-weight:600;">$${item.commissionDue.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
+            <td style="padding:10px 12px;border-bottom:1px solid #E8E5E0;color:#0E0E0E;text-align:right;font-weight:600;">$${item.commissionDue.toLocaleString('en-US', { minimumFractionDigits: 2 })}${item.stripeInvoiceUrl ? ` · <a href="${esc(item.stripeInvoiceUrl)}" style="color:#6B4F3F;">Pay&nbsp;→</a>` : ''}</td>
           </tr>`
       )
       .join('');
+  // The payment CTA (ticket 2026-08-03). The old button was gated on the
+  // COMMISSION_PAYMENT_URL env — unset in prod, so the button silently never
+  // rendered and the fallback was "reply and I'll send a Stripe link" (a
+  // manual loop the affected rancher fell straight into). Now: the env, when
+  // set, still wins; otherwise the CTA is the dashboard's Commission-owed
+  // block, which lists every open invoice with a working Stripe pay link.
+  // There is no reply-loop mode.
+  const monthlyPayUrl =
+    process.env.COMMISSION_PAYMENT_URL ||
+    commissionPayCta({ stripeInvoiceUrl: null, siteUrl: SITE_URL }).url;
 
   // Plain-text header — never esc() a subject.
   const monthlyInvoiceSubject = `Commission Invoice — ${data.monthYear} — BuyHalfCow`;
@@ -4439,15 +4466,11 @@ export async function sendMonthlyCommissionInvoice(data: {
   <div class="divider"></div>
 
   <p><strong>Payment Instructions</strong></p>
-  <p>Please remit payment within 15 days. Easiest option:</p>
-  ${process.env.COMMISSION_PAYMENT_URL ? `
+  <p>Please remit payment within 15 days. Each line above has its own secure Stripe invoice — pay by card or ACH:</p>
   <div style="text-align:center;margin:24px 0;">
-    <a href="${process.env.COMMISSION_PAYMENT_URL}" style="display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px;border:2px solid #0E0E0E;">Pay $${data.runningTotalUnpaid.toLocaleString('en-US', { minimumFractionDigits: 2 })} Now</a>
-    <p style="font-size:12px;color:#A7A29A;margin-top:8px;">Secure card payment via Stripe</p>
+    <a href="${esc(monthlyPayUrl)}" style="display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px;border:2px solid #0E0E0E;">Pay $${data.runningTotalUnpaid.toLocaleString('en-US', { minimumFractionDigits: 2 })} Now</a>
+    <p style="font-size:12px;color:#A7A29A;margin-top:8px;">Secure Stripe payment — every open invoice is listed under Settings → Billing → Commission owed</p>
   </div>
-  ` : `
-  <p style="font-size:14px;color:#2A2A2A;">Reply to this email and I'll send your secure Stripe payment link — pay by card or ACH.</p>
-  `}
   <p style="font-size:13px;">Questions about this invoice? Reply to this email.</p>
 
   <div class="footer">
