@@ -35,6 +35,7 @@ import {
 } from '@/lib/airtable';
 import { isSellableRow, isLocalPickupRow } from '@/lib/marketplaceProducts';
 import { deriveProductPricing, validateProductInput } from '@/lib/rancherProductInput';
+import { lockedCommissionRateFor } from '@/lib/commission';
 import { ensureStripePrice } from '@/lib/productStripeSync';
 
 export const dynamic = 'force-dynamic';
@@ -177,12 +178,15 @@ export async function POST(request: Request) {
   const v = validateProductInput(body);
   if (!v.ok) return NextResponse.json({ error: v.error }, { status: 400 });
 
-  // Rancher entered RETAIL; derive their net via the category margin. The
-  // margin becomes the application_fee at checkout (Display − Base) — computed
+  // Rancher entered RETAIL; derive their net. A locked-rate rancher's margin
+  // is THEIR Commission Rate (0 is valid — Operator tier nets the full price);
+  // the category margin only applies when no rate is locked. The margin
+  // becomes the application_fee at checkout (Display − Base) — computed
   // there, not here.
   const pricing = deriveProductPricing({
     displayCents: v.displayCents,
     category: String(v.fields['Category']),
+    lockedRate: lockedCommissionRateFor(rancher),
   });
 
   const active = !requireApproval();
@@ -397,10 +401,22 @@ export async function PATCH(request: Request) {
     Object.assign(patch, v.fields);
     shippingIncludedToStamp = v.shippingIncluded;
     // Any price change re-derives the net so Base can never drift from the
-    // margin policy. Stripe price sync self-heals on next checkout.
+    // margin policy. The margin is the rancher's LOCKED Commission Rate when
+    // they have one (category margin only as fallback) — so the rancher read
+    // FAILS CLOSED: deriving a locked-rate rancher's Base off the category
+    // table is the exact overcharge this rate exists to prevent. Stripe price
+    // sync self-heals on next checkout.
+    const owner: any = await getRecordById(TABLES.RANCHERS, session.rancherId).catch(() => null);
+    if (!owner) {
+      return NextResponse.json(
+        { error: 'could not confirm your commission rate — try again in a minute.' },
+        { status: 502 },
+      );
+    }
     const pricing = deriveProductPricing({
       displayCents: v.displayCents,
       category: String(v.fields['Category']),
+      lockedRate: lockedCommissionRateFor(owner),
     });
     patch['Rancher Base'] = pricing.baseCents / 100;
   }

@@ -46,6 +46,11 @@ interface RancherInfo {
   onboardingStatus: string;
   agreementSigned: boolean;
   commissionRate?: number;
+  // Locked-vs-absent truth (product-margin fix 2026-08-03): the rancher's
+  // locked Commission Rate as a fraction, or null when none is locked.
+  // 0 is VALID (Operator tier). Distinct from commissionRate, which falls
+  // back to the env default and can't tell "locked 10%" from "no rate".
+  lockedCommissionRate?: number | null;
   currentActiveReferrals: number;
   maxActiveReferrals: number;
   monthlyCapacity: number;
@@ -2972,6 +2977,7 @@ export default function RancherDashboardPage() {
             <ProductsTab
               connectActive={productsEligible}
               connectStatus={String(rancherInfo?.connectStatus || '').toLowerCase()}
+              lockedCommissionRate={rancherInfo?.lockedCommissionRate ?? null}
               onGoToMyPage={() => selectTab('my_page')}
               onOrdersChanged={(orders) => setProductOrders(orders)}
             />

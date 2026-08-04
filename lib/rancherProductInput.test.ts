@@ -295,3 +295,88 @@ test('ship window stays a sane whole number of days', () => {
   assert.equal(validateProductInput({ ...base, shipsInDays: 60 }).ok, true);
   assert.equal(validateProductInput({ ...base, shipsInDays: 1 }).ok, true);
 });
+
+// ── deriveProductPricing — LOCKED COMMISSION RATE (2026-08-03) ───────────────
+//
+// THE LIVE BUG: the product rail took the 15–20% category margin from EVERY
+// rancher — including a locked-rate rancher whose platform Commission Rate is
+// 0.10. A $375 Bundle netted $318.75 instead of $337.50. A locked rate now IS
+// the product margin; the category table only applies when no rate is locked.
+
+test('locked 10% beats the category margin — the exact live overcharge', () => {
+  // $375 Bundle at a locked 0.10: base must be $337.50. The category table's
+  // 15% produced $318.75 — an $18.75 overcharge on a single real order.
+  const p = deriveProductPricing({ displayCents: 37500, category: 'Bundle', lockedRate: 0.1 });
+  assert.equal(p.marginRate, 0.1);
+  assert.equal(p.baseCents, 33750);
+  assert.equal(p.marginCents, 3750);
+  // ...and it beats the 20% impulse band too.
+  const j = deriveProductPricing({ displayCents: 2000, category: 'Jerky', lockedRate: 0.1 });
+  assert.equal(j.marginRate, 0.1);
+  assert.equal(j.baseCents, 1800);
+});
+
+test('locked 0 (Operator tier) is VALID — base = display, never the category fallback', () => {
+  // The platform's most expensive historical bug was treating 0 as missing.
+  for (const category of PRODUCT_CATEGORIES) {
+    const p = deriveProductPricing({ displayCents: 37500, category, lockedRate: 0 });
+    assert.equal(p.marginRate, 0, category);
+    assert.equal(p.baseCents, 37500, category);
+    assert.equal(p.marginCents, 0, category);
+  }
+});
+
+test('no locked rate (undefined / null) → category behavior byte-identical', () => {
+  for (const lockedRate of [undefined, null]) {
+    const j = deriveProductPricing({ displayCents: 2000, category: 'Jerky', lockedRate });
+    assert.equal(j.marginRate, 0.2);
+    assert.equal(j.baseCents, 1600);
+    const b = deriveProductPricing({ displayCents: 37500, category: 'Bundle', lockedRate });
+    assert.equal(b.marginRate, 0.15);
+    assert.equal(b.baseCents, 31875);
+  }
+});
+
+test('locked rate rides normalizeCommissionRate — percent forms and garbage share the close-path rules', () => {
+  // A raw Airtable "10" (typed as percent) normalizes to 0.10 — same
+  // semantics calcCommissionForRancher applies on the close path.
+  const pct = deriveProductPricing({ displayCents: 37500, category: 'Bundle', lockedRate: 10 });
+  assert.equal(pct.marginRate, 0.1);
+  assert.equal(pct.baseCents, 33750);
+  // Garbage never explodes the math: negative / NaN / >=100 → no usable
+  // locked rate → category fallback (never a clamped-to-1-cent payout).
+  for (const junk of [-0.1, NaN, 400]) {
+    const p = deriveProductPricing({ displayCents: 37500, category: 'Bundle', lockedRate: junk });
+    assert.equal(p.marginRate, 0.15, String(junk));
+    assert.equal(p.baseCents, 31875, String(junk));
+  }
+});
+
+test('sellability invariant + cent reconciliation hold at locked rates on odd prices', () => {
+  for (const displayCents of [501, 999, 1001, 1359, 2499, 33333, 37500, 74900]) {
+    for (const lockedRate of [0, 0.04, 0.1, 0.125, 0.5]) {
+      const p = deriveProductPricing({ displayCents, category: 'Bundle', lockedRate });
+      assert.equal(p.marginRate, lockedRate, `${displayCents}@${lockedRate}: locked rate honored`);
+      assert.ok(p.baseCents > 0, `${displayCents}@${lockedRate}: base > 0`);
+      assert.ok(p.baseCents <= p.displayCents, `${displayCents}@${lockedRate}: base <= display`);
+      assert.equal(p.baseCents + p.marginCents, p.displayCents, `${displayCents}@${lockedRate}: cents reconcile`);
+    }
+  }
+});
+
+// ── Source-shape pin: BOTH pricing call sites in the products route must pass
+// the owner's locked rate. A revert to category-only derivation reappears here
+// before it reaches a rancher's payout.
+test('create + edit routes derive pricing WITH the rancher locked rate', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { fileURLToPath } = await import('node:url');
+  const routeSrc = readFileSync(
+    fileURLToPath(new URL('../app/api/rancher/products/route.ts', import.meta.url)),
+    'utf8',
+  );
+  const calls = routeSrc.match(/deriveProductPricing\(\{[\s\S]*?\}\)/g) || [];
+  assert.equal(calls.length, 2, 'POST create + PATCH edit each derive pricing exactly once');
+  for (const call of calls) {
+    assert.match(call, /lockedRate:\s*lockedCommissionRateFor\(/, 'every derivation carries the locked rate');
+  }
+});

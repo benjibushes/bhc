@@ -114,10 +114,17 @@ const EMPTY_FORM = {
 export default function ProductsTab({
   connectActive,
   connectStatus = '',
+  lockedCommissionRate = null,
   onGoToMyPage,
   onOrdersChanged,
 }: {
   connectActive: boolean;
+  // Product-margin fix 2026-08-03: the rancher's LOCKED Commission Rate as a
+  // fraction (0 valid — Operator tier), or null when none is locked. When
+  // locked it IS the product margin — the preview must show the number that
+  // actually settles, not the category table. Optional so the tab stays
+  // drop-in (null = category behavior, same as before).
+  lockedCommissionRate?: number | null;
   // Wave 2 rancher-UX: the cached Connect status string ('restricted',
   // 'onboarding', …). A rancher who ALREADY finished Stripe and later went
   // restricted (routine re-KYC, bank removed) used to read "finish your
@@ -310,11 +317,17 @@ export default function ProductsTab({
   }
 
   // Live net preview from the SAME pure math the API applies — no drift.
+  // lockedCommissionRate rides in so a locked-rate rancher previews THEIR
+  // rate, exactly what the create/edit route derives and checkout skims.
   const priceNum = Number(form.displayPrice);
   const priceCents = Number.isFinite(priceNum) ? Math.round(priceNum * 100) : 0;
   const preview =
     priceCents >= MIN_PRODUCT_PRICE_CENTS && form.category
-      ? deriveProductPricing({ displayCents: priceCents, category: form.category })
+      ? deriveProductPricing({
+          displayCents: priceCents,
+          category: form.category,
+          lockedRate: lockedCommissionRate,
+        })
       : null;
   // Walkthrough 2026-07-15: below the $5 floor (or with no category) the
   // preview silently vanished — the rancher had no idea why. Say why.
@@ -841,7 +854,9 @@ export default function ProductsTab({
                 {ship > 0 ? <> ({money(preview.displayCents / 100)} + {money(ship)} shipping)</> : null} · you net{' '}
                 <strong>{money(preview.baseCents / 100 + ship)}</strong>
                 {ship > 0 ? ' (shipping comes to you in full)' : ''} · buyhalfcow&rsquo;s cut{' '}
-                {money(preview.marginCents / 100)} ({Math.round(preview.marginRate * 100)}%) — skimmed
+                {money(preview.marginCents / 100)} (
+                {(preview.marginRate * 100).toFixed(1).replace(/\.0$/, '')}%
+                {lockedCommissionRate !== null ? ' — your locked rate' : ''}) — skimmed
                 automatically at checkout, your payout needs nothing from you.{' '}
                 {fees.shortfallCents === 0 ? (
                   <>card processing is on us — the net you see is the net you get.</>

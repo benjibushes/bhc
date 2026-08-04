@@ -10,7 +10,7 @@ import { requireRancher } from '@/lib/rancherAuth';
 
 export const maxDuration = 60;
 
-import { getRancherCommissionRate, netEarningsFor, referralRail } from '@/lib/commission';
+import { getRancherCommissionRate, lockedCommissionRateFor, netEarningsFor, referralRail } from '@/lib/commission';
 
 // Pure: total commission the rancher still owes BHC on closed-won deals.
 // tier_v2 ranchers NEVER owe a post-close invoice — BHC's cut was taken at
@@ -310,6 +310,12 @@ export async function GET(request: Request) {
         // + earnings tab show the correct rate instead of hardcoded 10%.
         // Audit finding 2026-05-20 #29.
         commissionRate: getRancherCommissionRate(rancher),
+        // Locked-vs-absent truth (product-margin fix 2026-08-03):
+        // commissionRate above conflates "locked at 10%" with "no locked rate
+        // → env default 10%". The product rail needs the difference — a locked
+        // rate replaces the category margin; absence falls back to it. null =
+        // no usable locked rate. 0 is VALID (Operator tier, 0% margin).
+        lockedCommissionRate: lockedCommissionRateFor(rancher),
         currentActiveReferrals: rancher['Current Active Referrals'] || 0,
         maxActiveReferrals: getMaxActiveReferrals(rancher),
         monthlyCapacity: rancher['Monthly Capacity'] || 0,

@@ -13,6 +13,8 @@
 //   0 < Rancher Base <= Display Price
 // A self-served product must never mint a negative-margin or free row.
 
+import { normalizeCommissionRate } from './commission';
+
 // Canonical Category values — must match the `categories` arrays inside
 // MARKETPLACE_GROUPS (lib/marketplaceProducts.ts) so a new product buckets
 // into a browse section instead of falling through to "more from the ranch".
@@ -138,18 +140,38 @@ export function resolveShippingChoice(input: {
 }
 
 /**
- * Derive the rancher's net from the retail price via the category margin.
+ * Derive the rancher's net from the retail price.
+ *
+ * LOCKED-RATE RULE (2026-08-03, live overcharge): a rancher with a locked
+ * `Commission Rate` gets THAT rate as the product margin — the category
+ * margin is only the fallback for ranchers without one. The category table
+ * silently took 15–20% from a rancher whose platform rate was locked at 10%
+ * (and would have taken it from Operator-tier 0% ranchers too). The operator
+ * has told a locked-rate rancher in writing that the category cut "isn't
+ * supposed to do that for anyone already on the platform" — that is the spec.
+ *
+ * `lockedRate` runs through normalizeCommissionRate (lib/commission — the
+ * single source of the 0-is-valid rule), so a locked 0 (Operator tier) means
+ * 0% margin (base = display), NEVER a fall-through to the category table,
+ * and a raw Airtable value ("10", "10%") normalizes instead of exploding the
+ * math. null/undefined/garbage → category behavior, byte-identical to before.
+ *
  * Base is rounded (not floored) then clamped so the sellability invariant
  * holds at any cent value; margin is the exact remainder so cents reconcile.
  */
 export function deriveProductPricing({
   displayCents,
   category,
+  lockedRate,
 }: {
   displayCents: number;
   category: string;
+  /** The owning rancher's locked Commission Rate (raw field or resolved
+   *  fraction — normalized either way). null/undefined = no locked rate. */
+  lockedRate?: number | null;
 }): ProductPricing {
-  const marginRate = MARGIN_BY_CATEGORY[category] ?? DEFAULT_MARGIN;
+  const normalizedLocked = normalizeCommissionRate(lockedRate);
+  const marginRate = normalizedLocked ?? MARGIN_BY_CATEGORY[category] ?? DEFAULT_MARGIN;
   let baseCents = Math.round(displayCents * (1 - marginRate));
   // Clamp into the invariant: 0 < base <= display.
   if (baseCents < 1) baseCents = 1;
