@@ -66,3 +66,28 @@ test('L3: reconcile is wrapped in a PI-keyed claimOnce + a durable Stock Restore
   assert.match(src, /claimOnce\(`reconcile-refund:\$\{piId\}`/, 'PI-keyed claim serializes concurrent refunds');
   assert.match(src, /Stock Restored At/, 'durable idempotency marker gates restore/cancel');
 });
+
+// ── Locked-rate margin audit (2026-08-03): settlement must NEVER re-derive the
+// margin. Every cent a settled order records comes from PI metadata stamped at
+// checkout-mint time, which itself reads the STORED Display Price /
+// Rancher Base off the product row (app/api/checkout/product + lib/
+// productBuyGates both read the row; lib/productCheckout stamps the metadata).
+// So fixing a locked-rate rancher's stored Base fixes every future charge —
+// and nothing between mint and settlement can quietly reapply a category rate.
+test('settlement pays the stored (metadata) base — no category-margin re-derivation', () => {
+  // The numbers a locked-10% rancher's row stores after the fix: $375 display,
+  // $337.50 base. Settlement must pay exactly that base — not display×0.85.
+  const m = computeSettlementMoney({
+    id: 'pi_lockedrate',
+    metadata: { displayCents: '37500', baseCents: '33750', quantity: '1', marginCents: '3750' },
+  });
+  assert.equal(m.rancherPayoutCents, 33750);
+  assert.equal(m.totalMarginCents, 3750);
+  assert.equal(m.paidCents - m.rancherPayoutCents, m.totalMarginCents);
+  // Source pin: this module never imports the category-margin machinery.
+  assert.doesNotMatch(
+    src,
+    /MARGIN_BY_CATEGORY|deriveProductPricing|rancherProductInput/,
+    'settlement must not re-derive margin from the category table',
+  );
+});

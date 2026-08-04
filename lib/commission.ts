@@ -94,6 +94,19 @@ export function isCommissionRateFieldEmpty(raw: unknown): boolean {
 }
 
 /**
+ * The rancher's LOCKED commission rate, or null when none is usable — the ONE
+ * place "does this rancher have a locked rate" is answered (product-margin
+ * fix 2026-08-03). Every consumer that needs locked-vs-absent semantics
+ * (close gates, product pricing, dashboard payloads) reads THIS, so the
+ * 0-is-valid rule can never be forked: a locked 0 (Operator tier) returns 0,
+ * not null. null = unset/garbage — the caller picks its own fallback (env
+ * default on close paths, category margin on the product rail).
+ */
+export function lockedCommissionRateFor(rancher: any): number | null {
+  return normalizeCommissionRate(rancher?.['Commission Rate']);
+}
+
+/**
  * Per-rancher commission rate. Reads the rancher's `Commission Rate` field
  * (locked at sign-agreement time) through normalizeCommissionRate, falls back
  * to env default only when the field is unset/unusable. Bounded [0, 1).
@@ -104,7 +117,7 @@ export function isCommissionRateFieldEmpty(raw: unknown): boolean {
  * env default.
  */
 export function getRancherCommissionRate(rancher: any): number {
-  const normalized = normalizeCommissionRate(rancher?.['Commission Rate']);
+  const normalized = lockedCommissionRateFor(rancher);
   if (normalized !== null) return normalized;
   return getCommissionRate();
 }
@@ -131,7 +144,7 @@ export function calcCommissionForRancher(rancher: any, saleAmount: number): numb
  * false (gate), locked 0 → true (close proceeds, commission = $0).
  */
 export function hasLockedCommissionRate(rancher: any): boolean {
-  return normalizeCommissionRate(rancher?.['Commission Rate']) !== null;
+  return lockedCommissionRateFor(rancher) !== null;
 }
 
 /**
