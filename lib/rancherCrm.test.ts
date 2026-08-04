@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   buyerKey,
   groupReferralsByBuyer,
+  mergeOrderBuyersIntoCustomers,
   deriveActivityEvents,
   countUnread,
   matchesSearch,
@@ -148,4 +149,109 @@ test('matches phone digits-only (punctuation ignored)', () => {
 
 test('blank query never matches', () => {
   assert.equal(matchesSearch({ name: 'Jane' }, '  '), false);
+});
+
+// ─── mergeOrderBuyersIntoCustomers — SHOP-CUSTOMER DEALS (2026-08-03) ───────
+// Shop-order buyers (Rancher Orders) fold into the SAME customers list so a
+// buyer who purchased through the ranch's own site shows up — and an
+// order-only row carries what the "Track as deal" promote needs. All fixture
+// people are fake.
+
+test('order-only buyer becomes a customer row with order annotations and NO referral linkage', () => {
+  const merged = mergeOrderBuyersIntoCustomers(
+    [],
+    [
+      {
+        id: 'recOrd1',
+        buyerName: 'Test Buyer',
+        buyerEmail: 'Test.Buyer@Example.com',
+        orderedAt: '2026-08-01T12:00:00Z',
+        ref: 'Quarter Beef — Test Buyer',
+        status: 'New',
+      },
+    ],
+  );
+  assert.equal(merged.length, 1);
+  const c = merged[0];
+  assert.equal(c.key, 'e:test.buyer@example.com');
+  assert.equal(c.email, 'test.buyer@example.com');
+  assert.equal(c.name, 'Test Buyer');
+  assert.equal(c.orderCount, 1);
+  assert.equal(c.latestOrderId, 'recOrd1');
+  assert.equal(c.latestOrderRef, 'Quarter Beef — Test Buyer');
+  // The promote gate reads these: no referral yet.
+  assert.deepEqual(c.referralIds, []);
+  assert.equal(c.latestReferralId, '');
+  // Money aggregates stay referral-only (no double count after a promoted close).
+  assert.equal(c.lifetimeValue, 0);
+});
+
+test('same email (case-insensitive) merges INTO the existing referral customer — annotated, never duplicated', () => {
+  const referralCustomers = groupReferralsByBuyer([
+    { id: 'r1', status: 'Closed Won', buyer_name: 'Test Buyer', buyer_email: 'test.buyer@example.com', sale_amount: 2000, closed_at: '2026-06-01' },
+  ]);
+  const merged = mergeOrderBuyersIntoCustomers(referralCustomers, [
+    { id: 'recOrd1', buyerName: 'Test Buyer', buyerEmail: 'TEST.BUYER@EXAMPLE.COM', orderedAt: '2026-08-01T12:00:00Z', ref: 'Ribeye Box', status: 'Shipped' },
+  ]);
+  assert.equal(merged.length, 1);
+  const c = merged[0];
+  assert.equal(c.orderCount, 1);
+  assert.equal(c.latestOrderId, 'recOrd1');
+  // Referral linkage untouched — the row still jumps to the deal.
+  assert.deepEqual(c.referralIds, ['r1']);
+  assert.equal(c.latestReferralId, 'r1');
+  assert.equal(c.lifetimeValue, 2000);
+});
+
+test('refunded orders are skipped; identity-less orders are skipped; email-less orders key by name', () => {
+  const merged = mergeOrderBuyersIntoCustomers(
+    [],
+    [
+      { id: 'recOrdRefund', buyerName: 'Test Buyer', buyerEmail: 'test.buyer@example.com', status: 'Refunded' },
+      { id: 'recOrdNoId', buyerName: '', buyerEmail: '', status: 'New' },
+      { id: 'recOrdNameOnly', buyerName: 'Fake Person', buyerEmail: '', orderedAt: '2026-07-01T00:00:00Z', status: 'New' },
+    ],
+  );
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].key, 'n:fake person');
+  // No email → the promote button can't render (server requires one anyway).
+  assert.equal(merged[0].email, '');
+});
+
+test('multiple orders from one buyer: counted once per order, latestOrder* is the NEWEST', () => {
+  const merged = mergeOrderBuyersIntoCustomers(
+    [],
+    [
+      { id: 'recOrdOld', buyerEmail: 'repeat@example.com', orderedAt: '2026-06-01T00:00:00Z', ref: 'Old Box', status: 'Shipped' },
+      { id: 'recOrdNew', buyerEmail: 'repeat@example.com', orderedAt: '2026-08-01T00:00:00Z', ref: 'New Box', status: 'New' },
+    ],
+  );
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].orderCount, 2);
+  assert.equal(merged[0].latestOrderId, 'recOrdNew');
+  assert.equal(merged[0].latestOrderRef, 'New Box');
+});
+
+test('input customer objects are not mutated (pure merge)', () => {
+  const original = groupReferralsByBuyer([
+    { id: 'r1', status: 'Intro Sent', buyer_email: 'test.buyer@example.com', created_at: '2026-07-01' },
+  ]);
+  mergeOrderBuyersIntoCustomers(original, [
+    { id: 'recOrd1', buyerEmail: 'test.buyer@example.com', orderedAt: '2026-08-01T00:00:00Z', status: 'New' },
+  ]);
+  assert.equal(original[0].orderCount, undefined);
+  assert.equal(original[0].latestOrderId, undefined);
+});
+
+test('sorting: lifetime $ still wins; among $0 rows, order recency backs up deal recency', () => {
+  const referralCustomers = groupReferralsByBuyer([
+    { id: 'r1', status: 'Closed Won', buyer_email: 'big.spender@example.com', sale_amount: 3000, closed_at: '2026-01-01' },
+    { id: 'r2', status: 'Intro Sent', buyer_email: 'old.lead@example.com', created_at: '2026-02-01' },
+  ]);
+  const merged = mergeOrderBuyersIntoCustomers(referralCustomers, [
+    { id: 'recOrdFresh', buyerEmail: 'fresh.shopper@example.com', orderedAt: '2026-08-01T00:00:00Z', status: 'New' },
+  ]);
+  assert.equal(merged[0].key, 'e:big.spender@example.com'); // lifetime $ first
+  assert.equal(merged[1].key, 'e:fresh.shopper@example.com'); // newest $0 row
+  assert.equal(merged[2].key, 'e:old.lead@example.com');
 });

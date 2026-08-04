@@ -1,7 +1,14 @@
 // POST /api/rancher/referrals — "My Leads": rancher-entered lead create.
 //
 // The rancher types in a person they met (farmers market, phone call,
-// neighbor) and manages them like a CRM. Architecture (2026-07-29, DO NOT
+// neighbor) and manages them like a CRM. TRACK-AS-DEAL (2026-08-03): the
+// same POST also accepts { orderId } — promote a shop-order customer
+// (Rancher Orders row, e.g. a purchase through the ranch's own site) into
+// the SAME kind of lead. Contact fields then come from the ORDER ROW
+// (server truth, ownership-checked), never the client body; the decision
+// logic is pure in lib/rancherLeads.decideOrderPromote. Everything below
+// the input branch — consumer upsert, referral create, the NO-side-effects
+// contract — is one shared path. Architecture (2026-07-29, DO NOT
 // redesign): the lead is a normal Referrals row with
 //   'Referral Source' = 'rancher-added'  (fldC5pUi90WDpBTsa)
 // plus a Consumers row with 'Lead Source' = 'rancher-crm' — NOT a new table,
@@ -39,8 +46,10 @@ import { isActiveDealReferral } from '@/lib/capacityCount';
 import { fetchReferralRowsForRancher } from '@/lib/referralReads';
 import {
   validateLeadInput,
+  decideOrderPromote,
   buildLeadConsumerFields,
   buildLeadReferralFields,
+  type LeadInput,
 } from '@/lib/rancherLeads';
 
 export const dynamic = 'force-dynamic';
@@ -121,16 +130,84 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
-  const validated = validateLeadInput({
-    name: body?.name,
-    email: body?.email,
-    phone: body?.phone,
-    note: body?.note,
-  });
-  if (!validated.ok) {
-    return NextResponse.json({ error: validated.error }, { status: 400 });
+  // ── input branch: hand-typed lead OR shop-order promote ──────────────────
+  let lead: LeadInput;
+  // True on the { orderId } path — its dedupe + double-deal fence already ran
+  // (fail-CLOSED, inside decideOrderPromote), so the hand-typed fence below is
+  // skipped rather than re-read.
+  let promotedFromOrder = false;
+  const orderId = String(body?.orderId || '').trim();
+  if (orderId) {
+    // Load the order row — contact truth comes from HERE, never the body.
+    let order: any = null;
+    try {
+      order = await getRecordById(TABLES.RANCHER_ORDERS, orderId);
+    } catch (e: any) {
+      const notFound =
+        e?.statusCode === 404 ||
+        String(e?.error || '') === 'NOT_FOUND' ||
+        /not.?found/i.test(String(e?.message || ''));
+      if (!notFound) {
+        // Transient Airtable blip must not read as "order not found".
+        return NextResponse.json(
+          { error: "Couldn't load that order just now — try again in a moment." },
+          { status: 503 },
+        );
+      }
+      order = null;
+    }
+
+    // Referral matches for the dedupe + double-deal decision. Unlike the
+    // hand-typed fence (fail-OPEN — never block a rancher typing at a
+    // market), the one-click promote fails CLOSED on a read error: a blind
+    // create here could silently duplicate an existing deal, and the rancher
+    // can simply tap again.
+    let existingRefs: any[] = [];
+    const orderEmail = String(order?.['Buyer Email'] || '').trim().toLowerCase();
+    if (order && orderEmail) {
+      const formula = referralsByBuyerEmailFormula(orderEmail);
+      if (formula) {
+        try {
+          existingRefs = (await getAllRecords(TABLES.REFERRALS, formula)) as any[];
+        } catch (e: any) {
+          console.warn('[rancher/referrals POST] promote dedupe read failed:', e?.message);
+          return NextResponse.json(
+            { error: "Couldn't check your existing deals just now — try again in a moment." },
+            { status: 503 },
+          );
+        }
+      }
+    }
+
+    const decision = decideOrderPromote({
+      order,
+      rancherId,
+      existingReferrals: existingRefs,
+    });
+    if (decision.kind === 'error') {
+      return NextResponse.json({ error: decision.message }, { status: decision.httpStatus });
+    }
+    if (decision.kind === 'duplicate') {
+      // 409 + the existing referral id so the UI can deep-link to the deal.
+      return NextResponse.json(
+        { error: decision.message, duplicate: true, referralId: decision.referralId },
+        { status: 409 },
+      );
+    }
+    lead = decision.lead;
+    promotedFromOrder = true;
+  } else {
+    const validated = validateLeadInput({
+      name: body?.name,
+      email: body?.email,
+      phone: body?.phone,
+      note: body?.note,
+    });
+    if (!validated.ok) {
+      return NextResponse.json({ error: validated.error }, { status: 400 });
+    }
+    lead = validated.lead;
   }
-  const lead = validated.lead;
 
   // Rancher row — State (lead's presumed state) + ranch name for the row title.
   let rancher: any = null;
@@ -146,7 +223,9 @@ export async function POST(req: Request) {
 
   // ── Double-deal fence + consumer upsert (email-keyed, like orders/request) ─
   let consumerId = '';
-  if (lead.email) {
+  // Promote path already ran its (fail-CLOSED) dedupe + fence above — never
+  // re-read here.
+  if (lead.email && !promotedFromOrder) {
     // Active-deal check rides the Buyer Email denorm (the reliable formula
     // key — link-field ARRAYJOIN emits names, not ids). Fail-OPEN on a read
     // error: a transient Airtable blip should not block a rancher typing in
@@ -183,7 +262,9 @@ export async function POST(req: Request) {
     } catch (e: any) {
       console.warn('[rancher/referrals POST] active-deal check failed (continuing):', e?.message);
     }
+  }
 
+  if (lead.email) {
     // Email-keyed consumer upsert (mirrors orders/request): reuse an existing
     // row rather than minting a duplicate pair. IMPORTANT: an EXISTING
     // consumer keeps their own provenance — we never stamp 'Lead Source' /

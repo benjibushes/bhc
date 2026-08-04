@@ -27,10 +27,12 @@ import {
   isRancherAddedReferral,
   validateLeadInput,
   decideLeadStagePatch,
+  decideOrderPromote,
   buildLeadConsumerFields,
   buildLeadReferralFields,
   CRM_LOSS_REASON,
 } from './rancherLeads';
+import { isCapacityCountedReferral, countHeldReferrals } from './capacityCount';
 
 // ── constants + stage model ────────────────────────────────────────────────
 
@@ -385,5 +387,190 @@ describe('buildLeadReferralFields', () => {
     );
     assert.ok(!('Buyer' in noBuyer));
     assert.ok(!('Buyer Email' in noBuyer));
+  });
+});
+
+// ── decideOrderPromote — "Track as deal" (2026-08-03) ──────────────────────
+// Promoting a shop-order customer (Rancher Orders row) into a rancher-added
+// lead. All fixture people are fake.
+
+describe('decideOrderPromote', () => {
+  const RANCHER = 'recRanchOwner001';
+  const baseOrder = {
+    id: 'recOrderAAA',
+    'Rancher Record ID': RANCHER,
+    'Buyer Email': 'Test.Buyer@Example.com',
+    'Buyer Name': 'Test Buyer',
+    'Order Ref': 'Quarter Beef — Test Buyer',
+    'Status': 'New',
+  };
+
+  it('missing order → 404', () => {
+    const d = decideOrderPromote({ order: null, rancherId: RANCHER, existingReferrals: [] });
+    assert.strictEqual(d.kind, 'error');
+    if (d.kind === 'error') assert.strictEqual(d.httpStatus, 404);
+  });
+
+  it("OWNERSHIP GATE: another rancher's order → 403 (a rancher can only promote THEIR customer)", () => {
+    const d = decideOrderPromote({
+      order: baseOrder,
+      rancherId: 'recSomeOtherRanch',
+      existingReferrals: [],
+    });
+    assert.strictEqual(d.kind, 'error');
+    if (d.kind === 'error') assert.strictEqual(d.httpStatus, 403);
+  });
+
+  it('blank session rancher id → 403 (never fail open on identity)', () => {
+    const d = decideOrderPromote({ order: baseOrder, rancherId: '', existingReferrals: [] });
+    assert.strictEqual(d.kind, 'error');
+    if (d.kind === 'error') assert.strictEqual(d.httpStatus, 403);
+  });
+
+  it('refunded order → 400 (a refunded buyer is not a deal to chase)', () => {
+    const d = decideOrderPromote({
+      order: { ...baseOrder, Status: 'Refunded' },
+      rancherId: RANCHER,
+      existingReferrals: [],
+    });
+    assert.strictEqual(d.kind, 'error');
+    if (d.kind === 'error') assert.strictEqual(d.httpStatus, 400);
+  });
+
+  it('order with no buyer email → 400 with a pointer at the manual form', () => {
+    const d = decideOrderPromote({
+      order: { ...baseOrder, 'Buyer Email': '' },
+      rancherId: RANCHER,
+      existingReferrals: [],
+    });
+    assert.strictEqual(d.kind, 'error');
+    if (d.kind === 'error') {
+      assert.strictEqual(d.httpStatus, 400);
+      assert.match(d.message, /My Leads form/);
+    }
+  });
+
+  it('DEDUPE: an existing referral for the same email + this rancher (ANY source, even closed) → duplicate, never a second row', () => {
+    const d = decideOrderPromote({
+      order: baseOrder,
+      rancherId: RANCHER,
+      existingReferrals: [
+        {
+          id: 'recRefRouted',
+          // Case-insensitive email match (belt over the formula's LOWER).
+          'Buyer Email': 'TEST.BUYER@EXAMPLE.COM',
+          Status: 'Closed Won', // terminal — still a duplicate
+          'Referral Source': '', // routed, not rancher-added — still a duplicate
+          Rancher: [RANCHER],
+        },
+      ],
+    });
+    assert.strictEqual(d.kind, 'duplicate');
+    if (d.kind === 'duplicate') assert.strictEqual(d.referralId, 'recRefRouted');
+  });
+
+  it('DEDUPE: matches on the Suggested Rancher link too, and hands back the NEWEST referral id', () => {
+    const d = decideOrderPromote({
+      order: baseOrder,
+      rancherId: RANCHER,
+      existingReferrals: [
+        {
+          id: 'recRefOld',
+          'Buyer Email': 'test.buyer@example.com',
+          Status: 'Closed Lost',
+          Rancher: [RANCHER],
+          'Created At': '2026-01-01T00:00:00Z',
+        },
+        {
+          id: 'recRefNew',
+          'Buyer Email': 'test.buyer@example.com',
+          Status: 'Rancher Contacted',
+          'Suggested Rancher': [RANCHER],
+          'Created At': '2026-07-01T00:00:00Z',
+        },
+      ],
+    });
+    assert.strictEqual(d.kind, 'duplicate');
+    if (d.kind === 'duplicate') assert.strictEqual(d.referralId, 'recRefNew');
+  });
+
+  it("CROSS-RANCHER FENCE: buyer mid-deal with ANOTHER rancher → 409 error (no double-dealing), but that rancher's CLOSED deal doesn't block", () => {
+    const otherActive = decideOrderPromote({
+      order: baseOrder,
+      rancherId: RANCHER,
+      existingReferrals: [
+        {
+          id: 'recRefElsewhere',
+          'Buyer Email': 'test.buyer@example.com',
+          Status: 'Negotiation',
+          Rancher: ['recSomeOtherRanch'],
+        },
+      ],
+    });
+    assert.strictEqual(otherActive.kind, 'error');
+    if (otherActive.kind === 'error') assert.strictEqual(otherActive.httpStatus, 409);
+
+    const otherClosed = decideOrderPromote({
+      order: baseOrder,
+      rancherId: RANCHER,
+      existingReferrals: [
+        {
+          id: 'recRefElsewhereClosed',
+          'Buyer Email': 'test.buyer@example.com',
+          Status: 'Closed Lost',
+          Rancher: ['recSomeOtherRanch'],
+        },
+      ],
+    });
+    assert.strictEqual(otherClosed.kind, 'create');
+  });
+
+  it('CREATE: prefills name/email from the ORDER row, lowercases the email, and carries the "from shop order" note', () => {
+    const d = decideOrderPromote({ order: baseOrder, rancherId: RANCHER, existingReferrals: [] });
+    assert.strictEqual(d.kind, 'create');
+    if (d.kind !== 'create') return;
+    assert.strictEqual(d.lead.name, 'Test Buyer');
+    assert.strictEqual(d.lead.email, 'test.buyer@example.com');
+    assert.strictEqual(d.lead.phone, '');
+    assert.strictEqual(d.lead.note, 'from shop order Quarter Beef — Test Buyer');
+  });
+
+  it('CREATE: blank Buyer Name falls back to the email local part, then a generic label', () => {
+    const fromLocal = decideOrderPromote({
+      order: { ...baseOrder, 'Buyer Name': '', 'Buyer Email': 'ranch.fan@example.com' },
+      rancherId: RANCHER,
+      existingReferrals: [],
+    });
+    assert.strictEqual(fromLocal.kind, 'create');
+    if (fromLocal.kind === 'create') assert.strictEqual(fromLocal.lead.name, 'ranch.fan');
+
+    const generic = decideOrderPromote({
+      order: { ...baseOrder, 'Buyer Name': '', 'Buyer Email': 'a@example.com' },
+      rancherId: RANCHER,
+      existingReferrals: [],
+    });
+    assert.strictEqual(generic.kind, 'create');
+    if (generic.kind === 'create') assert.strictEqual(generic.lead.name, 'Shop buyer');
+  });
+
+  it('COUNTER PIN: the promoted referral is rancher-added and NEVER capacity-counted — no Current Active Referrals increment, ever', () => {
+    const d = decideOrderPromote({ order: baseOrder, rancherId: RANCHER, existingReferrals: [] });
+    assert.strictEqual(d.kind, 'create');
+    if (d.kind !== 'create') return;
+    const fields = buildLeadReferralFields(
+      d.lead,
+      { rancherId: RANCHER, rancherState: 'TX', ranchName: 'Test Ranch', consumerId: 'recConsumer1' },
+      '2026-08-03T00:00:00.000Z',
+    );
+    // The rail's provenance + entry status.
+    assert.strictEqual(fields[REFERRAL_SOURCE_FIELD], REFERRAL_SOURCE_RANCHER_ADDED);
+    assert.strictEqual(fields['Status'], 'Rancher Contacted');
+    assert.match(String(fields['Notes']), /from shop order Quarter Beef — Test Buyer/);
+    // 'Rancher Contacted' IS a held status — the rancher-added source is what
+    // keeps it out of every capacity counter. Pin both sides.
+    assert.strictEqual(isCapacityCountedReferral(fields), false);
+    assert.strictEqual(countHeldReferrals(RANCHER, [fields]), 0);
+    const routedTwin = { ...fields, [REFERRAL_SOURCE_FIELD]: '' };
+    assert.strictEqual(countHeldReferrals(RANCHER, [routedTwin]), 1, 'pin is meaningful: a routed twin WOULD count');
   });
 });

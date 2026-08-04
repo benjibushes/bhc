@@ -28,10 +28,11 @@
 // Requested At — repo hard rule). The deposit ask happens via the EXISTING
 // request-deposit flow, which owns that transition and its stamps.
 //
-// Pure module — zero runtime deps (phoneFormat is pure) so every rule here is
-// unit-tested without Airtable (lib/rancherLeads.test.ts).
+// Pure module — zero runtime deps (phoneFormat + capacityCount are pure) so
+// every rule here is unit-tested without Airtable (lib/rancherLeads.test.ts).
 
 import { normalizePhoneDigits, isValidUsPhone, formatPhoneInput } from './phoneFormat';
+import { isActiveDealReferral } from './capacityCount';
 
 // ── provenance markers ────────────────────────────────────────────────────
 
@@ -240,6 +241,125 @@ export function decideLeadStagePatch(input: {
     return { kind: 'close', outcome: 'lost' };
   }
   return { kind: 'update', status: targetStatus };
+}
+
+// ── shop-order → lead promote decision (pure) ─────────────────────────────
+//
+// "TRACK AS DEAL" (2026-08-03): a buyer who purchased through the ranch's
+// own shop/site exists as a Rancher Orders row (Customers tab) but never as
+// a Referral — so the rancher couldn't move her through stages (contacted →
+// negotiation → closed). Promote = create a NORMAL rancher-added lead on the
+// EXISTING My Leads rail (same builders, same guards, same {stage} PATCH
+// machinery — nothing new to maintain), prefilled from the ORDER ROW, never
+// from client-supplied contact fields.
+//
+// Pure: the route hands it the order row + the buyer-email referral matches
+// and this decides — ownership, refunded, missing-email, dedupe (ANY
+// referral for this buyer email owned by this rancher, any source/status →
+// duplicate, never a second row), cross-rancher active fence, then a
+// validated LeadInput carrying the "from shop order <Order Ref>" note.
+
+export type OrderPromoteDecision =
+  | { kind: 'error'; httpStatus: number; message: string }
+  | { kind: 'duplicate'; referralId: string; message: string }
+  | { kind: 'create'; lead: LeadInput };
+
+export function decideOrderPromote(input: {
+  order: any;
+  rancherId: string;
+  /** Referrals rows already filtered by the buyer-email formula. */
+  existingReferrals: any[];
+}): OrderPromoteDecision {
+  const { order, rancherId } = input;
+  if (!order) {
+    return { kind: 'error', httpStatus: 404, message: 'Order not found.' };
+  }
+
+  // Ownership — the order row's plain-text owner key must equal the SESSION
+  // rancher (same rule as /api/rancher/orders). A rancher can only promote
+  // THEIR OWN customer.
+  const owner = String(order['Rancher Record ID'] || '').trim();
+  if (!rancherId || owner !== rancherId) {
+    return { kind: 'error', httpStatus: 403, message: 'Not authorized.' };
+  }
+
+  if (readEnumOrString(order['Status']).trim() === 'Refunded') {
+    return {
+      kind: 'error',
+      httpStatus: 400,
+      message: 'This order was refunded — nothing to track.',
+    };
+  }
+
+  const email = String(order['Buyer Email'] || '').trim().toLowerCase();
+  if (!email) {
+    return {
+      kind: 'error',
+      httpStatus: 400,
+      // Rare Stripe edge — the order recorded without a buyer email.
+      message: 'This order has no buyer email on file — add them from the My Leads form instead.',
+    };
+  }
+
+  // Dedupe belt (case-insensitive, over the formula's own LOWER/TRIM):
+  // ANY referral for this buyer email already owned by this rancher — routed
+  // OR rancher-added, open OR closed — means the person is already on their
+  // Deals surface. Never create a second row; hand back the id to deep-link.
+  const mine = (input.existingReferrals || [])
+    .filter((ref) => {
+      const refEmail = String(ref?.['Buyer Email'] || '').trim().toLowerCase();
+      if (!refEmail || refEmail !== email) return false;
+      const links = [
+        ...((Array.isArray(ref?.['Rancher']) ? ref['Rancher'] : []) as string[]),
+        ...((Array.isArray(ref?.['Suggested Rancher']) ? ref['Suggested Rancher'] : []) as string[]),
+      ];
+      return links.includes(rancherId);
+    })
+    // Newest first so the deep-link lands on the freshest deal.
+    .sort(
+      (a, b) =>
+        new Date(String(b?.['Created At'] || b?._createdTime || 0)).getTime() -
+        new Date(String(a?.['Created At'] || a?._createdTime || 0)).getTime(),
+    );
+  if (mine.length > 0) {
+    return {
+      kind: 'duplicate',
+      referralId: String(mine[0]?.id || ''),
+      message: 'This buyer is already on your Deals tab.',
+    };
+  }
+
+  // Cross-rancher fence — a buyer mid-deal with ANOTHER rancher must not be
+  // double-dealt (same rule + copy as the hand-typed create).
+  const activeElsewhere = (input.existingReferrals || []).some(
+    (ref) =>
+      String(ref?.['Buyer Email'] || '').trim().toLowerCase() === email &&
+      isActiveDealReferral(ref),
+  );
+  if (activeElsewhere) {
+    return {
+      kind: 'error',
+      httpStatus: 409,
+      message:
+        'This buyer is already in an active deal on the platform, so we can’t add them as your lead right now. Reach out to hello@buyhalfcow.com if you think that’s wrong.',
+    };
+  }
+
+  // Prefill from the order row. Name falls back to the email local part, then
+  // a generic label (validateLeadInput requires 2-80 chars).
+  let name = String(order['Buyer Name'] || '').trim().slice(0, 80);
+  if (name.length < 2) name = email.split('@')[0].slice(0, 80);
+  if (name.length < 2) name = 'Shop buyer';
+  // Order linkage — rides the EXISTING Notes block the rail already writes
+  // (rendered on the lead card), so the rancher sees why the deal exists.
+  const orderRef = String(order['Order Ref'] || '').trim();
+  const note = (orderRef ? `from shop order ${orderRef}` : 'from a shop order').slice(0, 500);
+
+  const validated = validateLeadInput({ name, email, phone: '', note });
+  if (!validated.ok) {
+    return { kind: 'error', httpStatus: 400, message: validated.error };
+  }
+  return { kind: 'create', lead: validated.lead };
 }
 
 // ── Airtable field builders (pure) ────────────────────────────────────────

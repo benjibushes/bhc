@@ -17,6 +17,7 @@ import { gradeLead, gradeSortWeight } from '@/lib/leadGrade';
 import { selectUntouchedIntros } from '@/lib/untouchedIntros';
 import {
   groupReferralsByBuyer,
+  mergeOrderBuyersIntoCustomers,
   deriveActivityEvents,
   countUnread,
   matchesSearch,
@@ -280,6 +281,11 @@ interface ProductOrderSummary {
   id: string;
   status: string;
   buyerName: string;
+  // SHOP-CUSTOMER DEALS (2026-08-03): the API always returned these; typing
+  // them feeds the Customers-tab merge (order buyers as customer rows) and
+  // the "Track as deal" promote.
+  buyerEmail?: string;
+  ref?: string;
   productName: string;
   buyerPaid: number;
   payout: number;
@@ -418,6 +424,16 @@ export default function RancherDashboardPage() {
   // Per-row stage updates: id being updated + last row-scoped error.
   const [leadUpdatingId, setLeadUpdatingId] = useState<string | null>(null);
   const [leadRowError, setLeadRowError] = useState<{ id: string; message: string } | null>(null);
+  // SHOP-CUSTOMER DEALS (2026-08-03) — "Track as deal" on order-only customer
+  // rows. Row-scoped busy flag + outcome message (success / duplicate with a
+  // deep-link / error), keyed by the customer key.
+  const [promotingCustomerKey, setPromotingCustomerKey] = useState<string | null>(null);
+  const [promoteResult, setPromoteResult] = useState<{
+    key: string;
+    kind: 'success' | 'duplicate' | 'error';
+    message: string;
+    referralId?: string;
+  } | null>(null);
   // Won modal (sale amount prompt, matching existing modal style) + two-tap
   // Lost confirm (first tap arms, second confirms — no window.prompt on mobile).
   const [leadWonModal, setLeadWonModal] = useState<Referral | null>(null);
@@ -1489,6 +1505,72 @@ export default function RancherDashboardPage() {
     }
   };
 
+  // SHOP-CUSTOMER DEALS (2026-08-03) — promote an order-only customer into a
+  // trackable rancher-added lead. POSTs { orderId } to the SAME My Leads
+  // create endpoint; the server prefills name/email from the order row and
+  // dedupes (409 + referralId → deep-link instead of a second row).
+  const trackOrderCustomerAsDeal = async (c: Customer) => {
+    if (!c.latestOrderId || promotingCustomerKey) return;
+    setPromotingCustomerKey(c.key);
+    setPromoteResult(null);
+    try {
+      const res = await fetch('/api/rancher/referrals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ orderId: c.latestOrderId }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        if (data?.duplicate && data?.referralId) {
+          setPromoteResult({
+            key: c.key,
+            kind: 'duplicate',
+            message: 'already on your deals — one tap to view it.',
+            referralId: String(data.referralId),
+          });
+        } else {
+          setPromoteResult({
+            key: c.key,
+            kind: 'error',
+            message: data?.error || 'Could not add the deal — try again.',
+          });
+        }
+        return;
+      }
+      setPromoteResult({
+        key: c.key,
+        kind: 'success',
+        message: 'added to your deals — track them in my leads above.',
+      });
+      // Refresh both feeds: the dashboard payload (the new lead renders in
+      // the My Leads lane) and the server-grouped customers list (this row
+      // now carries a referral, so the button retires).
+      await fetchDashboard();
+      try {
+        const cres = await fetch('/api/rancher/customers', { credentials: 'include' });
+        if (cres.ok) {
+          const cdata = await cres.json();
+          if (Array.isArray(cdata?.customers)) setCustomers(cdata.customers as Customer[]);
+        }
+      } catch {
+        /* stale customers list self-heals on next mount */
+      }
+      // Scroll the fresh lead card (My Leads lane, same tab) into view.
+      const newId = String(data?.referralId || '');
+      if (typeof window !== 'undefined' && newId) {
+        setTimeout(() => {
+          const el = document.getElementById(`ref-${newId}`);
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 100);
+      }
+    } catch {
+      setPromoteResult({ key: c.key, kind: 'error', message: 'Network error. Please try again.' });
+    } finally {
+      setPromotingCustomerKey(null);
+    }
+  };
+
   const updateLeadStage = async (
     ref: Referral,
     stage: 'new' | 'talking' | 'won' | 'lost',
@@ -1958,8 +2040,24 @@ export default function RancherDashboardPage() {
   // CRM list prefers the scoped /api/rancher/customers route but falls back to
   // the same pure grouping if that side-load hasn't landed / failed.
   const crmReferrals = referrals as unknown as CrmReferral[];
-  const customersList: Customer[] =
+  const referralCustomers: Customer[] =
     customers.length > 0 ? customers : groupReferralsByBuyer(crmReferrals);
+  // SHOP-CUSTOMER DEALS (2026-08-03): fold product-order buyers (Rancher
+  // Orders — e.g. purchases through the ranch's own shop/site) into the SAME
+  // customers list. A buyer with orders but no referral gets an order-only
+  // row here — the "Track as deal" case (she was invisible to this tab
+  // before, and had no Deals row to move through stages).
+  const customersList: Customer[] = mergeOrderBuyersIntoCustomers(
+    referralCustomers,
+    (productOrders || []).map((o) => ({
+      id: o.id,
+      buyerName: o.buyerName,
+      buyerEmail: o.buyerEmail,
+      orderedAt: o.orderedAt,
+      ref: o.ref,
+      status: o.status,
+    })),
+  );
   // Activity feed — every non-blank timestamp on the rancher's referrals becomes
   // a readable, reverse-chron event (lib/rancherCrm.deriveActivityEvents).
   const activityEvents: ActivityEvent[] = deriveActivityEvents(crmReferrals);
@@ -2000,9 +2098,11 @@ export default function RancherDashboardPage() {
   // referrals list already renders every active/closed row, so switching tabs +
   // closing the search panel is enough; deep-scroll is a nice-to-have we skip.
   const jumpToReferral = (referralId: string) => {
-    // My Leads rows render in the Customers tab CRM block, not Deals.
+    // My Leads rows render in the Customers tab CRM block, not Deals. An
+    // EMPTY id = an order-only customer (no referral yet) — their row lives
+    // on the Customers tab too.
     const target = referrals.find((r) => r.id === referralId);
-    selectTab(target && isMyLead(target) ? 'customers' : 'referrals');
+    selectTab(!referralId || (target && isMyLead(target)) ? 'customers' : 'referrals');
     setSearchOpen(false);
     setSearchQuery('');
     if (typeof window !== 'undefined' && referralId) {
@@ -2984,8 +3084,10 @@ export default function RancherDashboardPage() {
           )}
 
           {/* Customers Tab — WAVE 3a CRM. Every buyer (past + present) grouped
-              from this rancher's own referrals: contact, total deals, lifetime
-              $, last deal, repeat flag, link to their deal(s). Read-only. */}
+              from this rancher's own referrals PLUS their shop-order buyers
+              (SHOP-CUSTOMER DEALS 2026-08-03): contact, total deals, lifetime
+              $, last deal, repeat flag, link to their deal(s). Order-only rows
+              carry the "Track as deal" promote; everything else is read-only. */}
           {activeTab === 'customers' && (
             <div className="space-y-6">
               <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
@@ -3228,19 +3330,48 @@ export default function RancherDashboardPage() {
                       keyboard-accessible clickable div so the contact line
                       can hold real tel:/mailto: links (nested interactive
                       elements inside a <button> are invalid HTML). */}
-                  {filteredCustomers.map((c) => (
+                  {filteredCustomers.map((c) => {
+                    // SHOP-CUSTOMER DEALS (2026-08-03): an order-only row has
+                    // no referral to jump to — the card isn't clickable, it
+                    // carries the "Track as deal" promote instead.
+                    const clickable = !!c.latestReferralId;
+                    const canTrack =
+                      !!c.latestOrderId && !!c.email && c.referralIds.length === 0;
+                    const promoting = promotingCustomerKey === c.key;
+                    const rowMsg =
+                      promoteResult && promoteResult.key === c.key ? promoteResult : null;
+                    const dealLine =
+                      [
+                        c.totalDeals > 0
+                          ? `${c.totalDeals} deal${c.totalDeals === 1 ? '' : 's'}`
+                          : '',
+                        c.closedWonDeals > 0 ? `${c.closedWonDeals} closed` : '',
+                        (c.orderCount || 0) > 0
+                          ? `${c.orderCount} shop order${(c.orderCount || 0) === 1 ? '' : 's'}`
+                          : '',
+                        c.lastDealDate || c.lastOrderDate
+                          ? `last ${new Date(c.lastDealDate || c.lastOrderDate || '').toLocaleDateString()}`
+                          : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' · ');
+                    return (
                     <div
                       key={c.key}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => jumpToReferral(c.latestReferralId)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          jumpToReferral(c.latestReferralId);
-                        }
-                      }}
-                      className="block w-full text-left p-4 border border-dust bg-white hover:border-charcoal transition-colors cursor-pointer"
+                      {...(clickable
+                        ? {
+                            role: 'button',
+                            tabIndex: 0,
+                            onClick: () => jumpToReferral(c.latestReferralId),
+                            onKeyDown: (e: React.KeyboardEvent) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                jumpToReferral(c.latestReferralId);
+                              }
+                            },
+                          }
+                        : {})}
+                      className={`block w-full text-left p-4 border border-dust bg-white transition-colors ${clickable ? 'hover:border-charcoal cursor-pointer' : ''}`}
                     >
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                         <div className="min-w-0">
@@ -3275,11 +3406,7 @@ export default function RancherDashboardPage() {
                               </a>
                             )}
                           </p>
-                          <p className="text-xs text-saddle mt-0.5">
-                            {c.totalDeals} deal{c.totalDeals === 1 ? '' : 's'}
-                            {c.closedWonDeals > 0 ? ` · ${c.closedWonDeals} closed` : ''}
-                            {c.lastDealDate ? ` · last ${new Date(c.lastDealDate).toLocaleDateString()}` : ''}
-                          </p>
+                          <p className="text-xs text-saddle mt-0.5">{dealLine}</p>
                         </div>
                         <div className="text-right flex-shrink-0">
                           <p className="font-serif text-lg text-charcoal tabular-nums">
@@ -3288,8 +3415,45 @@ export default function RancherDashboardPage() {
                           <p className="text-[11px] uppercase tracking-wider text-dust">lifetime</p>
                         </div>
                       </div>
+                      {/* Track-as-deal affordance + outcome states. Success /
+                          duplicate replace the button; error renders beside a
+                          retry-able button. */}
+                      {(canTrack || rowMsg) && (
+                        <div className="pt-3" onClick={(e) => e.stopPropagation()}>
+                          {rowMsg?.kind === 'success' ? (
+                            <p className="text-xs text-sage-dark">{rowMsg.message}</p>
+                          ) : rowMsg?.kind === 'duplicate' ? (
+                            <div className="flex items-center gap-3 flex-wrap">
+                              <p className="text-xs text-saddle">{rowMsg.message}</p>
+                              {rowMsg.referralId && (
+                                <button
+                                  onClick={() => jumpToReferral(rowMsg.referralId!)}
+                                  className="px-3 py-1.5 min-h-[44px] text-xs font-medium border border-charcoal text-charcoal hover:bg-charcoal hover:text-bone transition-colors"
+                                >
+                                  View deal
+                                </button>
+                              )}
+                            </div>
+                          ) : canTrack ? (
+                            <div className="flex items-center gap-3 flex-wrap">
+                              <button
+                                onClick={() => trackOrderCustomerAsDeal(c)}
+                                disabled={promoting}
+                                title="Add this shop customer to your deals so you can track them to the close."
+                                className="px-3 py-1.5 min-h-[44px] text-xs font-medium border border-charcoal text-charcoal hover:bg-charcoal hover:text-bone transition-colors disabled:opacity-50"
+                              >
+                                {promoting ? 'Adding…' : 'Track as deal'}
+                              </button>
+                              {rowMsg?.kind === 'error' && (
+                                <p className="text-xs text-weathered">{rowMsg.message}</p>
+                              )}
+                            </div>
+                          ) : null}
+                        </div>
+                      )}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
