@@ -610,7 +610,7 @@ export default function AdminPage() {
                   >
                     <div className="font-[family-name:var(--font-serif)] text-2xl font-bold">{unsignedAgreementsCount}</div>
                     <div className="text-xs text-saddle mt-1">Unsigned Agreements</div>
-                    <span className="text-xs text-dust mt-0.5 inline-block">&gt;7 days old</span>
+                    <span className="text-xs text-muted mt-0.5 inline-block">&gt;7 days old</span>
                   </button>
                   {/* TWO RAILS, TWO TILES (2026-07-24). This tile was labeled
                       a bare "Unpaid Commission" while summing a column that
@@ -622,21 +622,21 @@ export default function AdminPage() {
                   <a href="/admin/commissions" className="p-3 border border-amber/60 bg-white text-center hover:bg-amber/20 transition-colors block">
                     <div className="font-[family-name:var(--font-serif)] text-2xl font-bold">${(refStats?.commissionUnpaid ?? 0).toLocaleString()}</div>
                     <div className="text-xs text-saddle mt-1">Legacy Commission Receivable</div>
-                    <span className="text-xs text-dust mt-0.5 inline-block">pre-Connect · all-time</span>
+                    <span className="text-xs text-muted mt-0.5 inline-block">pre-Connect · all-time</span>
                   </a>
                   <a href="/admin/payments" className="p-3 border border-amber/60 bg-white text-center hover:bg-amber/20 transition-colors block">
                     <div className="font-[family-name:var(--font-serif)] text-2xl font-bold">
                       {refStats?.connectFeeCaptured == null ? '—' : `$${refStats.connectFeeCaptured.toLocaleString()}`}
                     </div>
                     <div className="text-xs text-saddle mt-1">Connect Fees Captured</div>
-                    <span className="text-xs text-dust mt-0.5 inline-block">
+                    <span className="text-xs text-muted mt-0.5 inline-block">
                       {refStats?.connectFeeCaptured == null ? 'payments unavailable' : `at deposit · ${refStats.connectFeeCount ?? 0} deals`}
                     </span>
                   </a>
                   <div className="p-3 border border-amber/60 bg-white text-center">
                     <div className="font-[family-name:var(--font-serif)] text-2xl font-bold">{stalledLeadsCount}</div>
                     <div className="text-xs text-saddle mt-1">Stalled Leads</div>
-                    <span className="text-xs text-dust mt-0.5 inline-block">No action needed</span>
+                    <span className="text-xs text-muted mt-0.5 inline-block">No action needed</span>
                   </div>
                 </div>
               </div>
@@ -798,16 +798,16 @@ export default function AdminPage() {
                                           'bg-bone-deep text-saddle border-dust'
                                         }`}>
                                           {consumer.intent_classification} ({consumer.intent_score})
-                                          <span className="text-xs text-dust ml-1">Higher = more likely to buy</span>
+                                          <span className="text-xs text-muted ml-1">Higher = more likely to buy</span>
                                         </span>
                                       )}
                                       {consumer.referral_status && consumer.referral_status !== 'Unmatched' && consumer.referral_status !== 'Community' && (
                                         <span className="px-2 py-0.5 text-xs bg-dust/25 text-saddle border border-dust">
                                           {consumer.referral_status}
-                                          <span className="text-xs text-dust ml-1">Referral match status</span>
+                                          <span className="text-xs text-muted ml-1">Referral match status</span>
                                         </span>
                                       )}
-                                      <span className="text-xs text-dust">{daysSinceSignup}d ago</span>
+                                      <span className="text-xs text-muted">{daysSinceSignup}d ago</span>
                                     </div>
 
                                     <div className="flex items-center gap-2">
@@ -1082,7 +1082,7 @@ export default function AdminPage() {
                                 }
                                 if (stage === 'Agreement Signed') {
                                   return (
-                                    <span className="px-3 py-1 text-xs border border-dust text-dust cursor-default">
+                                    <span className="px-3 py-1 text-xs border border-dust text-muted cursor-default">
                                       Awaiting Verification
                                     </span>
                                   );

@@ -232,7 +232,7 @@ export default function TodayQueue({
                 <p className="text-[11px] uppercase tracking-widest text-saddle font-semibold">
                   {row.kicker}
                   {row.badge && (
-                    <span className="ml-2 inline-block px-1.5 py-0.5 text-[10px] normal-case tracking-normal bg-amber/20 text-amber-dark rounded-sm">
+                    <span className="ml-2 inline-block px-1.5 py-0.5 text-[11px] normal-case tracking-normal bg-amber/20 text-amber-dark rounded-sm">
                       {row.badge}
                     </span>
                   )}
@@ -259,13 +259,13 @@ export default function TodayQueue({
                   <span className="flex gap-2 shrink-0">
                     <a
                       href={`tel:${row.phone}`}
-                      className="rounded-sm border border-charcoal px-3 py-2 text-xs uppercase tracking-wider text-charcoal hover:bg-charcoal hover:text-bone transition-colors"
+                      className="rounded-sm border border-charcoal px-3 py-2 min-h-[44px] inline-flex items-center text-xs uppercase tracking-wider text-charcoal hover:bg-charcoal hover:text-bone transition-colors"
                     >
                       call
                     </a>
                     <a
                       href={`sms:${row.phone}`}
-                      className="rounded-sm border border-charcoal px-3 py-2 text-xs uppercase tracking-wider text-charcoal hover:bg-charcoal hover:text-bone transition-colors"
+                      className="rounded-sm border border-charcoal px-3 py-2 min-h-[44px] inline-flex items-center text-xs uppercase tracking-wider text-charcoal hover:bg-charcoal hover:text-bone transition-colors"
                     >
                       text
                     </a>

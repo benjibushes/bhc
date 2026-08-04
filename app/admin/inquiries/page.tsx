@@ -624,7 +624,7 @@ export default function AdminInquiriesPage() {
                               {inquiry.status.replace('_', ' ')}
                             </span>
                             {inquiry.interest_type === 'Wholesale' && (
-                              <span className="px-2 py-0.5 bg-charcoal text-bone text-[10px] uppercase tracking-wider">
+                              <span className="px-2 py-0.5 bg-charcoal text-bone text-[11px] uppercase tracking-wider">
                                 B2B
                               </span>
                             )}
@@ -725,7 +725,7 @@ export default function AdminInquiriesPage() {
                               Matched Ranchers ({inquiry.matched_ranchers?.length || 0})
                             </h4>
                             {!inquiry.matched_ranchers || inquiry.matched_ranchers.length === 0 ? (
-                              <p className="text-sm italic text-dust">No ranchers matched yet.</p>
+                              <p className="text-sm italic text-muted">No ranchers matched yet.</p>
                             ) : (
                               <ul className="space-y-1">
                                 {inquiry.matched_ranchers.map((m) => (
@@ -870,7 +870,7 @@ function WholesaleMatchDrawer({
       )}
       <div className="max-h-64 overflow-y-auto border border-dust">
         {filtered.length === 0 ? (
-          <p className="p-3 text-sm italic text-dust">No ranchers to show.</p>
+          <p className="p-3 text-sm italic text-muted">No ranchers to show.</p>
         ) : (
           <ul className="divide-y divide-bone">
             {filtered.map((r) => {
@@ -888,7 +888,7 @@ function WholesaleMatchDrawer({
                     <p className="text-sm truncate">
                       {r.ranch_name || '(unnamed)'} <span className="text-saddle">— {r.operator_name}</span>
                     </p>
-                    <p className="text-xs text-dust">{r.state}</p>
+                    <p className="text-xs text-muted">{r.state}</p>
                   </div>
                 </li>
               );

@@ -943,7 +943,7 @@ export default function ReferralsPage() {
               <div className="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
                   <span className="font-medium">Selected {selectedIds.size}</span>
-                  <span className="text-xs text-dust">
+                  <span className="text-xs text-muted">
                     {(() => {
                       const sel = referrals.filter(r => selectedIds.has(r.id));
                       const pending = sel.filter(r => r.status === 'Pending Approval').length;
@@ -969,7 +969,7 @@ export default function ReferralsPage() {
                   <button
                     onClick={clearSelection}
                     disabled={bulkLoading}
-                    className="px-3 py-2 border border-dust text-dust text-sm hover:bg-dust hover:text-charcoal disabled:opacity-50"
+                    className="px-3 py-2 border border-dust text-muted text-sm hover:bg-dust hover:text-charcoal disabled:opacity-50"
                   >
                     Clear
                   </button>

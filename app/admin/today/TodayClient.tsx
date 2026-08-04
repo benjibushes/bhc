@@ -120,7 +120,8 @@ export default function TodayClient() {
       )}
 
       {/* BAND 1 — MONEY */}
-      <section aria-label="Money">
+      <section aria-label="Money" className="space-y-2">
+        <h2 className="text-xs font-semibold tracking-widest text-muted">MONEY</h2>
         <div className="grid grid-cols-2 gap-2">
           <MoneyTile label="Earned today" cents={data?.money?.earnedTodayCents} />
           <MoneyTile label="Earned MTD" cents={data?.money?.earnedMtdCents} />
@@ -149,7 +150,8 @@ export default function TodayClient() {
       </section>
 
       {/* BAND 2 — WHAT BROKE */}
-      <section aria-label="What broke">
+      <section aria-label="What broke" className="space-y-2">
+        <h2 className="text-xs font-semibold tracking-widest text-muted">WHAT BROKE</h2>
         {data?.health == null ? (
           <p className="text-sm text-saddle">Health check unavailable.</p>
         ) : data.health.healthy ? (
@@ -161,7 +163,7 @@ export default function TodayClient() {
             {data.health.reds.map((r) => (
               <li
                 key={r.name}
-                className="text-sm py-2 px-3 bg-white border-l-4 border-weathered border border-dust rounded-sm"
+                className="text-sm py-2 px-3 bg-white border border-dust border-l-4 border-l-weathered rounded-sm"
               >
                 <span className="font-semibold">{r.name}:</span> {r.detail}
                 {r.fix && <span className="block text-xs text-saddle mt-0.5">Fix: {r.fix}</span>}
@@ -173,7 +175,7 @@ export default function TodayClient() {
 
       {/* BAND 3 — DIAL LIST */}
       <section aria-label="Dial list" className="space-y-2">
-        <h2 className="text-xs font-semibold tracking-widest text-dust">WHO TO CALL</h2>
+        <h2 className="text-xs font-semibold tracking-widest text-muted">WHO TO CALL</h2>
         {data?.dial == null ? (
           <p className="text-sm text-saddle">Dial list unavailable.</p>
         ) : data.dial.length === 0 ? (
@@ -195,7 +197,7 @@ export default function TodayClient() {
                         <span className="ml-2 text-xs text-saddle">{row.state}</span>
                       )}
                       {row.kind === 'rancher' && (
-                        <span className="ml-2 text-[10px] uppercase tracking-wide text-saddle border border-dust px-1">
+                        <span className="ml-2 text-[11px] uppercase tracking-wide text-saddle border border-dust px-1">
                           rancher
                         </span>
                       )}
@@ -231,7 +233,7 @@ export default function TodayClient() {
       {/* BAND 4 — THE ONE MOVE */}
       <section aria-label="The one move">
         <div className="bg-charcoal text-bone rounded-sm p-4">
-          <p className="text-[10px] font-semibold tracking-widest text-tallow mb-1">
+          <p className="text-[11px] font-semibold tracking-widest text-tallow mb-1">
             THE ONE MOVE
           </p>
           <p className="text-sm leading-snug">
@@ -242,7 +244,7 @@ export default function TodayClient() {
 
       {/* BAND 5 — SUPPLY */}
       <section aria-label="Supply">
-        <h2 className="text-xs font-semibold tracking-widest text-dust mb-2">SUPPLY</h2>
+        <h2 className="text-xs font-semibold tracking-widest text-muted mb-2">SUPPLY</h2>
         {data?.supply == null ? (
           <p className="text-sm text-saddle">Supply counts unavailable.</p>
         ) : (
@@ -297,7 +299,7 @@ function MoneyTile({
         alert ? 'border-l-4 border-l-weathered' : ''
       }`}
     >
-      <p className="text-[10px] font-semibold tracking-widest text-dust">{label.toUpperCase()}</p>
+      <p className="text-[11px] font-semibold tracking-widest text-muted">{label.toUpperCase()}</p>
       <p className="text-2xl tabular-nums mt-0.5">{cents == null ? '—' : fmtUsd(cents)}</p>
       {sub && <p className="text-xs text-saddle tabular-nums">{sub}</p>}
     </div>
@@ -308,7 +310,7 @@ function StatTile({ label, value }: { label: string; value: number }) {
   return (
     <div className="bg-white border border-dust rounded-sm p-3 text-center">
       <p className="text-2xl tabular-nums">{value}</p>
-      <p className="text-[10px] font-semibold tracking-widest text-dust">{label.toUpperCase()}</p>
+      <p className="text-[11px] font-semibold tracking-widest text-muted">{label.toUpperCase()}</p>
     </div>
   );
 }

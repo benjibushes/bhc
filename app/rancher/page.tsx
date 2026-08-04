@@ -2355,7 +2355,7 @@ export default function RancherDashboardPage() {
           style={{ width: `${Math.min(100, (rancherInfo.currentActiveReferrals / rancherInfo.maxActiveReferrals) * 100)}%` }}
         />
       </div>
-      <p className="text-xs text-dust">
+      <p className="text-xs text-muted">
         {rancherInfo.currentActiveReferrals >= rancherInfo.maxActiveReferrals
           ? 'At capacity — new leads paused until a deal closes'
           : `${rancherInfo.maxActiveReferrals - rancherInfo.currentActiveReferrals} more leads available`}
@@ -2389,7 +2389,7 @@ export default function RancherDashboardPage() {
           {capacityError && (
             <div className="p-3 border border-weathered text-weathered text-sm">{capacityError}</div>
           )}
-          <p className="text-xs text-dust">Set how many buyer leads you can handle at once. We&apos;ll pause new leads when you hit this limit.</p>
+          <p className="text-xs text-muted">Set how many buyer leads you can handle at once. We&apos;ll pause new leads when you hit this limit.</p>
         </div>
       )}
       {/* E4b — self-serve pause/resume. Pausing flips Active Status to
@@ -2476,7 +2476,10 @@ export default function RancherDashboardPage() {
                 <PushSetupCard />
               </div>
             </div>
-            <div className="flex items-center gap-4 flex-wrap">
+            {/* justify-end keeps wrapped rows right-aligned — without it the
+                Log out / Set password text buttons wrap to a stray left-hung
+                second row at mid widths. */}
+            <div className="flex items-center gap-4 flex-wrap sm:justify-end">
               {/* WAVE 3a — global search. Always available (not gated on lead
                   count). Filters already-loaded leads + customers by name /
                   email / phone and jumps to the result. */}
@@ -2488,7 +2491,7 @@ export default function RancherDashboardPage() {
                   onFocus={() => setSearchOpen(true)}
                   placeholder="search leads & customers"
                   aria-label="Search leads and customers"
-                  className="w-44 sm:w-56 px-3 py-2 min-h-[44px] text-sm border border-dust bg-bone text-charcoal placeholder:text-dust focus:outline-none focus:border-charcoal transition-colors"
+                  className="w-44 sm:w-56 px-3 py-2 min-h-[44px] text-sm border border-dust bg-bone text-charcoal placeholder:text-muted focus:outline-none focus:border-charcoal transition-colors"
                 />
                 {searchOpen && trimmedQuery.length > 0 && (
                   <>
@@ -2501,7 +2504,7 @@ export default function RancherDashboardPage() {
                         <>
                           {searchCustomerResults.length > 0 && (
                             <div>
-                              <p className="px-4 pt-3 pb-1 text-[11px] uppercase tracking-widest text-dust">customers</p>
+                              <p className="px-4 pt-3 pb-1 text-[11px] uppercase tracking-widest text-muted">customers</p>
                               {searchCustomerResults.slice(0, 6).map((c) => (
                                 <button
                                   key={`s-c-${c.key}`}
@@ -2509,15 +2512,15 @@ export default function RancherDashboardPage() {
                                   className="block w-full text-left px-4 py-2.5 min-h-[44px] text-sm hover:bg-bone-warm transition-colors"
                                 >
                                   <span className="font-medium">{c.name}</span>
-                                  {c.isRepeat && <span className="ml-2 text-[10px] uppercase tracking-wider bg-sage/15 text-sage-dark px-1.5 py-0.5">repeat</span>}
-                                  <span className="block text-xs text-dust truncate">{c.email || c.phone} · {c.closedWonDeals} deal{c.closedWonDeals === 1 ? '' : 's'}</span>
+                                  {c.isRepeat && <span className="ml-2 text-[11px] uppercase tracking-wider bg-sage/15 text-sage-dark px-1.5 py-0.5">repeat</span>}
+                                  <span className="block text-xs text-muted truncate">{c.email || c.phone} · {c.closedWonDeals} deal{c.closedWonDeals === 1 ? '' : 's'}</span>
                                 </button>
                               ))}
                             </div>
                           )}
                           {searchLeadResults.length > 0 && (
                             <div>
-                              <p className="px-4 pt-3 pb-1 text-[11px] uppercase tracking-widest text-dust">leads</p>
+                              <p className="px-4 pt-3 pb-1 text-[11px] uppercase tracking-widest text-muted">leads</p>
                               {searchLeadResults.slice(0, 8).map((r) => (
                                 <button
                                   key={`s-l-${r.id}`}
@@ -2525,7 +2528,7 @@ export default function RancherDashboardPage() {
                                   className="block w-full text-left px-4 py-2.5 min-h-[44px] text-sm hover:bg-bone-warm transition-colors"
                                 >
                                   <span className="font-medium">{r.buyer_name || r.buyer_email || 'lead'}</span>
-                                  <span className="block text-xs text-dust truncate">{r.status} · {r.buyer_email || r.buyer_phone}</span>
+                                  <span className="block text-xs text-muted truncate">{r.status} · {r.buyer_email || r.buyer_phone}</span>
                                 </button>
                               ))}
                             </div>
@@ -2550,7 +2553,7 @@ export default function RancherDashboardPage() {
                 >
                   <span aria-hidden className="text-base">🔔</span>
                   {unreadActivity > 0 && (
-                    <span className="absolute -top-1 -right-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[10px] font-bold bg-rust text-bone rounded-full">
+                    <span className="absolute -top-1 -right-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[11px] font-bold bg-rust text-bone rounded-full">
                       {unreadActivity > 99 ? '99+' : unreadActivity}
                     </span>
                   )}
@@ -2582,7 +2585,7 @@ export default function RancherDashboardPage() {
                                 {isUnread && <span aria-hidden className="mt-1.5 w-1.5 h-1.5 rounded-full bg-rust flex-shrink-0" />}
                                 <span className={isUnread ? '' : 'pl-3.5'}>
                                   <span className="block text-sm text-charcoal">{e.title}</span>
-                                  <span className="block text-xs text-dust">{new Date(e.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+                                  <span className="block text-xs text-muted">{new Date(e.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
                                 </span>
                               </span>
                             </button>
@@ -2616,11 +2619,11 @@ export default function RancherDashboardPage() {
               )}
               <button
                 onClick={() => { setPwModalOpen(true); setPwSaved(false); setPwModalError(''); setPwValue(''); setPwConfirm(''); }}
-                className="text-sm text-dust hover:text-charcoal transition-colors"
+                className="text-sm text-muted hover:text-charcoal transition-colors"
               >
                 Set password
               </button>
-              <button onClick={handleLogout} className="text-sm text-dust hover:text-charcoal transition-colors">
+              <button onClick={handleLogout} className="text-sm text-muted hover:text-charcoal transition-colors">
                 Log out
               </button>
             </div>
@@ -2633,7 +2636,7 @@ export default function RancherDashboardPage() {
               <div className="bg-bone border border-dust max-w-md w-full p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
                 <div className="flex items-center justify-between">
                   <h2 className="font-serif text-2xl">set a password</h2>
-                  <button onClick={() => setPwModalOpen(false)} className="text-dust hover:text-charcoal" aria-label="Close">✕</button>
+                  <button onClick={() => setPwModalOpen(false)} className="text-muted hover:text-charcoal min-w-[44px] min-h-[44px] flex items-center justify-center" aria-label="Close">✕</button>
                 </div>
                 {pwSaved ? (
                   <div className="space-y-4">
@@ -2866,15 +2869,15 @@ export default function RancherDashboardPage() {
                       <span className={`flex-shrink-0 w-6 h-6 flex items-center justify-center text-xs font-bold ${
                         step.state === 'done' ? 'bg-sage text-bone' :
                         step.state === 'current' ? 'bg-amber text-charcoal' :
-                        'bg-bone-deep text-dust'
+                        'bg-bone-deep text-muted'
                       }`} aria-hidden>
                         {step.state === 'done' ? '\u2713' : step.state === 'current' ? '!' : i + 1}
                       </span>
                       <div className="flex-1 min-w-0">
                         <p className={`text-sm ${
-                          step.state === 'done' ? 'text-dust line-through' :
+                          step.state === 'done' ? 'text-muted line-through' :
                           step.state === 'current' ? 'font-medium text-charcoal' :
-                          'text-dust'
+                          'text-muted'
                         }`}>{step.label}</p>
                         {step.cta && <div className="mt-1">{step.cta}</div>}
                       </div>
@@ -2898,7 +2901,7 @@ export default function RancherDashboardPage() {
                         onChange={(e) => setVerificationRefs(e.target.value)}
                         className="w-full px-3 py-2 text-sm border border-dust min-h-[80px]"
                       />
-                      <p className="text-xs text-dust mt-1">We may reach out to confirm. 2-3 references recommended.</p>
+                      <p className="text-xs text-muted mt-1">We may reach out to confirm. 2-3 references recommended.</p>
                     </div>
 
                     <div>
@@ -3105,7 +3108,7 @@ export default function RancherDashboardPage() {
                     onChange={(e) => setCustomerSearch(e.target.value)}
                     placeholder="filter by name, email, phone"
                     aria-label="Filter customers"
-                    className="w-full sm:w-64 px-3 py-2 min-h-[44px] text-sm border border-dust bg-bone text-charcoal placeholder:text-dust focus:outline-none focus:border-charcoal transition-colors"
+                    className="w-full sm:w-64 px-3 py-2 min-h-[44px] text-sm border border-dust bg-bone text-charcoal placeholder:text-muted focus:outline-none focus:border-charcoal transition-colors"
                   />
                 )}
               </div>
@@ -3137,7 +3140,7 @@ export default function RancherDashboardPage() {
                       placeholder="name"
                       aria-label="Lead name"
                       maxLength={80}
-                      className="w-full px-3 py-2 min-h-[44px] text-sm border border-dust bg-bone text-charcoal placeholder:text-dust focus:outline-none focus:border-charcoal transition-colors"
+                      className="w-full px-3 py-2 min-h-[44px] text-sm border border-dust bg-bone text-charcoal placeholder:text-muted focus:outline-none focus:border-charcoal transition-colors"
                     />
                     <input
                       type="tel"
@@ -3145,7 +3148,7 @@ export default function RancherDashboardPage() {
                       onChange={(e) => setLeadForm({ ...leadForm, phone: e.target.value })}
                       placeholder="phone"
                       aria-label="Lead phone"
-                      className="w-full px-3 py-2 min-h-[44px] text-sm border border-dust bg-bone text-charcoal placeholder:text-dust focus:outline-none focus:border-charcoal transition-colors"
+                      className="w-full px-3 py-2 min-h-[44px] text-sm border border-dust bg-bone text-charcoal placeholder:text-muted focus:outline-none focus:border-charcoal transition-colors"
                     />
                     <input
                       type="email"
@@ -3153,7 +3156,7 @@ export default function RancherDashboardPage() {
                       onChange={(e) => setLeadForm({ ...leadForm, email: e.target.value })}
                       placeholder="email"
                       aria-label="Lead email"
-                      className="w-full px-3 py-2 min-h-[44px] text-sm border border-dust bg-bone text-charcoal placeholder:text-dust focus:outline-none focus:border-charcoal transition-colors"
+                      className="w-full px-3 py-2 min-h-[44px] text-sm border border-dust bg-bone text-charcoal placeholder:text-muted focus:outline-none focus:border-charcoal transition-colors"
                     />
                   </div>
                   <input
@@ -3163,7 +3166,7 @@ export default function RancherDashboardPage() {
                     placeholder="note (optional) — e.g. wants a half in the fall"
                     aria-label="Lead note"
                     maxLength={500}
-                    className="w-full px-3 py-2 min-h-[44px] text-sm border border-dust bg-bone text-charcoal placeholder:text-dust focus:outline-none focus:border-charcoal transition-colors"
+                    className="w-full px-3 py-2 min-h-[44px] text-sm border border-dust bg-bone text-charcoal placeholder:text-muted focus:outline-none focus:border-charcoal transition-colors"
                   />
                   <div className="flex flex-col sm:flex-row sm:items-center gap-2">
                     <button
@@ -3173,7 +3176,7 @@ export default function RancherDashboardPage() {
                     >
                       {leadSubmitting ? 'Adding…' : 'Add lead'}
                     </button>
-                    <p className="text-[11px] uppercase tracking-widest text-dust">
+                    <p className="text-[11px] uppercase tracking-widest text-muted">
                       phone or email — at least one
                     </p>
                   </div>
@@ -3206,7 +3209,7 @@ export default function RancherDashboardPage() {
                             </span>
                             <span className="font-medium text-charcoal">{lead.buyer_name}</span>
                           </div>
-                          <p className="text-xs text-dust">
+                          <p className="text-xs text-muted">
                             {[lead.buyer_phone, lead.buyer_email].filter(Boolean).join(' · ') || 'no contact on file'}
                           </p>
                           {lead.notes && (
@@ -3241,7 +3244,7 @@ export default function RancherDashboardPage() {
                                 </button>
                               )}
                               {depositEligible && !lead.buyer_email && !onDepositRail && (
-                                <span className="text-[11px] text-dust self-center">
+                                <span className="text-[11px] text-muted self-center">
                                   add email to send a deposit link
                                 </span>
                               )}
@@ -3280,11 +3283,11 @@ export default function RancherDashboardPage() {
                 {/* Closed leads — compact list, chip + amount. */}
                 {myLeadsClosed.length > 0 && (
                   <div className="space-y-1 pt-1">
-                    <p className="text-[11px] uppercase tracking-widest text-dust">closed</p>
+                    <p className="text-[11px] uppercase tracking-widest text-muted">closed</p>
                     {myLeadsClosed.map((lead) => (
                       <div key={lead.id} className="flex items-center justify-between gap-2 py-1.5 border-b border-dust/40 last:border-b-0">
                         <div className="flex items-center gap-2 min-w-0">
-                          <span className={`inline-block px-2 py-0.5 text-[10px] font-medium ${statusStyles[lead.status] || 'bg-dust/20 text-saddle'}`}>
+                          <span className={`inline-block px-2 py-0.5 text-[11px] font-medium ${statusStyles[lead.status] || 'bg-dust/20 text-saddle'}`}>
                             {lead.status === 'Closed Won' ? 'won' : lead.status === 'Closed Lost' ? 'lost' : lead.status.toLowerCase()}
                           </span>
                           <span className="text-sm text-charcoal truncate">{lead.buyer_name}</span>
@@ -3305,7 +3308,7 @@ export default function RancherDashboardPage() {
                   <StatCard label="Customers" value={customersList.length} />
                   <StatCard label="Repeat Buyers" value={customersList.filter((c) => c.isRepeat).length} />
                   <StatCard
-                    label="Lifetime $"
+                    label="Lifetime Sales"
                     value={`$${customersList.reduce((s, c) => s + c.lifetimeValue, 0).toLocaleString()}`}
                   />
                 </div>
@@ -3378,13 +3381,13 @@ export default function RancherDashboardPage() {
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="font-medium text-charcoal truncate">{c.name}</span>
                             {c.isRepeat && (
-                              <span className="text-[10px] uppercase tracking-wider bg-sage/15 text-sage-dark px-1.5 py-0.5">
+                              <span className="text-[11px] uppercase tracking-wider bg-sage/15 text-sage-dark px-1.5 py-0.5">
                                 repeat buyer
                               </span>
                             )}
-                            {c.state && <span className="text-xs text-dust">{c.state}</span>}
+                            {c.state && <span className="text-xs text-muted">{c.state}</span>}
                           </div>
-                          <p className="text-xs text-dust truncate mt-0.5">
+                          <p className="text-xs text-muted truncate mt-0.5">
                             {!c.email && !c.phone && 'no contact on file'}
                             {c.email && (
                               <a
@@ -3412,7 +3415,7 @@ export default function RancherDashboardPage() {
                           <p className="font-serif text-lg text-charcoal tabular-nums">
                             ${c.lifetimeValue.toLocaleString()}
                           </p>
-                          <p className="text-[11px] uppercase tracking-wider text-dust">lifetime</p>
+                          <p className="text-[11px] uppercase tracking-wider text-muted">lifetime</p>
                         </div>
                       </div>
                       {/* Track-as-deal affordance + outcome states. Success /
@@ -3760,7 +3763,7 @@ export default function RancherDashboardPage() {
                                 ) : null}
                               </div>
                               <p className="font-medium">{ref.buyer_name}</p>
-                              <p className="text-xs text-dust">{ref.order_type}</p>
+                              <p className="text-xs text-muted">{ref.order_type}</p>
                               <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-saddle">
                                 <span>
                                   Deposit:{' '}
@@ -3866,7 +3869,7 @@ export default function RancherDashboardPage() {
                               {ref.status}
                             </span>
                             <p className="font-medium mt-1">{ref.buyer_name}</p>
-                            <p className="text-xs text-dust">{ref.closed_at ? new Date(ref.closed_at).toLocaleDateString() : ''}</p>
+                            <p className="text-xs text-muted">{ref.closed_at ? new Date(ref.closed_at).toLocaleDateString() : ''}</p>
                           </div>
                           <div className="flex items-center gap-3">
                             {ref.status === 'Closed Won' && (
@@ -3993,10 +3996,14 @@ export default function RancherDashboardPage() {
                 {/* Unpaid card is now driven by the real balance, not the tier
                     flag: any owed commission (legacy OR off-rail tier_v2 close)
                     shows a payable balance; zero owed shows "Collected". */}
+                {/* Polish pass 2026-08-04: one card, always a number. The old
+                    zero-owed branch rendered the WORD "Collected" styled like a
+                    money stat (and made a second "Commission" card in the same
+                    grid). Same data, same branches — just stated as an amount. */}
                 {stats.unpaidCommission > 0 ? (
-                  <StatCard label="Unpaid Commission" value={formatUSD(stats.unpaidCommission)} sub="Invoice pending" />
+                  <StatCard label="Commission Owed" value={formatUSD(stats.unpaidCommission)} sub="Invoice pending" />
                 ) : (
-                  <StatCard label="Commission" value="Collected" sub={rancherInfo.pricingModel === 'tier_v2' ? 'taken at deposit' : ''} />
+                  <StatCard label="Commission Owed" value={formatUSD(0)} sub={rancherInfo.pricingModel === 'tier_v2' ? 'nothing owed — collected at deposit' : 'nothing owed'} />
                 )}
               </div>
 
@@ -4253,12 +4260,12 @@ export default function RancherDashboardPage() {
                         </span>
                         <span className="font-medium text-charcoal">{rv.buyerName}</span>
                         {rv.submittedAt && (
-                          <span className="text-xs text-dust">
+                          <span className="text-xs text-muted">
                             {new Date(rv.submittedAt).toLocaleDateString()}
                           </span>
                         )}
                         {!rv.publiclyVisible && (
-                          <span className="text-[10px] uppercase tracking-wider bg-dust/20 text-saddle px-1.5 py-0.5">
+                          <span className="text-[11px] uppercase tracking-wider bg-dust/20 text-saddle px-1.5 py-0.5">
                             not shown publicly
                           </span>
                         )}
@@ -4313,7 +4320,7 @@ export default function RancherDashboardPage() {
                       </div>
                       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs pt-1">
                         {checklist.map((c) => (
-                          <span key={c.label} className={c.done ? 'text-sage-dark' : 'text-dust'}>
+                          <span key={c.label} className={c.done ? 'text-sage-dark' : 'text-muted'}>
                             {c.done ? '✓' : '○'} {c.label}
                           </span>
                         ))}
@@ -4334,12 +4341,12 @@ export default function RancherDashboardPage() {
                     <ul className="space-y-1 text-sm">
                       {checklist.map((c) => (
                         <li key={c.label} className="flex items-center gap-2">
-                          <span className={c.done ? 'text-sage-dark' : (c.essential ? 'text-weathered' : 'text-dust')}>
+                          <span className={c.done ? 'text-sage-dark' : (c.essential ? 'text-weathered' : 'text-muted')}>
                             {c.done ? '✓' : '○'}
                           </span>
                           <span className={c.done ? 'text-charcoal' : 'text-saddle'}>
                             {c.label}
-                            {!c.essential && <span className="text-dust text-xs"> (recommended)</span>}
+                            {!c.essential && <span className="text-muted text-xs"> (recommended)</span>}
                             {c.essential && !c.done && <span className="text-weathered text-xs"> · required to publish</span>}
                           </span>
                         </li>
@@ -4387,7 +4394,7 @@ export default function RancherDashboardPage() {
                   moved up + given a preview + cover label. */}
               <div className="space-y-4">
                 <h3 className="font-serif text-lg border-b border-dust pb-2">photos</h3>
-                <p className="text-xs text-dust">The first photo is your cover — it&apos;s the big one buyers see at the top of your page. Add real shots of your cattle, your land, and your family.</p>
+                <p className="text-xs text-muted">The first photo is your cover — it&apos;s the big one buyers see at the top of your page. Add real shots of your cattle, your land, and your family.</p>
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   {/* Cover photo preview (first gallery photo) */}
@@ -4400,13 +4407,13 @@ export default function RancherDashboardPage() {
                           className="w-full aspect-[16/9] object-cover border border-dust"
                           onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0.3'; }}
                         />
-                        <span className="absolute bottom-0 left-0 bg-charcoal text-bone text-[10px] uppercase tracking-widest px-2 py-1">
+                        <span className="absolute bottom-0 left-0 bg-charcoal text-bone text-[11px] uppercase tracking-widest px-2 py-1">
                           Your cover photo
                         </span>
                       </div>
                     ) : (
                       <div className="w-full aspect-[16/9] border border-dashed border-dust bg-bone-warm flex items-center justify-center text-center p-4">
-                        <p className="text-xs text-dust">No cover photo yet — add a gallery photo below and the first one becomes your cover.</p>
+                        <p className="text-xs text-muted">No cover photo yet — add a gallery photo below and the first one becomes your cover.</p>
                       </div>
                     )}
                   </div>
@@ -4420,13 +4427,13 @@ export default function RancherDashboardPage() {
                           className="w-full aspect-square object-contain border border-dust bg-white p-2"
                           onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0.3'; }}
                         />
-                        <span className="absolute bottom-0 left-0 bg-saddle text-bone text-[10px] uppercase tracking-widest px-2 py-1">
+                        <span className="absolute bottom-0 left-0 bg-saddle text-bone text-[11px] uppercase tracking-widest px-2 py-1">
                           Your logo
                         </span>
                       </div>
                     ) : (
                       <div className="w-full aspect-square border border-dashed border-dust bg-bone-warm flex items-center justify-center text-center p-4">
-                        <p className="text-xs text-dust">No logo yet</p>
+                        <p className="text-xs text-muted">No logo yet</p>
                       </div>
                     )}
                   </div>
@@ -4440,7 +4447,7 @@ export default function RancherDashboardPage() {
                 />
 
                 <div className="space-y-3">
-                  <label className="block text-sm font-medium">Gallery Photos <span className="text-dust font-normal">(up to 8 — the first is your cover; cattle, the operation, your family, what makes your ranch yours)</span></label>
+                  <label className="block text-sm font-medium">Gallery Photos <span className="text-muted font-normal">(up to 8 — the first is your cover; cattle, the operation, your family, what makes your ranch yours)</span></label>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                     {galleryPhotos.map((url, i) => (
                       <div key={`${url}-${i}`} className="relative group">
@@ -4451,7 +4458,7 @@ export default function RancherDashboardPage() {
                           onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0.3'; }}
                         />
                         {i === 0 && (
-                          <span className="absolute top-1 left-1 bg-charcoal text-bone text-[9px] uppercase tracking-widest px-1.5 py-0.5">
+                          <span className="absolute top-1 left-1 bg-charcoal text-bone text-[11px] uppercase tracking-widest px-1.5 py-0.5">
                             Cover
                           </span>
                         )}
@@ -4485,7 +4492,7 @@ export default function RancherDashboardPage() {
                       }}
                     />
                   ) : (
-                    <p className="text-xs text-dust">Max 8 photos. Remove one to add another.</p>
+                    <p className="text-xs text-muted">Max 8 photos. Remove one to add another.</p>
                   )}
                 </div>
               </div>
@@ -4497,7 +4504,7 @@ export default function RancherDashboardPage() {
                   <h3 className="font-serif text-lg border-b border-dust pb-2">brand &amp; story</h3>
 
                   <div className="space-y-1">
-                    <label className="block text-sm font-medium">Page URL Slug <span className="text-dust font-normal">(e.g. rocking-r-ranch)</span></label>
+                    <label className="block text-sm font-medium">Page URL Slug <span className="text-muted font-normal">(e.g. rocking-r-ranch)</span></label>
                     <input
                       type="text"
                       value={pageForm['Slug'] || ''}
@@ -4506,12 +4513,12 @@ export default function RancherDashboardPage() {
                       className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
                     />
                     {pageForm['Slug'] && (
-                      <p className="text-xs text-dust">buyhalfcow.com/ranchers/{pageForm['Slug'].toLowerCase().replace(/[^a-z0-9-]/g, '-')}</p>
+                      <p className="text-xs text-muted">buyhalfcow.com/ranchers/{pageForm['Slug'].toLowerCase().replace(/[^a-z0-9-]/g, '-')}</p>
                     )}
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-sm font-medium">Tagline <span className="text-dust font-normal">(one sentence)</span></label>
+                    <label className="block text-sm font-medium">Tagline <span className="text-muted font-normal">(one sentence)</span></label>
                     <input
                       type="text"
                       value={pageForm['Tagline'] || ''}
@@ -4533,7 +4540,7 @@ export default function RancherDashboardPage() {
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-sm font-medium">Interview Video URL <span className="text-dust font-normal">(YouTube link)</span></label>
+                    <label className="block text-sm font-medium">Interview Video URL <span className="text-muted font-normal">(YouTube link)</span></label>
                     <input
                       type="url"
                       value={pageForm['Video URL'] || ''}
@@ -4544,7 +4551,7 @@ export default function RancherDashboardPage() {
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-sm font-medium">Custom Notes <span className="text-dust font-normal">(optional — anything extra buyers should know)</span></label>
+                    <label className="block text-sm font-medium">Custom Notes <span className="text-muted font-normal">(optional — anything extra buyers should know)</span></label>
                     <textarea
                       rows={3}
                       value={pageForm['Custom Notes'] || ''}
@@ -4557,7 +4564,7 @@ export default function RancherDashboardPage() {
                   <h3 className="font-serif text-lg border-b border-dust pb-2 pt-4">delivery &amp; details</h3>
 
                   <div className="space-y-1">
-                    <label className="block text-sm font-medium">Beef Types <span className="text-dust font-normal">(e.g. Angus, Hereford, Wagyu)</span></label>
+                    <label className="block text-sm font-medium">Beef Types <span className="text-muted font-normal">(e.g. Angus, Hereford, Wagyu)</span></label>
                     <input
                       type="text"
                       value={pageForm['Beef Types'] || ''}
@@ -4570,7 +4577,7 @@ export default function RancherDashboardPage() {
                   <div className="space-y-1">
                     <label className="block text-sm font-medium">
                       Cal.com Booking Link
-                      <span className="text-dust font-normal"> (so buyers can self-schedule a call with you)</span>
+                      <span className="text-muted font-normal"> (so buyers can self-schedule a call with you)</span>
                     </label>
                     <input
                       type="text"
@@ -4619,7 +4626,7 @@ export default function RancherDashboardPage() {
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-sm font-medium">Certifications <span className="text-dust font-normal">(e.g. USDA, Grass-Fed, Organic)</span></label>
+                    <label className="block text-sm font-medium">Certifications <span className="text-muted font-normal">(e.g. USDA, Grass-Fed, Organic)</span></label>
                     <input
                       type="text"
                       value={pageForm['Certifications'] || ''}
@@ -4630,7 +4637,7 @@ export default function RancherDashboardPage() {
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-sm font-medium">Team Emails <span className="text-dust font-normal">(extra logins for spouse, hired help, etc.)</span></label>
+                    <label className="block text-sm font-medium">Team Emails <span className="text-muted font-normal">(extra logins for spouse, hired help, etc.)</span></label>
                     <textarea
                       value={pageForm['Team Emails'] || ''}
                       onChange={e => setPageForm(p => ({ ...p, 'Team Emails': e.target.value }))}
@@ -4638,14 +4645,14 @@ export default function RancherDashboardPage() {
                       rows={2}
                       className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm font-mono"
                     />
-                    <p className="text-xs text-dust">
+                    <p className="text-xs text-muted">
                       One email per line. Anyone listed here can request a login link at /rancher/login and access this dashboard. Primary email always works regardless.
                     </p>
                   </div>
 
                   <div className="space-y-2">
                     <label className="block text-sm font-medium">States You Want To Serve</label>
-                    <p className="text-xs text-dust">
+                    <p className="text-xs text-muted">
                       Tap the states you&apos;d like buyers from. We review your request and turn on
                       routing once your capacity and verification check out.
                       <strong className="text-charcoal"> Your home state is always included.</strong>
@@ -4682,12 +4689,12 @@ export default function RancherDashboardPage() {
                           )}
                           {muted.length > 0 && (
                             <div className="flex items-start gap-2">
-                              <span className="font-bold text-dust shrink-0">— Removed by you:</span>
-                              <span className="font-mono text-dust">{muted.join(', ')}</span>
+                              <span className="font-bold text-muted shrink-0">— Removed by you:</span>
+                              <span className="font-mono text-muted">{muted.join(', ')}</span>
                             </div>
                           )}
                           {preferred.size === 0 && routing.size === 0 && (
-                            <p className="text-dust italic">No states selected yet — pick the states you can deliver to above.</p>
+                            <p className="text-muted italic">No states selected yet — pick the states you can deliver to above.</p>
                           )}
                         </div>
                       );
@@ -4744,11 +4751,11 @@ export default function RancherDashboardPage() {
                       placeholder="e.g. Ranchland Packing Co. (Bozeman, MT)"
                       className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
                     />
-                    <p className="text-xs text-dust">The real name of the USDA-inspected plant that processes your beef — <strong>not</strong> your ranch name. Buyers trust a named processor.</p>
+                    <p className="text-xs text-muted">The real name of the USDA-inspected plant that processes your beef — <strong>not</strong> your ranch name. Buyers trust a named processor.</p>
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-sm font-medium">Instagram <span className="text-dust font-normal">(profile URL)</span></label>
+                    <label className="block text-sm font-medium">Instagram <span className="text-muted font-normal">(profile URL)</span></label>
                     <input
                       type="url"
                       value={pageForm['Instagram URL'] || ''}
@@ -4759,7 +4766,7 @@ export default function RancherDashboardPage() {
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-sm font-medium">Facebook <span className="text-dust font-normal">(page URL)</span></label>
+                    <label className="block text-sm font-medium">Facebook <span className="text-muted font-normal">(page URL)</span></label>
                     <input
                       type="url"
                       value={pageForm['Facebook URL'] || ''}
@@ -4770,7 +4777,7 @@ export default function RancherDashboardPage() {
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-sm font-medium">Google Reviews <span className="text-dust font-normal">(link to your reviews)</span></label>
+                    <label className="block text-sm font-medium">Google Reviews <span className="text-muted font-normal">(link to your reviews)</span></label>
                     <input
                       type="url"
                       value={pageForm['Google Reviews URL'] || ''}
@@ -4786,7 +4793,7 @@ export default function RancherDashboardPage() {
                     via lib/pricing. Mirrors the setup wizard Step-3 pattern. */}
                 <div className="space-y-5">
                   <h3 className="font-serif text-lg border-b border-dust pb-2">pricing</h3>
-                  <p className="text-xs text-dust">Enter your <strong>whole-cow</strong> price once — we fill in Half, Quarter, and each reserve deposit for you. Edit any number to override; the rest stay yours.</p>
+                  <p className="text-xs text-muted">Enter your <strong>whole-cow</strong> price once — we fill in Half, Quarter, and each reserve deposit for you. Edit any number to override; the rest stay yours.</p>
 
                   {(() => {
                     const whole = Number(pageForm['Whole Price']) || 0;
@@ -4829,7 +4836,7 @@ export default function RancherDashboardPage() {
                           {soldCutsNote && (
                             <p className="text-xs text-weathered">{soldCutsNote}</p>
                           )}
-                          <p className="text-xs text-dust">
+                          <p className="text-xs text-muted">
                             Turning a size off clears its price and stops us
                             routing buyers who want it. Takes effect when you
                             save.
@@ -4883,7 +4890,7 @@ export default function RancherDashboardPage() {
                           <div className="space-y-3">
                             <div className="grid grid-cols-2 gap-3">
                               <div className="space-y-1">
-                                <label className="text-xs text-dust">Price per pound ($)</label>
+                                <label className="text-xs text-muted">Price per pound ($)</label>
                                 <input
                                   type="number"
                                   inputMode="decimal"
@@ -4894,7 +4901,7 @@ export default function RancherDashboardPage() {
                                 />
                               </div>
                               <div className="space-y-1">
-                                <label className="text-xs text-dust">Hanging weight (lbs)</label>
+                                <label className="text-xs text-muted">Hanging weight (lbs)</label>
                                 <input
                                   type="number"
                                   inputMode="decimal"
@@ -4919,7 +4926,7 @@ export default function RancherDashboardPage() {
                             the derivation anchor (wizard semantics: unsold cuts
                             save as cleared, so no Whole price ships to buyers). */}
                         {!soldCuts.includes('Whole') && (
-                          <p className="text-xs text-dust">
+                          <p className="text-xs text-muted">
                             You&rsquo;re not selling wholes — the whole-cow number
                             above is only used to work out your other prices and
                             won&rsquo;t show on your page.
@@ -4941,15 +4948,15 @@ export default function RancherDashboardPage() {
                             return (
                               <div key={tier} className={`space-y-2 ${tier === 'Half' ? 'border-l-2 border-saddle pl-3' : ''}`}>
                                 <p className="text-xs font-medium uppercase tracking-wider text-charcoal">
-                                  {tier}{tier === 'Half' && <span className="text-dust font-normal normal-case"> (most popular)</span>}
+                                  {tier}{tier === 'Half' && <span className="text-muted font-normal normal-case"> (most popular)</span>}
                                 </p>
                                 <div className="grid grid-cols-2 gap-3">
                                   {/* Price */}
                                   <div className="space-y-1">
                                     <span className="flex items-center justify-between gap-2">
-                                      <label className="text-xs text-dust">Price ($)</label>
+                                      <label className="text-xs text-muted">Price ($)</label>
                                       {isWhole ? null : !priceTouched ? (
-                                        <span className="text-[10px] uppercase tracking-widest text-saddle border border-dust px-1.5 py-0.5 leading-none">auto</span>
+                                        <span className="text-[11px] uppercase tracking-widest text-saddle border border-dust px-1.5 py-0.5 leading-none">auto</span>
                                       ) : (
                                         <button type="button" onClick={() => resetDerived(`${tier} Price`)} className="text-[11px] uppercase tracking-widest text-saddle hover:text-charcoal underline underline-offset-2">reset</button>
                                       )}
@@ -4972,9 +4979,9 @@ export default function RancherDashboardPage() {
                                   {/* Deposit */}
                                   <div className="space-y-1">
                                     <span className="flex items-center justify-between gap-2">
-                                      <label className="text-xs text-dust">Deposit ($)</label>
+                                      <label className="text-xs text-muted">Deposit ($)</label>
                                       {!depTouched ? (
-                                        <span className="text-[10px] uppercase tracking-widest text-saddle border border-dust px-1.5 py-0.5 leading-none">auto</span>
+                                        <span className="text-[11px] uppercase tracking-widest text-saddle border border-dust px-1.5 py-0.5 leading-none">auto</span>
                                       ) : (
                                         <button type="button" onClick={() => resetDerived(`${tier} Deposit`)} className="text-[11px] uppercase tracking-widest text-saddle hover:text-charcoal underline underline-offset-2">reset</button>
                                       )}
@@ -4991,7 +4998,7 @@ export default function RancherDashboardPage() {
                                 </div>
                                 {/* Approx lbs — free text, unchanged field */}
                                 <div className="space-y-1">
-                                  <label className="text-xs text-dust">Approx. finished weight</label>
+                                  <label className="text-xs text-muted">Approx. finished weight</label>
                                   <input
                                     type="text"
                                     value={pageForm[`${tier} lbs`] || ''}
@@ -5018,10 +5025,10 @@ export default function RancherDashboardPage() {
                             Connected ranchers where it's misleading. */}
                         {rancherInfo.pricingModel !== 'tier_v2' && (
                           <div className="border border-dust bg-white p-4 space-y-3">
-                            <p className="text-sm font-medium">Payment links <span className="text-xs font-normal text-dust">(your Square, PayPal, or Stripe checkout)</span></p>
+                            <p className="text-sm font-medium">Payment links <span className="text-xs font-normal text-muted">(your Square, PayPal, or Stripe checkout)</span></p>
                             {tiers.map((tier) => (
                               <div key={tier} className="space-y-1">
-                                <label className="text-xs text-dust">{tier} payment link</label>
+                                <label className="text-xs text-muted">{tier} payment link</label>
                                 <input
                                   type="url"
                                   value={pageForm[`${tier} Payment Link`] || ''}
@@ -5043,7 +5050,7 @@ export default function RancherDashboardPage() {
                   <div className="space-y-3">
                     <p className="text-sm font-medium">Reservation / Deposit</p>
                     <div className="space-y-1">
-                      <label className="text-xs text-dust">Next Processing Date</label>
+                      <label className="text-xs text-muted">Next Processing Date</label>
                       <input
                         type="date"
                         value={pageForm['Next Processing Date'] || ''}
@@ -5059,7 +5066,7 @@ export default function RancherDashboardPage() {
                         payment-links editor above). */}
                     {rancherInfo.pricingModel !== 'tier_v2' && (
                       <div className="space-y-1">
-                        <label className="text-xs text-dust">Reserve Link <span className="text-dust">(deposit / waitlist link)</span></label>
+                        <label className="text-xs text-muted">Reserve Link <span className="text-muted">(deposit / waitlist link)</span></label>
                         <input
                           type="url"
                           value={pageForm['Reserve Link'] || ''}
@@ -5080,7 +5087,7 @@ export default function RancherDashboardPage() {
                   saved object; we just stop collecting/showing it. */}
               <div className="space-y-4">
                 <h3 className="font-serif text-lg border-b border-dust pb-2">other products (shown on your page)</h3>
-                <p className="text-xs text-dust">Extras beyond quarter/half/whole beef — sampler boxes, jerky, bones, and the like. These are <strong>displayed on your page</strong> so buyers know what else you offer; buyers contact you about them. Cow shares are sold through BuyHalfCow.</p>
+                <p className="text-xs text-muted">Extras beyond quarter/half/whole beef — sampler boxes, jerky, bones, and the like. These are <strong>displayed on your page</strong> so buyers know what else you offer; buyers contact you about them. Cow shares are sold through BuyHalfCow.</p>
                 {customProducts.map((p, i) => (
                   <div key={i} className="p-3 border border-dust bg-white flex justify-between items-start">
                     <div>
@@ -5117,7 +5124,7 @@ export default function RancherDashboardPage() {
                   step; checkbox multi-select drives which sub-fields show. */}
               <div className="space-y-4">
                 <h3 className="font-serif text-lg border-b border-dust pb-2">fulfillment</h3>
-                <p className="text-xs text-dust">How do buyers get their beef? Pick all that apply — buyers see these options on your listing.</p>
+                <p className="text-xs text-muted">How do buyers get their beef? Pick all that apply — buyers see these options on your listing.</p>
                 <div className="space-y-2">
                   {([
                     ['Local Pickup', 'Local pickup at my ranch'],
@@ -5192,7 +5199,7 @@ export default function RancherDashboardPage() {
                 {fulfillmentTypes.includes('Local Pickup') && (
                   <>
                     <div className="space-y-1">
-                      <label className="block text-sm font-medium">Pickup Address <span className="text-dust font-normal">(optional — shown to buyers so they know where to go)</span></label>
+                      <label className="block text-sm font-medium">Pickup Address <span className="text-muted font-normal">(optional — shown to buyers so they know where to go)</span></label>
                       <input
                         type="text"
                         value={pageForm['Pickup Address'] || ''}
@@ -5202,7 +5209,7 @@ export default function RancherDashboardPage() {
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="block text-sm font-medium">Pickup Instructions <span className="text-dust font-normal">(optional — sent to buyers after they pay)</span></label>
+                      <label className="block text-sm font-medium">Pickup Instructions <span className="text-muted font-normal">(optional — sent to buyers after they pay)</span></label>
                       <textarea
                         rows={2}
                         value={pageForm['Pickup Instructions'] || ''}
@@ -5215,7 +5222,7 @@ export default function RancherDashboardPage() {
                 )}
 
                 <div className="space-y-1">
-                  <label className="block text-sm font-medium">Fulfillment Cost Notes <span className="text-dust font-normal">(optional)</span></label>
+                  <label className="block text-sm font-medium">Fulfillment Cost Notes <span className="text-muted font-normal">(optional)</span></label>
                   <textarea
                     rows={2}
                     value={pageForm['Fulfillment Cost Notes'] || ''}
@@ -5232,7 +5239,7 @@ export default function RancherDashboardPage() {
                   the old dashboard path wrote a raw string and corrupted it). */}
               <div className="space-y-4">
                 <h3 className="font-serif text-lg border-b border-dust pb-2">testimonials</h3>
-                <p className="text-xs text-dust">Real quotes from happy buyers. These show as social proof on your public page.</p>
+                <p className="text-xs text-muted">Real quotes from happy buyers. These show as social proof on your public page.</p>
                 {testimonials.map((t, i) => (
                   <div key={i} className="p-3 border border-dust bg-white space-y-2">
                     <div className="grid sm:grid-cols-2 gap-2">
@@ -5281,7 +5288,7 @@ export default function RancherDashboardPage() {
                   written to the FAQ Airtable field. */}
               <div className="space-y-4">
                 <h3 className="font-serif text-lg border-b border-dust pb-2">frequently asked questions</h3>
-                <p className="text-xs text-dust">Answer the questions buyers ask most — cuts, timing, pickup, storage. Fewer back-and-forth emails for you.</p>
+                <p className="text-xs text-muted">Answer the questions buyers ask most — cuts, timing, pickup, storage. Fewer back-and-forth emails for you.</p>
                 {faqItems.map((f, i) => (
                   <div key={i} className="p-3 border border-dust bg-white space-y-2">
                     <input
@@ -5332,7 +5339,7 @@ export default function RancherDashboardPage() {
                   {pageSaving ? 'Saving...' : 'Save Page'}
                 </button>
                 {!rancherInfo.pageLive && rancherInfo.slug && (
-                  <p className="text-xs text-dust">
+                  <p className="text-xs text-muted">
                     After saving, click &quot;Publish my page&quot; above.
                   </p>
                 )}
@@ -5342,7 +5349,7 @@ export default function RancherDashboardPage() {
 
           <Divider />
 
-          <div className="text-center text-sm text-dust space-y-2">
+          <div className="text-center text-sm text-muted space-y-2">
             <p>Questions? Email <a href="mailto:hello@buyhalfcow.com" className="text-charcoal hover:text-saddle transition-colors">hello@buyhalfcow.com</a></p>
             <Link href="/" className="text-saddle hover:text-charcoal transition-colors">
               &larr; Back to home
@@ -5360,7 +5367,8 @@ export default function RancherDashboardPage() {
               <h2 className="font-serif text-2xl">mark lead won</h2>
               <button
                 onClick={() => { setLeadWonModal(null); setLeadWonAmount(''); }}
-                className="text-2xl leading-none hover:text-saddle"
+                className="text-2xl leading-none hover:text-saddle min-w-[44px] min-h-[44px] flex items-center justify-center"
+                aria-label="Close"
               >
                 ×
               </button>
@@ -5402,7 +5410,7 @@ export default function RancherDashboardPage() {
           <div className="bg-bone p-8 max-w-md w-full space-y-6 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-start">
               <h2 className="font-serif text-2xl">mark closed lost</h2>
-              <button onClick={() => { setLostModal(null); setUpdateError(''); }} className="text-2xl leading-none hover:text-saddle">×</button>
+              <button onClick={() => { setLostModal(null); setUpdateError(''); }} className="text-2xl leading-none hover:text-saddle min-w-[44px] min-h-[44px] flex items-center justify-center" aria-label="Close">×</button>
             </div>
             <p className="text-sm text-saddle">Buyer: <strong className="text-charcoal">{lostModal.buyer_name}</strong></p>
 
@@ -5471,7 +5479,7 @@ export default function RancherDashboardPage() {
           <div className="bg-bone p-8 max-w-md w-full space-y-6 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-start">
               <h2 className="font-serif text-2xl">revive lead</h2>
-              <button onClick={() => { setReviveModal(null); setUpdateError(''); }} className="text-2xl leading-none hover:text-saddle">×</button>
+              <button onClick={() => { setReviveModal(null); setUpdateError(''); }} className="text-2xl leading-none hover:text-saddle min-w-[44px] min-h-[44px] flex items-center justify-center" aria-label="Close">×</button>
             </div>
             <p className="text-sm text-saddle">Buyer: <strong className="text-charcoal">{reviveModal.buyer_name}</strong></p>
 
@@ -5850,7 +5858,7 @@ export default function RancherDashboardPage() {
           <div className="bg-bone p-8 max-w-md w-full space-y-6 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-start">
               <h2 className="font-serif text-2xl">request deposit</h2>
-              <button onClick={closeDepositModal} className="text-2xl leading-none hover:text-saddle">×</button>
+              <button onClick={closeDepositModal} className="text-2xl leading-none hover:text-saddle min-w-[44px] min-h-[44px] flex items-center justify-center" aria-label="Close">×</button>
             </div>
             <p className="text-sm text-saddle">
               Buyer: <strong className="text-charcoal">{depositModal.buyer_name}</strong>
@@ -5954,11 +5962,11 @@ export default function RancherDashboardPage() {
                                 ? 'bg-charcoal text-bone border-charcoal'
                                 : priced
                                   ? 'border-dust bg-white text-charcoal hover:border-charcoal'
-                                  : 'border-dust bg-bone-warm text-dust cursor-not-allowed'
+                                  : 'border-dust bg-bone-warm text-muted cursor-not-allowed'
                             }`}
                           >
                             {t}
-                            {!priced && <span className="block text-[10px] normal-case tracking-normal">no price set</span>}
+                            {!priced && <span className="block text-[11px] normal-case tracking-normal">no price set</span>}
                           </button>
                         );
                       })}
@@ -6021,7 +6029,7 @@ export default function RancherDashboardPage() {
                       receives — the send is no longer a black box. Mirrors the
                       real sendBuyerDepositInvoice subject + opening line. */}
                   <div className="bg-white border border-dust p-4 text-xs leading-relaxed">
-                    <div className="text-[10px] uppercase tracking-widest text-saddle mb-2">what {depositModal.buyer_name?.split(' ')[0] || 'the buyer'} will receive</div>
+                    <div className="text-[11px] uppercase tracking-widest text-saddle mb-2">what {depositModal.buyer_name?.split(' ')[0] || 'the buyer'} will receive</div>
                     <p className="text-charcoal font-medium mb-1">
                       Subject: Reserve your {depositCut} from {rancherInfo?.ranchName || 'your ranch'} — ${parseFloat(depositAmountInput || '0') > 0 ? Math.round(parseFloat(depositAmountInput)) : '—'} deposit
                     </p>
@@ -6333,7 +6341,7 @@ function StatCard({ label, value, sub }: { label: string; value: string | number
     <div className="p-4 border border-dust bg-white text-center">
       <div className="font-serif text-2xl">{value}</div>
       <p className="text-xs text-saddle mt-1 uppercase tracking-wider">{label}</p>
-      {sub && <p className="text-xs text-dust mt-0.5">{sub}</p>}
+      {sub && <p className="text-xs text-muted mt-0.5">{sub}</p>}
     </div>
   );
 }
@@ -6644,7 +6652,7 @@ function HomeTab({
                 statuses (incl. Awaiting Payment / Slot Locked), a superset of
                 the in-conversation card next door. Same word for two different
                 sets read as a bug. */}
-            <p className="text-xs text-dust mt-0.5">
+            <p className="text-xs text-muted mt-0.5">
               {rancherInfo.currentActiveReferrals} of {rancherInfo.maxActiveReferrals} slots held
             </p>
           </button>
@@ -6657,7 +6665,7 @@ function HomeTab({
         <div className="border border-dust bg-white p-4">
           <p className="text-xs text-saddle uppercase tracking-wider">In conversation</p>
           <p className="font-serif text-xl text-charcoal mt-1">{activeRefs.length}</p>
-          <p className="text-xs text-dust mt-0.5">
+          <p className="text-xs text-muted mt-0.5">
             {stats.closedWon} deal{stats.closedWon === 1 ? '' : 's'} closed
           </p>
           {/* Zero-cost win: recent close rate — surfaces lead quality so the
@@ -6802,12 +6810,15 @@ function PipelineExplainer({ depositEligible }: { depositEligible?: boolean }) {
         { n: '4', label: 'confirm payment', sub: 'tell us the money landed — that finishes the deal' },
       ];
   return (
-    <details className="border border-dust bg-bone-warm">
-      <summary className="cursor-pointer list-none px-4 py-3 flex items-center justify-between gap-3 select-none">
+    <details className="border border-dust bg-bone-warm group">
+      <summary className="cursor-pointer list-none px-4 py-3 min-h-[44px] flex items-center justify-between gap-3 select-none">
         <span className="text-[11px] uppercase tracking-widest text-saddle font-semibold">
           how getting paid works
         </span>
-        <span className="text-xs text-saddle">tap to expand →</span>
+        {/* label follows the open state — "expand →" used to stay put after
+            opening, and the arrow read as navigation, not disclosure. */}
+        <span className="text-xs text-saddle group-open:hidden">tap to expand ▾</span>
+        <span className="text-xs text-saddle hidden group-open:inline">tap to close ▴</span>
       </summary>
       <div className="px-4 pb-4 pt-1">
         <ol className="flex flex-col sm:flex-row sm:flex-wrap gap-3">
@@ -6821,7 +6832,7 @@ function PipelineExplainer({ depositEligible }: { depositEligible?: boolean }) {
                 <p className="text-xs text-saddle leading-snug mt-0.5">{s.sub}</p>
               </div>
               {i < steps.length - 1 && (
-                <span aria-hidden className="hidden sm:inline self-center text-dust">→</span>
+                <span aria-hidden className="hidden sm:inline self-center text-muted">→</span>
               )}
             </li>
           ))}
@@ -6850,7 +6861,9 @@ function LeadGradeBadge({ referral }: { referral: Referral }) {
     B: 'bg-amber/25 text-amber-dark',
     C: 'bg-dust/25 text-saddle',
   };
-  const label = g.grade === 'A' ? '🔥 A' : g.grade;
+  // "C" alone was mystery meat (the why lives in a hover-only tooltip —
+  // invisible on touch). "C lead" reads instantly next to the status chip.
+  const label = g.grade === 'A' ? '🔥 A lead' : `${g.grade} lead`;
   return (
     <span
       className={`inline-block px-2 py-0.5 text-xs font-bold ${styles[g.grade]}`}
@@ -6944,7 +6957,7 @@ function PipelineNextStep({ referral }: { referral: Referral }) {
   }
   return (
     <p className="text-xs text-saddle mt-1">
-      <span className="uppercase tracking-wider text-dust">{stage}</span>
+      <span className="uppercase tracking-wider text-muted">{stage}</span>
       {' → '}
       <span className="text-charcoal">{next}</span>
     </p>
@@ -7029,11 +7042,14 @@ function ReferralCard({
             <LeadGradeBadge referral={referral} />
             <FreshnessIndicator referral={referral} />
             <ResponseDeadline referral={referral} />
-            <RancherRotBadge days={referral.days_since_activity ?? null} />
+            {/* Polish pass 2026-08-04: RancherRotBadge removed from this row —
+                it repeated the day count FreshnessIndicator already states in
+                plain words ("35d stale…" AND a bare "35d" chip read as two
+                different facts). One staleness signal per card. */}
             {depositEligible && <DepositBadge referral={referral} />}
           </div>
           <h3 className="font-serif text-xl mt-2">{referral.buyer_name}</h3>
-          <p className="text-sm text-dust">
+          <p className="text-sm text-muted">
             {referral.intro_sent_at ? `Introduced ${new Date(referral.intro_sent_at).toLocaleDateString()}` : ''}
           </p>
           {depositEligible && <PipelineNextStep referral={referral} />}
@@ -7042,8 +7058,11 @@ function ReferralCard({
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 text-sm">
-        <div><span className="text-saddle">Email:</span> <a href={`mailto:${referral.buyer_email}`} className="text-charcoal hover:underline">{referral.buyer_email}</a></div>
+      {/* Polish pass 2026-08-04: single column on phones — at 375px the
+          two-column grid squeezed emails into ~130px and long addresses
+          overflowed into the Phone column. break-all as a second fence. */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+        <div><span className="text-saddle">Email:</span> <a href={`mailto:${referral.buyer_email}`} className="text-charcoal hover:underline break-all">{referral.buyer_email}</a></div>
         <div><span className="text-saddle">Phone:</span> <a href={`tel:${referral.buyer_phone}`} className="text-charcoal hover:underline">{referral.buyer_phone}</a></div>
         <div><span className="text-saddle">State:</span> {referral.buyer_state}</div>
         <div><span className="text-saddle">Looking for:</span> {referral.order_type}</div>
@@ -7063,7 +7082,9 @@ function ReferralCard({
             className="px-4 min-h-[44px] text-sm font-medium bg-sage text-bone hover:bg-sage-dark transition-colors"
             title="Send the buyer a deposit link to lock their slot. Card payment straight to your Stripe account."
           >
-            {referral.deposit_requested_at ? 're-request deposit' : 'request deposit'}
+            {/* Title Case to match the sibling actions (I've Contacted This
+                Buyer / Close as Won…) — was the row's one lowercase button. */}
+            {referral.deposit_requested_at ? 'Re-request Deposit' : 'Request Deposit'}
           </button>
         )}
         {referral.status === 'Intro Sent' && (
@@ -7133,7 +7154,7 @@ function ReferralCard({
         {!depositLockedUi && (
           <button
             onClick={onPass}
-            className="px-4 min-h-[44px] py-2 text-sm border border-dust text-dust hover:bg-dust hover:text-bone transition-colors"
+            className="px-4 min-h-[44px] py-2 text-sm border border-dust text-muted hover:bg-dust hover:text-bone transition-colors"
             title="Pass on this lead — we'll auto-reassign the buyer to another rancher"
           >
             Pass on Lead
@@ -7397,7 +7418,7 @@ function AccountSettingsSection({
         aria-expanded={open}
       >
         <span className="font-serif text-lg">account</span>
-        <span className="text-dust text-sm">{open ? '▲' : '▼'}</span>
+        <span className="text-muted text-sm">{open ? '▲' : '▼'}</span>
       </button>
       {open && (
         <form onSubmit={save} className="px-4 pb-4 pt-1 space-y-4 border-t border-dust">
@@ -7580,7 +7601,7 @@ function BuyerCutSheet({ referral }: { referral: Referral }) {
     !!referral.buyer_window_pref;
   return (
     <div className="border border-dust bg-bone-warm/60 p-3 text-xs space-y-1">
-      <p className="uppercase tracking-widest text-saddle font-semibold text-[10px]">
+      <p className="uppercase tracking-widest text-saddle font-semibold text-[11px]">
         Buyer&apos;s cut sheet
       </p>
       {hasPrefs ? (
@@ -7980,7 +8001,7 @@ function FulfillmentConfirmRow({
             >
               Cancel
             </button>
-            <span className="text-xs text-dust ml-auto">{note.length}/500</span>
+            <span className="text-xs text-muted ml-auto">{note.length}/500</span>
           </div>
         </>
       )}
@@ -8475,7 +8496,7 @@ function RancherRotBadge({ days }: { days: number | null }) {
   return (
     <span
       title={`Last activity ${days} day${days === 1 ? '' : 's'} ago`}
-      className={`inline-block text-[10px] font-mono px-1 py-0.5 ${tier}`}
+      className={`inline-block text-[11px] font-mono px-1 py-0.5 ${tier}`}
     >
       {label}
     </span>

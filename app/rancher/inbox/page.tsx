@@ -26,6 +26,16 @@ interface Message {
   'Sent Via': string;
 }
 
+
+// Polish pass 2026-08-04: "Jul 1, 8:00 AM" instead of the default
+// toLocaleString() ("7/1/2026, 8:00:00 AM") — seconds are noise here.
+function fmtWhen(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
 export default function RancherInboxPage() {
   const router = useRouter();
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
@@ -191,8 +201,8 @@ export default function RancherInboxPage() {
               <div className="text-xs text-saddle mb-1 truncate">
                 {t.subject || 'pre-purchase questions'}
               </div>
-              <div className="text-xs text-dust mb-1">
-                {t.lastSenderType} · {t.lastMessageAt ? new Date(t.lastMessageAt).toLocaleString() : ''}
+              <div className="text-xs text-muted mb-1">
+                {t.lastSenderType} · {fmtWhen(t.lastMessageAt)}
               </div>
               <div className="text-sm text-saddle truncate">{t.lastMessage}</div>
             </button>
@@ -228,7 +238,7 @@ export default function RancherInboxPage() {
                 messages.map((m) => (
                   <div key={m.id} className="mb-3 border-b border-divider pb-2 last:border-b-0">
                     <div className="text-xs text-saddle uppercase tracking-wide">
-                      {m['Sender Type']} · {new Date(m['Created At']).toLocaleString()}
+                      {m['Sender Type']} · {fmtWhen(m['Created At'])}
                     </div>
                     <div className="mt-1 whitespace-pre-wrap text-sm">{m.Body}</div>
                   </div>
