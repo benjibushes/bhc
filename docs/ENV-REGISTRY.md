@@ -145,7 +145,7 @@
 | `CAMPAIGN_DAILY_CAP` | Max campaign sends/day, default 25 | fail-open | code-default |
 | `CAMPAIGN_SMS_RECOVERY_HOURS` | Hours before campaign SMS recovery fires | fail-open | code-default |
 | `CAMPAIGN_START_DATE` | Campaign anchor date for reactivation cadence | fail-open | ben-flips |
-| `COMMISSION_PAYMENT_URL` | 'Pay Now' button in commission invoice email; unset → button silently omitted, rancher must be chased manually | fail-silent | set-once |
+| `COMMISSION_PAYMENT_URL` | Optional override for the monthly commission email's 'Pay Now' button href; unset → button links to the dashboard's Commission-owed block (per-invoice Stripe hosted pay links), which is the default and fine | fail-open | code-default |
 | `COMMIT_SHA` | Manual commit-sha fallback for drift/health | fail-open | code-default |
 | `DEPLOY_DRIFT_REPO_NAME` | Repo name for drift check | fail-open | code-default |
 | `DEPLOY_DRIFT_REPO_OWNER` | Repo owner for drift check | fail-open | code-default |

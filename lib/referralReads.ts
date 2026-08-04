@@ -43,8 +43,10 @@ export const REFERRAL_DASHBOARD_FIELDS = [
   // buyer card
   'Buyer Name', 'Buyer Email', 'Buyer Phone', 'Buyer State',
   'Order Type', 'Budget Range', 'Notes',
-  // flags + invoices
-  'Rancher Engaged Flag', 'Stripe Invoice URL',
+  // flags + invoices — BOTH stamp fields: the commission-owed surface
+  // (lib/commissionOwed.ts) needs the ID to know a hosted invoice already
+  // exists even when the URL write partially failed.
+  'Rancher Engaged Flag', 'Stripe Invoice URL', 'Stripe Invoice ID',
   // fulfillment tracker (WAVE 3b)
   'Fulfillment Confirmed At', 'Fulfillment Status', 'Cut Sheet Note',
   'Fulfillment Method', 'Shipping Carrier', 'Tracking Number',

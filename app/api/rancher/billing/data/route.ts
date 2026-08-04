@@ -6,6 +6,8 @@ import { NextResponse } from 'next/server';
 import { getRecordById, getAllRecords, TABLES } from '@/lib/airtable';
 import { TIERS, tierFor, commissionRateForTier } from '@/lib/tiers';
 import { getRancherCommissionRate, hasLockedCommissionRate } from '@/lib/commission';
+import { selectCommissionOwedRows, totalCommissionOwed, type CommissionOwedRow } from '@/lib/commissionOwed';
+import { fetchReferralRowsForRancher } from '@/lib/referralReads';
 import { getConnectAccountStatus } from '@/lib/stripeConnect';
 import { getStripe } from '@/lib/stripe';
 import { requireRancher } from '@/lib/rancherAuth';
@@ -52,6 +54,8 @@ export async function GET(req: Request) {
       // Legacy escrow list — permanently empty under direct charges (same
       // as live); the UI renders stripePayouts.
       payouts: [],
+      // Demo rancher rides the Connect rail — nothing owed, block hidden.
+      commissionOwed: { rows: [], totalDue: 0 },
       stripePayouts: [
         {
           id: 'po_DEMO0003',
@@ -184,6 +188,27 @@ export async function GET(req: Request) {
     console.warn('[billing/data] payouts fetch failed:', e?.message);
   }
 
+  // Commission owed (ticket 2026-08-03) — unpaid post-close commission with a
+  // Pay path per row. RAIL-PER-ROW: selection is per REFERRAL (Closed Won +
+  // unpaid + no Deposit Paid At + Commission Due > 0), NEVER per rancher —
+  // a tier_v2/Connect rancher with off-rail closes still owes, and a
+  // deposit-rail row never shows here (its fee was buyer-paid at deposit).
+  // Connect-only ranchers therefore get zero rows and the UI hides the block.
+  //   null = read failed (UI says so, never claims "nothing owed")
+  //   {rows: [], ...} = genuinely nothing owed
+  let commissionOwed: { rows: CommissionOwedRow[]; totalDue: number } | null = {
+    rows: [],
+    totalDue: 0,
+  };
+  try {
+    const referralRows = await fetchReferralRowsForRancher(session.rancherId);
+    const rows = selectCommissionOwedRows(referralRows, session.rancherId);
+    commissionOwed = { rows, totalDue: totalCommissionOwed(rows) };
+  } catch (e: any) {
+    console.warn('[billing/data] commission-owed fetch failed:', e?.message);
+    commissionOwed = null;
+  }
+
   // Add-on purchase history
   let addOns: any[] = [];
   try {
@@ -234,6 +259,7 @@ export async function GET(req: Request) {
     connectCanResumeOnboarding,
     payouts,
     stripePayouts,
+    commissionOwed,
     addOns,
   });
 }

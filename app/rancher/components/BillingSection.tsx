@@ -66,6 +66,25 @@ interface BillingData {
     purchasedAt: string | null;
     stripeInvoiceId: string;
   }>;
+  // Unpaid post-close commission (ticket 2026-08-03) — RAIL-PER-ROW selection
+  // server-side: only Closed Won rows that rode the legacy invoice rail (no
+  // deposit paid) with Commission Due > 0. Connect/deposit-rail closes never
+  // appear (their fee was buyer-paid at deposit), so Connect-only ranchers get
+  // rows: [] and the block stays hidden. null = the read failed (show an
+  // error line, never claim "nothing owed").
+  commissionOwed?: {
+    rows: Array<{
+      referralId: string;
+      buyerName: string;
+      orderType: string;
+      closedAt: string | null;
+      ageDays: number;
+      saleAmount: number;
+      commissionDue: number;
+      stripeInvoiceUrl: string | null;
+    }>;
+    totalDue: number;
+  } | null;
 }
 
 const ADDON_CATALOG = [
@@ -110,6 +129,10 @@ export default function BillingSection({ justOnboarded }: { justOnboarded: boole
   // While polling for the post-onboarding status flip (Stripe webhook → Airtable
   // → live read can lag a few seconds), show a "still refreshing" hint.
   const [refreshing, setRefreshing] = useState(false);
+  // Commission-owed Pay flow — which row is currently minting its Stripe
+  // invoice, and any inline error (kept out of the section-fatal `error`).
+  const [payingRef, setPayingRef] = useState<string | null>(null);
+  const [payErr, setPayErr] = useState('');
 
   // Single source of truth for loading billing data — reused by the initial
   // mount AND the post-onboarding auto-refresh poll.
@@ -208,6 +231,35 @@ export default function BillingSection({ justOnboarded }: { justOnboarded: boole
     }
   };
 
+  // Pay an owed commission invoice. Stamped hosted URL → straight there.
+  // No URL yet (close-time Stripe invoice never got created — the exact
+  // trap from the 2026-08-03 ticket) → mint it lazily via the idempotent
+  // endpoint, then redirect to the hosted Stripe invoice page.
+  const payCommission = async (row: { referralId: string; stripeInvoiceUrl: string | null }) => {
+    setPayErr('');
+    if (row.stripeInvoiceUrl) {
+      window.location.href = row.stripeInvoiceUrl;
+      return;
+    }
+    setPayingRef(row.referralId);
+    try {
+      const res = await fetch(`/api/rancher/referrals/${row.referralId}/commission-invoice`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      const j = await res.json().catch(() => ({}));
+      if (res.ok && j?.invoiceUrl) {
+        window.location.href = j.invoiceUrl;
+      } else {
+        setPayErr(typeof j?.error === 'string' ? j.error : 'Could not open your invoice — try again in a minute.');
+      }
+    } catch (e: any) {
+      setPayErr(e?.message || 'Could not open your invoice — try again in a minute.');
+    } finally {
+      setPayingRef(null);
+    }
+  };
+
   const startConnect = async () => {
     setConnectErr('');
     try {
@@ -272,6 +324,76 @@ export default function BillingSection({ justOnboarded }: { justOnboarded: boole
             {' · '}
             <Link href="/partner/checkout/operator" className="underline">Operator $500/mo</Link>
           </p>
+        </div>
+      )}
+
+      {/* Commission owed (ticket 2026-08-03) — the dashboard pay path for
+          unpaid post-close commission. Server-side selection is RAIL-PER-ROW:
+          Connect/deposit-rail closes never appear here (their fee was
+          buyer-paid at deposit — showing them owed would contradict the money
+          model), so Connect-only ranchers never see this block. Renders only
+          when something is actually owed; a failed read says so explicitly. */}
+      {data.commissionOwed === null && (
+        <div className="border border-dust bg-white p-4 mb-4">
+          <p className="text-saddle text-sm">
+            We couldn’t load your commission balance just now — refresh in a minute.
+          </p>
+        </div>
+      )}
+      {data.commissionOwed && data.commissionOwed.rows.length > 0 && (
+        <div className="border border-amber-dark bg-white p-6 mb-4">
+          <div className="text-xs text-saddle uppercase tracking-wider mb-1">Commission owed</div>
+          <div className="font-serif text-2xl mb-1">{formatUSD(data.commissionOwed.totalDue)}</div>
+          <p className="text-sm text-saddle mb-4">
+            Commission on {data.commissionOwed.rows.length === 1 ? 'a closed deal' : `${data.commissionOwed.rows.length} closed deals`} where
+            no deposit ran through the platform. Pay by card or ACH on the secure Stripe invoice — takes about a minute.
+          </p>
+          {payErr && (
+            <div className="p-3 mb-3 border-l-4 border-weathered bg-weathered/10 text-sm text-weathered flex items-center justify-between gap-3">
+              <span>{payErr}</span>
+              <button type="button" onClick={() => setPayErr('')} className="text-lg leading-none hover:opacity-70">×</button>
+            </div>
+          )}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="border-b border-divider">
+                <tr className="text-left text-saddle text-xs uppercase tracking-wider">
+                  <th className="pb-2 font-normal">Deal</th>
+                  <th className="pb-2 font-normal">Closed</th>
+                  <th className="pb-2 font-normal text-right">Sale</th>
+                  <th className="pb-2 font-normal text-right">Commission</th>
+                  <th className="pb-2 font-normal"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.commissionOwed.rows.map((row) => (
+                  <tr key={row.referralId} className="border-b border-divider last:border-0">
+                    <td className="py-2">
+                      {row.buyerName}
+                      <span className="text-saddle text-xs"> · {row.orderType}</span>
+                    </td>
+                    <td className="py-2 text-saddle">
+                      {fmtDate(row.closedAt)}
+                      {row.ageDays > 0 && (
+                        <span className="text-xs"> ({row.ageDays}d ago)</span>
+                      )}
+                    </td>
+                    <td className="py-2 text-right tabular-nums text-saddle">{formatUSD(row.saleAmount)}</td>
+                    <td className="py-2 text-right tabular-nums font-semibold">{formatUSD(row.commissionDue)}</td>
+                    <td className="py-2 text-right">
+                      <button
+                        onClick={() => payCommission(row)}
+                        disabled={payingRef !== null}
+                        className="bg-charcoal text-bone px-4 py-1.5 uppercase tracking-wider text-xs disabled:opacity-50"
+                      >
+                        {payingRef === row.referralId ? 'Opening…' : 'Pay →'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
