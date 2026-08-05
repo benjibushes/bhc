@@ -72,10 +72,21 @@ export interface BrokerSellCut {
   /** Due today. Goes 100% to BHC and IS the commission. 0 when !sellable. */
   deposit: number;
   /** === deposit. Named for the console's "you keep $X" line so the operator
-   *  money truth is read straight off the rail's own quote, not re-derived. */
+   *  money truth is read straight off the rail's own quote, not re-derived.
+   *  EXACT in both pricing modes — the commission never rides the weight. */
   bhcKeeps: number;
-  /** price − deposit. The ranch collects this direct; it is also its net. */
+  /** price − deposit. The ranch collects this direct; it is also its net. In
+   *  WEIGHT-PRICED mode this is the LOW end of the collect range. */
   ranchCollects: number;
+  /** WEIGHT-PRICED (range) mode — the cut's Max field is set above the floor,
+   *  so the exact share price is set by hanging weight. The console renders
+   *  "buyer price: $floor–$max (hanging weight)" and a collect range; the
+   *  "you keep" line stays exact. When false, priceMax/ranchCollectsMax
+   *  COLLAPSE to price/ranchCollects so the split invariant
+   *  (bhcKeeps + ranchCollectsMax === priceMax) holds in both modes. */
+  weightPriced: boolean;
+  priceMax: number;
+  ranchCollectsMax: number;
   /** assertBrokerEligible's message, VERBATIM, when !sellable. '' otherwise. */
   reason: string;
 }
@@ -119,10 +130,14 @@ export function buildBrokerSellRancher(rancher: any, state: string): BrokerSellR
         deposit: 0,
         bhcKeeps: 0,
         ranchCollects: 0,
+        weightPriced: false,
+        priceMax: 0,
+        ranchCollectsMax: 0,
         reason: gate.error,
       };
     }
-    const { priceCents, depositCents, balanceCents } = gate.quote;
+    const { priceCents, depositCents, balanceCents, weightPriced, priceMaxCents, balanceMaxCents } =
+      gate.quote;
     return {
       cut,
       label: CUT_LABELS[cut],
@@ -131,6 +146,11 @@ export function buildBrokerSellRancher(rancher: any, state: string): BrokerSellR
       deposit: depositCents / 100,
       bhcKeeps: depositCents / 100,
       ranchCollects: balanceCents / 100,
+      // WEIGHT-PRICED: ceilings from the quote; exact mode collapses them so
+      // the console can always render priceMax/ranchCollectsMax safely.
+      weightPriced,
+      priceMax: (weightPriced && priceMaxCents ? priceMaxCents : priceCents) / 100,
+      ranchCollectsMax: (weightPriced && balanceMaxCents ? balanceMaxCents : balanceCents) / 100,
       reason: '',
     };
   });

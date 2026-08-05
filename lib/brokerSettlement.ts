@@ -62,7 +62,11 @@ export async function settleBrokerDeposit(pi: any): Promise<void> {
   // balanceCents is intentionally not destructured here — the notification
   // layer recomputes it from (priceCents, depositCents) inside
   // buildBrokerOrderFacts, which is the single place that clamps it at zero.
-  const { depositCents, priceCents } = readBrokerMoney(pi);
+  // WEIGHT-PRICED mode: priceCents is the range FLOOR and priceMaxCents the
+  // ceiling (readBrokerMoney collapses the ceiling to the exact price when the
+  // metadata carries none). The deposit — the commission — is identical in
+  // both modes.
+  const { depositCents, priceCents, priceMaxCents } = readBrokerMoney(pi);
 
   // Serialize simultaneous deliveries for this PI. Degrades OPEN if Redis is
   // down — the row-flip gate below is the real guarantee.
@@ -80,7 +84,14 @@ export async function settleBrokerDeposit(pi: any): Promise<void> {
   // Everything a human or a report needs to see that this money is BHC's and
   // that the rancher is owed nothing:
   //   Deposit Paid At / Deposit Amount — the deposit itself
-  //   Total Sale Amount               — the full share price
+  //   Total Sale Amount               — the full share price. For a WEIGHT-
+  //                                     PRICED cut this is the range FLOOR
+  //                                     (metadata.priceCents carries the floor
+  //                                     by construction): conservative, never
+  //                                     overstates a sale whose exact price the
+  //                                     hanging weight hasn't set yet. The
+  //                                     range itself lives in the Stripe
+  //                                     metadata + the referral Notes.
   //   BHC Fee Cents + Fee Captured At — on THIS rail the fee IS the deposit,
   //                                     so the whole deposit is stamped as the
   //                                     captured fee. That is the marker that
@@ -170,6 +181,11 @@ export async function settleBrokerDeposit(pi: any): Promise<void> {
     cutLabel: CUT_LABELS[cut] || String(referral?.['Order Type'] || 'Beef share'),
     priceCents,
     depositCents,
+    // WEIGHT-PRICED ceiling from the Stripe metadata (== priceCents in exact
+    // mode, which the facts builder collapses back to exact framing). Never
+    // re-read from the rancher's price fields — they may have been edited
+    // between checkout and settlement.
+    priceMaxCents,
     orderRef: `BHC-${referralId.slice(-6)}`,
   });
 

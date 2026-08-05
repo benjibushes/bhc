@@ -136,13 +136,27 @@ export function resolveSellLinkRail(body: any): SellLinkRailChoice {
 export function brokerMintGate(
   rancher: any,
   cut: Cut,
-): { ok: true; tierPrice: number; deposit: number } | { ok: false; status: number; error: string } {
+):
+  | { ok: true; tierPrice: number; deposit: number; tierPriceMax?: number }
+  | { ok: false; status: number; error: string } {
   const gate = assertBrokerEligible(rancher, cut);
   if (!gate.ok) {
     return {
       ok: false,
       status: gate.status,
       error: `${rancher?.['Ranch Name'] || 'This ranch'}: ${gate.error}`,
+    };
+  }
+  // WEIGHT-PRICED: tierPrice is the range FLOOR and tierPriceMax the ceiling —
+  // the console's copy must say "estimated $floor–$max, final price set by
+  // hanging weight", never an exact total. Exact-mode returns keep the exact
+  // shape (no tierPriceMax key), pinned by test.
+  if (gate.quote.weightPriced && gate.quote.priceMaxCents) {
+    return {
+      ok: true,
+      tierPrice: gate.quote.priceCents / 100,
+      deposit: gate.quote.depositCents / 100,
+      tierPriceMax: gate.quote.priceMaxCents / 100,
     };
   }
   return { ok: true, tierPrice: gate.quote.priceCents / 100, deposit: gate.quote.depositCents / 100 };
@@ -195,6 +209,9 @@ export async function POST(request: Request) {
   let rancher: any = null;
   let tierPrice = 0;
   let deposit = 0;
+  // WEIGHT-PRICED (broker rail only): ceiling of the estimated share price.
+  // null = exact pricing (the ceiling of nothing is nothing).
+  let tierPriceMax: number | null = null;
   const rail = choice.request.rail;
 
   if (rail === 'broker') {
@@ -212,6 +229,7 @@ export async function POST(request: Request) {
     }
     tierPrice = gate.tierPrice;
     deposit = gate.deposit;
+    tierPriceMax = gate.tierPriceMax ?? null;
   } else {
     // ── CONNECT RAIL (unchanged) ───────────────────────────────────────────
     rancher = await getRancherBySlug(rancherSlug).catch(() => null);
@@ -280,5 +298,11 @@ export async function POST(request: Request) {
     // can state Ben's take honestly without re-deriving it.
     bhcTake: rail === 'broker' ? deposit : null,
     rancherNets: rail === 'broker' ? tierPrice - deposit : null,
+    // WEIGHT-PRICED (broker rail): tierPrice is the range FLOOR and these two
+    // carry the ceiling; both null for exact pricing (and always for Connect).
+    // The console's buyer copy must say "estimated", never an exact total,
+    // whenever tierPriceMax is present. The deposit/bhcTake stay exact.
+    tierPriceMax,
+    rancherNetsMax: rail === 'broker' && tierPriceMax !== null ? tierPriceMax - deposit : null,
   });
 }

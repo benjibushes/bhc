@@ -24,7 +24,12 @@
 // before paying, so the receipt can never be the first place they learn of it.
 // Both are optional per ranch; blank renders NOTHING, not an empty heading.
 
-import { brokerBalanceNote, brokerFulfillmentSteps, brokerAdditionalCosts } from '@/lib/brokerRail';
+import {
+  brokerBalanceNote,
+  brokerFulfillmentSteps,
+  brokerAdditionalCosts,
+  brokerPricingNote,
+} from '@/lib/brokerRail';
 
 /** Everything both emails need. Assembled by the settlement layer from the
  *  referral + rancher + consumer rows; no lookups happen in here. */
@@ -71,6 +76,23 @@ export interface BrokerOrderFacts {
    */
   additionalCosts: string;
   orderRef: string;
+  /**
+   * WEIGHT-PRICED (range) mode — 2026-08-05. When true, `priceCents` /
+   * `balanceCents` are the range FLOOR and the max fields below carry the
+   * ceiling: the exact share price is set by hanging weight after processing,
+   * so NEITHER email may state an exact balance — only the honest range. The
+   * deposit is EXACT in both modes (it is the commission, unaffected by the
+   * final weight). All four fields are optional so an exact-mode caller (and
+   * every pre-existing fixture) is untouched: absent ⇒ exact mode.
+   */
+  weightPriced?: boolean;
+  /** Ceiling of the share price. == priceCents when not weight-priced. */
+  priceMaxCents?: number;
+  /** Ceiling of the ranch balance. == balanceCents when not weight-priced. */
+  balanceMaxCents?: number;
+  /** The ranch's explanation of how the final price is set ($/lb, typical
+   *  carcass weights). Rendered ONLY in weight-priced mode; '' renders nothing. */
+  pricingNote?: string;
 }
 
 export function money(cents: number): string {
@@ -111,12 +133,24 @@ export function buildBrokerOrderFacts(args: {
   cutLabel: string;
   priceCents: number;
   depositCents: number;
+  /** WEIGHT-PRICED ceiling (from Stripe metadata at settlement — never re-read
+   *  from rancher prices). Omitted / not above priceCents ⇒ exact mode. */
+  priceMaxCents?: number;
   orderRef: string;
 }): BrokerOrderFacts {
   const { rancher, referral, consumer } = args;
   const ranchName = String(rancher?.['Ranch Name'] || rancher?.['Operator Name'] || 'the ranch').trim();
   const priceCents = Math.max(0, Math.round(Number(args.priceCents) || 0));
   const depositCents = Math.max(0, Math.round(Number(args.depositCents) || 0));
+  const balanceCents = Math.max(0, priceCents - depositCents);
+  // WEIGHT-PRICED: a ceiling collapses to the exact price unless it is a real
+  // range strictly above the floor — so malformed metadata degrades to exact
+  // framing (a true statement: the floor IS the price we quoted) rather than
+  // rendering a nonsense range.
+  const rawMax = Math.round(Number(args.priceMaxCents) || 0);
+  const weightPriced = Number.isFinite(rawMax) && rawMax > priceCents;
+  const priceMaxCents = weightPriced ? rawMax : priceCents;
+  const balanceMaxCents = Math.max(balanceCents, priceMaxCents - depositCents);
   return {
     ranchName,
     operatorName: String(rancher?.['Operator Name'] || ranchName).trim(),
@@ -133,14 +167,20 @@ export function buildBrokerOrderFacts(args: {
     depositCents,
     // Clamp at 0: a malformed deposit larger than the price must never render
     // a negative balance on a rancher's fulfillment sheet.
-    balanceCents: Math.max(0, priceCents - depositCents),
-    balanceNote: brokerBalanceNote(rancher),
+    balanceCents,
+    // WEIGHT-PRICED: the composed note LEADS with the honest range — nothing
+    // downstream may state an exact balance for a weight-priced share.
+    balanceNote: brokerBalanceNote(rancher, weightPriced ? { balanceCents, balanceMaxCents } : undefined),
     // Read from the rancher record (not the referral): these describe how THIS
     // ranch fulfills, and the receipt must repeat what the buyer already saw on
     // the checkout page, which read the same two fields.
     fulfillmentSteps: brokerFulfillmentSteps(rancher),
     additionalCosts: brokerAdditionalCosts(rancher),
     orderRef: String(args.orderRef || '').trim(),
+    weightPriced,
+    priceMaxCents,
+    balanceMaxCents,
+    pricingNote: brokerPricingNote(rancher),
   };
 }
 
@@ -154,8 +194,35 @@ export interface BuiltEmail {
   text: string;
 }
 
+/**
+ * WEIGHT-PRICED helpers, shared by both emails. `range` is the single gate for
+ * every piece of range copy: false ⇒ the exact-mode strings are byte-identical
+ * to before range mode existed (pinned by tests).
+ */
+function rangeFacts(f: BrokerOrderFacts): {
+  range: boolean;
+  priceRange: string;
+  collectRange: string;
+  balMaxCents: number;
+} {
+  const balMaxCents = Number(f.balanceMaxCents ?? f.balanceCents) || f.balanceCents;
+  const priceMaxCents = Number(f.priceMaxCents ?? f.priceCents) || f.priceCents;
+  const range = f.weightPriced === true && balMaxCents > f.balanceCents && priceMaxCents > f.priceCents;
+  return {
+    range,
+    priceRange: `${money(f.priceCents)}–${money(priceMaxCents)}`,
+    collectRange: `${money(f.balanceCents)}–${money(balMaxCents)}`,
+    balMaxCents,
+  };
+}
+
 export function buildBrokerRancherEmail(f: BrokerOrderFacts): BuiltEmail {
-  const subject = `New order: ${f.cutLabel} for ${f.buyerName || f.buyerEmail} — ${money(f.balanceCents)} to collect`;
+  const { range, priceRange, collectRange, balMaxCents } = rangeFacts(f);
+  // Range mode: the exact balance does not exist yet (hanging weight), so the
+  // subject — like every money line below — states the honest range instead.
+  const subject = range
+    ? `New order: ${f.cutLabel} for ${f.buyerName || f.buyerEmail} — ${collectRange} to collect`
+    : `New order: ${f.cutLabel} for ${f.buyerName || f.buyerEmail} — ${money(f.balanceCents)} to collect`;
 
   const contactRows: Array<[string, string]> = [
     ['Name', f.buyerName || '(not given)'],
@@ -242,19 +309,41 @@ export function buildBrokerRancherEmail(f: BrokerOrderFacts): BuiltEmail {
     <h2>The money</h2>
     <div class="money">
       <table width="100%" cellpadding="0" cellspacing="0">
-        <tr><td>${esc(f.cutLabel)} — full share price</td><td align="right">${money(f.priceCents)}</td></tr>
+        ${
+          range
+            ? `<tr><td>${esc(f.cutLabel)} — share price (set by hanging weight)</td><td align="right">${priceRange}</td></tr>`
+            : `<tr><td>${esc(f.cutLabel)} — full share price</td><td align="right">${money(f.priceCents)}</td></tr>`
+        }
         <tr><td>Deposit BuyHalfCow collected</td><td align="right">− ${money(f.depositCents)}</td></tr>
         <tr><td colspan="2"><hr style="border:none;border-top:1px solid #A7A29A;margin:8px 0;"></td></tr>
-        <tr><td class="collect">You collect from the buyer</td><td align="right" class="collect">${money(f.balanceCents)}</td></tr>
-      </table>
+        <tr><td class="collect">You collect from the buyer</td><td align="right" class="collect">${range ? collectRange : money(f.balanceCents)}</td></tr>
+      </table>${
+        range
+          ? `
+      <div class="muted" style="margin-top:8px;">The exact balance is set by hanging weight — this order settles inside the range above.</div>`
+          : ''
+      }
     </div>
-    <p class="muted"><strong>How this works, as agreed:</strong> the ${money(f.depositCents)} deposit is BuyHalfCow's commission for finding and closing this buyer — we keep it, and we do not invoice you for anything. You collect the remaining ${money(f.balanceCents)} directly from the buyer, so your net on this share is <strong>${money(f.balanceCents)}</strong>.</p>
+    ${
+      range
+        ? `<p class="muted"><strong>How this works, as agreed:</strong> the ${money(f.depositCents)} deposit is BuyHalfCow's commission for finding and closing this buyer — we keep it, and we do not invoice you for anything. You collect the remaining balance directly from the buyer — between ${money(f.balanceCents)} and ${money(balMaxCents)}, with the exact amount set by hanging weight — so your net on this share is <strong>${collectRange}</strong>.</p>`
+        : `<p class="muted"><strong>How this works, as agreed:</strong> the ${money(f.depositCents)} deposit is BuyHalfCow's commission for finding and closing this buyer — we keep it, and we do not invoice you for anything. You collect the remaining ${money(f.balanceCents)} directly from the buyer, so your net on this share is <strong>${money(f.balanceCents)}</strong>.</p>`
+    }${
+      range && f.pricingNote
+        ? `
+    <p class="muted"><strong>Pricing basis (what the buyer was shown):</strong><br>${escMultiline(f.pricingNote)}</p>`
+        : ''
+    }
 
     <h2>Collecting your balance</h2>
     <p>${esc(f.balanceNote)}</p>
 ${buyerScriptHtml}
     <h2>What to do now</h2>
-    <p>Contact the buyer to confirm timing, cut sheet, and pickup or delivery. Collect the ${money(f.balanceCents)} balance yourself at fulfillment. If anything about this order is wrong, reply to this email.</p>
+    <p>Contact the buyer to confirm timing, cut sheet, and pickup or delivery. ${
+      range
+        ? `Collect the balance yourself at fulfillment — between ${money(f.balanceCents)} and ${money(balMaxCents)}, with the exact amount set by hanging weight.`
+        : `Collect the ${money(f.balanceCents)} balance yourself at fulfillment.`
+    } If anything about this order is wrong, reply to this email.</p>
 
     <p class="muted">Order reference: ${esc(f.orderRef)}</p>
   </div>
@@ -268,11 +357,29 @@ ${buyerScriptHtml}
     ...contactRows.map(([k, v]) => `  ${k}: ${v}`),
     '',
     'THE MONEY',
-    `  ${f.cutLabel} full share price: ${money(f.priceCents)}`,
-    `  Deposit BuyHalfCow collected: -${money(f.depositCents)}`,
-    `  YOU COLLECT FROM THE BUYER: ${money(f.balanceCents)}`,
+    ...(range
+      ? [
+          `  ${f.cutLabel} share price (set by hanging weight): ${priceRange}`,
+          `  Deposit BuyHalfCow collected: -${money(f.depositCents)}`,
+          `  YOU COLLECT FROM THE BUYER: ${collectRange}`,
+          '  The exact balance is set by hanging weight — this order settles inside the range above.',
+        ]
+      : [
+          `  ${f.cutLabel} full share price: ${money(f.priceCents)}`,
+          `  Deposit BuyHalfCow collected: -${money(f.depositCents)}`,
+          `  YOU COLLECT FROM THE BUYER: ${money(f.balanceCents)}`,
+        ]),
     '',
-    `As agreed: the ${money(f.depositCents)} deposit is BuyHalfCow's commission for finding and closing this buyer. We keep it and never invoice you. You collect the remaining ${money(f.balanceCents)} directly from the buyer, so your net on this share is ${money(f.balanceCents)}.`,
+    range
+      ? `As agreed: the ${money(f.depositCents)} deposit is BuyHalfCow's commission for finding and closing this buyer. We keep it and never invoice you. You collect the remaining balance directly from the buyer — between ${money(f.balanceCents)} and ${money(balMaxCents)}, with the exact amount set by hanging weight — so your net on this share is ${collectRange}.`
+      : `As agreed: the ${money(f.depositCents)} deposit is BuyHalfCow's commission for finding and closing this buyer. We keep it and never invoice you. You collect the remaining ${money(f.balanceCents)} directly from the buyer, so your net on this share is ${money(f.balanceCents)}.`,
+    ...(range && f.pricingNote
+      ? [
+          '',
+          'PRICING BASIS (what the buyer was shown)',
+          ...String(f.pricingNote).split(/\r?\n/).map((l) => `  ${l}`),
+        ]
+      : []),
     '',
     'COLLECTING YOUR BALANCE',
     `  ${f.balanceNote}`,
@@ -289,6 +396,12 @@ ${buyerScriptHtml}
 // ---------------------------------------------------------------------------
 
 export function buildBrokerBuyerReceipt(f: BrokerOrderFacts): BuiltEmail {
+  // WEIGHT-PRICED mode: the receipt may NEVER state an exact balance — the
+  // exact share price does not exist until the hanging weight is known. Every
+  // money line below states the honest estimated range instead; the deposit
+  // stays exact. Split silence still holds: nothing here mentions what BHC
+  // keeps, in either mode.
+  const { range, priceRange, collectRange } = rangeFacts(f);
   const subject = `Your ${f.cutLabel} is reserved — ${f.ranchName}`;
 
   const ranchContact = [
@@ -340,22 +453,39 @@ export function buildBrokerBuyerReceipt(f: BrokerOrderFacts): BuiltEmail {
         <tr><td>Ranch</td><td align="right"><strong>${esc(f.ranchName)}</strong></td></tr>
         <tr><td>Share</td><td align="right"><strong>${esc(f.cutLabel)}</strong></td></tr>
         <tr><td colspan="2"><hr style="border:none;border-top:1px solid #A7A29A;margin:8px 0;"></td></tr>
-        <tr><td>Total price for your share</td><td align="right">${money(f.priceCents)}</td></tr>
+        ${
+          range
+            ? `<tr><td>Estimated price for your share</td><td align="right">${priceRange}</td></tr>
         <tr><td>Deposit paid today</td><td align="right">${money(f.depositCents)}</td></tr>
-        <tr><td class="balance">Balance due to the ranch</td><td align="right" class="balance">${money(f.balanceCents)}</td></tr>
+        <tr><td class="balance">Estimated balance due to the ranch</td><td align="right" class="balance">${collectRange}</td></tr>
+        <tr><td colspan="2" class="muted" style="padding-top:8px;">Your final share price is set by hanging weight — ${esc(f.ranchName)} confirms the exact balance.</td></tr>`
+            : `<tr><td>Total price for your share</td><td align="right">${money(f.priceCents)}</td></tr>
+        <tr><td>Deposit paid today</td><td align="right">${money(f.depositCents)}</td></tr>
+        <tr><td class="balance">Balance due to the ranch</td><td align="right" class="balance">${money(f.balanceCents)}</td></tr>`
+        }
         ${extraCostRow}
       </table>
     </div>
 
     <h2>Paying the balance</h2>
-    <p>The remaining <strong>${money(f.balanceCents)}</strong> is paid <strong>directly to ${esc(f.ranchName)}</strong> — not to BuyHalfCow. ${esc(f.balanceNote)}</p>
+    ${
+      range
+        ? `<p>The remaining balance is paid <strong>directly to ${esc(f.ranchName)}</strong> — not to BuyHalfCow. ${esc(f.balanceNote)}</p>`
+        : `<p>The remaining <strong>${money(f.balanceCents)}</strong> is paid <strong>directly to ${esc(f.ranchName)}</strong> — not to BuyHalfCow. ${esc(f.balanceNote)}</p>`
+    }${
+      range && f.pricingNote
+        ? `
+    <h2>How your final price is set</h2>
+    <p>${escMultiline(f.pricingNote)}</p>`
+        : ''
+    }
     <p class="muted">Changed your plans? Your deposit is fully refundable until ${esc(f.ranchName)} confirms your animal — email hello@buyhalfcow.com and BuyHalfCow refunds it in full.</p>
 ${
   f.additionalCosts
     ? `
     <h2>The cost paid separately</h2>
     <p>${escMultiline(f.additionalCosts)}</p>
-    <p class="muted">You pay that directly to the third party who does that work. It is separate from your ${money(f.depositCents)} deposit and from the ${money(f.balanceCents)} balance you pay ${esc(f.ranchName)}.</p>
+    <p class="muted">You pay that directly to the third party who does that work. It is separate from your ${money(f.depositCents)} deposit and from the ${range ? `balance you pay ${esc(f.ranchName)}` : `${money(f.balanceCents)} balance you pay ${esc(f.ranchName)}`}.</p>
 `
     : ''
 }
@@ -376,20 +506,40 @@ ${
     'YOUR ORDER',
     `  Ranch: ${f.ranchName}`,
     `  Share: ${f.cutLabel}`,
-    `  Total price for your share: ${money(f.priceCents)}`,
-    `  Deposit paid today: ${money(f.depositCents)}`,
-    `  BALANCE DUE TO THE RANCH: ${money(f.balanceCents)}`,
+    ...(range
+      ? [
+          `  Estimated price for your share: ${priceRange}`,
+          `  Deposit paid today: ${money(f.depositCents)}`,
+          `  ESTIMATED BALANCE DUE TO THE RANCH: ${collectRange}`,
+          `  Your final share price is set by hanging weight — ${f.ranchName} confirms the exact balance.`,
+        ]
+      : [
+          `  Total price for your share: ${money(f.priceCents)}`,
+          `  Deposit paid today: ${money(f.depositCents)}`,
+          `  BALANCE DUE TO THE RANCH: ${money(f.balanceCents)}`,
+        ]),
     '',
     'PAYING THE BALANCE',
-    `  The remaining ${money(f.balanceCents)} is paid directly to ${f.ranchName}, not to BuyHalfCow.`,
+    range
+      ? `  The remaining balance is paid directly to ${f.ranchName}, not to BuyHalfCow.`
+      : `  The remaining ${money(f.balanceCents)} is paid directly to ${f.ranchName}, not to BuyHalfCow.`,
     `  ${f.balanceNote}`,
     `  Changed your plans? Your deposit is fully refundable until ${f.ranchName} confirms your animal — email hello@buyhalfcow.com and BuyHalfCow refunds it in full.`,
+    ...(range && f.pricingNote
+      ? [
+          '',
+          'HOW YOUR FINAL PRICE IS SET',
+          ...String(f.pricingNote).split(/\r?\n/).map((l) => `  ${l}`),
+        ]
+      : []),
     ...(f.additionalCosts
       ? [
           '',
           'THE COST PAID SEPARATELY',
           ...f.additionalCosts.split(/\r?\n/).map((l) => `  ${l}`),
-          `  You pay that directly to the third party who does that work. It is separate from your ${money(f.depositCents)} deposit and from the ${money(f.balanceCents)} balance you pay ${f.ranchName}.`,
+          range
+            ? `  You pay that directly to the third party who does that work. It is separate from your ${money(f.depositCents)} deposit and from the balance you pay ${f.ranchName}.`
+            : `  You pay that directly to the third party who does that work. It is separate from your ${money(f.depositCents)} deposit and from the ${money(f.balanceCents)} balance you pay ${f.ranchName}.`,
         ]
       : []),
     ...(f.fulfillmentSteps.length
@@ -414,15 +564,20 @@ ${
 // ---------------------------------------------------------------------------
 
 export function buildBrokerOperatorCard(f: BrokerOrderFacts): string {
+  // WEIGHT-PRICED mode: the commission (deposit) line is exact in both modes;
+  // the price + collect lines state the honest range.
+  const { range, priceRange, collectRange } = rangeFacts(f);
   return [
     `🤝 <b>BROKER SALE</b> — ${esc(f.cutLabel)}`,
     '',
     `Ranch: <b>${esc(f.ranchName)}</b> (represented, off-platform)`,
     `Buyer: ${esc(f.buyerName || f.buyerEmail)}`,
     '',
-    `Share price: ${money(f.priceCents)}`,
+    range ? `Share price: ${priceRange} (hanging weight)` : `Share price: ${money(f.priceCents)}`,
     `<b>BHC commission (deposit, kept in full): ${money(f.depositCents)}</b>`,
-    `Rancher collects direct: ${money(f.balanceCents)}`,
+    range
+      ? `Rancher collects direct: ${collectRange} (exact set by hanging weight)`
+      : `Rancher collects direct: ${money(f.balanceCents)}`,
     '',
     `Rancher emailed the fulfillment sheet. No Connect, no payout, no invoice.`,
     `Ref: ${esc(f.orderRef)}`,

@@ -84,6 +84,24 @@ const CUT_DEPOSIT_FIELD: Record<Cut, string> = {
   whole: 'Whole Deposit',
 };
 
+// WEIGHT-PRICED (range) mode — 2026-08-05. Some represented ranches price on
+// HANGING WEIGHT ($/lb × carcass weight), so the exact share price does not
+// exist until the animal is processed. When a cut's Max field is set AND
+// strictly above its Price field, that cut is WEIGHT-PRICED: the Price field is
+// the range FLOOR and Max is the ceiling. Max missing, ≤ the floor, or
+// malformed → EXACT mode, byte-identical to before these fields existed.
+// Verified against the live schema 2026-08-05.
+const CUT_PRICE_MAX_FIELD: Record<Cut, string> = {
+  quarter: 'Quarter Price Max',
+  half: 'Half Price Max',
+  whole: 'Whole Price Max',
+};
+
+/** Buyer-facing explanation of how the exact balance is determined ($/lb,
+ *  typical carcass weights). Rendered wherever a WEIGHT-PRICED cut's money is
+ *  shown; never rendered for exact-mode cuts. multilineText, Ranchers. */
+export const BROKER_PRICING_NOTE_FIELD = 'Broker Pricing Note';
+
 /**
  * The `Match Type` value stamped on a broker referral.
  *
@@ -158,9 +176,55 @@ export function rancherHasConnectAccount(rancher: any): boolean {
 export const BROKER_BALANCE_NOTE_FALLBACK =
   'The ranch will tell you how to pay the balance when they contact you about pickup or delivery.';
 
-export function brokerBalanceNote(rancher: any): string {
-  const note = String(rancher?.[BROKER_BALANCE_NOTE_FIELD] || '').trim();
-  return note || BROKER_BALANCE_NOTE_FALLBACK;
+/**
+ * Whole-dollar-friendly money formatting for composed buyer/rancher copy:
+ * "$1,050" for round amounts, "$1,799.99" when cents actually exist. NaN-safe.
+ */
+export function formatUsdCents(cents: number): string {
+  const n = Number(cents);
+  const safe = Number.isFinite(n) ? Math.round(n) : 0;
+  const whole = safe % 100 === 0;
+  return `$${(safe / 100).toLocaleString('en-US', {
+    minimumFractionDigits: whole ? 0 : 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+/**
+ * WEIGHT-PRICED composition: when a valid range is passed, the note LEADS with
+ * the honest range statement — the buyer must never read a collection
+ * instruction that implies an exact balance exists before the hanging weight
+ * is known. With no range argument (or a degenerate one) this is byte-identical
+ * to the original helper, so every exact-mode caller is untouched.
+ */
+export function brokerBalanceNote(
+  rancher: any,
+  range?: { balanceCents: number; balanceMaxCents: number },
+): string {
+  const note = String(rancher?.[BROKER_BALANCE_NOTE_FIELD] || '').trim() || BROKER_BALANCE_NOTE_FALLBACK;
+  if (
+    range &&
+    Number.isFinite(range.balanceCents) &&
+    Number.isFinite(range.balanceMaxCents) &&
+    range.balanceMaxCents > range.balanceCents
+  ) {
+    return (
+      `Your final share price is set by hanging weight, so the balance you pay the ranch ` +
+      `will land between ${formatUsdCents(range.balanceCents)} and ${formatUsdCents(range.balanceMaxCents)}. ` +
+      note
+    );
+  }
+  return note;
+}
+
+/**
+ * The ranch's own explanation of how the final price is determined ($/lb rate,
+ * typical carcass weights). '' when unset — callers render NOTHING in that
+ * case (and never render it at all for an exact-priced cut, where there is no
+ * weight-based pricing to explain).
+ */
+export function brokerPricingNote(rancher: any): string {
+  return String(rancher?.[BROKER_PRICING_NOTE_FIELD] || '').trim();
 }
 
 // ---------------------------------------------------------------------------
@@ -225,12 +289,30 @@ export function brokerAdditionalCosts(rancher: any): string {
 export interface BrokerQuote {
   cut: Cut;
   cutLabel: string;
-  /** The rancher's FULL share price — what the buyer ultimately pays in total. */
+  /** The rancher's FULL share price — what the buyer ultimately pays in total.
+   *  In WEIGHT-PRICED mode this is the range FLOOR (the conservative number:
+   *  it is what `Total Sale Amount` is stamped with, so money reads never
+   *  overstate a weight-priced sale). */
   priceCents: number;
-  /** Collected by BHC now, kept in full. This IS the commission. */
+  /** Collected by BHC now, kept in full. This IS the commission — EXACT in
+   *  both modes, entirely unaffected by the final hanging weight. */
   depositCents: number;
-  /** price − deposit. Buyer owes this to the RANCH; it is also the rancher's net. */
+  /** price − deposit. Buyer owes this to the RANCH; it is also the rancher's
+   *  net. In WEIGHT-PRICED mode this is the LOW end of the balance range. */
   balanceCents: number;
+  /** WEIGHT-PRICED (range) mode: true when a valid `<Cut> Price Max` exists
+   *  strictly above the floor. The exact share price is set by hanging weight
+   *  after processing — no surface may state an exact balance for this cut. */
+  weightPriced: boolean;
+  /** Range ceiling of the share price. Present ONLY when weightPriced. */
+  priceMaxCents?: number;
+  /** priceMax − deposit — the HIGH end of the balance range. Present ONLY when
+   *  weightPriced. */
+  balanceMaxCents?: number;
+  /** A `<Cut> Price Max` value existed but was malformed (garbage / negative)
+   *  and was treated as absent — the cut sold in EXACT mode. Surfaced so the
+   *  operator can see the field needs fixing; never blocks the sale. */
+  priceMaxIgnored?: 'malformed';
 }
 
 export type BrokerEligibility =
@@ -324,16 +406,50 @@ export function assertBrokerEligible(rancher: any, cut: Cut): BrokerEligibility 
 
   const priceCents = Math.round(priceDollars * 100);
   const depositCents = Math.round(depositDollars * 100);
-  return {
-    ok: true,
-    quote: {
-      cut,
-      cutLabel: CUT_LABELS[cut],
-      priceCents,
-      depositCents,
-      balanceCents: priceCents - depositCents,
-    },
+
+  // ── WEIGHT-PRICED (range) detection — AFTER every refusal gate above, so it
+  // can only ever ANNOTATE an already-sellable exact quote, never rescue an
+  // unsellable one. The deposit gates (explicit, > 0, strictly < the FLOOR)
+  // ran against the floor and are deliberately untouched: the deposit is the
+  // commission and nothing about a hanging-weight ceiling may alter it.
+  //   • Max set and strictly above the floor → RANGE mode.
+  //   • Max missing / blank / ≤ floor        → EXACT mode, silently (a ranch
+  //     with no ceiling is the normal case, not an error).
+  //   • Max malformed (garbage, negative)    → EXACT mode, noted on the quote
+  //     so the operator console can surface the broken field.
+  const rawMax = rancher[CUT_PRICE_MAX_FIELD[cut]];
+  let weightPriced = false;
+  let priceMaxCents = 0;
+  let priceMaxIgnored: 'malformed' | undefined;
+  if (rawMax !== undefined && rawMax !== null && String(rawMax).trim() !== '') {
+    const maxDollars = Number(rawMax);
+    if (!Number.isFinite(maxDollars) || maxDollars < 0) {
+      priceMaxIgnored = 'malformed';
+    } else {
+      const maxCents = Math.round(maxDollars * 100);
+      if (maxCents > priceCents) {
+        weightPriced = true;
+        priceMaxCents = maxCents;
+      }
+    }
+  }
+
+  const quote: BrokerQuote = {
+    cut,
+    cutLabel: CUT_LABELS[cut],
+    priceCents,
+    depositCents,
+    balanceCents: priceCents - depositCents,
+    weightPriced,
   };
+  // Range fields exist ONLY in range mode — an exact quote keeps the exact
+  // shape (pinned by test) so no reader can mistake a collapsed 0 for money.
+  if (weightPriced) {
+    quote.priceMaxCents = priceMaxCents;
+    quote.balanceMaxCents = priceMaxCents - depositCents;
+  }
+  if (priceMaxIgnored) quote.priceMaxIgnored = priceMaxIgnored;
+  return { ok: true, quote };
 }
 
 // ---------------------------------------------------------------------------
@@ -366,11 +482,22 @@ export function isBrokerRailMetadata(metadata: any): boolean {
  * a drifting or malicious metadata value can never record more collected than
  * was taken. The price exists only in metadata (Stripe never sees it) and is
  * floored at the deposit so the balance can never go negative.
+ *
+ * WEIGHT-PRICED mode: `metadata.priceCents` carries the range FLOOR (that is
+ * what `Total Sale Amount` gets stamped with — conservative, never overstates)
+ * and `metadata.priceMaxCents` the ceiling. A missing / malformed / not-above-
+ * floor ceiling collapses the range to the exact price (weightPriced=false and
+ * max fields == the exact fields), so every exact-mode read is unchanged. The
+ * DEPOSIT read is identical in both modes — the commission never varies with
+ * the final weight.
  */
 export function readBrokerMoney(pi: any): {
   depositCents: number;
   priceCents: number;
   balanceCents: number;
+  weightPriced: boolean;
+  priceMaxCents: number;
+  balanceMaxCents: number;
 } {
   const charged = Math.max(0, Math.round(Number(pi?.amount ?? pi?.amount_total ?? 0) || 0));
   const rawDeposit = Number(pi?.metadata?.depositCents);
@@ -381,7 +508,17 @@ export function readBrokerMoney(pi: any): {
   const rawPrice = Number(pi?.metadata?.priceCents);
   const priceCents =
     Number.isFinite(rawPrice) && rawPrice > depositCents ? Math.round(rawPrice) : depositCents;
-  return { depositCents, priceCents, balanceCents: Math.max(0, priceCents - depositCents) };
+  const rawMax = Number(pi?.metadata?.priceMaxCents);
+  const weightPriced = Number.isFinite(rawMax) && Math.round(rawMax) > priceCents;
+  const priceMaxCents = weightPriced ? Math.round(rawMax) : priceCents;
+  return {
+    depositCents,
+    priceCents,
+    balanceCents: Math.max(0, priceCents - depositCents),
+    weightPriced,
+    priceMaxCents,
+    balanceMaxCents: Math.max(0, priceMaxCents - depositCents),
+  };
 }
 
 /**

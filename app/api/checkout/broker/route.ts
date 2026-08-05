@@ -23,6 +23,7 @@ import {
   brokerBalanceNote,
   brokerFulfillmentSteps,
   brokerAdditionalCosts,
+  brokerPricingNote,
   referralRailForRancher,
   CUT_LABELS,
   type Cut,
@@ -197,6 +198,10 @@ export async function POST(req: Request) {
     result = await createBrokerCheckout({
       depositCents: quote.depositCents,
       priceCents: quote.priceCents,
+      // WEIGHT-PRICED (range) mode: pass the ceiling so the Stripe metadata —
+      // the settlement contract — carries the honest range. Exact-mode cuts
+      // omit it and the session params stay byte-identical to before.
+      priceMaxCents: quote.weightPriced ? quote.priceMaxCents : undefined,
       cut,
       buyerEmail,
       referralId,
@@ -258,6 +263,9 @@ export async function POST(req: Request) {
     await updateRecord(TABLES.REFERRALS, referralId, {
       'Deposit Requested At': new Date().toISOString(),
       'Deposit Amount': quote.depositCents / 100,
+      // WEIGHT-PRICED cuts stamp the range FLOOR — conservative, never
+      // overstates a sale whose exact price the hanging weight hasn't set yet
+      // (the range itself is in the Stripe metadata + the referral Notes).
       'Total Sale Amount': quote.priceCents / 100,
       'Order Type': quote.cutLabel,
       'Terms Accepted At': new Date().toISOString(),
@@ -272,6 +280,72 @@ export async function POST(req: Request) {
 // ---------------------------------------------------------------------------
 // GET ?refId=X — data for the broker checkout page
 // ---------------------------------------------------------------------------
+
+/**
+ * The page's money projection, pure + exported so the payload shape is unit-
+ * testable (the route handler itself is Airtable + auth bound).
+ *
+ * EXACT-mode cuts keep the exact key set that shipped before weight pricing
+ * existed (pinned by test). A WEIGHT-PRICED cut additionally carries
+ * `weightPriced` / `priceMaxCents` / `balanceMaxCents`, and the projection
+ * gains a top-level `pricingNote` (the ranch's $/lb explanation) ONLY when at
+ * least one cut is weight-priced — it is rendered wherever a weight-priced
+ * cut's money is shown, and nowhere else.
+ */
+export function buildBrokerCheckoutInfo(rancher: any): {
+  balanceNote: string;
+  fulfillmentSteps: string[];
+  additionalCosts: string;
+  pricingNote?: string;
+  cuts: any[];
+} {
+  // Per-cut quotes for every cut this ranch can actually sell on this rail.
+  const cuts = (['quarter', 'half', 'whole'] as Cut[])
+    .map((c) => {
+      const g = assertBrokerEligible(rancher, c);
+      if (!g.ok) return null;
+      const base = {
+        slug: c,
+        label: g.quote.cutLabel,
+        priceCents: g.quote.priceCents,
+        // The buyer-facing number: what the card is charged today. EXACT in
+        // both pricing modes — the deposit is unaffected by the final weight.
+        dueNowCents: g.quote.depositCents,
+        balanceCents: g.quote.balanceCents,
+      };
+      if (!g.quote.weightPriced) return base;
+      return {
+        ...base,
+        // RANGE mode: priceCents/balanceCents above are the FLOOR; these carry
+        // the ceiling. The page must state "estimated $floor–$max", never an
+        // exact total or balance, for this cut.
+        weightPriced: true,
+        priceMaxCents: g.quote.priceMaxCents,
+        balanceMaxCents: g.quote.balanceMaxCents,
+      };
+    })
+    .filter(Boolean);
+
+  const info: {
+    balanceNote: string;
+    fulfillmentSteps: string[];
+    additionalCosts: string;
+    pricingNote?: string;
+    cuts: any[];
+  } = {
+    balanceNote: brokerBalanceNote(rancher),
+    // Fulfillment transparency, projected from the SAME already-fetched rancher
+    // record — no second round trip. Both are commonly empty ([] / ''), and the
+    // page renders nothing at all in that case.
+    fulfillmentSteps: brokerFulfillmentSteps(rancher),
+    additionalCosts: brokerAdditionalCosts(rancher),
+    cuts,
+  };
+  if (cuts.some((c: any) => c.weightPriced === true)) {
+    info.pricingNote = brokerPricingNote(rancher);
+  }
+  return info;
+}
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -310,22 +384,6 @@ export async function GET(req: Request) {
   if (!loaded.ok) return loaded.res;
   const { rancher } = loaded;
 
-  // Per-cut quotes for every cut this ranch can actually sell on this rail.
-  const cuts = (['quarter', 'half', 'whole'] as Cut[])
-    .map((c) => {
-      const g = assertBrokerEligible(rancher, c);
-      if (!g.ok) return null;
-      return {
-        slug: c,
-        label: g.quote.cutLabel,
-        priceCents: g.quote.priceCents,
-        // The buyer-facing number: what the card is charged today.
-        dueNowCents: g.quote.depositCents,
-        balanceCents: g.quote.balanceCents,
-      };
-    })
-    .filter(Boolean);
-
   return NextResponse.json({
     rancher: {
       name: String(rancher['Operator Name'] || rancher['Ranch Name'] || ''),
@@ -333,12 +391,6 @@ export async function GET(req: Request) {
       state: String(rancher['State'] || ''),
     },
     rail: 'broker',
-    balanceNote: brokerBalanceNote(rancher),
-    // Fulfillment transparency, projected from the SAME already-fetched rancher
-    // record — no second round trip. Both are commonly empty ([] / ''), and the
-    // page renders nothing at all in that case.
-    fulfillmentSteps: brokerFulfillmentSteps(rancher),
-    additionalCosts: brokerAdditionalCosts(rancher),
-    cuts,
+    ...buildBrokerCheckoutInfo(rancher),
   });
 }

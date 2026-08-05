@@ -30,14 +30,34 @@ import {
 import {
   assertBrokerEligible,
   isBrokerRancher,
+  formatUsdCents,
   BROKER_MATCH_TYPE,
   CUT_LABELS,
   type Cut,
+  type BrokerQuote,
 } from '@/lib/brokerRail';
 
 // Statuses meaning "this deposit intent is dead or already settled" — never
 // reuse one. Mirrors lib/campaignReferral's REUSABLE_BLOCKED.
 const REUSABLE_BLOCKED = new Set(['Closed Won', 'Closed Lost', 'Awaiting Payment', 'Slot Locked']);
+
+/**
+ * The referral's Notes seed. Pure + exported so the weight-priced record is
+ * unit-testable. For a WEIGHT-PRICED cut the note records the range and the
+ * floor-stamp semantics right on the row — `Total Sale Amount` alone would
+ * otherwise read like an exact price to any human scanning Airtable.
+ */
+export function brokerReferralNotes(quote: BrokerQuote): string {
+  const base =
+    '[Source] Broker rail — BHC represents this ranch; the deposit is BHC commission and the rancher collects the balance direct.';
+  if (!quote.weightPriced || !quote.priceMaxCents) return base;
+  return (
+    base +
+    `\n[weight-priced] Final share price is set by hanging weight: estimated ` +
+    `${formatUsdCents(quote.priceCents)}–${formatUsdCents(quote.priceMaxCents)}. ` +
+    `Total Sale Amount is stamped at the range FLOOR (conservative; the deposit/commission is exact and unaffected).`
+  );
+}
 
 export type BrokerReferralResult =
   | { ok: true; referralId: string; created: boolean; rancher: any }
@@ -132,10 +152,13 @@ export async function findOrCreateBrokerReferral(args: {
     'Order Type': gate.quote.cutLabel,
     'Intent Score': 90,
     'Intent Classification': 'High',
-    Notes: '[Source] Broker rail — BHC represents this ranch; the deposit is BHC commission and the rancher collects the balance direct.',
+    Notes: brokerReferralNotes(gate.quote),
     Rancher: [rancherId],
     Buyer: [consumerId],
-    // Money truth up front, before a cent moves.
+    // Money truth up front, before a cent moves. WEIGHT-PRICED cuts stamp the
+    // range FLOOR as Total Sale Amount — conservative, never overstates — with
+    // the full range recorded in Notes (brokerReferralNotes above). The deposit
+    // is exact in both modes.
     'Total Sale Amount': gate.quote.priceCents / 100,
     'Deposit Amount': gate.quote.depositCents / 100,
   };

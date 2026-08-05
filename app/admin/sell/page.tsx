@@ -43,6 +43,9 @@ interface SellProduct { id: string; name: string; rancher: string; price: number
 // BROKER rail. `sellable:false` cuts are rendered DISABLED with `reason` —
 // never a button that 400s. The deposit is never derived on this rail, so a
 // cut missing a price OR a deposit simply is not sellable yet.
+// WEIGHT-PRICED cuts (`weightPriced`) price on hanging weight: `price` /
+// `ranchCollects` are the range FLOOR, the *Max fields the ceiling — render
+// "$floor–$max (hanging weight)"; the deposit / "you keep" stays exact.
 interface BrokerCut {
   cut: string;
   label: string;
@@ -51,6 +54,9 @@ interface BrokerCut {
   deposit: number;
   bhcKeeps: number;
   ranchCollects: number;
+  weightPriced?: boolean;
+  priceMax?: number;
+  ranchCollectsMax?: number;
   reason: string;
 }
 interface BrokerRancher { id: string; name: string; state: string; inState: boolean; cuts: BrokerCut[] }
@@ -199,17 +205,27 @@ export default function AdminSellPage() {
       // Surface the API's refusal VERBATIM — it names the ranch and the exact
       // missing number, which is what the operator needs to go fix.
       if (!res.ok) throw new Error(data?.error || `failed (${res.status})`);
+      // WEIGHT-PRICED: tierPriceMax present ⇒ the exact price is set by hanging
+      // weight — every total/balance below becomes an honest estimated range.
+      // The deposit (and Ben's keep, which IS the deposit) stays exact.
+      const ranged = data.tierPriceMax != null && Number(data.tierPriceMax) > Number(data.tierPrice);
       setResult({
         kind: 'broker',
         url: data.url,
         // Operator money truth, straight off the response — the deposit IS the
         // commission on this rail, so `bhcTake` and `rancherNets` are stated
         // rather than re-derived here.
-        headline: `${data.cutLabel} — ${data.rancher} (represented) · ${money(data.deposit)} deposit · you keep ${money(data.bhcTake ?? data.deposit)} · ranch collects ${money(data.rancherNets ?? data.tierPrice - data.deposit)}`,
+        headline: ranged
+          ? `${data.cutLabel} — ${data.rancher} (represented) · ${money(data.tierPrice)}–${money(data.tierPriceMax)} hanging weight · ${money(data.deposit)} deposit · you keep ${money(data.bhcTake ?? data.deposit)} · ranch collects ${money(data.rancherNets ?? data.tierPrice - data.deposit)}–${money(data.rancherNetsMax ?? data.tierPriceMax - data.deposit)}`
+          : `${data.cutLabel} — ${data.rancher} (represented) · ${money(data.deposit)} deposit · you keep ${money(data.bhcTake ?? data.deposit)} · ranch collects ${money(data.rancherNets ?? data.tierPrice - data.deposit)}`,
         // Buyer-facing copy: the deposit is theirs toward the share and the
         // balance is settled with the ranch. Their TOTAL is the same either
-        // way, so how BHC and the ranch split it is not stated to them.
-        sms: `Hey${first ? ' ' + first : ''} — Ben from BuyHalfCow. Here's your link for the ${data.cutLabel} from ${data.rancher}: ${data.url} — ${money(data.deposit)} today holds your share (${money(data.tierPrice)} total), and you settle the ${money(data.tierPrice - data.deposit)} balance directly with the ranch.`,
+        // way, so how BHC and the ranch split it is not stated to them. A
+        // weight-priced share NEVER gets an exact total or balance — only the
+        // estimated range and how the final number is set.
+        sms: ranged
+          ? `Hey${first ? ' ' + first : ''} — Ben from BuyHalfCow. Here's your link for the ${data.cutLabel} from ${data.rancher}: ${data.url} — ${money(data.deposit)} today holds your share (estimated ${money(data.tierPrice)}–${money(data.tierPriceMax)} total, final price set by hanging weight), and you settle the balance directly with the ranch.`
+          : `Hey${first ? ' ' + first : ''} — Ben from BuyHalfCow. Here's your link for the ${data.cutLabel} from ${data.rancher}: ${data.url} — ${money(data.deposit)} today holds your share (${money(data.tierPrice)} total), and you settle the ${money(data.tierPrice - data.deposit)} balance directly with the ranch.`,
       });
     } catch (e: any) {
       setGenErr(e?.message || 'could not mint the represented-ranch link');
@@ -483,10 +499,19 @@ export default function AdminSellPage() {
                             <div key={c.cut} className="flex items-center gap-3 flex-wrap border-t border-dust pt-1.5">
                               <div className="flex-1 min-w-[170px]">
                                 <div className="text-[13px]">
-                                  {c.label} · {money(c.price)} · <strong>{money(c.deposit)} deposit</strong>
+                                  {c.label} ·{' '}
+                                  {c.weightPriced && c.priceMax
+                                    ? `${money(c.price)}–${money(c.priceMax)} (hanging weight)`
+                                    : money(c.price)}{' '}
+                                  · <strong>{money(c.deposit)} deposit</strong>
                                 </div>
                                 <div className="text-xs text-saddle tabular-nums">
-                                  you keep {money(c.bhcKeeps)} · ranch collects {money(c.ranchCollects)}
+                                  {/* the keep is EXACT in both modes — it is the deposit;
+                                      only the ranch's collect rides the weight */}
+                                  you keep {money(c.bhcKeeps)} · ranch collects{' '}
+                                  {c.weightPriced && c.ranchCollectsMax
+                                    ? `${money(c.ranchCollects)}–${money(c.ranchCollectsMax)}`
+                                    : money(c.ranchCollects)}
                                 </div>
                               </div>
                               <button

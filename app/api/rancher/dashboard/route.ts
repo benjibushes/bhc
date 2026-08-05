@@ -416,6 +416,13 @@ export async function GET(request: Request) {
             // migrated ex-represented rancher's earnings by the whole deposit.
             // netEarningsFor's non-tier_v2 branch (rev − fee) is exactly the
             // broker truth, so route broker rows through it with the fee stamp.
+            //
+            // WEIGHT-PRICED broker rows (2026-08-05): the broker rail stamps
+            // 'Total Sale Amount' at the range FLOOR for a hanging-weight cut
+            // (the exact price doesn't exist until processing), so the sale
+            // figure feeding this read is conservative — a migrated
+            // ex-represented rancher's net can only be UNDERstated, never
+            // overstated, for those rows. The fee (the deposit) is exact.
             (isBrokerReferralRow(r)
               ? netEarningsFor('broker', Number(r['Sale Amount']) || 0, referralFeeDollars(r))
               : netEarningsFor(
