@@ -209,6 +209,26 @@ const DEMO_REFERRALS: Ref[] = [
     'Rancher Engaged Flag': true,
     _createdTime: daysAgo(8),
   }),
+  // ── Dormant (auto-archived by the 21-day quiet cron) ──
+  // DORMANT REVIVAL (2026-08-05): keeps the Deals tab's "gone quiet"
+  // revival section visible in demo mode — one routed buyer the machine
+  // parked, exactly the row shape the Reactivate action operates on.
+  ref({
+    id: 'recDEMOreferral09',
+    Status: 'Dormant',
+    'Buyer Name': 'M.H. — MT',
+    'Buyer Email': 'mh.mt@buyers.example',
+    'Buyer Phone': '(406) 555-0177',
+    'Buyer State': 'MT',
+    'Order Type': 'Quarter',
+    'Budget Range': '$1,200',
+    Notes: 'Went quiet after the intro — auto archived after 21 days.',
+    Buyer: ['recDEMObuyer0000009'],
+    'Intro Sent At': daysAgo(35),
+    'Rancher Accepted At': daysAgo(34),
+    'Last Rancher Activity At': daysAgo(28),
+    _createdTime: daysAgo(35),
+  }),
   // ── Deposit rail ──
   ref({
     id: 'recDEMOreferral05',
