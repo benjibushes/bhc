@@ -38,9 +38,19 @@ import { BROKER_REFUND_POLICY_SHORT } from '@/lib/refundPolicy';
 interface BrokerCut {
   slug: string;
   label: string;
+  /** In WEIGHT-PRICED mode this is the range FLOOR. */
   priceCents: number;
+  /** Deposit — EXACT in both pricing modes (unaffected by hanging weight). */
   dueNowCents: number;
+  /** In WEIGHT-PRICED mode this is the LOW end of the balance range. */
   balanceCents: number;
+  /** WEIGHT-PRICED (range) mode — the exact share price is set by hanging
+   *  weight after processing. When true the ceilings below are present and
+   *  this page must state "estimated $floor–$max", NEVER an exact total or
+   *  balance. Absent (exact mode) renders the page exactly as before. */
+  weightPriced?: boolean;
+  priceMaxCents?: number;
+  balanceMaxCents?: number;
 }
 
 interface BrokerInfo {
@@ -51,11 +61,20 @@ interface BrokerInfo {
   fulfillmentSteps?: string[];
   /** Money owed to a THIRD PARTY on top of the share price. '' = price is all-in. */
   additionalCosts?: string;
+  /** The ranch's explanation of how the final price is set ($/lb, typical
+   *  carcass weights). Sent only when a weight-priced cut exists; rendered
+   *  only while a weight-priced cut is selected. */
+  pricingNote?: string;
   cuts: BrokerCut[];
 }
 
 function usd(cents: number): string {
   return `$${(cents / 100).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+}
+
+/** "$1,050–$1,225" — the honest estimated range for a weight-priced cut. */
+function usdRange(minCents: number, maxCents: number): string {
+  return `${usd(minCents)}–${usd(maxCents)}`;
 }
 
 function BrokerCheckoutInner() {
@@ -188,33 +207,79 @@ function BrokerCheckoutInner() {
                 }`}
               >
                 <span className="font-medium">{c.label}</span>
-                <span className="text-saddle">{usd(c.priceCents)} total</span>
+                <span className="text-saddle">
+                  {c.weightPriced && c.priceMaxCents
+                    ? `${usdRange(c.priceCents, c.priceMaxCents)} est. total`
+                    : `${usd(c.priceCents)} total`}
+                </span>
               </button>
             ))}
           </div>
         )}
 
-        {cut && (
-          <div className="mt-8 rounded-sm border border-dust bg-white p-5">
-            <div className="flex items-baseline justify-between">
-              <span className="text-saddle">{cut.label} — total price</span>
-              <span className="font-medium">{usd(cut.priceCents)}</span>
+        {cut &&
+          (cut.weightPriced && cut.priceMaxCents && cut.balanceMaxCents ? (
+            /* WEIGHT-PRICED (range) mode — the exact share price is set by
+               hanging weight after processing, so this card states the honest
+               estimated range and NEVER an exact total or balance. The deposit
+               stays exact: it is unaffected by the final weight. */
+            <div className="mt-8 rounded-sm border border-dust bg-white p-5">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-saddle">{cut.label} — share price</span>
+                <span className="font-medium">estimated {usdRange(cut.priceCents, cut.priceMaxCents)}</span>
+              </div>
+              <p className="mt-1 text-xs text-saddle">
+                Final price set by hanging weight — the exact number comes from your animal&apos;s
+                processed weight.
+              </p>
+              <div className="mt-2 flex items-baseline justify-between">
+                <span className="text-saddle">Deposit due today</span>
+                <span className="font-serif text-2xl font-bold">{usd(cut.dueNowCents)}</span>
+              </div>
+              <hr className="my-3 border-dust" />
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-saddle">Balance you pay the ranch</span>
+                <span className="font-medium">
+                  estimated {usdRange(cut.balanceCents, cut.balanceMaxCents)}
+                </span>
+              </div>
+              <p className="mt-3 text-sm text-saddle leading-relaxed">
+                Your deposit counts toward your share price. Your final price is set by hanging
+                weight, so the balance you pay directly to {ranchLabel} — not to BuyHalfCow — will
+                land between {usd(cut.balanceCents)} and {usd(cut.balanceMaxCents)}. {info.balanceNote}
+              </p>
+              {info.pricingNote ? (
+                <div className="mt-4 rounded-sm border border-dust bg-bone-warm p-3">
+                  <p className="text-xs uppercase tracking-wide text-saddle">
+                    How your final price is set
+                  </p>
+                  <p className="mt-1 whitespace-pre-line text-sm text-charcoal leading-relaxed">
+                    {info.pricingNote}
+                  </p>
+                </div>
+              ) : null}
             </div>
-            <div className="mt-2 flex items-baseline justify-between">
-              <span className="text-saddle">Deposit due today</span>
-              <span className="font-serif text-2xl font-bold">{usd(cut.dueNowCents)}</span>
+          ) : (
+            <div className="mt-8 rounded-sm border border-dust bg-white p-5">
+              <div className="flex items-baseline justify-between">
+                <span className="text-saddle">{cut.label} — total price</span>
+                <span className="font-medium">{usd(cut.priceCents)}</span>
+              </div>
+              <div className="mt-2 flex items-baseline justify-between">
+                <span className="text-saddle">Deposit due today</span>
+                <span className="font-serif text-2xl font-bold">{usd(cut.dueNowCents)}</span>
+              </div>
+              <hr className="my-3 border-dust" />
+              <div className="flex items-baseline justify-between">
+                <span className="text-saddle">Balance you pay the ranch</span>
+                <span className="font-medium">{usd(cut.balanceCents)}</span>
+              </div>
+              <p className="mt-3 text-sm text-saddle leading-relaxed">
+                Your deposit counts toward your share price. You pay the remaining{' '}
+                {usd(cut.balanceCents)} directly to {ranchLabel}, not to BuyHalfCow. {info.balanceNote}
+              </p>
             </div>
-            <hr className="my-3 border-dust" />
-            <div className="flex items-baseline justify-between">
-              <span className="text-saddle">Balance you pay the ranch</span>
-              <span className="font-medium">{usd(cut.balanceCents)}</span>
-            </div>
-            <p className="mt-3 text-sm text-saddle leading-relaxed">
-              Your deposit counts toward your share price. You pay the remaining{' '}
-              {usd(cut.balanceCents)} directly to {ranchLabel}, not to BuyHalfCow. {info.balanceNote}
-            </p>
-          </div>
-        )}
+          ))}
 
         {/* THIRD-PARTY COST DISCLOSURE — deliberately loud and deliberately
             ABOVE the pay button. Some represented ranches sell the animal and
@@ -238,7 +303,12 @@ function BrokerCheckoutInner() {
               You pay this directly to the third party who does that work. It is{' '}
               <strong>not</strong> included in the{' '}
               {cut ? `${usd(cut.dueNowCents)} deposit` : 'deposit'} you&apos;re paying today
-              {cut ? `, and it is not part of the ${usd(cut.balanceCents)} balance you pay ${ranchLabel}` : ''}.
+              {/* Weight-priced cuts have no exact balance to cite — never state one. */}
+              {cut
+                ? cut.weightPriced
+                  ? `, and it is not part of the balance you pay ${ranchLabel}`
+                  : `, and it is not part of the ${usd(cut.balanceCents)} balance you pay ${ranchLabel}`
+                : ''}.
             </p>
           </section>
         )}
