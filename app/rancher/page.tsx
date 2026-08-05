@@ -1117,6 +1117,35 @@ export default function RancherDashboardPage() {
     }
   };
 
+  // DORMANT REVIVAL (2026-08-05): rancher-facing reactivate for a ROUTED row
+  // the auto-expiry cron parked in 'Dormant'. Plain status PATCH back to
+  // 'Rancher Contacted' — allowed by the referral endpoint, stamps Last
+  // Rancher Activity At (restarts the 21-day quiet clock), and the row
+  // rejoins the active list with its full action set. Distinct from the
+  // admin-only handleReviveLead above, which exists for Closed Lost.
+  const reviveDormantRef = async (referral: Referral) => {
+    setUpdating(referral.id);
+    setUpdateError('');
+    try {
+      const res = await fetch(`/api/rancher/referrals/${referral.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ status: 'Rancher Contacted' }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setUpdateError(data.error || 'Could not reactivate — try again.');
+        return;
+      }
+      await fetchDashboard();
+    } catch {
+      setUpdateError('Network error. Please try again.');
+    } finally {
+      setUpdating(null);
+    }
+  };
+
   // Audit #17 (2026-05-28): open branded modal instead of window.prompt.
   // Real submit happens in submitMarkLost — invoked from the modal's CTA.
   const handleMarkLost = (referral: Referral) => {
@@ -2028,6 +2057,14 @@ export default function RancherDashboardPage() {
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   const myLeadsOpen = myLeads.filter(r => !['Closed Won', 'Closed Lost', 'Refunded', 'Dormant'].includes(r.status));
   const myLeadsClosed = myLeads.filter(r => ['Closed Won', 'Closed Lost', 'Refunded'].includes(r.status));
+  // DORMANT REVIVAL (2026-08-05): the auto-expiry cron parks quiet rows in
+  // 'Dormant' — which matched NO bucket here, so the row vanished from the
+  // dashboard entirely (the exact vanish bug Refunded had before Wave C).
+  // A rancher whose dormant buyer later purchased couldn't reactivate the
+  // row OR record the close → the commission never got written. Dormant rows
+  // now render in their own revivable section on each list.
+  const myLeadsDormant = myLeads.filter(r => r.status === 'Dormant');
+  const dormantRefs = referrals.filter(r => r.status === 'Dormant' && !isMyLead(r));
 
   const activeRefs = referrals.filter(r => ['Intro Sent', 'Rancher Contacted', 'Negotiation'].includes(r.status) && !isMyLead(r));
   // Wave C: 'Refunded' rides the closed bucket so a refunded deal stays
@@ -3301,6 +3338,73 @@ export default function RancherDashboardPage() {
                     ))}
                   </div>
                 )}
+
+                {/* DORMANT REVIVAL (2026-08-05) — leads the machine parked
+                    after 21 quiet days. Previously these matched no bucket
+                    and vanished; a lead who bought during the quiet spell
+                    could never be recorded. Reactivate restarts the clock;
+                    Won/Lost close it on the spot (same stage rail). */}
+                {myLeadsDormant.length > 0 && (
+                  <div className="space-y-1 pt-1">
+                    <p className="text-[11px] uppercase tracking-widest text-muted">
+                      gone quiet — auto archived, still yours
+                    </p>
+                    {myLeadsDormant.map((lead) => {
+                      const busy = leadUpdatingId === lead.id;
+                      return (
+                        <div key={lead.id} id={`ref-${lead.id}`} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 py-2 border-b border-dust/40 last:border-b-0 scroll-mt-24">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="inline-block px-2 py-0.5 text-[11px] font-medium bg-dust/20 text-saddle">dormant</span>
+                              <span className="text-sm text-charcoal truncate">{lead.buyer_name}</span>
+                            </div>
+                            <p className="text-xs text-muted mt-0.5">
+                              {[lead.buyer_phone, lead.buyer_email].filter(Boolean).join(' · ') || 'no contact on file'}
+                            </p>
+                            {leadRowError?.id === lead.id && (
+                              <p className="text-xs text-weathered">{leadRowError.message}</p>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap gap-2 flex-shrink-0">
+                            <button
+                              onClick={() => updateLeadStage(lead, 'new')}
+                              disabled={busy}
+                              className="px-3 py-1.5 min-h-[44px] text-xs border border-charcoal text-charcoal hover:bg-charcoal hover:text-bone transition-colors disabled:opacity-50"
+                              title="Put this lead back on your working list."
+                            >
+                              {busy ? 'Saving…' : 'Reactivate'}
+                            </button>
+                            <button
+                              onClick={() => { setLeadWonModal(lead); setLeadWonAmount(''); }}
+                              disabled={busy}
+                              className="px-3 py-1.5 min-h-[44px] text-xs font-medium bg-charcoal text-bone hover:bg-saddle transition-colors disabled:opacity-50"
+                              title="They bought — record the sale."
+                            >
+                              Won
+                            </button>
+                            {leadLostArmedId === lead.id ? (
+                              <button
+                                onClick={() => updateLeadStage(lead, 'lost')}
+                                disabled={busy}
+                                className="px-3 py-1.5 min-h-[44px] text-xs font-medium bg-weathered text-bone transition-colors disabled:opacity-50"
+                              >
+                                {busy ? 'Saving…' : 'Confirm lost?'}
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => setLeadLostArmedId(lead.id)}
+                                disabled={busy}
+                                className="px-3 py-1.5 min-h-[44px] text-xs border border-dust text-saddle hover:border-charcoal transition-colors disabled:opacity-50"
+                              >
+                                Lost
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               {customersList.length > 0 && (
@@ -3929,6 +4033,51 @@ export default function RancherDashboardPage() {
                             }}
                           />
                         )}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {/* DORMANT REVIVAL (2026-08-05) — routed intros the auto-expiry
+                  cron parked after 21 quiet days. These matched no bucket and
+                  vanished from the dashboard, so a buyer who resurfaced (or
+                  bought) after going quiet was unreachable and unrecordable.
+                  Reactivate is a plain status PATCH back to 'Rancher
+                  Contacted' — the card rejoins the active list above with its
+                  full action set (deposit link, close won/lost, notes). */}
+              {dormantRefs.length > 0 && (
+                <>
+                  <Divider />
+                  <h2 className="font-serif text-2xl">gone quiet</h2>
+                  <p className="text-sm text-saddle -mt-2">
+                    auto archived after 21 days without activity. still your buyers —
+                    reactivate to pick one back up or record a sale that happened offline.
+                  </p>
+                  <div className="space-y-2">
+                    {dormantRefs.map((ref) => (
+                      <div key={ref.id} id={`ref-${ref.id}`} className="border border-dust bg-white scroll-mt-24 p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="inline-block px-2 py-0.5 text-xs font-medium bg-dust/20 text-saddle">dormant</span>
+                            <span className="font-medium text-charcoal">{ref.buyer_name}</span>
+                            {ref.order_type && <span className="text-xs text-muted">{ref.order_type}</span>}
+                          </div>
+                          <p className="text-xs text-muted mt-1">
+                            {[ref.buyer_phone, ref.buyer_email].filter(Boolean).join(' · ') || 'no contact on file'}
+                          </p>
+                          {updateError && updating === ref.id && (
+                            <p className="text-xs text-weathered mt-1">{updateError}</p>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => reviveDormantRef(ref)}
+                          disabled={updating === ref.id}
+                          className="px-4 py-2 min-h-[44px] text-sm border border-charcoal text-charcoal hover:bg-charcoal hover:text-bone transition-colors disabled:opacity-50 flex-shrink-0"
+                          title="Put this buyer back on your working list — then close or message them from there."
+                        >
+                          {updating === ref.id ? 'Reactivating…' : 'Reactivate'}
+                        </button>
                       </div>
                     ))}
                   </div>

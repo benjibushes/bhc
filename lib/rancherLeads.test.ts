@@ -236,6 +236,55 @@ describe('decideLeadStagePatch', () => {
     }
   });
 
+  // DORMANT REVIVAL (2026-08-05): Dormant is a MACHINE pause (auto-expiry
+  // cron), never an outcome — it must not behave like a terminal status.
+  // Regression pin for the Foodstead ticket: 53 dormant leads were 409-ing
+  // every action with "already closed — contact hello@", so purchases that
+  // happened during the quiet spell could never be recorded.
+  it('reactivates a Dormant lead to new/talking (plain status write)', () => {
+    for (const [stage, status] of [
+      ['new', 'Rancher Contacted'],
+      ['talking', 'Negotiation'],
+    ] as const) {
+      const d = decideLeadStagePatch({
+        referral: baseRef({ 'Status': 'Dormant' }),
+        rancherId: 'recRANCHER1',
+        stage,
+      });
+      assert.strictEqual(d.kind, 'update', `Dormant → ${stage} must be an update`);
+      if (d.kind === 'update') assert.strictEqual(d.status, status);
+    }
+  });
+
+  it('closes a Dormant lead won (with amount) or lost — the offline-purchase case', () => {
+    const won = decideLeadStagePatch({
+      referral: baseRef({ 'Status': 'Dormant' }),
+      rancherId: 'recRANCHER1',
+      stage: 'won',
+      saleAmount: 2999,
+    });
+    assert.strictEqual(won.kind, 'close');
+    if (won.kind === 'close') assert.strictEqual(won.outcome, 'won');
+    const lost = decideLeadStagePatch({
+      referral: baseRef({ 'Status': 'Dormant' }),
+      rancherId: 'recRANCHER1',
+      stage: 'lost',
+    });
+    assert.strictEqual(lost.kind, 'close');
+    if (lost.kind === 'close') assert.strictEqual(lost.outcome, 'lost');
+  });
+
+  it('still requires a positive sale amount to close a Dormant lead won', () => {
+    const d = decideLeadStagePatch({
+      referral: baseRef({ 'Status': 'Dormant' }),
+      rancherId: 'recRANCHER1',
+      stage: 'won',
+      saleAmount: 0,
+    });
+    assert.strictEqual(d.kind, 'error');
+    if (d.kind === 'error') assert.strictEqual(d.httpStatus, 400);
+  });
+
   it('requires a positive sale amount for won', () => {
     for (const bad of [undefined, 0, -5, NaN]) {
       const d = decideLeadStagePatch({
