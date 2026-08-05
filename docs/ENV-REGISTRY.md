@@ -109,7 +109,7 @@
 | `META_CLOSE_PURCHASE_ENABLED` | Fire attributed CAPI Purchase on Closed-Won; unset=off | fail-silent | ben-flips |
 | `META_DEPOSIT_PURCHASE_ENABLED` | Fire CAPI Purchase on deposit-paid; unset=off by design | fail-silent | ben-flips |
 | `META_PRODUCT_PURCHASE_ENABLED` | Fire CAPI Purchase on low-ticket product sales; unset=off | fail-silent | ben-flips |
-| `NATIONWIDE_ROUTING_ENABLED` | 'true' → multi-state routing honored; unset=state-only routing | fail-silent | ben-flips |
+| ⚠️ `NATIONWIDE_ROUTING_ENABLED` | INVERTED semantics since 2026-08-04 (operator decision: nationwide ON by default) — default ON, only explicit 'false' kills the nationwide fallback globally. Per-buyer `Nationwide Preference` opt-out AND the buyer-fit gate (lib/nationwideFit.ts: budget covers the rancher's cheapest cut, or expressed beef interest matches the rancher's Beef Types) still gate every match on top | fail-open | ben-flips |
 | `NEXT_PUBLIC_PRODUCT_PAYMENT_ELEMENT` | 'true' → product checkout uses on-domain Payment Element vs hosted Checkout | fail-open | ben-flips |
 | ⚠️ `NURTURE_ENABLED` | Tri-state nurture-drip cron gate ('true'/'dry-run'/off); unset → nurture emails silently stop, cron reports healthy skip | fail-silent | ben-flips |
 | `ORPHAN_REAPER_REWARM_ENABLED` | 'true' → reaper re-warms orphaned checkouts with an email; unset=flip-only | fail-silent | ben-flips |

@@ -9,19 +9,40 @@ import {
   NATIONWIDE_PREFERENCE_FIELD,
 } from './nationwidePreference';
 
-// ── nationwideRoutingEnabled: the GLOBAL kill switch (2026-07-05) ────────────
-// Default OFF — no nationwide routing until supply is ready + an explicit flip.
-test('nationwideRoutingEnabled: only exactly "true" enables it; default OFF', () => {
+// ── nationwideRoutingEnabled: the GLOBAL kill switch ─────────────────────────
+// INVERTED 2026-08-04 (operator decision: "put gas on the machine") — default
+// ON; only an explicit 'false' kills the fallback globally (MATCHING_ENABLED
+// semantics). The 2026-07-05 default-off era is over.
+test('nationwideRoutingEnabled: default ON; only exactly "false" disables it', () => {
   const saved = process.env.NATIONWIDE_ROUTING_ENABLED;
   try {
     delete process.env.NATIONWIDE_ROUTING_ENABLED;
-    assert.equal(nationwideRoutingEnabled(), false); // unset → local supply only
+    assert.equal(nationwideRoutingEnabled(), true); // unset → ON (the new default)
     process.env.NATIONWIDE_ROUTING_ENABLED = 'false';
-    assert.equal(nationwideRoutingEnabled(), false);
-    process.env.NATIONWIDE_ROUTING_ENABLED = '1';
-    assert.equal(nationwideRoutingEnabled(), false); // not 'true' → off
+    assert.equal(nationwideRoutingEnabled(), false); // explicit kill switch
     process.env.NATIONWIDE_ROUTING_ENABLED = 'true';
     assert.equal(nationwideRoutingEnabled(), true);
+    process.env.NATIONWIDE_ROUTING_ENABLED = '1';
+    assert.equal(nationwideRoutingEnabled(), true); // anything but 'false' → ON
+    process.env.NATIONWIDE_ROUTING_ENABLED = '0';
+    assert.equal(nationwideRoutingEnabled(), true); // no creative spellings of off
+  } finally {
+    if (saved === undefined) delete process.env.NATIONWIDE_ROUTING_ENABLED;
+    else process.env.NATIONWIDE_ROUTING_ENABLED = saved;
+  }
+});
+
+// Per-buyer opt-out survives the default-on flip: the route requires
+// buyerNationwideOk AND nationwideOn, so with the switch at its (now-ON)
+// default a 'local-only' buyer STILL never enters the fallback.
+test('default-on switch + local-only buyer: the opt-out still wins', () => {
+  const saved = process.env.NATIONWIDE_ROUTING_ENABLED;
+  try {
+    delete process.env.NATIONWIDE_ROUTING_ENABLED;
+    const gateOpen = nationwideRoutingEnabled() && nationwideAllowed('local-only');
+    assert.equal(gateOpen, false); // buyer choice beats the global default
+    assert.equal(nationwideRoutingEnabled() && nationwideAllowed('nationwide-ok'), true);
+    assert.equal(nationwideRoutingEnabled() && nationwideAllowed(undefined), true);
   } finally {
     if (saved === undefined) delete process.env.NATIONWIDE_ROUTING_ENABLED;
     else process.env.NATIONWIDE_ROUTING_ENABLED = saved;
