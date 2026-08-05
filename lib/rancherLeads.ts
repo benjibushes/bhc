@@ -153,7 +153,15 @@ export type LeadStageDecision =
   | { kind: 'update'; status: string }
   | { kind: 'close'; outcome: 'won' | 'lost'; saleAmount?: number };
 
-const TERMINAL_STATUSES = new Set(['Closed Won', 'Closed Lost', 'Refunded', 'Dormant']);
+// DORMANT IS NOT TERMINAL (2026-08-05). The auto-expiry cron flips a quiet
+// lead to Dormant to release its slot — a MACHINE pause, not an outcome. It
+// used to sit in this set, which 409'd every rancher action with "already
+// closed — contact hello@": a rancher whose dormant buyer then purchased
+// could neither reactivate the row nor record the close, so the commission
+// was never written and the pay surface stayed empty (Foodstead ticket,
+// 53 dormant rows). Dormant now falls through: new/talking reactivates
+// (freshness stamp restarts the 21-day clock), won/lost closes normally.
+const TERMINAL_STATUSES = new Set(['Closed Won', 'Closed Lost', 'Refunded']);
 // Deposit-rail statuses a lead can reach via the existing request-deposit
 // flow. won/lost are still allowed from here while the deposit is UNPAID
 // (off-platform close; the unused link just dies) — regressing to open
