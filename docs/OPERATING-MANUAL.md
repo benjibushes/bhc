@@ -83,7 +83,10 @@ d21 long-haul). First report ~16:30 UTC daily; after one sane report say
 **Deliberately OFF (not forgotten):**
 - `EMAIL_SEQUENCES_ENABLED` — the OLD nurture engine stays dead; the new
   nurture-drip cron replaced it (see armed switches above).
-- `NATIONWIDE_ROUTING_ENABLED` — strategy lock: local-first until supply.
+- `NATIONWIDE_ROUTING_ENABLED` — NO LONGER OFF: inverted to default-ON
+  2026-08-04 (operator decision). Local-first still wins whenever local
+  supply exists; the fallback is additionally gated per-buyer by opt-in and
+  the buyer-fit gate (lib/nationwideFit.ts). Set 'false' to kill globally.
 - `CAMPAIGN_LIVE` / `CAMPAIGN_ROUTER_ENABLED` — drop-day levers.
 - `CAPACITY_LIBERATOR_ENABLED` — OBSOLETE: the capacity-liberator cron was
   deleted in #506 (it overlapped stale-hold expiry). The env var has no

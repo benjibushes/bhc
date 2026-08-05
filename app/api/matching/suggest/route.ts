@@ -27,6 +27,7 @@ import {
   parseRoutingWeightOverride,
 } from '@/lib/routingPriority';
 import { nationwideAllowed, nationwideRoutingEnabled, NATIONWIDE_PREFERENCE_FIELD } from '@/lib/nationwidePreference';
+import { parseBudgetCeiling, nationwideFitVerdict } from '@/lib/nationwideFit';
 import { isExcludingLossReason } from '@/lib/lossReasons';
 import { leadFactsHtml, closeCtaHtml, readyBannerHtml } from '@/lib/rancherLeadEmail';
 
@@ -642,36 +643,11 @@ export async function POST(request: Request) {
       return list.includes(buyerTier);
     };
 
-    // Parse a buyer budget range into a numeric ceiling.
-    // Current brackets: $1000-$1500, $2000-$2500, $4000-$5000, $5000+, "Just exploring".
-    // Legacy brackets still accepted for buyers stored before the form rework:
-    // "<$500", "$500-$1000", "$1000-$2000", "$2000+", "Unsure", "Not Sure".
-    //
-    // Returns 0 for "Just exploring" (no rancher should match — these aren't
-    // real buyers yet). Returns Infinity for "Unsure" (legacy permissive).
-    const parseBudgetCeiling = (range: string): number => {
-      if (!range) return Infinity;
-      const r = range.trim().toLowerCase();
-      if (r === '') return Infinity;
-      // Hard reject: "just exploring" buyers shouldn't match any rancher.
-      // Returning 0 makes isPriceFit reject every priced rancher. They'll
-      // stay in nurture until they pick a real budget.
-      if (r === 'just exploring') return 0;
-      if (r === 'unsure' || r === 'not sure') return Infinity;
-      if (r.startsWith('<')) {
-        const n = parseInt(r.replace(/[^0-9]/g, ''), 10);
-        return isFinite(n) ? n : Infinity;
-      }
-      if (r.endsWith('+')) return Infinity; // e.g. "$2000+", "$5000+"
-      // Range like "$1000-$1500" — take the upper bound.
-      const parts = r.split('-');
-      if (parts.length === 2) {
-        const upper = parseInt(parts[1].replace(/[^0-9]/g, ''), 10);
-        if (isFinite(upper)) return upper;
-      }
-      const single = parseInt(r.replace(/[^0-9]/g, ''), 10);
-      return isFinite(single) ? single : Infinity;
-    };
+    // Budget bracket → numeric ceiling: parseBudgetCeiling MOVED to
+    // lib/nationwideFit.ts (2026-08-04) so the nationwide buyer-fit gate and
+    // this route's isPriceFit share ONE parser (identical semantics, now
+    // unit-tested there). Brackets: $1000-$1500 … $5000+, "Just exploring"→0,
+    // legacy "Unsure"/"Not Sure"→Infinity — see the lib for the full table.
 
     // Helper: does the rancher's pricing fit the buyer's order type + budget?
     // - If the rancher hasn't set prices at all, don't block (still a valid match —
@@ -1036,19 +1012,41 @@ export async function POST(request: Request) {
       // buyerRecForGate is the consumer row fetched fresh at the top of this
       // request, so a preference written moments earlier (funnel choice →
       // re-fire) is always visible here.
+      //
+      // Three stacked gates, all must pass: the GLOBAL switch (default ON
+      // since 2026-08-04), the per-buyer preference above, and the per-
+      // candidate BUYER-FIT gate inside the filter below.
       const buyerNationwideOk = nationwideAllowed(buyerRecForGate?.[NATIONWIDE_PREFERENCE_FIELD]);
-      // GLOBAL kill switch (founder directive 2026-07-05): don't route new
-      // leads nationwide until we have local supply. Default OFF → a buyer with
-      // no in-state rancher WAITS (waitlisted below) instead of shipping to a
-      // far rancher. Flip NATIONWIDE_ROUTING_ENABLED=true in Vercel only when
-      // supply is ready. Applies ON TOP of the per-buyer opt-out.
+      // GLOBAL kill switch — INVERTED 2026-08-04 (operator decision: "put gas
+      // on the machine"): default ON. Only an explicit
+      // NATIONWIDE_ROUTING_ENABLED='false' in Vercel turns the fallback off
+      // globally. Applies ON TOP of the per-buyer opt-out above, and the
+      // BUYER-FIT gate below (same decision, second half) applies on top of
+      // BOTH — the switch opens the road; fit decides who rides it.
       const nationwideOn = nationwideRoutingEnabled();
       if (!topMatch && (!buyerNationwideOk || !nationwideOn)) {
         console.log(
-          `[match] Buyer ${buyerName || buyerId} — nationwide fallback skipped (${!nationwideOn ? 'NATIONWIDE_ROUTING_ENABLED off — local supply only' : 'buyer opted local-only'}); waitlisted for a local rancher.`,
+          `[match] Buyer ${buyerName || buyerId} — nationwide fallback skipped (${!nationwideOn ? 'NATIONWIDE_ROUTING_ENABLED=false — local supply only' : 'buyer opted local-only'}); waitlisted for a local rancher.`,
         );
       }
       if (!topMatch && buyerNationwideOk && nationwideOn) {
+        // ── BUYER-FIT GATE (operator decision 2026-08-04) ─────────────────
+        // Nationwide-approved ranchers are specialty producers ("they must
+        // NOT get every customer, only the right customer"). Each candidate
+        // is checked for buyer fit — budget ceiling vs the rancher's OWN
+        // cheapest cut, or the buyer's `Interest Beef` expressing the
+        // rancher's OWN `Beef Types` signals. Rancher-attribute-driven and
+        // generic by construction (lib/nationwideFit.ts — pure, tested);
+        // never keyed to a specific ranch. Buyers filtered here fall through
+        // to the SAME waitlist path as no-candidates (status quo, zero
+        // regression); the skip reasons ride the log line below. Budget
+        // source mirrors isPriceFit (request budgetRange) with the consumer
+        // row as fallback for callers that omit it.
+        const fitBuyer = {
+          'Budget': budgetRange || buyerRecForGate?.['Budget'] || '',
+          'Interest Beef': buyerRecForGate?.['Interest Beef'] || '',
+        };
+        const fitSkipReasons: string[] = [];
         const nationwideEligible = allRanchers.filter((r: any) => {
           if (!isEligibleBase(r)) return false;
           if (!(r['Admin Approved Multi-State'] && r['Ships Nationwide'])) return false;
@@ -1056,8 +1054,21 @@ export async function POST(request: Request) {
           if (normalizeState(r['State']) === normalizedBuyerState) return false;
           if (!isTierFit(r)) return false;
           if (!isPriceFit(r)) return false;
+          const verdict = nationwideFitVerdict(fitBuyer, r);
+          if (!verdict.fit) {
+            fitSkipReasons.push(verdict.reason);
+            return false;
+          }
           return true;
         });
+        if (fitSkipReasons.length > 0) {
+          const reasons = [...new Set(fitSkipReasons)].join('; ');
+          console.log(
+            nationwideEligible.length === 0
+              ? `[match] Buyer ${buyerName || buyerId} — nationwide fallback skipped (fit gate: ${reasons}); waitlisted for a local rancher.`
+              : `[match] Buyer ${buyerName || buyerId} — nationwide fit gate filtered ${fitSkipReasons.length} candidate(s) (${reasons}); ${nationwideEligible.length} still eligible.`,
+          );
+        }
         // No primary-state preference here (none are in-state). Load-balance →
         // round-robin → performance, same tiebreakers as the local sort.
         nationwideEligible.sort((a: any, b: any) => {

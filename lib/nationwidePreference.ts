@@ -47,21 +47,26 @@ export function nationwideAllowed(raw: unknown): boolean {
 }
 
 /**
- * GLOBAL nationwide-routing kill switch (founder directive 2026-07-05: do NOT
- * route new leads nationwide until we have real local supply — grow local
- * density first). The nationwide FALLBACK in app/api/matching/suggest (a buyer
- * with no in-state rancher matched to a Ships-Nationwide + Admin-Approved-
- * Multi-State rancher) fires ONLY when this returns true.
+ * GLOBAL nationwide-routing kill switch. The nationwide FALLBACK in
+ * app/api/matching/suggest (a buyer with no in-state rancher matched to a
+ * Ships-Nationwide + Admin-Approved-Multi-State rancher) fires ONLY when this
+ * returns true.
  *
- * Default FALSE — so a no-in-state-supply buyer WAITS (waitlisted for a local
- * rancher) instead of being shipped a far rancher. This is deliberate policy,
- * not an accident of "no rancher is double-flagged yet": even after an operator
- * double-flags a rancher for supply reasons, nationwide routing stays OFF until
- * NATIONWIDE_ROUTING_ENABLED is explicitly set to 'true' in Vercel.
+ * Default TRUE — INVERTED 2026-08-04 (operator decision: "unblock everything
+ * we can — put gas on the machine"). The 2026-07-05 default-off era ("grow
+ * local density first") is over: a no-local-supply buyer may now route to an
+ * approved nationwide shipper by default. Only an explicit 'false' in Vercel
+ * kills the fallback globally (same inverted semantics as MATCHING_ENABLED);
+ * unset, 'true', or any other value = ON.
  *
- * Per-buyer opt-out (nationwideAllowed) still applies on TOP of this — both
- * must pass for the fallback to fire.
+ * This switch was never the ONLY gate, and the other two still apply on top —
+ * all three must pass for the fallback to fire:
+ *   • per-buyer opt-in/opt-out (nationwideAllowed above — 'local-only' buyers
+ *     always stay local), and
+ *   • the BUYER-FIT gate (lib/nationwideFit.ts, same 2026-08-04 decision):
+ *     a specialty/premium nationwide rancher only receives buyers whose
+ *     budget or expressed beef interest actually fits them.
  */
 export function nationwideRoutingEnabled(): boolean {
-  return process.env.NATIONWIDE_ROUTING_ENABLED === 'true';
+  return process.env.NATIONWIDE_ROUTING_ENABLED !== 'false';
 }
