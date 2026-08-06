@@ -48,6 +48,7 @@ import {
   TIMING_OPTIONS,
   BUDGET_OPTIONS,
   STORAGE_OPTIONS,
+  RAISED_OPTIONS,
   FUNNEL_ACCENT,
   type StepKey,
   type FunnelOption,
@@ -196,6 +197,10 @@ export default function BuyerFunnel({
   // Optional — '' means the buyer skipped the chip row ("prefer not to say").
   const [budget, setBudget] = useState('');
   const [storage, setStorage] = useState('');
+  // Raised preference (2026-08-06, REP lead-quality) — optional one-tap;
+  // '' means skipped. Server maps it onto Consumers `Interest Beef` so the
+  // nationwide fit gate can match true grass-fed seekers.
+  const [raised, setRaised] = useState('');
 
   // Contact fields. Phone is REQUIRED.
   const [firstName, setFirstName] = useState('');
@@ -291,6 +296,7 @@ export default function BuyerFunnel({
       if (str(snap.timing)) setTiming(str(snap.timing));
       if (str(snap.budget)) setBudget(str(snap.budget));
       if (str(snap.storage)) setStorage(str(snap.storage));
+      if (str(snap.raised)) setRaised(str(snap.raised));
       if (str(snap.firstName)) setFirstName(str(snap.firstName));
       if (str(snap.email)) setEmail(str(snap.email));
       if (str(snap.phone)) setPhone(str(snap.phone));
@@ -326,7 +332,7 @@ export default function BuyerFunnel({
       window.sessionStorage.setItem(
         FUNNEL_SNAPSHOT_KEY,
         JSON.stringify({
-          stepKey, tier, timing, budget, storage,
+          stepKey, tier, timing, budget, storage, raised,
           firstName, email, phone, state, zip, smsOptIn,
           consumerId, token,
         }),
@@ -335,7 +341,7 @@ export default function BuyerFunnel({
       /* storage blocked (private mode) — the funnel still works, just
          without refresh-proofing */
     }
-  }, [mode, stepKey, tier, timing, budget, storage, firstName, email, phone, state, zip, smsOptIn, consumerId, token, result]);
+  }, [mode, stepKey, tier, timing, budget, storage, raised, firstName, email, phone, state, zip, smsOptIn, consumerId, token, result]);
 
   // ── History integration — Back walks steps, never exits mid-quiz ──────────
   // Mount stamps the current entry; every step CHANGE pushes a new entry
@@ -498,7 +504,7 @@ export default function BuyerFunnel({
   // Back is hidden there.
   const canGoBack =
     (stepKey === 'timing' || stepKey === 'budget' || stepKey === 'contact' ||
-      stepKey === 'storage' || stepKey === 'commit') &&
+      stepKey === 'storage' || stepKey === 'raised' || stepKey === 'commit') &&
     !(mode === 'resume' && stepKey === 'storage');
 
   // ── quiz_start funnel event (2026-07-28 conversion audit) ─────────────────
@@ -642,10 +648,16 @@ export default function BuyerFunnel({
     }
   }
 
-  // ── Step 5: storage select → commit (client state only) ─────────────────────
+  // ── Step 5: storage select → raised (client state only) ─────────────────────
   function selectStorage(storageValue: string) {
     setError('');
     selectAndAdvance(setStorage, storageValue, 'storage');
+  }
+
+  // ── Step 6: raised preference → commit (client state only, optional) ────────
+  function selectRaised(raisedValue: string) {
+    setError('');
+    selectAndAdvance(setRaised, raisedValue, 'raised');
   }
 
   // ── Step 6: the real commitment tap → finalize → reveal ─────────────────────
@@ -677,7 +689,7 @@ export default function BuyerFunnel({
           consumerId,
           // ack mirrors the tap (this function only runs on the tap); the
           // server-side stamp keys on ackConfirmedAt, not this boolean.
-          answers: { tier, timing, storage, ack: true },
+          answers: { tier, timing, storage, raised, ack: true },
           ackConfirmedAt: new Date().toISOString(),
           eventId,
           ...(attribution.current.campaign.startsWith('rancher-')
@@ -1003,7 +1015,24 @@ export default function BuyerFunnel({
           </div>
         )}
 
-        {/* ── STEP 6 — COMMIT (the real response ack — it IS the submit) ────── */}
+        {/* ── STEP 6 — RAISED (optional preference; REP lead-quality 2026-08-06).
+            One tap, auto-advances like every other question. "no strong
+            preference" IS the skip — no separate skip link to maintain. The
+            answer maps to Consumers `Interest Beef` server-side so grass-fed
+            ranchers get matched to buyers who actually asked for grass-fed. */}
+        {stepKey === 'raised' && (
+          <div className="space-y-4">
+            <CardGrid
+              options={RAISED_OPTIONS}
+              selected={raised}
+              flashing={flashing}
+              onSelect={(v) => selectRaised(v)}
+            />
+            {error && <ErrorBox>{error}</ErrorBox>}
+          </div>
+        )}
+
+        {/* ── STEP 7 — COMMIT (the real response ack — it IS the submit) ────── */}
         {stepKey === 'commit' && (
           <div className="space-y-5">
             <div className="rounded-lg border border-dust bg-white p-5 text-left">

@@ -3,7 +3,7 @@
 // tweaks are config edits, not component rewrites. Values (tier/timing/storage)
 // MUST match the server scorer in app/api/qualify/route.ts.
 
-export type StepKey = 'size' | 'timing' | 'budget' | 'contact' | 'storage' | 'commit' | 'reveal';
+export type StepKey = 'size' | 'timing' | 'budget' | 'contact' | 'storage' | 'raised' | 'commit' | 'reveal';
 
 export interface FunnelStepCopy {
   title: string;
@@ -13,7 +13,11 @@ export interface FunnelStepCopy {
 // budget (optional, skippable chip row) + commit (the real response-ack tap —
 // it IS the finalize submit, replacing the old hard-coded ack:true) added
 // 2026-07-15 (funnel truth PR). Both single-tap, mobile-first, no text inputs.
-export const FUNNEL_STEPS: StepKey[] = ['size', 'timing', 'budget', 'contact', 'storage', 'commit', 'reveal'];
+// `raised` (2026-08-06, REP lead-quality): optional one-tap "how it's raised"
+// preference between storage and commit. Writes Consumers `Interest Beef` so
+// the nationwide fit gate (lib/nationwideFit) can match true grass-fed seekers
+// to grass-fed-only ranchers instead of qualifying on budget alone.
+export const FUNNEL_STEPS: StepKey[] = ['size', 'timing', 'budget', 'contact', 'storage', 'raised', 'commit', 'reveal'];
 
 export const FUNNEL_COPY: Record<StepKey, FunnelStepCopy> = {
   // sub softened 2026-07-06 (journey overhaul Phase 2): the size step is the
@@ -24,7 +28,8 @@ export const FUNNEL_COPY: Record<StepKey, FunnelStepCopy> = {
   timing: { title: 'when do you want the freezer full?', sub: 'no wrong answer.' },
   budget: { title: 'roughly what budget?', sub: 'optional — helps your rancher quote you right. skip if you’re not sure.' },
   contact: { title: 'claim your match', sub: 'private & approval-only. no spam, never resold.' },
-  storage: { title: 'how will you store it?', sub: 'almost there — last one.' },
+  storage: { title: 'how will you store it?', sub: 'almost there.' },
+  raised: { title: 'how do you want it raised?', sub: 'optional — helps us match you to the right ranch. no wrong answer.' },
   // The dynamic question line ("your rancher will call or text within 24–48
   // hours from a {state} number — will you pick up?") renders in the component
   // because it interpolates the buyer's state.
@@ -83,12 +88,22 @@ export const STORAGE_OPTIONS: FunnelOption[] = [
   { value: 'rancher_holds', label: 'Rancher holds it', detail: 'Pick up in batches', icon: 'ti-clock' },
 ];
 
+// `value` strings match VALID_RAISED in app/api/qualify/route.ts. The server
+// maps them to Consumers `Interest Beef` text; lib/nationwideFit matches
+// /grass/i on that text, so ONLY the grass_finished mapping may contain the
+// word "grass".
+export const RAISED_OPTIONS: FunnelOption[] = [
+  { value: 'grass_finished', label: 'grass-fed & finished', detail: '100% grass, start to finish', icon: 'ti-plant-2' },
+  { value: 'grain_ok', label: 'grain-finished is fine', detail: 'classic corn-finished flavor', icon: 'ti-seeding' },
+  { value: 'no_preference', label: 'no strong preference', detail: 'match me on quality + price', icon: 'ti-scale' },
+];
+
 // ── Progress display (H2, conversion audit 2026-07-28) ─────────────────────
 // `reveal` is the destination, not a question. Counting it in the display
 // total made the final commit tap read "Step 6 of 7 · 83%" — telling the buyer
 // another question was coming at the exact commit moment. The progress header
 // is hidden on reveal anyway, so displayed steps = every step but reveal.
-export const FUNNEL_DISPLAY_STEP_COUNT = FUNNEL_STEPS.length - 1; // 6
+export const FUNNEL_DISPLAY_STEP_COUNT = FUNNEL_STEPS.length - 1; // 7
 
 /**
  * 0-based FUNNEL_STEPS index → 0–100 progress for the bar. The last DISPLAYED

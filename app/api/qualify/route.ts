@@ -58,10 +58,17 @@ const VALID_TIMINGS: Timing[] = ['ASAP', 'Within 30 days', 'Within 60 days', 'Wi
 type Storage = 'have_freezer' | 'need_freezer' | 'rancher_holds' | 'cuts_only';
 const VALID_STORAGE: Storage[] = ['have_freezer', 'need_freezer', 'rancher_holds', 'cuts_only'];
 
+// Raised preference (optional, REP lead-quality 2026-08-06). Values match
+// RAISED_OPTIONS in lib/funnelConfig. Invalid/absent coerces to '' — the
+// question is optional and must NEVER 400 a completed quiz.
+const VALID_RAISED = ['grass_finished', 'grain_ok', 'no_preference'];
+
 interface QualifyAnswers {
   tier: Tier;
   timing: Timing;
   storage: Storage;
+  /** '' = skipped; otherwise a VALID_RAISED value. In answersJson for audit. */
+  raised?: string;
   ack: boolean;
 }
 
@@ -157,6 +164,8 @@ export async function POST(request: Request) {
   let tier = String(answers.tier || '').trim() as Tier;
   let timing = String(answers.timing || '').trim() as Timing;
   const storage = String(answers.storage || '').trim() as Storage;
+  const rawRaised = String(answers.raised || '').trim();
+  const raised = VALID_RAISED.includes(rawRaised) ? rawRaised : '';
   const ack = answers.ack === true;
 
   // Resume-mode funnel (the YES-click / quiz-link path) starts at the storage
@@ -199,7 +208,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Invalid storage' }, { status: 400 });
   }
 
-  const validated: QualifyAnswers = { tier, timing, storage, ack };
+  const validated: QualifyAnswers = { tier, timing, storage, ...(raised ? { raised } : {}), ack };
   const score = scoreAnswers(validated);
   const completedAt = new Date().toISOString();
 
@@ -225,6 +234,7 @@ export async function POST(request: Request) {
     ackConfirmedAt,
     tierDefaulted,
     timingDefaulted,
+    raised,
   });
 
   // FUNNEL = QUALIFIED (founder rule 2026-07-08): completing the quiz routes
@@ -344,7 +354,7 @@ export async function POST(request: Request) {
           intentClassification: consumer['Intent Classification'] || 'High',
           notes:
             (consumer['Notes'] || '') +
-            `\n[QUIZ ${completedAt}] tier=${tier} timing=${timing} storage=${storage} ack=${ack} score=${score}/100`,
+            `\n[QUIZ ${completedAt}] tier=${tier} timing=${timing} storage=${storage}${raised ? ` raised=${raised}` : ''} ack=${ack} score=${score}/100`,
           // Hot-lead bypass — qualified buyer earned the over-cap allowance.
           warmupEngaged: true,
           // PERFECT-A: propagate rancher-page-lead campaign so the matching
