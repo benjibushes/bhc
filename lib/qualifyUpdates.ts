@@ -32,7 +32,21 @@ export interface QualifyUpdatesInput {
   // abandoned-quiz-nudge drip ({Funnel Completed At}="" clause).
   tierDefaulted?: boolean;
   timingDefaulted?: boolean;
+  /** Validated raised-preference quiz value ('' when skipped/absent). Maps to
+   * the Consumers `Interest Beef` text that lib/nationwideFit matches with
+   * /grass/i — so ONLY the grass_finished mapping may contain "grass". */
+  raised?: string;
 }
+
+// Raised-preference quiz value → Consumers `Interest Beef` text (REP
+// lead-quality, 2026-08-06). Written only when the buyer answered — a skip
+// must never blank an existing value (older records may carry hand-entered
+// preferences).
+export const RAISED_TO_INTEREST_BEEF: Record<string, string> = {
+  grass_finished: 'Grass-fed & grass-finished',
+  grain_ok: 'Grain-finished ok',
+  no_preference: 'No preference',
+};
 
 // Legacy /access form vocab (pre-2026-06-18) → quiz Timing vocab. The legacy
 // form never used the quiz's values, so an unmapped hydration coerced every
@@ -95,6 +109,12 @@ export function buildQualifyConsumerUpdates(input: QualifyUpdatesInput): Record<
   // the tap happened; the server clock is the stored truth).
   if (isValidAckConfirmedAt(input.ackConfirmedAt)) {
     updates['Response Ack At'] = input.completedAt;
+  }
+
+  // Raised preference → Interest Beef, answered-only (skip never clears).
+  const interestBeef = RAISED_TO_INTEREST_BEEF[String(input.raised || '')];
+  if (interestBeef) {
+    updates['Interest Beef'] = interestBeef;
   }
 
   // "Not Sure" / "Just exploring" never narrow the stored signup answers.

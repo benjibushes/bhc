@@ -130,3 +130,25 @@ test('isValidAckConfirmedAt accepts only parseable ISO strings', () => {
   assert.equal(isValidAckConfirmedAt(null), false);
   assert.equal(isValidAckConfirmedAt(true), false);
 });
+
+// ── Raised preference → Interest Beef (REP lead-quality, 2026-08-06) ────────
+
+test('grass_finished writes the grass-fed Interest Beef text', () => {
+  const u = base({ raised: 'grass_finished' });
+  assert.equal(u['Interest Beef'], 'Grass-fed & grass-finished');
+});
+
+test('grain_ok and no_preference write text WITHOUT the word grass (nationwideFit matches /grass/i)', () => {
+  for (const raised of ['grain_ok', 'no_preference']) {
+    const u = base({ raised });
+    assert.ok(u['Interest Beef']);
+    assert.ok(!/grass/i.test(u['Interest Beef']), `${raised} mapping must not contain "grass"`);
+  }
+});
+
+test('skipped/absent/invalid raised never writes Interest Beef (skip must not clear stored values)', () => {
+  for (const raised of ['', undefined, 'garbage']) {
+    const u = base({ raised });
+    assert.equal('Interest Beef' in u, false, `raised=${String(raised)} must not write`);
+  }
+});

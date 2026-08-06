@@ -13,9 +13,9 @@ test('reveal is the last configured step (precondition for the display count)', 
 
 test('display count excludes reveal', () => {
   assert.equal(FUNNEL_DISPLAY_STEP_COUNT, FUNNEL_STEPS.length - 1);
-  // Guard against config drift: today that is 6 displayed steps
-  // (size, timing, budget, contact, storage, commit).
-  assert.equal(FUNNEL_DISPLAY_STEP_COUNT, 6);
+  // Guard against config drift: today that is 7 displayed steps
+  // (size, timing, budget, contact, storage, raised, commit).
+  assert.equal(FUNNEL_DISPLAY_STEP_COUNT, 7);
 });
 
 test('first step shows 0%', () => {
