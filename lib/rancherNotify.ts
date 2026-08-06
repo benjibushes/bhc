@@ -68,7 +68,15 @@ export function rancherFirstName(rancher: Record<string, any> | null | undefined
 export async function notifyRancherDepositPaid(
   referral: Record<string, any>,
   rancher: Record<string, any>,
-  opts: { isReminder?: boolean; depositAmount?: number; consumer?: Record<string, any> | null } = {},
+  opts: {
+    isReminder?: boolean;
+    depositAmount?: number;
+    consumer?: Record<string, any> | null;
+    /** Buyer-paid BHC fee (dollars) — rides the email so the rancher's Stripe
+     * statement fee line is pre-explained. Falls back to the referral's
+     * stamped BHC Fee Cents (the SLA re-ping path has no live charge). */
+    buyerPaidFeeDollars?: number;
+  } = {},
 ): Promise<RancherNotifyResult> {
   const result: RancherNotifyResult = {
     emailSent: false,
@@ -91,6 +99,10 @@ export async function notifyRancherDepositPaid(
     typeof opts.depositAmount === 'number' && opts.depositAmount > 0
       ? opts.depositAmount
       : Number(referral['Deposit Amount'] || 0) || undefined;
+  const buyerPaidFeeDollars =
+    typeof opts.buyerPaidFeeDollars === 'number' && opts.buyerPaidFeeDollars > 0
+      ? opts.buyerPaidFeeDollars
+      : (Number(referral['BHC Fee Cents'] || 0) || 0) / 100 || undefined;
 
   const rancherEmail = resolveRancherEmail(rancher);
   const rancherPhone = String(rancher['Phone'] || '').trim();
@@ -133,6 +145,7 @@ export async function notifyRancherDepositPaid(
         state,
         cut,
         depositAmount,
+        buyerPaidFeeDollars,
         rancherId,
         isReminder: opts.isReminder,
       });

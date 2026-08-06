@@ -1275,6 +1275,11 @@ export async function sendRancherDepositPaid(data: {
   state?: string;
   cut?: string; // "Quarter" | "Half" | "Whole" | freeform order type
   depositAmount?: number; // dollars
+  /** Buyer-paid BHC fee (dollars). When present, the email pre-explains the
+   * fee line the rancher will see on their Stripe statement — that minus
+   * entry carries OUR name and reads as "Connect charged me" cold
+   * (Foodstead ticket 2026-08-05). */
+  buyerPaidFeeDollars?: number;
   rancherId?: string; // for tagged Reply-To
   /** Re-ping from the SLA cron — softens the lead-in to "still waiting". */
   isReminder?: boolean;
@@ -1322,7 +1327,12 @@ export async function sendRancherDepositPaid(data: {
         }</p>
   </div>
   <p>When you've got it, tap <strong>Accept Slot</strong> in your dashboard to lock the deposit in (it stays refundable to the buyer until you do):</p>
-  <p><a class="cta" href="${dashUrl}">Accept + view in dashboard →</a></p>
+  <p><a class="cta" href="${dashUrl}">Accept + view in dashboard →</a></p>${
+    typeof data.buyerPaidFeeDollars === 'number' && data.buyerPaidFeeDollars > 0
+      ? `
+  <p style="font-size:13px;color:#6B4F3F;background:#FAF8F4;border-left:3px solid #A7A29A;padding:12px 16px;">One note for your Stripe statement: ${buyer} also paid the $${data.buyerPaidFeeDollars.toFixed(2)} BuyHalfCow fee on top of this deposit. It passes through your account and splits out to us automatically, so you will see it as a fee line with our name on it. It never comes out of your price.</p>`
+      : ''
+  }
   <p style="font-size:13px;color:#6B4F3F;margin-top:24px;">Questions? Reply right here. — Ben, BuyHalfCow</p>
 </div></body></html>`,
   });

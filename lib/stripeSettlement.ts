@@ -480,7 +480,14 @@ export async function settleBuyerDeposit(pi: any): Promise<void> {
   try {
     if (referralRow && rancherRow) {
       const { notifyRancherDepositPaid } = await import('@/lib/rancherNotify');
-      const r = await notifyRancherDepositPaid(referralRow, rancherRow, { depositAmount: depositCents / 100 });
+      const r = await notifyRancherDepositPaid(referralRow, rancherRow, {
+        depositAmount: depositCents / 100,
+        // Foodstead ticket (2026-08-05): the rancher's Stripe shows the
+        // buyer-paid BHC fee as a minus line with our name on it — reads as
+        // "Connect charged me". Spell the split out in the alert so the
+        // statement is never a surprise.
+        buyerPaidFeeDollars: platformFeeCents > 0 ? platformFeeCents / 100 : undefined,
+      });
       if (!r.emailSent && !r.smsSent) {
         console.warn(`[stripe webhook] rancher deposit notify reached no channel (ref=${referralId}): ${r.skipped || 'send failed'}`);
       }
