@@ -26,6 +26,11 @@ export const OAUTH_STATE_PURPOSE = 'shopify-oauth-state' as const;
 export const INSTALL_LINK_PURPOSE = 'shopify-install-link' as const;
 export const OAUTH_NONCE_COOKIE = 'bhc-shopify-oauth-nonce';
 
+// Sentinel rancherId for anonymous App Store installs (no rancher account
+// yet). The OAuth callback runs every security check for this state, saves
+// NOTHING, and lands the merchant on the claim page to sign up / log in.
+export const APPSTORE_STATE_RANCHER = '__appstore__';
+
 // Shop hostname per the docs' recommended pattern — anchored BOTH ends (the
 // docs' example regex is unanchored at the end; an attacker's
 // x.myshopify.com.evil.com must not pass).
