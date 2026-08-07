@@ -255,6 +255,10 @@
     {
       "path": "/api/cron/first-touch-sla",
       "schedule": "5 16 * * *"
+    },
+    {
+      "path": "/api/cron/supabase-keepalive",
+      "schedule": "7 6 * * *"
     }
   ]
 }

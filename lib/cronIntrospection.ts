@@ -64,6 +64,7 @@ export const EXPECTED_CRONS_24H = [
   'first-touch-sla',
   'fulfillment-chase',
   'healthcheck',
+  'supabase-keepalive',
   'migration-deadline',
   'nightly-rancher-audit',
   'onboarding-stuck',
