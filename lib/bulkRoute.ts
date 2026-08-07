@@ -442,6 +442,17 @@ export async function bulkRouteStateToRancher(opts: {
             depositMagicLinkUrl,
           });
           summary.emails_sent_buyer++;
+          // Deposit-carrying intro = deposit invite — stamp so the nudge
+          // rail chases it (2026-08-07 speed-to-lead pass). Best-effort.
+          if (depositMagicLinkUrl && targetReferralId) {
+            try {
+              await updateRecord(TABLES.REFERRALS, targetReferralId, {
+                'Deposit Invite Sent At': new Date().toISOString(),
+              });
+            } catch (e: any) {
+              summary.errors.push(`Deposit-invite stamp for ${buyerEmail}: ${e.message}`);
+            }
+          }
         } catch (e: any) {
           summary.errors.push(`Buyer email for ${buyerEmail}: ${e.message}`);
         }

@@ -1809,6 +1809,20 @@ export async function POST(request: Request) {
               rancherTagline: String(topMatch['Tagline'] || '').trim() || undefined,
               rancherAbout: String(topMatch['About Text'] || '').trim() || undefined,
             });
+            // The intro that carried a deposit magic link IS a deposit
+            // invite — stamp it so the deposit-request-nudge invite rail
+            // chases this buyer instead of being blind to intro'd deposits
+            // (2026-08-07 speed-to-lead pass). Best-effort: a failed stamp
+            // must not fail the routing.
+            if (depositMagicLinkUrl) {
+              try {
+                await updateRecord(TABLES.REFERRALS, referral.id, {
+                  'Deposit Invite Sent At': new Date().toISOString(),
+                });
+              } catch (e: any) {
+                console.warn('[matching/suggest] deposit-invite stamp failed:', e?.message);
+              }
+            }
           } catch (e: any) {
             console.error('Buyer intro email failed:', e?.message);
             try {

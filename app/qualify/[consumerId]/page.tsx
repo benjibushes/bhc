@@ -24,9 +24,9 @@ export default async function QualifyPage({
   searchParams,
 }: {
   params: Promise<{ consumerId: string }>;
-  searchParams: Promise<{ token?: string }>;
+  searchParams: Promise<{ token?: string; reconfirmed?: string }>;
 }) {
-  const [{ consumerId }, { token }, cfg] = await Promise.all([
+  const [{ consumerId }, { token, reconfirmed }, cfg] = await Promise.all([
     params,
     searchParams,
     getAdminConfig(),
@@ -38,6 +38,9 @@ export default async function QualifyPage({
       consumerId={consumerId}
       token={typeof token === 'string' ? token : undefined}
       offerOperatorCall={cfg.funnelOfferOperatorCall}
+      // Reconfirm fast lane: the "still looking" click already re-verified
+      // this buyer — jump straight to commit (one tap → routed → deposit).
+      startAtCommit={reconfirmed === '1'}
     />
   );
 }

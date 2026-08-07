@@ -88,6 +88,13 @@ interface BuyerFunnelProps {
   // outcomes (waitlist/nurture full, matched/call compact) so every buyer has
   // a priced next step. Deposit-capable reveal never shows it.
   lowTicketPicks?: MarketplaceProduct[];
+  // Reconfirm fast lane (2026-08-07 speed-to-lead): a "still looking"
+  // email click already re-verified this buyer server-side, so resume mode
+  // jumps straight to the commit step — one tap from inbox to routed (and,
+  // for deposit-capable matches, the Mode 0 deposit reveal). Stored answers
+  // hydrate server-side in /api/qualify; the skip-never-clears semantics in
+  // lib/qualifyUpdates make the jumped-over steps safe. Resume mode only.
+  startAtCommit?: boolean;
 }
 
 // ── Live social-proof stats (GET /api/funnel/stats) ──────────────────────────
@@ -185,11 +192,14 @@ export default function BuyerFunnel({
   initialState,
   notice,
   lowTicketPicks,
+  startAtCommit,
 }: BuyerFunnelProps) {
   const [noticeOpen, setNoticeOpen] = useState(!!notice);
   // resume mode jumps straight to Storage — size/timing/contact already exist
   // on the record (props carry consumerId + token).
-  const [stepKey, setStepKey] = useState<StepKey>(mode === 'resume' ? 'storage' : 'size');
+  const [stepKey, setStepKey] = useState<StepKey>(
+    mode === 'resume' ? (startAtCommit ? 'commit' : 'storage') : 'size',
+  );
 
   // Answers (client state until the relevant POST persists them).
   const [tier, setTier] = useState('');
@@ -505,7 +515,9 @@ export default function BuyerFunnel({
   const canGoBack =
     (stepKey === 'timing' || stepKey === 'budget' || stepKey === 'contact' ||
       stepKey === 'storage' || stepKey === 'raised' || stepKey === 'commit') &&
-    !(mode === 'resume' && stepKey === 'storage');
+    !(mode === 'resume' && stepKey === 'storage') &&
+    // Reconfirm fast lane: commit is the FIRST step — nothing behind it.
+    !(mode === 'resume' && startAtCommit && stepKey === 'commit');
 
   // ── quiz_start funnel event (2026-07-28 conversion audit) ─────────────────
   // Fired ONCE per session at the FIRST quiz ANSWER (not page view — bots and
