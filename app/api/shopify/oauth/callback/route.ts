@@ -22,6 +22,7 @@ import {
   parsePendingIntegration,
   isValidShopDomain,
   publicAppCreds,
+  APPSTORE_STATE_RANCHER,
   OAUTH_NONCE_COOKIE,
 } from '@/lib/shopifyOauth';
 import { parseIntegration } from '@/lib/fulfillmentConnector';
@@ -113,6 +114,22 @@ export async function GET(req: Request) {
   // 2. shop shape + pin to the staged shop.
   const shop = String(query.shop || '').toLowerCase().trim();
   if (!isValidShopDomain(shop)) return fail('bad-shop');
+
+  // Anonymous App Store install (entry: /api/shopify/app-store) — there is
+  // no rancher account yet. Run the full security checks, persist NOTHING
+  // (the code is never exchanged; the app is installed on the shop, so the
+  // dashboard card's one-click connect re-consents instantly once they have
+  // an account), and land them on the claim page — the app UI.
+  if (state.payload.rancherId === APPSTORE_STATE_RANCHER) {
+    if (!state.payload.pub) return fail('bad-state');
+    const claimCreds = publicAppCreds();
+    if (!claimCreds) return fail('secret-unavailable');
+    if (state.payload.shop !== shop) return fail('shop-mismatch');
+    if (!verifyOauthCallbackHmac(query, claimCreds.clientSecret)) return fail('bad-hmac');
+    return clearNonce(
+      NextResponse.redirect(`${SITE_URL}/store-connected?ok=1&rancher=1&claim=1`, 302),
+    );
+  }
 
   const rancher: any = await getRecordById(TABLES.RANCHERS, state.payload.rancherId).catch(() => null);
   if (!rancher) return fail('unknown-rancher');
