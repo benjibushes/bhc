@@ -112,25 +112,30 @@ export default function FullHomepage() {
                 </p>
               </Card>
 
-              {/* SHOP — secondary rung */}
-              <Card as="article" padding="lg" variant="default" className="md:col-span-3 flex flex-col">
-                <p className="text-xs uppercase tracking-widest text-saddle mb-2">try it first</p>
-                <h3 className="font-serif text-xl mb-2 lowercase">jerky &amp; boxes, shipped</h3>
-                <p className="text-saddle text-sm mb-6 flex-1">
-                  smaller, shipped nationwide. no freezer needed.
-                </p>
-                <span className="inline-flex"><Button href="/shop" variant="secondary" size="sm">shop beef →</Button></span>
-              </Card>
+              {/* SHOP + GEAR — stacked beside the share card so neither
+                  renders as a cramped quarter column with wrapping pills
+                  (design pass 2026-08-07). Variant ladder (accent →
+                  secondary → ghost) is the intentional hierarchy — layout
+                  only changes here. */}
+              <div className="md:col-span-6 flex flex-col gap-4">
+                <Card as="article" padding="lg" variant="default" className="flex-1 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                  <div>
+                    <p className="text-xs uppercase tracking-widest text-saddle mb-2">try it first</p>
+                    <h3 className="font-serif text-xl mb-1 lowercase">jerky &amp; boxes, shipped</h3>
+                    <p className="text-saddle text-sm">smaller, shipped nationwide. no freezer needed.</p>
+                  </div>
+                  <span className="inline-flex shrink-0 whitespace-nowrap"><Button href="/shop" variant="secondary" size="sm">shop beef →</Button></span>
+                </Card>
 
-              {/* GEAR — lightest third rung */}
-              <Card as="article" padding="lg" variant="default" className="md:col-span-3 flex flex-col">
-                <p className="text-xs uppercase tracking-widest text-saddle mb-2">gear up</p>
-                <h3 className="font-serif text-xl mb-2 lowercase">the tools ben uses</h3>
-                <p className="text-saddle text-sm mb-6 flex-1">
-                  freezers, grills, knives — the gear behind the beef.
-                </p>
-                <span className="inline-flex"><Button href="/gear" variant="ghost" size="sm">see the gear →</Button></span>
-              </Card>
+                <Card as="article" padding="lg" variant="default" className="flex-1 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                  <div>
+                    <p className="text-xs uppercase tracking-widest text-saddle mb-2">gear up</p>
+                    <h3 className="font-serif text-xl mb-1 lowercase">the tools ben uses</h3>
+                    <p className="text-saddle text-sm">freezers, grills, knives — the gear behind the beef.</p>
+                  </div>
+                  <span className="inline-flex shrink-0 whitespace-nowrap"><Button href="/gear" variant="ghost" size="sm">see the gear →</Button></span>
+                </Card>
+              </div>
             </div>
             <p className="text-xs text-saddle mt-6">
               Raise cattle?{' '}
@@ -165,8 +170,8 @@ export default function FullHomepage() {
                   className="border border-dust bg-white p-4 md:p-5 text-left space-y-2"
                 >
                   <div className="flex items-baseline gap-2">
-                    <span className="font-serif text-2xl md:text-3xl text-charcoal">{step.n}</span>
                     <span className="text-xs uppercase tracking-widest text-saddle">Step</span>
+                    <span className="font-serif text-2xl md:text-3xl text-charcoal">{step.n}</span>
                   </div>
                   <p className="font-serif text-lg text-charcoal">{step.t}</p>
                   <p className="text-xs text-saddle leading-relaxed">{step.d}</p>
