@@ -53,10 +53,29 @@ export async function GET(request: Request) {
     console.warn('[buyer/reconfirm] re-stamp failed:', e?.message);
   }
 
-  // Land on /access with the welcome-back flags: the page shows a
-  // "welcome back — you're confirmed still looking" banner and prefills the
-  // state dropdown. The quiz itself re-runs on purpose — freshness is the
-  // point of this rail, so matching uses the buyer's CURRENT answers.
+  // SPEED-TO-LEAD (2026-08-07): the old redirect landed this CONFIRMED-hot
+  // buyer on /access in FRESH mode — step 1 of 8, from scratch. Data showed
+  // that's the balk point (reconfirmed buyers bailed and waited for the
+  // next-day router instead). Now: mint the qualify-access token this
+  // buyer's identity has already earned and land them on the resume rail's
+  // commit fast lane — one tap from the email to routed (and, for a
+  // deposit-capable match, straight to the Mode 0 deposit reveal). Stored
+  // answers hydrate server-side; lib/qualifyUpdates' skip-never-clears
+  // semantics make the jumped-over steps safe. Routing itself still fires
+  // only on the in-page submit — a scanner prefetching THIS GET still only
+  // re-stamps, exactly as before.
+  if (consumerId) {
+    const qualifyToken = jwt.sign(
+      { type: 'qualify-access', consumerId },
+      JWT_SECRET,
+      { expiresIn: '14d' },
+    );
+    const params = new URLSearchParams({ token: qualifyToken, reconfirmed: '1' });
+    return NextResponse.redirect(`${SITE_URL}/qualify/${consumerId}?${params.toString()}`, 302);
+  }
+
+  // No consumer resolved (shouldn't happen past the JWT gate) — the old
+  // warm landing stays as the fallback.
   const params = new URLSearchParams({ resume: '1', reconfirmed: '1' });
   if (statePrefill) params.set('state', statePrefill);
   return NextResponse.redirect(`${SITE_URL}/access?${params.toString()}`, 302);
