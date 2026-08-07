@@ -9,8 +9,11 @@
 // with sendFulfillmentReceipt, so Shopify already emailed the buyer their
 // tracking (Ben decision 2026-07-21). The SLA chase stops via Status.
 //
-// Always 200 on non-actionable input (Shopify retries non-2xx aggressively);
-// 401 only on a real HMAC failure.
+// HMAC contract (App Store automated checks, 2026-08-06): 200 only for input
+// that is either verified against a known secret or benign-and-public-signed;
+// ANY unverifiable signature — missing header, unknown shop, undecryptable
+// per-store secret — is 401. Shopify never retries a 401, so this stays
+// retry-storm-safe while satisfying review.
 
 import { NextResponse } from 'next/server';
 import { getAllRecords, getFirstRecord, createRecord, updateRecord, TABLES, escapeAirtableValue } from '@/lib/airtable';
@@ -41,7 +44,25 @@ export async function POST(request: Request) {
     const raw = await request.text();
     const shop = String(request.headers.get('x-shopify-shop-domain') || '').toLowerCase().trim();
     const topic = String(request.headers.get('x-shopify-topic') || '');
-    if (!shop) return NextResponse.json({ ok: true, skipped: 'no shop header' });
+
+    // APP-STORE HMAC CONTRACT (2026-08-06, automated-check failure): any
+    // request whose HMAC cannot be verified against a secret we hold MUST get
+    // 401 — Shopify's review probes with missing/invalid signatures and
+    // unknown shops and requires the rejection. `publicSigOk` is the shared
+    // verdict for every "we can't resolve a per-store secret" path below:
+    // valid against the public app's secret → benign 200 skip (Shopify never
+    // retries a 2xx); anything else → 401 (Shopify never retries a 401, so
+    // no retry storm). Per-store custom-app events still verify against the
+    // store's own secret exactly as before.
+    const hmacHeader = request.headers.get('x-shopify-hmac-sha256');
+    const publicSigOk = (() => {
+      const creds = publicAppCreds();
+      return creds ? verifyShopifyHmac(raw, hmacHeader, creds.clientSecret) : false;
+    })();
+    if (!shop) {
+      if (publicSigOk) return NextResponse.json({ ok: true, skipped: 'no shop header' });
+      return NextResponse.json({ ok: false, error: 'invalid signature' }, { status: 401 });
+    }
 
     // MANDATORY COMPLIANCE TOPICS (public app, Phase 2): customers/data_request,
     // customers/redact, shop/redact. Shopify's review sends these with the
@@ -124,14 +145,21 @@ export async function POST(request: Request) {
     ).catch(() => [])) as any[];
     const rancher = ranchers.find((r) => parseIntegration(r['Fulfillment Integration'])?.shop === shop);
     const integration = rancher ? parseIntegration(rancher['Fulfillment Integration']) : null;
-    if (!integration) return NextResponse.json({ ok: true, skipped: 'unknown shop' });
+    if (!integration) {
+      // Unknown shop: no per-store secret to verify against. Public-app-signed
+      // events (install race, post-uninstall stragglers) stay a benign 200;
+      // an unverifiable signature is 401 per the App Store HMAC contract.
+      if (publicSigOk) return NextResponse.json({ ok: true, skipped: 'unknown shop' });
+      return NextResponse.json({ ok: false, error: 'invalid signature' }, { status: 401 });
+    }
 
     let secret = '';
     try {
       secret = decryptSecret(integration.encApiSecret);
     } catch {
       console.error(`[shopify-webhook] secret decrypt failed for ${shop}`);
-      return NextResponse.json({ ok: true, skipped: 'secret unavailable' });
+      if (publicSigOk) return NextResponse.json({ ok: true, skipped: 'secret unavailable' });
+      return NextResponse.json({ ok: false, error: 'invalid signature' }, { status: 401 });
     }
     if (!verifyShopifyHmac(raw, request.headers.get('x-shopify-hmac-sha256'), secret)) {
       console.warn(`[shopify-webhook] HMAC fail for ${shop} topic=${topic}`);
