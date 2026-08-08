@@ -211,6 +211,41 @@ export async function POST(request: Request) {
       } catch (e: any) {
         console.error('[resend] rancher-onboarding rescue alert failed:', e?.message);
       }
+
+      // ── COMPLAINT TELEMETRY (P2.5, marketing revamp 2026-08) ────────────
+      // Rolling spam-complaint rate for the whole program. The kill line at
+      // this list size is ~5 complaints/week; alert BEFORE it at 3+ in the
+      // trailing 7 days so Ben can pause the offending lane while it's still
+      // a warning. The count is derived at alert time from the dated
+      // Auto-unsub/Auto-flag Notes stamps this same handler just wrote — no
+      // new table, no new field (lib/complaintTelemetry.ts). Runs AFTER the
+      // stamping above so the current complaint is included. Deduped per
+      // 24h so a bad day pings once, not once per complaint.
+      if (eventType === 'email.complained') {
+        try {
+          const { countRecentComplaints, COMPLAINT_ALERT_THRESHOLD } = await import(
+            '@/lib/complaintTelemetry'
+          );
+          const complaints7d = await countRecentComplaints();
+          if (complaints7d >= COMPLAINT_ALERT_THRESHOLD) {
+            const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+            await sendOperatorSignal({
+              urgency: 'loud',
+              kind: 'other',
+              summary: `Spam complaints at ${complaints7d} in the trailing 7 days — kill line is ~5/wk`,
+              detail:
+                `Latest: ${recipientEmail}. Complaint rate is approaching the deliverability kill line. ` +
+                `Check Email Sends by Template Name for the noisiest marketing lane and pause it ` +
+                `(Cron Pauses / template pause) before the next send window. All complainers are ` +
+                `already auto-suppressed.`,
+              dedupeKey: 'email-complaint-rate-7d',
+              dedupeWindowMs: 24 * 60 * 60 * 1000,
+            });
+          }
+        } catch (e: any) {
+          console.error('[resend] complaint telemetry failed:', e?.message);
+        }
+      }
     }
 
     if (eventType === 'email.delivery_delayed') {

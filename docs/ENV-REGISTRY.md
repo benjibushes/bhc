@@ -104,6 +104,7 @@
 | `SMS_PROVIDER` | Which vendor the SMS transport sends through: `twilio` (default) \| `telnyx` \| `plivo` \| `bandwidth`. **Unset ⇒ twilio ⇒ byte-identical to pre-2026-07-30 behavior.** An UNKNOWN value warns and falls back to twilio rather than silently dropping every send. Runbook: docs/SMS-PROVIDER-SETUP.md | fail-open | ben-flips |
 | `LOG_RETENTION_ENABLED` | Tri-state log-purge cron; unset → logs accumulate (Airtable row bloat) | fail-silent | ben-flips |
 | `MAINTENANCE_MODE` | 'true' → platform-wide pause (crons skip, go-live blocked); unset=normal | fail-open | ben-flips |
+| `MARKETING_SEND_DOMAIN` | P2.5 stream-keyed sending: From-domain for MARKETING-stream email only (nurture/nudge/digest/campaign/reconfirm per lib/emailStreams.ts). Unset/blank ⇒ marketing rides the apex — byte-identical to pre-P2.5. Set to the marketing subdomain (e.g. `updates.buyhalfcow.com`) ONLY after it's verified in Resend (DKIM) — DMARC is sp=quarantine, an unverified subdomain send quarantines day one. Transactional/money mail NEVER reads this | fail-open | ben-flips |
 | ⚠️ `MATCHING_ENABLED` | Routing kill switch with INVERTED semantics — default ON, only explicit 'false' pauses matching/intros platform-wide | fail-open | ben-flips |
 | `LOSS_RECOVERY_ENABLED` | Loss-recovery cron off Referrals 'Loss Reason' (re-engage / downsell / nurture-stamp); anything but 'true' = DRY-RUN (selection runs + logs would-send list, zero sends/stamps — the WAITING_ACTIVATION precedent). ⚠️ BEFORE any bulk 'Loss Reason' backfill on historical rows: pre-stamp 'Recovery Sent At' — the 14d freshness window rides LAST_MODIFIED_TIME(), so a mass edit makes months-old losses look fresh (live runs also self-halt >200 eligible/day as a backstop) | fail-silent | ben-flips |
 | `META_CLOSE_PURCHASE_ENABLED` | Fire attributed CAPI Purchase on Closed-Won; unset=off | fail-silent | ben-flips |
@@ -181,7 +182,7 @@
 | `RESERVE_RECOVERY_MAX_AGE_DAYS` | Oldest reserve eligible for recovery | fail-open | code-default |
 | `RESERVE_RECOVERY_SMS_HOURS` | Hours before recovery SMS leg | fail-open | code-default |
 | `ROUTING_MAX_HOPS` | Max re-route hops before giving up on a lead | fail-open | code-default |
-| `SEND_DOMAINS` | Rotating From-domains for email; defaults buyhalfcow.com | fail-open | set-once |
+| `SEND_DOMAINS` | P2.5: rotation KILLED — only the FIRST entry is read, as the apex/transactional From-domain; defaults buyhalfcow.com. Marketing stream rides `MARKETING_SEND_DOMAIN` (feature-flag section) | fail-open | set-once |
 | `STALE_HOLD_DAYS` | Days before a hold is stale | fail-open | code-default |
 | `STUCK_REFERRAL_MAX_PER_RUN` | Stuck-referral recovery batch cap | fail-open | code-default |
 | `STUCK_REFERRAL_NORMALIZE_PER_RUN` | Status-normalization cap per run | fail-open | code-default |
