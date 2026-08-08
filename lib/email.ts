@@ -1,5 +1,16 @@
 import { Resend } from 'resend';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import jwt from 'jsonwebtoken';
+// P2.5 (marketing revamp 2026-08): stream-keyed sending. Every send resolves
+// a stream ('transactional' | 'marketing') from its guardedSend template name
+// and the stream — not a round-robin — picks the From-domain. The
+// classification map + domain policy + List-Unsubscribe policy are pure and
+// unit-tested in lib/emailStreams.ts.
+import {
+  resolveEmailStream,
+  sendDomainForStream,
+  ensureListUnsubscribeHeaders,
+} from './emailStreams';
 import { getAllRecords, escapeAirtableValue, TABLES } from './airtable';
 import { checkFrequencyCap, logEmailSend } from './emailFrequencyGuard';
 import { JWT_SECRET } from './secrets';
@@ -153,6 +164,14 @@ export function sanitizeBroadcastHtml(html: string): string {
 
 const _resend = new Resend(process.env.RESEND_API_KEY || 're_placeholder_for_build');
 
+// P2.5 — carries the guardedSend template name across the async hop into the
+// resend wrapper + getFromEmail(), so EVERY send resolves its stream from the
+// same authoritative string that's logged to Email Sends. No call-site
+// plumbing, no chance of a copy-paste mismatch between the templateName and
+// the stream tag. Sends outside guardedSend see an empty store and fail safe
+// to 'transactional' (lib/emailStreams.ts).
+const _emailTemplateContext = new AsyncLocalStorage<string>();
+
 // In-memory suppression cache. Built lazily on first email send and refreshed
 // every SUPPRESSION_TTL_MS. Avoids hitting Airtable on every send while still
 // catching new unsubscribes within ~5 minutes. Critical to avoid CAN-SPAM
@@ -243,13 +262,8 @@ function htmlToPlainText(html: string): string {
     .trim();
 }
 
-// Extract the domain from a sender like "Name <ben@domain.com>" or "ben@domain.com".
-// Returns SEND_DOMAINS[0] as a fallback so we never crash on parse failure.
-function extractDomain(from: string | undefined): string {
-  if (!from) return SEND_DOMAINS[0];
-  const match = String(from).match(/<?[^@<>\s]+@([^>\s]+)>?/);
-  return match ? match[1] : SEND_DOMAINS[0];
-}
+// (extractDomain deleted in P2.5 — zero call sites; it was the last
+// SEND_DOMAINS-rotation remnant besides getFromEmail itself.)
 
 // Wrapper that auto-adds replyTo, plain text, and CAN-SPAM footer
 // to EVERY email. This is the single enforcement point for deliverability.
@@ -388,6 +402,29 @@ const resend = {
         }
       }
       delete params._replyContext;
+      // P2.5 — centralized List-Unsubscribe, living next to the footer logic
+      // it always belonged beside. Panel finding: the CAN-SPAM footer was
+      // centrally injected here while the List-Unsubscribe headers were
+      // per-caller opt-in (84 of 88 sites carried them by hand) — so a future
+      // sender could silently ship marketing mail without them. Now every
+      // MARKETING-stream send is guaranteed the List-Unsubscribe +
+      // List-Unsubscribe-Post one-click pair, minted by the SAME JWT builder
+      // (getUnsubscribeHeaders) the call sites use — reused, not duplicated.
+      // Transactional sends keep current caller behavior: explicit headers
+      // are honored as-is, and the deliberately header-less internals
+      // (sendAdminAlert / sendInquiryAlertToAdmin / sendOperatorPreCallBrief
+      // + this wrapper's own internals) stay untouched.
+      {
+        const stream = resolveEmailStream(_emailTemplateContext.getStore());
+        const headerRecipient = Array.isArray(params.to) ? params.to[0] : params.to;
+        if (headerRecipient) {
+          params.headers = ensureListUnsubscribeHeaders(
+            stream,
+            params.headers,
+            () => getUnsubscribeHeaders(String(headerRecipient)),
+          );
+        }
+      }
       // Auto-inject CAN-SPAM footer (physical address + unsubscribe link)
       // into every HTML email.
       //
@@ -453,19 +490,28 @@ const RANCHER_BOOK_CALL_URL = `${SITE_URL}/book?purpose=rancher`; // rancher onb
 const MERCH_URL = process.env.MERCH_URL || 'https://www.sackett-ranch.com/pages/buy-half-cow';
 
 // =====================================================
-// DOMAIN ROTATION — cycle sends across multiple domains
-// to protect deliverability and warm up new domains.
-// Set SEND_DOMAINS as comma-separated list in env:
-//   SEND_DOMAINS=buyhalfcow.com,mail.buyhalfcow.com,bhcbeef.com
-// Each domain should be verified in Resend.
+// STREAM-KEYED FROM-DOMAIN (P2.5, marketing revamp 2026-08).
+//
+// Replaces the SEND_DOMAINS round-robin, which incremented a global index on
+// EVERY send — deposit invoices included — cycling money mail across all
+// configured domains. The 2026-08-08 deliverability panel flagged that as
+// reputation cross-contamination the day a marketing subdomain exists.
+//
+// Now the send's STREAM picks one deterministic domain
+// (lib/emailStreams.ts):
+//   transactional → apex (first SEND_DOMAINS entry, default buyhalfcow.com)
+//   marketing     → MARKETING_SEND_DOMAIN env, falling back to the apex
+// Until Ben verifies the marketing subdomain in Resend and sets
+// MARKETING_SEND_DOMAIN, BOTH streams ride the apex — byte-identical to the
+// pre-P2.5 single-domain behavior. The flip is config, not code.
+//
+// The stream comes from the guardedSend template name via
+// _emailTemplateContext; a send with no context fails safe to transactional.
 // =====================================================
-const SEND_DOMAINS = (process.env.SEND_DOMAINS || 'buyhalfcow.com').split(',').map(d => d.trim()).filter(Boolean);
-let domainIndex = 0;
 
 function getFromEmail(): string {
-  const domain = SEND_DOMAINS[domainIndex % SEND_DOMAINS.length];
-  domainIndex++;
-  return `BuyHalfCow <ben@${domain}>`;
+  const stream = resolveEmailStream(_emailTemplateContext.getStore());
+  return `BuyHalfCow <ben@${sendDomainForStream(stream)}>`;
 }
 
 /**
@@ -534,7 +580,11 @@ async function guardedSend(opts: {
     return { success: false, suppressed: true, reason: gate.reason };
   }
   try {
-    const result: any = await opts.send();
+    // P2.5 — run the send inside the template-name context so getFromEmail()
+    // and the resend wrapper resolve the stream from the SAME authoritative
+    // string this guard logs to Email Sends. AsyncLocalStorage survives any
+    // await inside the closure, so async send() bodies classify correctly too.
+    const result: any = await _emailTemplateContext.run(opts.templateName, () => opts.send());
     // EMAIL TRUTH (2026-07-14 outage): the Resend SDK does NOT throw on API
     // errors — it RESOLVES with { error }. An invalid/revoked key returned
     // { error: validation_error } here, fell through the suppression check,

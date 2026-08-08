@@ -124,7 +124,15 @@ parallel ONLY where file sets are disjoint; within a track, sequential)
   leash (purchase = engagement).
 
 **Track 2 — email stream infra (sequential; parallel-safe vs Track 1):**
-- **P2.5 — Stream-keyed sending.** Kill the `SEND_DOMAINS` round-robin
+- **P2.5 — SHIPPED 2026-08-08 (#575).** Stream-keyed sending live:
+  round-robin dead, every send resolves transactional|marketing from its
+  guardedSend template name (lib/emailStreams.ts — 44 marketing / 62
+  transactional / unknown fails safe to transactional), both streams on
+  apex until Ben sets `MARKETING_SEND_DOMAIN` (ENV-REGISTRY + env.example);
+  List-Unsubscribe/one-click forced on ALL marketing sends in the central
+  wrapper (existing JWT builder reused); complaint telemetry counts the
+  webhook's dated Notes stamps and alarms loud at 3+/7d (deduped 24h).
+  Original spec: Kill the `SEND_DOMAINS` round-robin
   (lib/email.ts:462-469) — replace with per-stream domain selection:
   transactional stays on the apex; ALL marketing lanes ride the
   marketing subdomain once Ben verifies it in Resend (until then, both
