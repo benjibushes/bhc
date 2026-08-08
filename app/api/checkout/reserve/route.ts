@@ -423,6 +423,16 @@ export async function POST(req: Request) {
         depositMagicLinkUrl: magicLink,
       });
       emailSent = true;
+      // Deposit-link intro IS a deposit invite — feed the nudge rail
+      // (2026-08-07 speed-to-lead pass, all-sender sweep). Rail C catches
+      // reserve rows by Match Type; this stamp makes Rail B see them too.
+      try {
+        await updateRecord(TABLES.REFERRALS, referral.id, {
+          'Deposit Invite Sent At': new Date().toISOString(),
+        });
+      } catch (e: any) {
+        console.warn('[checkout/reserve] deposit-invite stamp failed:', e?.message);
+      }
     } catch (e: any) {
       console.error('[checkout/reserve] magic-link email failed:', e?.message);
     }

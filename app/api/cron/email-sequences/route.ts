@@ -437,6 +437,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
                 const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
                 const rancherEmail = rancher['Email'];
                 const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
+                let promoteSentDepositInvite = false;
                 if (rancherEmail && consumer['Email']) {
                   // Connect-active (tier_v2 + Connect active) ranchers route
                   // deposits through Stripe Connect direct charge at
@@ -450,6 +451,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
                     const magicToken = generateMemberLoginToken(consumerId, consumer['Email']);
                     const nextPath = `/checkout/${stuckRef.id}/deposit`;
                     promoteDepositMagicLinkUrl = `${SITE_URL}/api/auth/member/verify?token=${magicToken}&next=${encodeURIComponent(nextPath)}`;
+                    promoteSentDepositInvite = true;
                   }
                   // Buyer-side intro (w/ rancher pricing + contact)
                   await sendBuyerIntroNotification({
@@ -491,6 +493,11 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
                   }).catch((e: any) => console.warn('[promote-pa] rancher intro failed:', e?.message));
                 }
                 await updateRecord(TABLES.REFERRALS, stuckRef.id, {
+                  // Deposit-link intro IS a deposit invite — feed the nudge
+                  // rail (2026-08-07 speed-to-lead pass, all-sender sweep).
+                  ...(promoteSentDepositInvite
+                    ? { 'Deposit Invite Sent At': new Date().toISOString() }
+                    : {}),
                   'Status': 'Intro Sent',
                   'Approval Status': 'approved',
                   'Intro Sent At': new Date().toISOString(),

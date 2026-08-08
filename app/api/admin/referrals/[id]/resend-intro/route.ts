@@ -86,6 +86,7 @@ export async function POST(
       }
     }
 
+    let sentDepositInvite = false;
     if (buyerEmail) {
       try {
         const buyerId = referral['Buyer']?.[0] || '';
@@ -108,6 +109,7 @@ export async function POST(
           const magicToken = generateMemberLoginToken(buyerId, buyerEmail);
           const nextPath = `/checkout/${referral.id}/deposit`;
           depositMagicLinkUrl = `${SITE_URL}/api/auth/member/verify?token=${magicToken}&next=${encodeURIComponent(nextPath)}`;
+          sentDepositInvite = true;
         }
 
         await sendBuyerIntroNotification({
@@ -145,6 +147,12 @@ export async function POST(
       'Intro Sent At': new Date().toISOString(),
       'Chase Count': 0,
       'Last Chased At': '',
+      // Deposit-link intro IS a deposit invite — feed the nudge rail
+      // (2026-08-07 speed-to-lead pass, all-sender sweep). Only when the
+      // buyer email actually carried the link.
+      ...(buyerSent && sentDepositInvite
+        ? { 'Deposit Invite Sent At': new Date().toISOString() }
+        : {}),
     });
 
     await sendTelegramUpdate(

@@ -876,6 +876,19 @@ async function processUpdate(update: any) {
               nextProcessingDate: rancher['Next Processing Date'] || '',
               depositMagicLinkUrl,
             }).catch((e: any) => console.error('[match] buyer intro failed:', e?.message));
+            // A deposit magic link in the intro IS a deposit invite — stamp it so
+            // the deposit-request-nudge invite rail chases this buyer (completes the
+            // 2026-08-07 speed-to-lead pass across every intro sender). Best-effort.
+            if (depositMagicLinkUrl) {
+              try {
+                await updateRecord(TABLES.REFERRALS, refRecord.id, {
+                  'Deposit Invite Sent At': new Date().toISOString(),
+                });
+              } catch (e: any) {
+                console.warn('[match] deposit-invite stamp failed:', e?.message);
+              }
+            }
+
             await sendEmail({
               to: rancherEmail,
               subject: `BuyHalfCow Introduction: ${buyerName} in ${buyer['State'] || ''}`,
@@ -1056,9 +1069,23 @@ async function processUpdate(update: any) {
                 loginUrl: buyerLoginUrl,
                 depositMagicLinkUrl,
               });
+              // A deposit magic link in the intro IS a deposit invite — stamp
+              // it so the deposit-request-nudge invite rail chases this buyer
+              // (2026-08-07 speed-to-lead pass, all-sender sweep). Best-effort:
+              // a failed stamp must not fail the intro.
+              if (depositMagicLinkUrl) {
+                try {
+                  await updateRecord(TABLES.REFERRALS, fullReferralId, {
+                    'Deposit Invite Sent At': new Date().toISOString(),
+                  });
+                } catch (stampErr: any) {
+                  console.warn('[match] deposit-invite stamp failed:', stampErr?.message);
+                }
+              }
             } catch (e) {
               console.error('Error sending buyer intro notification:', e);
             }
+
 
             // Update consumer's referral status
             try {
@@ -1332,9 +1359,23 @@ async function processUpdate(update: any) {
                 loginUrl: buyerLoginUrl,
                 depositMagicLinkUrl,
               });
+              // A deposit magic link in the intro IS a deposit invite — stamp
+              // it so the deposit-request-nudge invite rail chases this buyer
+              // (2026-08-07 speed-to-lead pass, all-sender sweep). Best-effort:
+              // a failed stamp must not fail the intro.
+              if (depositMagicLinkUrl) {
+                try {
+                  await updateRecord(TABLES.REFERRALS, refId, {
+                    'Deposit Invite Sent At': new Date().toISOString(),
+                  });
+                } catch (stampErr: any) {
+                  console.warn('[match] deposit-invite stamp failed:', stampErr?.message);
+                }
+              }
             } catch (e) {
               console.error('Error sending buyer intro on reassignment:', e);
             }
+
 
             try {
               await updateRecord(TABLES.CONSUMERS, buyerConsumerId, {
@@ -5711,6 +5752,7 @@ Confirm send?`;
                 const budgetRange = ref['Budget Range'] || '';
                 const notes = ref['Notes'] || '';
 
+                let bulkSentDepositInvite = false;
                 if (rancherEmail) {
                   // Connect-active (tier_v2 + Connect active) ranchers route
                   // deposits through Stripe Connect direct charge at
@@ -5725,6 +5767,7 @@ Confirm send?`;
                     const magicToken = generateMemberLoginToken(bulkBuyerId, buyerEmail);
                     const nextPath = `/checkout/${ref.id}/deposit`;
                     bulkDepositMagicLinkUrl = `${SITE_URL}/api/auth/member/verify?token=${magicToken}&next=${encodeURIComponent(nextPath)}`;
+                    bulkSentDepositInvite = true;
                   }
                   await sendBuyerIntroNotification({
                     firstName: buyerName.split(' ')[0] || 'there',
@@ -5769,6 +5812,11 @@ Confirm send?`;
                   'Status': 'Intro Sent',
                   'Approval Status': 'approved',
                   'Intro Sent At': new Date().toISOString(),
+                  // Deposit-link intro IS a deposit invite — feed the nudge
+                  // rail (2026-08-07 speed-to-lead pass, all-sender sweep).
+                  ...(bulkSentDepositInvite
+                    ? { 'Deposit Invite Sent At': new Date().toISOString() }
+                    : {}),
                 });
                 fired++;
               } catch (e: any) {
