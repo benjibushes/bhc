@@ -55,6 +55,7 @@ import {
   buildDigestMarkerLine,
   renderRanchStandDigest,
   type DigestSkipReason,
+  activeSprintConsumerIds,
 } from '@/lib/ranchStandDigest';
 
 export const maxDuration = 300;
@@ -89,13 +90,20 @@ async function realHandler(_request: Request): Promise<{
   const runStartMs = Date.now();
 
   // One read each; every selector downstream is pure over these rows.
-  const [consumers, ranchers, productRows, closedWonRefs] = await Promise.all([
+  const [consumers, ranchers, productRows, closedWonRefs, openDepositRefs] = await Promise.all([
     getAllRecords(TABLES.CONSUMERS) as Promise<any[]>,
     getAllRecords(TABLES.RANCHERS) as Promise<any[]>,
     getAllRecords(TABLES.RANCHER_PRODUCTS) as Promise<any[]>,
     // Same hygiene source as /wins + lib/socialProof — Closed Won only; the
     // pure helper trims it to first name + state (never a full buyer name).
     (getAllRecords(TABLES.REFERRALS, '{Status} = "Closed Won"') as Promise<any[]>).catch(() => [] as any[]),
+    // P7b sprint defer: rows with a live unpaid deposit ask (invite OR
+    // request stamped, not yet paid). Fail-open to [] — a failed read must
+    // not block the digest, it just skips the defer courtesy this run.
+    (getAllRecords(
+      TABLES.REFERRALS,
+      'AND({Deposit Paid At} = "", OR({Deposit Invite Sent At} != "", {Deposit Requested At} != ""))',
+    ) as Promise<any[]>).catch(() => [] as any[]),
   ]);
 
   // ── Content (shared across every recipient this run) ──────────────────
@@ -110,17 +118,19 @@ async function realHandler(_request: Request): Promise<{
   const story = ranchStoryForMonth(now.getUTCMonth());
 
   // ── Recipients → engagement tiers ─────────────────────────────────────
+  const activeSprintIds = activeSprintConsumerIds(openDepositRefs, nowMs);
   const skips: Record<DigestSkipReason, number> = {
     'no-email': 0,
     synthetic: 0,
     suppressed: 0,
+    'sprint-deferred': 0,
     'skipped-neverengaged': 0,
     'skipped-sunset': 0,
     'recently-sent': 0,
   };
   const eligible = [];
   for (const c of consumers) {
-    const decision = classifyDigestRecipient(c, nowMs);
+    const decision = classifyDigestRecipient(c, nowMs, { activeSprintIds });
     if (decision.eligible) eligible.push(decision.target);
     else skips[decision.reason]++;
   }
@@ -134,6 +144,7 @@ async function realHandler(_request: Request): Promise<{
     `selected=${selected.length}${todays.length > DIGEST_RUN_CAP ? ` (run-cap ${DIGEST_RUN_CAP} of ${todays.length})` : ''} ` +
     `skipped-sunset=${skips['skipped-sunset']} skipped-neverengaged=${skips['skipped-neverengaged']} ` +
     `suppressed-flags=${skips.suppressed} recently-sent=${skips['recently-sent']} ` +
+    `sprint-deferred=${skips['sprint-deferred']} ` +
     `thin-month=${thinMonth} new-arrivals=${newArrivals.length} shelf=${shelf.length}`;
 
   const skipReasonBreakdown: Record<string, number> = Object.fromEntries(

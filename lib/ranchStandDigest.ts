@@ -55,6 +55,38 @@ export const DIGEST_CADENCE_DAYS = 25;
  *  Notes stamp means an over-cap tail is simply picked up next month. */
 export const DIGEST_RUN_CAP = 200;
 
+/** Sprint defer (P7b cap-lane policy): a buyer inside a live deposit sprint
+ *  — unpaid, invited/requested within the deposit-invite window + decay
+ *  (14d + 7d, lib/intentWindows) — gets NO digest that month. The money ask
+ *  owns their attention AND their 3/week guardedSend cap slot; a
+ *  merchandising email mid-sprint could cap-suppress a sprint touch. */
+export const SPRINT_DEFER_DAYS = 21;
+
+/** Consumer ids currently inside a live deposit sprint. Referral rows with
+ *  Deposit Paid At set are DONE (customer — digest welcome); rows whose
+ *  invite/request stamp is older than SPRINT_DEFER_DAYS have exited the
+ *  window (sprint machinery has said its piece — digest may resume). */
+export function activeSprintConsumerIds(
+  referrals: readonly (Record<string, unknown> & { id?: string })[],
+  nowMs: number,
+): Set<string> {
+  const out = new Set<string>();
+  for (const r of referrals) {
+    if (r['Deposit Paid At']) continue;
+    const stamps = [r['Deposit Invite Sent At'], r['Deposit Requested At']];
+    let latest = 0;
+    for (const v of stamps) {
+      const t = v ? Date.parse(String(v)) : NaN;
+      if (Number.isFinite(t) && t > latest) latest = t;
+    }
+    if (latest > 0 && nowMs - latest < SPRINT_DEFER_DAYS * DAY_MS) {
+      const buyers = Array.isArray(r['Buyer']) ? (r['Buyer'] as unknown[]) : [];
+      for (const b of buyers) out.add(String(b));
+    }
+  }
+  return out;
+}
+
 /** "Newly listed" window for the new-on-the-stand section. Digest cadence is
  *  monthly; 35 days covers month-length drift so a product listed the day
  *  after last month's send is never silently skipped. */
@@ -319,7 +351,8 @@ export type DigestSkipReason =
   | 'suppressed'
   | 'skipped-neverengaged'
   | 'skipped-sunset'
-  | 'recently-sent';
+  | 'recently-sent'
+  | 'sprint-deferred';
 
 export type DigestClassification =
   | { eligible: true; target: DigestTarget }
@@ -378,12 +411,18 @@ function readSegment(v: unknown): string {
 export function classifyDigestRecipient(
   row: Record<string, unknown> & { id?: string },
   nowMs: number,
+  opts?: { activeSprintIds?: ReadonlySet<string> },
 ): DigestClassification {
   const email = String(row['Email'] || '').trim().toLowerCase();
   if (!row?.id || !email || !email.includes('@')) return { eligible: false, reason: 'no-email' };
   if (isSyntheticTestEmail(email)) return { eligible: false, reason: 'synthetic' };
   if (row['Unsubscribed'] || row['Bounced'] || row['Complained']) {
     return { eligible: false, reason: 'suppressed' };
+  }
+  // P7b sprint defer: mid-deposit-sprint buyers skip this month's digest —
+  // the money ask owns their cap slot (see activeSprintConsumerIds).
+  if (opts?.activeSprintIds?.has(String(row.id))) {
+    return { eligible: false, reason: 'sprint-deferred' };
   }
 
   const eng = engagementMs(row);

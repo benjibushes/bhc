@@ -24,6 +24,7 @@ import {
   assignTiers,
   renderRanchStandDigest,
   type DigestTarget,
+  activeSprintConsumerIds,
 } from './ranchStandDigest';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -370,4 +371,38 @@ test('render: rendered copy carries no NO-words or fake urgency', () => {
     assert.ok(!/don'?t miss out|last chance|hurry|act now/i.test(text));
     assert.equal(subject, subject.toLowerCase());
   }
+});
+
+// ── P7b · sprint defer ──────────────────────────────────────────────────────
+
+test('activeSprintConsumerIds: live unpaid invite within 21d defers its buyer', () => {
+  const now = Date.parse('2026-08-08T12:00:00Z');
+  const refs = [
+    { id: 'r1', 'Deposit Invite Sent At': '2026-08-01T00:00:00Z', Buyer: ['cA'] },
+    { id: 'r2', 'Deposit Requested At': '2026-08-05T00:00:00Z', Buyer: ['cB'] },
+  ];
+  const ids = activeSprintConsumerIds(refs as any, now);
+  assert.ok(ids.has('cA') && ids.has('cB'));
+});
+
+test('activeSprintConsumerIds: paid, stale, or unstamped rows never defer', () => {
+  const now = Date.parse('2026-08-08T12:00:00Z');
+  const refs = [
+    { id: 'r1', 'Deposit Invite Sent At': '2026-08-01T00:00:00Z', 'Deposit Paid At': '2026-08-02T00:00:00Z', Buyer: ['paid'] },
+    { id: 'r2', 'Deposit Invite Sent At': '2026-07-01T00:00:00Z', Buyer: ['stale'] },
+    { id: 'r3', Buyer: ['never'] },
+    { id: 'r4', 'Deposit Requested At': 'not-a-date', Buyer: ['garbage'] },
+  ];
+  const ids = activeSprintConsumerIds(refs as any, now);
+  assert.equal(ids.size, 0);
+});
+
+test('classifyDigestRecipient: sprint-deferred beats eligibility, absent set changes nothing', () => {
+  const now = Date.parse('2026-08-08T12:00:00Z');
+  const row = { id: 'cA', Email: 'a@example.com', 'Last Email Clicked At': '2026-08-01T00:00:00Z' } as any;
+  const deferred = classifyDigestRecipient(row, now, { activeSprintIds: new Set(['cA']) });
+  assert.equal(deferred.eligible, false);
+  assert.equal((deferred as any).reason, 'sprint-deferred');
+  const normal = classifyDigestRecipient(row, now);
+  assert.equal(normal.eligible, true);
 });
