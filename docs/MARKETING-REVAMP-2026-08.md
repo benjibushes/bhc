@@ -78,16 +78,17 @@ phase: (a) Cron Runs + Email Sends evidence of what it actually did in
 the last 30d, (b) code-path read for live callers. Then: KILL / RESCOPE /
 KEEP, recorded here.
 
-| Candidate | Suspicion | Likely verdict |
+| Candidate | Suspicion | FINAL VERDICT (P7a, 2026-08-08) |
 |---|---|---|
-| `sendIncompleteProfileAsk` (179/wk) | Chasing profile fields from people who can't buy | RESCOPE to Lane 1 |
-| `sendWaitingActivationNudge` (148/wk) | Activating WAITING buyers in states with no supply | RESCOPE to Lane 1 + state gate |
-| `sendReadyChaseNudge` to >30d-cold | Zombie chases | RESCOPE to intent window |
-| `still_looking_reconfirm` to Lane 2 | Reconfirming interest in unavailable product | RESCOPE to Lane 1 |
-| Abandoned-quiz nudges beyond stage 3 for Lane 2 | Quiz leads to a share they can't buy | RESCOPE: point Lane 2 re-entry at /shop |
-| 63 dead admin gauges | Known-dead per 07-19 audit | KILL in cleanup phase |
-| Dead env flags (Threads flag, etc.) | Flag dead, feature live — verify per flag | Per-item |
-| Per-template caps sized for old volume | 67 cap-exceeded/48h | RETUNE with lane policy |
+| `sendIncompleteProfileAsk` (179/wk) | Chasing profile fields from people who can't buy | **RESCOPED #574** — INCOMPLETE_PROFILE-before-state ordering fix; stranded buyers now segment on state first |
+| `sendWaitingActivationNudge` (148/wk) | Activating WAITING buyers in states with no supply | **KEEP (was already supply-gated)** — panel finding confirmed; no change needed |
+| `sendReadyChaseNudge` to >30d-cold | Zombie chases | **KEEP (was already gated)** + intent windows now governed by **#579** tiered sprints/sunset |
+| `still_looking_reconfirm` to Lane 2 | Reconfirming interest in unavailable product | **RESCOPED #576** — supply-gated (matching/suggest still-looking branch) |
+| `nurture-drip` (~220/wk, no Ranchers fetch) | Share nurture to buyers with no supply | **RESCOPED #576** — supply-gated |
+| Abandoned-quiz nudges beyond stage 3 for Lane 2 | Quiz leads to a share they can't buy | **RESCOPED #574** (segment reorder) + **#579** (7d intent window) |
+| 63 dead admin gauges | Known-dead per 07-19 audit | **8 KILLED + 1 REPAIRED (P7a)** — the "63" was an audit-script artifact (blind spots: unquoted keys, const/computed-key writes, ops-managed fields, inverse links). Verified-then-killed with zero writers proven via schema + live-data + both-repo grep: `UTM Source` (funnel-conversion + leadScore — field doesn't exist), `Lead Score` (cal/bookings — doesn't exist), `Last Activity At` (desk — 0 values ever), `Backfill Emails Sent`/`At`, `AI Qualification Summary`, `AI Recommended Action` (consumers admin — writers archived/dead), `Onboarding Complete` (ranchers admin). Repaired: buyer-context rancher column read two nonexistent fields → now reads live `Suggested Rancher Name`. KEEP-with-proof: Deposit Style/Resistance Tier/Price Range (ops-managed), ad-spend fields (same-file writers), Callback stamps, share-click counters, Funnel Events (inverse link) |
+| Dead env flags (Threads flag, etc.) | Flag dead, feature live — verify per flag | **VERIFIED ALREADY DEAD+REMOVED** — `ON_PLATFORM_MESSAGING_ENABLED` has zero code readers and was scrubbed from env.example 2026-08-01 (BHC-PLATFORM-MAP.md:287); Threads feature is LIVE and untouched. No other dead flags identified |
+| Per-template caps sized for old volume | 67 cap-exceeded/48h | **DEFERRED to P7b** — cap files owned by the parallel P7b agent (lib/email.ts caps, emailStreams) |
 
 ## 5 · BUILD PHASES — v2, panel-amended (one PR each; tracks may run in
 parallel ONLY where file sets are disjoint; within a track, sequential)
@@ -169,6 +170,14 @@ parallel ONLY where file sets are disjoint; within a track, sequential)
   working phase from a dead one.
 - **P7 — Teardown execution** per ledger verdicts (verify-then-kill),
   dead gauges deleted, caps retuned to lane policy.
+  - **P7a — SHIPPED 2026-08-08:** safe half done. Ledger verdicts finalized
+    (§4 table now carries FINAL VERDICT column); 8 dead admin gauges killed +
+    1 wrong-field-name gauge repaired (buyer-context rancher column);
+    Threads flag verified already-dead-and-removed. The "63 dead gauges"
+    number was an audit-script artifact — see §4 row for the verified
+    breakdown and the KEEP-with-proof list.
+  - **P7b — remaining:** caps retune to lane policy (lib/email.ts caps /
+    lib/emailStreams.ts / cron cadence files — owned by the parallel agent).
 
 **Wave 2 (after Wave 1 ships + first campaign fires — the revenue flows
 the panel ranked highest for Lane 2, needing event instrumentation):**

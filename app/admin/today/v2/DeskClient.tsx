@@ -33,7 +33,6 @@ interface CalBooking {
   consumerId?: string;
   qualificationScore?: number | null;
   qualificationAnswers?: string;
-  leadScore?: number | null;
   phone?: string;
   state?: string;
 }
@@ -608,11 +607,7 @@ export default function DeskClient() {
                       {typeof b.qualificationScore === 'number' && (
                         <span
                           className="inline-block text-[10px] font-mono px-1 py-0.5 bg-bone-warm text-charcoal border border-divider"
-                          title={
-                            typeof b.leadScore === 'number'
-                              ? `Quiz ${b.qualificationScore} · lead score ${b.leadScore}`
-                              : `Quiz score ${b.qualificationScore}`
-                          }
+                          title={`Quiz score ${b.qualificationScore}`}
                         >
                           ⭐ {b.qualificationScore}
                         </span>

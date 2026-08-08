@@ -49,7 +49,6 @@ interface Consumer {
   campaign: string;
   created_at: string;
   sequence_stage: string;
-  ai_recommended_action: string;
 }
 
 interface Rancher {
@@ -845,7 +844,7 @@ export default function AdminPage() {
                                         <div>
                                           {consumer.notes && <p className="text-saddle italic">&quot;{consumer.notes}&quot;</p>}
                                           {consumer.sequence_stage && <p className="text-saddle">Sequence: {consumer.sequence_stage}</p>}
-                                          {/* AI Recommended Action hidden — no writer yet (audit 2026-06-22); re-add when the AI qualifier writes it */}
+                                          {/* AI Recommended Action deleted (P7a teardown) — the AI qualifier that wrote it is gone; field holds only stale pre-06-22 values */}
                                           {consumer.admin_notes && (
                                             <p className="px-2 py-1 bg-amber/10 border-l-2 border-amber/60 text-amber-dark text-xs">
                                               Notes: {consumer.admin_notes}

@@ -59,12 +59,14 @@ export async function GET(req: Request) {
     closed: referrals.filter((r: any) => String(r['Status'] || '') === 'Closed Won').length,
   };
 
-  // Group by UTM Source on Consumers
+  // Group by Source on Consumers. (P7a teardown: the `UTM Source` fallback
+  // leg was deleted — the field does not exist on the Consumers table, so the
+  // read was `undefined` on every record since it was written.)
   const bySource: Record<string, Record<Stage, number>> = {};
   const consumerById = new Map<string, any>();
   for (const c of consumers as any[]) {
     consumerById.set(c.id, c);
-    const src = String(c['Source'] || c['UTM Source'] || 'direct').toLowerCase() || 'direct';
+    const src = String(c['Source'] || 'direct').toLowerCase() || 'direct';
     if (!bySource[src]) {
       bySource[src] = { signup: 0, qualified: 0, booked: 0, invoiced: 0, locked: 0, closed: 0 };
     }
@@ -75,7 +77,7 @@ export async function GET(req: Request) {
   for (const r of referrals as any[]) {
     const buyerLink = Array.isArray(r['Buyer']) ? r['Buyer'][0] : null;
     const c = buyerLink ? consumerById.get(buyerLink) : null;
-    const src = String(c?.['Source'] || c?.['UTM Source'] || 'direct').toLowerCase() || 'direct';
+    const src = String(c?.['Source'] || 'direct').toLowerCase() || 'direct';
     if (!bySource[src]) {
       bySource[src] = { signup: 0, qualified: 0, booked: 0, invoiced: 0, locked: 0, closed: 0 };
     }

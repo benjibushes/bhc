@@ -60,7 +60,10 @@ export async function GET(request: Request) {
     referrals: referrals.slice(0, 5).map((r: any) => ({
       id: r.id,
       status: String(r['Status'] || ''),
-      rancher: String(r['Rancher Name'] || r['Assigned Rancher Name'] || ''),
+      // P7a teardown: was `Rancher Name` / `Assigned Rancher Name` — NEITHER
+      // exists on Referrals (rancher column rendered blank since Phase 10).
+      // `Suggested Rancher Name` is the real, written field (suggest :1346).
+      rancher: String(r['Suggested Rancher Name'] || ''),
       depositPaidAt: String(r['Deposit Paid At'] || ''),
     })),
     orders: (orders as any[]).slice(0, 5).map((o: any) => ({
