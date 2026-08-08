@@ -26,6 +26,7 @@ import FaqSection, { parseFaq, type FaqItem } from './FaqSection';
 import FulfillmentSection, { parseFulfillment } from './FulfillmentSection';
 import ProductCard from '../../components/ProductCard';
 import { loadProductsForRancher, type MarketplaceProduct } from '@/lib/marketplaceProducts';
+import { operationTypeFor } from '@/lib/operationType';
 import { getClosedWonDealCountForRancher } from '@/lib/socialProof';
 import { jsonLdSafe } from '@/lib/jsonLdSafe';
 import { hasServiceZipGate } from '@/lib/exclusiveZip';
@@ -870,6 +871,15 @@ export default async function RancherPage(
               <div className="text-center space-y-3">
                 <Pill tone="neutral" className="mx-auto">Available shares</Pill>
                 <h2 className="font-serif text-3xl md:text-5xl">Choose your share</h2>
+                {/* Operation-type label (P4): a share is a LOCAL operation —
+                    say which kind of outfit this is, right where the buyer
+                    reserves. Renders nothing when the state is unknown. */}
+                {(() => {
+                  const shareOp = operationTypeFor({ type: 'share-ranch', state });
+                  return shareOp ? (
+                    <p className="text-[13px] text-saddle">{shareOp.label}</p>
+                  ) : null;
+                })()}
                 <p className="text-saddle max-w-xl mx-auto">
                   All prices include processing.{' '}
                   {onConnect

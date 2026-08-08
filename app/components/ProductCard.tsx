@@ -21,6 +21,7 @@ import Link from 'next/link';
 import ProductImage from '../shop/ProductImage';
 import BuyButton from '../shop/BuyButton';
 import PriceTag from './PriceTag';
+import { operationTypeFor } from '@/lib/operationType';
 
 export interface ProductCardProduct {
   id: string;
@@ -38,6 +39,11 @@ export interface ProductCardProduct {
   shippingCost?: number;
   /** Pickup-at-the-ranch product — renders only on the rancher's own page. */
   localOnly?: boolean;
+  /** Airtable Category (MarketplaceProduct rows) — feeds the operation-type
+   *  label so merch never claims "ships frozen". */
+  category?: string;
+  /** Browse-group key (StandProduct rows) — same job as category. */
+  group?: string;
   /** BYOC (2026-07-08): when set (rancher-page surfaces only), the buy action
    *  links out to the rancher's own store via /go/[id] instead of BHC
    *  checkout. /shop never passes this. */
@@ -51,6 +57,17 @@ export interface ProductCardProduct {
 export default function ProductCard({ p, compact = false }: { p: ProductCardProduct; compact?: boolean }) {
   const href = `/shop/${p.id}`;
   const deposit = !!p.depositStyle;
+  // Operation-type label (P4, marketing-revamp principle 4): which KIND of
+  // outfit is this? Null for pickup rows (their own copy already labels them)
+  // — the caption simply doesn't render.
+  const opType = operationTypeFor({
+    type: 'product',
+    localOnly: p.localOnly,
+    shelfStable: p.shelfStable,
+    depositStyle: p.depositStyle,
+    category: p.category,
+    group: p.group,
+  });
   // compact = marketplace-grid variant (2-up mobile): square image, tighter
   // type/padding, description hidden. Full variant unchanged for the rancher
   // page + funnel rails.
@@ -84,6 +101,15 @@ export default function ProductCard({ p, compact = false }: { p: ProductCardProd
 
         {!compact && p.description ? (
           <p className="text-[13px] text-charcoal/80 leading-snug m-0 line-clamp-2">{p.description}</p>
+        ) : null}
+
+        {/* Operation-type label (P4): the KIND of outfit, stated before the
+            shipping mechanics. Renders nothing when classification is
+            uncertain (and for pickup rows, whose line below already says it). */}
+        {opType ? (
+          <div className={`${compact ? 'text-[11px]' : 'text-[13px]'} text-saddle line-clamp-1`}>
+            {opType.label}
+          </div>
         ) : null}
 
         <div className={`${compact ? 'text-[11px]' : 'text-xs'} line-clamp-1 ${p.localOnly ? 'text-saddle font-medium' : 'text-sage'}`}>

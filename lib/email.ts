@@ -40,6 +40,10 @@ import {
   SHARE_WEIGHT_RANGE_CU_FT,
   shareTierFromOrderType,
 } from './beefWeights';
+// P4 (marketing revamp 2026-08): operation-type labels — "local share —
+// serves [state]" on the share intro's pricing block, from the ONE shared
+// classifier (lib/operationType). Null state → the line renders nothing.
+import { operationTypeFor, operationTypeEmailLine } from './operationType';
 // BROKER RAIL (2026-07-31): the settlement email BODIES are pure + unit-tested
 // in lib/brokerNotify (the money lines on that rail are the whole product), so
 // this module only wraps them in guardedSend. See the broker section at the
@@ -1733,6 +1737,11 @@ export async function sendBuyerIntroNotification(data: {
   // blank brand fields) simply omits the block.
   rancherTagline?: string;
   rancherAbout?: string;
+  // Operation-type label (P4, 2026-08-08): the rancher's home state ('MT' or
+  // 'Montana' both work) drives the "local share — serves [state]" line in the
+  // pricing block. Optional — unset/unrecognized renders nothing, never a
+  // wrong label.
+  rancherState?: string;
 }) {
   // Build pricing block when any tier is configured.
   const pricingRows: string[] = [];
@@ -1754,9 +1763,16 @@ export async function sendBuyerIntroNotification(data: {
   const processingLine = data.nextProcessingDate
     ? `<p style="margin-top:12px;font-size:13px;color:#6B4F3F;"><strong>Next processing date:</strong> ${esc(new Date(data.nextProcessingDate).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' }))}</p>`
     : '';
+  // Operation-type label (P4): one quiet line under the pricing header — a
+  // share is a LOCAL operation and the buyer should never guess which kind of
+  // outfit they're matched with. '' when the state is unknown.
+  const opTypeLine = operationTypeEmailLine(
+    operationTypeFor({ type: 'share-ranch', state: data.rancherState }),
+  );
   const pricingBlock = pricingRows.length > 0
     ? `<div style="margin:20px 0;">
     <p style="font-weight:600;margin-bottom:8px;">Current pricing from ${esc(data.rancherName)}:</p>
+    ${opTypeLine}
     <table style="border-collapse:collapse;width:100%;font-size:14px;">
       ${pricingRows.join('')}
     </table>

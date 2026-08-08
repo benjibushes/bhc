@@ -26,6 +26,7 @@ import PriceTag from '../../components/PriceTag';
 import ProductCard from '../../components/ProductCard';
 import { loadProductsForRancher } from '@/lib/marketplaceProducts';
 import { rancherCanTakeProductCharge } from '@/lib/storefrontGates';
+import { operationTypeFor } from '@/lib/operationType';
 
 export const revalidate = 300;
 
@@ -327,6 +328,21 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
                   <span className="text-sage"> · verified ranch{p.rancherState ? ` · ${p.rancherState}` : ''}</span>
                   {p.weight ? ` · ${p.weight}` : ''}
                 </div>
+                {/* Operation-type label (P4): the KIND of outfit, stated at the
+                    top before the buyer reads any mechanics. Renders nothing
+                    when classification is uncertain. */}
+                {(() => {
+                  const opType = operationTypeFor({
+                    type: 'product',
+                    localOnly: p.localOnly,
+                    shelfStable: p.shelfStable,
+                    depositStyle: p.depositStyle,
+                    category: p.category,
+                  });
+                  return opType ? (
+                    <div className="text-[13px] text-saddle mt-1">{opType.label}</div>
+                  ) : null;
+                })()}
               </div>
 
               {p.depositStyle ? (

@@ -875,6 +875,8 @@ async function processUpdate(update: any) {
               wholeLbs: rancher['Whole lbs'] || '',
               nextProcessingDate: rancher['Next Processing Date'] || '',
               depositMagicLinkUrl,
+              // Operation-type label (P4): "local share — serves [state]".
+              rancherState: String(rancher['State'] || '').trim() || undefined,
             }).catch((e: any) => console.error('[match] buyer intro failed:', e?.message));
             // A deposit magic link in the intro IS a deposit invite — stamp it so
             // the deposit-request-nudge invite rail chases this buyer (completes the
@@ -1068,6 +1070,8 @@ async function processUpdate(update: any) {
                 rancherSlug: rancher['Slug'] || '',
                 loginUrl: buyerLoginUrl,
                 depositMagicLinkUrl,
+                // Operation-type label (P4): "local share — serves [state]".
+                rancherState: String(rancher['State'] || '').trim() || undefined,
               });
               // A deposit magic link in the intro IS a deposit invite — stamp
               // it so the deposit-request-nudge invite rail chases this buyer
@@ -1358,6 +1362,8 @@ async function processUpdate(update: any) {
                 rancherSlug: rancher['Slug'] || '',
                 loginUrl: buyerLoginUrl,
                 depositMagicLinkUrl,
+                // Operation-type label (P4): "local share — serves [state]".
+                rancherState: String(rancher['State'] || '').trim() || undefined,
               });
               // A deposit magic link in the intro IS a deposit invite — stamp
               // it so the deposit-request-nudge invite rail chases this buyer

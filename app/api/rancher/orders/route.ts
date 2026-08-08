@@ -21,6 +21,7 @@ import { claimOnce } from '@/lib/rancherCapacity';
 import { sendEmail } from '@/lib/email';
 import { carrierTrackingUrl } from '@/lib/trackingLink';
 import { orderStatusUrlFor } from '@/lib/orderStatusLink';
+import { operationTypeFor, operationTypeEmailLine } from '@/lib/operationType';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -223,6 +224,7 @@ export async function POST(request: Request) {
         : `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
         <p>hey ${buyerFirst},</p>
         <p>your <strong>${productName}</strong> just shipped from <strong>${ranchName}</strong>.</p>
+        ${operationTypeEmailLine(operationTypeFor({ type: 'product', localOnly: isPickup }))}
         ${trackingHtml}
         ${statusHtml}
         <p style="font-size:14px;color:#5A5752">if anything shows up wrong or freezer-burned, we make it right — just reply to this email.</p>

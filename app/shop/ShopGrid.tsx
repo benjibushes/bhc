@@ -33,6 +33,7 @@ import ProductImage from './ProductImage';
 import Button from '../components/Button';
 import Pill from '../components/Pill';
 import { US_STATES, normalizeState, stateName } from '@/lib/states';
+import { operationTypeForStand } from '@/lib/operationType';
 import { waitlistLine, stateNameToSlug, stateBySlug } from '@/lib/stateSeo';
 import {
   splitStandsByState,
@@ -320,6 +321,10 @@ export default function ShopGrid({
  * renders only when the ranch's public page actually resolves (gated slug).
  */
 function RanchStall({ stand, items }: { stand: ShopStand; items: StandProduct[] }) {
+  // Operation-type label (P4): the STAND is labeled ships-nationwide only when
+  // every rendered item ships (any pickup item → no stand-level claim; the
+  // pickup cards carry their own line). Null renders nothing.
+  const standOp = operationTypeForStand(items);
   return (
     <section className="border border-dust bg-bone-warm/60 p-3.5 md:p-5">
       <div className="flex items-center gap-3 flex-wrap">
@@ -336,6 +341,7 @@ function RanchStall({ stand, items }: { stand: ShopStand; items: StandProduct[] 
           <div className="font-serif text-lg leading-tight">{stand.name}</div>
           <div className="text-[12px] text-saddle mt-0.5">
             {stand.state ? stateName(stand.state) : 'family ranch'}
+            {standOp ? ` · ${standOp.label}` : ''}
           </div>
         </div>
         {stand.deals > 0 && (
