@@ -80,6 +80,7 @@ import { claimOnce } from '@/lib/rancherCapacity';
 import { JWT_SECRET } from '@/lib/secrets';
 import { normalizeState } from '@/lib/states';
 import { isRancherOperationalForBuyers, getOperationalServedStates } from '@/lib/rancherEligibility';
+import { getServedStates } from '@/lib/routingSegment';
 import { activeDealReferralsFormula } from '@/lib/cronReadFilters';
 import { isActiveDealReferral } from '@/lib/capacityCount';
 import {
@@ -221,13 +222,16 @@ async function realHandler(_request: Request): Promise<CronResult> {
   const rancherSlugByState = new Map<string, string>();
   try {
     const ranchers = (await getAllRecords(TABLES.RANCHERS)) as any[];
-    supplyStates = new Set<string>();
+    // Coverage set from the shared P1′ helper (capacity-OUT — the exact
+    // semantics this loop always had). The slug map below is presentation
+    // (which rancher page to link), not coverage — it keeps its own pass.
+    supplyStates = getServedStates(ranchers);
     for (const r of ranchers) {
       if (!isRancherOperationalForBuyers(r)) continue;
       const slug = String(r['Slug'] || '').trim();
+      if (!slug) continue;
       for (const s of getOperationalServedStates(r)) {
-        supplyStates.add(s);
-        if (slug && !rancherSlugByState.has(s)) rancherSlugByState.set(s, slug);
+        if (!rancherSlugByState.has(s)) rancherSlugByState.set(s, slug);
       }
     }
   } catch (e: any) {

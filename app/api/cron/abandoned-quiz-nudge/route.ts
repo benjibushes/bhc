@@ -40,7 +40,7 @@ import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 import { JWT_SECRET } from '@/lib/secrets';
-import { isRancherOperationalForBuyers, getOperationalServedStates } from '@/lib/rancherEligibility';
+import { getServedStates } from '@/lib/routingSegment';
 import { normalizeState } from '@/lib/states';
 import { decideQuizNudge, appendQuizNudgeLog, QUIZ_NUDGE_LOG_FIELD } from '@/lib/quizNudgeLog';
 
@@ -183,14 +183,10 @@ async function realHandler(_request: Request): Promise<CronResult> {
 
   // Served-states scoping (Ben, 2026-06-18): only nudge buyers whose state has
   // an operational rancher. Qualifying buyers in unserved states would dead-end
-  // on waitlist and the "rancher in {state}" copy would over-promise. Union
-  // logic mirrors the signup-time gate (hasOperationalRancherForState).
+  // on waitlist and the "rancher in {state}" copy would over-promise. Uses the
+  // shared P1′ helper (capacity-OUT — same semantics this loop always had).
   const ranchers = (await getAllRecords(TABLES.RANCHERS).catch(() => [])) as any[];
-  const servedStates = new Set<string>();
-  for (const r of ranchers) {
-    if (!isRancherOperationalForBuyers(r)) continue;
-    for (const s of getOperationalServedStates(r)) servedStates.add(s);
-  }
+  const servedStates = getServedStates(ranchers);
   const inServed = candidates.filter((c) => servedStates.has(normalizeState(c['State'])));
   const droppedUnserved = candidates.length - inServed.length;
 
