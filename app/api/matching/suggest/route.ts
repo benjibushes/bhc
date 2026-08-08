@@ -1839,6 +1839,8 @@ export async function POST(request: Request) {
               // trimmed → falsy fields simply don't render the block.
               rancherTagline: String(topMatch['Tagline'] || '').trim() || undefined,
               rancherAbout: String(topMatch['About Text'] || '').trim() || undefined,
+              // Operation-type label (P4): "local share — serves [state]".
+              rancherState: String(topMatch['State'] || '').trim() || undefined,
             });
             // The intro that carried a deposit magic link IS a deposit
             // invite — stamp it so the deposit-request-nudge invite rail

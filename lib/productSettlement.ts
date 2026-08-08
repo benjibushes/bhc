@@ -28,6 +28,7 @@ import { sendEmail } from '@/lib/email';
 import { fireCapi, buildUserData, productPurchaseEnabled } from '@/lib/metaCapi';
 import { zipFromStripePayment, buyerZipPatch } from '@/lib/buyerZip';
 import { orderStatusUrlFor } from '@/lib/orderStatusLink';
+import { operationTypeFor, operationTypeEmailLine } from '@/lib/operationType';
 
 function escapeHtml(s: string): string {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -309,6 +310,13 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
     `<p style="font-size:13px;color:#5A5752;border-top:1px solid #A7A29A;padding-top:14px;margin-top:22px">` +
     `p.s. if it's good and you'd rather stop buying beef by the box, a quarter or half from a ranch like this one runs about $5.50 to $9.50 a pound and fills a freezer for the year. ` +
     `<a href="${SITE}/access?utm_source=email&utm_medium=product_receipt&utm_campaign=shop_to_share" style="color:#0E0E0E">see what's available near you</a>.</p>`;
+  // Operation-type label (P4): one quiet line naming the KIND of operation.
+  // PI metadata carries no shelf-stable flag, so the helper stays on the
+  // frozen-agnostic "ships nationwide"; pickup orders classify null and the
+  // line simply doesn't render (their copy already says pickup).
+  const opTypeLine = operationTypeEmailLine(
+    operationTypeFor({ type: 'product', localOnly: isPickup, depositStyle }),
+  );
   if (buyerEmail) {
     await sendEmail({
       to: buyerEmail,
@@ -322,6 +330,7 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
         <p>hey ${buyerFirst},</p>
         <p>your deposit's in — <strong>${escapeHtml(rancherName)}</strong> has your <strong>${escapeHtml(productName)}</strong> reservation and will reach out to confirm the size you want + the balance <em>before anything ships</em>.</p>
         <p style="font-size:14px;color:#5A5752">deposit paid: $${dollars(displayCents)} — it counts toward your total. nothing ships until you've confirmed the details together.</p>
+        ${opTypeLine}
         ${rancherContactBlock}
         ${orderStatusHtml}
         ${shareLadderPs}
@@ -331,6 +340,7 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
         <p>hey ${buyerFirst},</p>
         <p>you're all set — <strong>${escapeHtml(rancherName)}</strong> got your order for <strong>${quantity > 1 ? `${quantity}× ` : 'a '}${escapeHtml(productName)}</strong>${isPickup ? ' and will reach out to set up your pickup at the ranch.' : ' and will ship it direct to you.'}</p>
         <p style="font-size:14px;color:#5A5752">paid: $${dollars(paidCents)}${quantity > 1 || shippingCents > 0 ? ` (${quantity > 1 ? `${quantity} × $${dollars(displayCents)}` : `$${dollars(displayCents)}`}${shippingCents > 0 ? ` + $${dollars(shippingCents)} shipping` : ''})` : ''}. ${isPickup ? 'local pickup — no shipping charged; the ranch will confirm the time and place with you.' : "you'll get tracking as soon as it's on the way."}</p>
+        ${opTypeLine}
         ${isPickup ? pickupWhereBlock + rancherContactBlock : ''}
         ${!isPickup && shipTo ? `<p style="font-size:13px;color:#5A5752">shipping to:<br>${escapeHtml(shipTo).replace(/\n/g, '<br>')}<br><span style="color:#A7A29A">typo in the address? just reply to this email and we'll fix it before it ships.</span></p>` : ''}
         ${!isPickup ? rancherContactLine : ''}

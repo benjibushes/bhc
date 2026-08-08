@@ -135,6 +135,8 @@ export async function POST(
             if (typeof raw === 'object' && 'name' in raw) return String(raw.name);
             return String(raw);
           })(),
+          // Operation-type label (P4): "local share — serves [state]".
+          rancherState: String(rancher['State'] || '').trim() || undefined,
         });
         buyerSent = true;
       } catch (e) {

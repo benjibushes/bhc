@@ -421,6 +421,8 @@ export async function POST(req: Request) {
         wholePrice: Number(rancher['Whole Price']) || undefined,
         referralId: referral.id,
         depositMagicLinkUrl: magicLink,
+        // Operation-type label (P4): "local share — serves [state]".
+        rancherState: String(rancher['State'] || '').trim() || undefined,
       });
       emailSent = true;
       // Deposit-link intro IS a deposit invite — feed the nudge rail
