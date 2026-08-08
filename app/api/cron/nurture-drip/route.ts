@@ -13,6 +13,9 @@
 //   - Pure selector gates: WAITING/READY only, Qualified At (or Funnel
 //     Completed At, for held not-ready completers) required, any
 //     active deal referral = out, terminal after touch 4, monotonic order.
+//   - P2′ lane gate (lib/marketingSupplyGate): share-ready lane only.
+//     'national' (unserved-state / no-budget / community) + 'customer'
+//     (TERMINAL) buyers are SKIPPED, counted in the Cron Runs note.
 //   - claim-before-send per (buyer, touch) — a crashed run can't double-send.
 //   - guardedSend underneath: suppression list + 3/week frequency cap +
 //     Email Log. Touch spacing (≥3d) can't trip the cap by itself.
@@ -27,6 +30,8 @@ import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 import { dueNurtureTouch } from '@/lib/nurtureDrip';
 import { isActiveDealReferral } from '@/lib/capacityCount';
+import { getServedStates } from '@/lib/routingSegment';
+import { nurtureLaneGate } from '@/lib/marketingSupplyGate';
 import {
   sendNurtureEducation,
   sendNurtureShopBridge,
@@ -63,10 +68,17 @@ async function realHandler(_request: Request): Promise<DripResult> {
   const dryRun = mode === 'dry-run';
   const runStartMs = Date.now();
 
-  const [consumers, referrals] = await Promise.all([
+  const [consumers, referrals, ranchers] = await Promise.all([
     getAllRecords(TABLES.CONSUMERS) as Promise<any[]>,
     getAllRecords(TABLES.REFERRALS) as Promise<any[]>,
+    getAllRecords(TABLES.RANCHERS) as Promise<any[]>,
   ]);
+
+  // P2′ SUPPLY/LANE GATE (MARKETING-REVAMP-2026-08 §5): the drip is share-
+  // pressure content, so only lane 'share-ready' receives it. Capacity-OUT
+  // served-states set (P1′ shared helper) — an at-capacity rancher still
+  // counts as coverage, so a single fill never flips a state's drip off.
+  const servedStates = getServedStates(ranchers as any);
 
   // Buyers with a live deal — the drip never talks over a rancher intro.
   const activeDealBuyers = new Set<string>();
@@ -77,6 +89,11 @@ async function realHandler(_request: Request): Promise<DripResult> {
 
   const now = Date.now();
   const due: Array<{ c: any; touch: number }> = [];
+  // P2′ observability: how many otherwise-due buyers the lane gate held back.
+  // 'national' buyers are NOT stamped/advanced — the digest/product flows
+  // that will serve them are later phases; nothing interim is sent.
+  let skippedNational = 0;
+  let skippedCustomer = 0;
   for (const c of consumers) {
     const t = dueNurtureTouch(
       {
@@ -92,8 +109,25 @@ async function realHandler(_request: Request): Promise<DripResult> {
       },
       now,
     );
-    if (t) due.push({ c, touch: t.touch });
+    if (!t) continue;
+    // Lane gate AFTER the due selector so the counts reflect real
+    // suppression (buyers who would actually have been emailed today).
+    // share-ready buyers pass through byte-identical to the pre-gate drip
+    // (pinned in lib/marketingSupplyGate.test.ts).
+    const gate = nurtureLaneGate({
+      routingSegment: c['Routing Segment'],
+      state: c['State'],
+      servedStates,
+    });
+    if (!gate.send) {
+      if (gate.reason === 'national') skippedNational++;
+      else skippedCustomer++;
+      continue;
+    }
+    due.push({ c, touch: t.touch });
   }
+  const laneNote =
+    ` skippedNational=${skippedNational} skippedCustomer=${skippedCustomer}`;
 
   if (dryRun) {
     const byTouch: Record<string, number> = {};
@@ -108,8 +142,12 @@ async function realHandler(_request: Request): Promise<DripResult> {
     return {
       status: 'success',
       recordsTouched: 0,
-      notes: `dry-run: ${due.length} due`,
-      skipReasonBreakdown: { 'dry-run-due': due.length },
+      notes: `dry-run: ${due.length} due${laneNote}`,
+      skipReasonBreakdown: {
+        'dry-run-due': due.length,
+        'lane-national': skippedNational,
+        'lane-customer': skippedCustomer,
+      },
     };
   }
 
@@ -174,7 +212,11 @@ async function realHandler(_request: Request): Promise<DripResult> {
   return {
     status: failed || timeBoxed ? 'partial' : 'success',
     recordsTouched: sent,
-    notes: `sent=${sent} failed=${failed} due=${due.length}${timeBoxed ? ' timeBoxed' : ''}`,
+    notes: `sent=${sent} failed=${failed} due=${due.length}${laneNote}${timeBoxed ? ' timeBoxed' : ''}`,
+    skipReasonBreakdown: {
+      'lane-national': skippedNational,
+      'lane-customer': skippedCustomer,
+    },
   };
 }
 

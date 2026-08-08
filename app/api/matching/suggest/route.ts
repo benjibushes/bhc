@@ -221,7 +221,36 @@ export async function POST(request: Request) {
       const reconfirmRecentlySent =
         !Number.isNaN(lastReconfirmMs) &&
         Date.now() - lastReconfirmMs < RECONFIRM_RESEND_DAYS * 24 * 60 * 60 * 1000;
+      // P2′ SUPPLY GATE (MARKETING-REVAMP-2026-08 §5): the reconfirm email
+      // asks the buyer to re-commit to a purchase — never send it when NO
+      // operational rancher serves their state (capacity-OUT via the shared
+      // P1′ getServedStates: an at-capacity rancher still counts). Unknown/
+      // blank state fails open; a rancher-fetch error fails open (pre-P2′
+      // behavior). Skipping the send also skips the 'Reconfirm Sent At'
+      // stamp — stamp-before-send semantics are preserved for sends that
+      // happen. The 412 below, the operatorOverride bypass (this whole
+      // branch requires !isOperatorOverride), and every other branch of
+      // suggest are untouched.
+      let reconfirmSkippedNoSupply = false;
       if (!reconfirmRecentlySent) {
+        try {
+          const { getServedStates } = await import('@/lib/routingSegment');
+          const { reconfirmAllowedForState } = await import('@/lib/marketingSupplyGate');
+          const ranchersForGate: any[] = await getAllRecords(TABLES.RANCHERS);
+          reconfirmSkippedNoSupply = !reconfirmAllowedForState(
+            buyerRecForGate['State'],
+            getServedStates(ranchersForGate),
+          );
+        } catch (gateErr: any) {
+          console.warn('[matching/suggest] reconfirm supply gate check failed (fail-open):', gateErr?.message);
+        }
+      }
+      if (reconfirmSkippedNoSupply) {
+        console.info(
+          `[matching/suggest] still-looking reconfirm SKIPPED (no supply) — ${buyerLabel} (${buyerRecForGate['State'] || '?'}) has no operational rancher in state`,
+        );
+      }
+      if (!reconfirmRecentlySent && !reconfirmSkippedNoSupply) {
         try {
           const buyerEmailForReconfirm = String(buyerRecForGate['Email'] || '').trim().toLowerCase();
           if (buyerEmailForReconfirm && !buyerRecForGate['Unsubscribed'] && !buyerRecForGate['Bounced'] && !buyerRecForGate['Complained']) {
@@ -254,7 +283,9 @@ export async function POST(request: Request) {
         qualifiedAt: buyerRecForGate['Qualified At'],
         hint: reconfirmRecentlySent
           ? `Qualified >28 days ago — re-confirm already emailed within ${RECONFIRM_RESEND_DAYS}d, not re-sent; lead routes as soon as they confirm (or pass operatorOverride to route now).`
-          : 'Qualified >28 days ago — one-click re-confirm emailed; lead routes as soon as they confirm (or pass operatorOverride to route now).',
+          : reconfirmSkippedNoSupply
+            ? 'Qualified >28 days ago — re-confirm NOT sent: no operational rancher serves their state (P2′ supply gate); pass operatorOverride to route now.'
+            : 'Qualified >28 days ago — one-click re-confirm emailed; lead routes as soon as they confirm (or pass operatorOverride to route now).',
       }, { status: 412 });
     }
 
