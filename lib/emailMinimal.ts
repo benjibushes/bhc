@@ -222,8 +222,15 @@ export async function sendBuyerDepositInvoice(opts: {
 
 // 3b. LEAK 2 (2026-07-05): buyer-facing nudge on an UNPAID deposit request.
 //     Previously an unpaid request got zero buyer follow-up for 14 days (and
-//     that net pinged the rancher). Two touches, capped by the cron's
-//     selector: nudge 1 (~24h) urgency, nudge 2 (~72h+) soft last-touch.
+//     that net pinged the rancher). Three variants:
+//       1     — first nudge (~24h) urgency
+//       'mid' — P5′ (2026-08-08) middle touches of the invite rail's tiered
+//               14d window (touches 2-5) — honest low-pressure check-in; the
+//               old copy said "last note from me" on touch 2, which becomes a
+//               lie once the window allows 6 touches (no fake cliffs — brand
+//               fence from docs/marketing/sms-deposit-nudge.md applies here too)
+//       2     — the TRUE final soft last-touch (rail A's touch 2; rail B's
+//               decay touch)
 //     The link is the magic-link → deposit-page hop (NOT the stored Stripe
 //     session URL — those expire in ~24h, exactly when this fires).
 export async function sendDepositRequestNudge(opts: {
@@ -233,17 +240,20 @@ export async function sendDepositRequestNudge(opts: {
   cutTier: string;
   checkoutUrl: string; // magic-link hop to /checkout/<refId>/deposit
   rancherPhone?: string;
-  /** 1 = first nudge (urgency), 2 = final soft touch. */
-  touch: 1 | 2;
+  /** 1 = first nudge (urgency), 'mid' = middle touch, 2 = final soft touch. */
+  touch: 1 | 2 | 'mid';
 }) {
   const rancherFirst = escape(String(opts.rancherName || '').trim().split(/\s+/)[0] || 'your rancher');
   const phoneLine = opts.rancherPhone
     ? ` questions? text ${rancherFirst} at <a href="sms:${escape(opts.rancherPhone)}" style="color:#0E0E0E;font-weight:600;">${escape(opts.rancherPhone)}</a> or reply to this email.`
     : ` questions? just reply to this email.`;
   const first = opts.touch === 1;
+  const mid = opts.touch === 'mid';
   const subject = first
     ? `your ${opts.cutTier} from ${opts.rancherName} is still waiting`
-    : `should ${opts.rancherName} hold your ${opts.cutTier}?`;
+    : mid
+      ? `your ${opts.cutTier} at ${opts.rancherName} — still open`
+      : `should ${opts.rancherName} hold your ${opts.cutTier}?`;
   const body = first
     ? `<p>hey ${escape(opts.buyerName)},</p>
       <p><strong>${escape(opts.rancherName)}</strong> still has your <strong>${escape(opts.cutTier)}</strong> set aside — but the slot isn't held until your deposit lands, and ${rancherFirst}'s processing dates fill first-come.</p>
@@ -251,7 +261,14 @@ export async function sendDepositRequestNudge(opts: {
         <a href="${opts.checkoutUrl}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#FAF8F4;text-decoration:none;font-size:15px;font-weight:600">pay deposit + lock your slot →</a>
       </p>
       <p style="font-size:14px;color:#2A2A2A;line-height:1.6">fully refundable until ${rancherFirst} accepts your slot.${phoneLine}</p>`
-    : `<p>hey ${escape(opts.buyerName)},</p>
+    : mid
+      ? `<p>hey ${escape(opts.buyerName)},</p>
+      <p>quick check-in — <strong>${escape(opts.rancherName)}</strong> is still holding a <strong>${escape(opts.cutTier)}</strong> for you. no pressure either way: if you're in, the link below locks it. if the timing's off, reply and tell me and i'll stop the reminders.</p>
+      <p style="margin:26px 0">
+        <a href="${opts.checkoutUrl}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#FAF8F4;text-decoration:none;font-size:15px;font-weight:600">pay deposit + lock your slot →</a>
+      </p>
+      <p style="font-size:14px;color:#2A2A2A;line-height:1.6">fully refundable until ${rancherFirst} accepts your slot.${phoneLine}</p>`
+      : `<p>hey ${escape(opts.buyerName)},</p>
       <p>last note from me on this one — <strong>${escape(opts.rancherName)}</strong> has been holding a <strong>${escape(opts.cutTier)}</strong> for you. if the timing's wrong, no hard feelings; if you still want it, here's your link:</p>
       <p style="margin:26px 0">
         <a href="${opts.checkoutUrl}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#FAF8F4;text-decoration:none;font-size:15px;font-weight:600">lock it in →</a>
@@ -264,7 +281,37 @@ export async function sendDepositRequestNudge(opts: {
       ${body}
       <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow<br><em>Connecting every household to a ranch they trust.</em></p>
     </div>`,
-    templateName: first ? 'deposit_request_nudge_1' : 'deposit_request_nudge_2',
+    templateName: first ? 'deposit_request_nudge_1' : mid ? 'deposit_request_nudge_mid' : 'deposit_request_nudge_2',
+  });
+}
+
+// 3d. P5′ SUNSET RE-PERMISSION (2026-08-08, MARKETING-REVAMP-2026-08 §5):
+//     the ONE re-permission email the marketing-sunset cron sends to a
+//     consumer with 180+ days of zero engagement (clicks + site activity —
+//     opens don't count, MPP) before suppressing them. Plain Ben voice, one
+//     link, no images, no pitch. MARKETING stream (lib/emailStreams.ts) so
+//     the central wrapper auto-adds List-Unsubscribe + one-click headers.
+//     keepUrl → /api/marketing/keep?token=<jwt> (stamps engagement truth).
+export async function sendSunsetRePermission(opts: {
+  to: string;
+  firstName: string;
+  keepUrl: string;
+}) {
+  const first = escape(String(opts.firstName || '').trim() || 'there');
+  return sendEmail({
+    to: opts.to,
+    subject: `still want ranch updates?`,
+    html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
+      <p>hey ${first},</p>
+      <p>you signed up for BuyHalfCow a while back, and i haven't heard from you since. i only want to email people who actually want to hear from ranchers.</p>
+      <p>still want ranch updates? one click keeps you on the list. silence takes you off it — no hard feelings either way.</p>
+      <p style="margin:28px 0">
+        <a href="${opts.keepUrl}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#FAF8F4;text-decoration:none;font-size:15px;font-weight:600">keep me on the list →</a>
+      </p>
+      <p style="font-size:13px;color:#5A5752;line-height:1.6">if i don't hear from you in the next 30 days, i'll quietly stop emailing.</p>
+      <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow<br><em>Connecting every household to a ranch they trust.</em></p>
+    </div>`,
+    templateName: 'sunset_repermission',
   });
 }
 

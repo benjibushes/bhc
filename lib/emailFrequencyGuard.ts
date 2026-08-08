@@ -27,15 +27,20 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   // Live Email Sends data: 99 of the last 100 suppressions were 'cap-exceeded'
   // — NOT unsubscribes. The 3/week cap was silently eating the deposit ASK.
   //
-  // deposit_request_nudge_1/2: the buyer's rancher SENT them a deposit request
-  // and they're expected to pay — this is the money ask. 5 were cap-suppressed,
-  // which partly explains the 16-requested → 6-opened → 1-paid funnel. SAFE to
-  // whitelist because the throttle is DB-STATE, not a best-effort stamp:
-  // DEPOSIT_NUDGE_LIFETIME_CAP=2 read from 'Deposit Nudge Count' + 48h cooldown
-  // (lib/depositRequestNudge.ts) — capped at 2 per referral FOREVER, so
-  // whitelisting cannot create volume even if a stamp write fails.
+  // deposit_request_nudge_1/2/mid: the buyer's rancher SENT them a deposit
+  // request (or the quiz minted an invite) and they're expected to pay — this
+  // is the money ask. 5 were cap-suppressed, which partly explains the
+  // 16-requested → 6-opened → 1-paid funnel. SAFE to whitelist because the
+  // throttle is DB-STATE, not a best-effort stamp: rail A stays capped at
+  // DEPOSIT_NUDGE_LIFETIME_CAP=2 + 48h cooldown; rail B (P5′ 2026-08-08) is
+  // bounded by lib/intentWindows' deposit-invite policy — hard lifetime cap
+  // of 6 touches per referral, every gap >= 2 days, window+decay hard-ends at
+  // day 21 — all read from 'Deposit Nudge Count'/'Deposit Nudge Last Sent At'
+  // with claim-before-send, so whitelisting cannot create volume even if a
+  // send fails.
   'deposit_request_nudge_1',
   'deposit_request_nudge_2',
+  'deposit_request_nudge_mid',
   // NOT whitelisted (pressure audit 2026-07-17): still_looking_reconfirm and
   // sendRancherLeadReminder were ALSO cap-eaten (31 + 33 suppressed), but their
   // throttles are too weak to safely uncap:

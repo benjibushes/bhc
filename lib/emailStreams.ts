@@ -82,6 +82,10 @@ export const MARKETING_TEMPLATES: readonly string[] = [
   'sendRancherLaunchWarmup',
   'sendRancherLaunchWarmupNudge',
   'sendNoBudgetFounderPitch',
+  // P5′ sunset re-permission (marketing-sunset cron) — the ONE "still want
+  // ranch updates?" ask before 180d-unengaged consumers are suppressed. MUST
+  // be marketing: it needs the auto List-Unsubscribe/one-click pair.
+  'sunset_repermission',
   // Campaign machine
   'sendBroadcastEmail',
   'demandRouterMsg1',
@@ -119,6 +123,9 @@ export const TRANSACTIONAL_TEMPLATES: readonly string[] = [
   'buyer_deposit_invoice',
   'deposit_request_nudge_1',
   'deposit_request_nudge_2',
+  // P5′ middle touches of the deposit-invite tiered window (touches 2-5) —
+  // same money-ask class as nudge_1/2.
+  'deposit_request_nudge_mid',
   'quiz_complete_cal_invite',
   'quiz_complete_deposit_invite',
   'buyer_refund_notice',

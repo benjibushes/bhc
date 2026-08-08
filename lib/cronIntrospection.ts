@@ -112,6 +112,11 @@ export const EXPECTED_CRONS_24H = [
   // is written every day (skipped/dry-run/live alike), so a missing row
   // means a REAL missed run.
   'ranch-stand-digest',
+  // P5′ sunset policy (re-permission ask + 180d/12mo suppression) — dark
+  // until MARKETING_SUNSET_ENABLED, but the gate sits INSIDE realHandler
+  // (demand-router pattern): a daily 'skipped' Cron Runs row is written
+  // while dark, so a missing row always means a REAL missed run.
+  'marketing-sunset',
 ] as const;
 
 /**

@@ -43,6 +43,7 @@ import { generateMemberLoginToken } from '@/lib/secrets';
 import {
   selectDepositNudges,
   selectDepositAbandonNudges,
+  depositAbandonPlan,
   selectDepositSmsRescues,
   renderDepositSmsNudge,
   durableDepositPayLink,
@@ -79,10 +80,14 @@ interface CronResult {
 const CANDIDATE_FORMULA =
   `AND({Status}="Awaiting Payment", NOT({Deposit Requested At}=""), {Deposit Paid At}="")`;
 
-// DEPOSIT-ABANDON RAIL (2026-07-05): quiz-complete deposit invites (Deposit
-// Invite Sent At set) that were never paid and aren't past the deposit ask.
-// Disjoint from the rancher-request rail via the empty Deposit Requested At
-// clause; the JS selector re-checks age/cap/cooldown/terminal-status.
+// DEPOSIT-ABANDON RAIL (2026-07-05; P5′ tiered window 2026-08-08): quiz-
+// complete deposit invites (Deposit Invite Sent At set) that were never paid
+// and aren't past the deposit ask. Disjoint from the rancher-request rail via
+// the empty Deposit Requested At clause; the JS selector re-checks terminal
+// status + rides lib/intentWindows' 'deposit-invite' policy (14d window, up
+// to 5 touches at days 1/3/6/9/13, one decay touch in days 14-21, then done).
+// Stamps and claim-before-send are UNCHANGED — same 'Deposit Nudge Count' /
+// 'Deposit Nudge Last Sent At' truth, same verify-persist abort.
 const ABANDON_CANDIDATE_FORMULA =
   `AND(NOT({Deposit Invite Sent At}=""), {Deposit Requested At}="", {Deposit Paid At}="")`;
 
@@ -438,7 +443,17 @@ async function realHandler(_request: Request): Promise<CronResult> {
       if (!buyerEmail) continue;
 
       const priorCount = Number(r['Deposit Nudge Count']) || 0;
-      const touch: 1 | 2 = priorCount >= 1 ? 2 : 1;
+      // Copy variant. Rail A keeps its original 2-touch mapping (1 = urgency,
+      // 2 = "last note"). Rail B (P5′) has up to 6 touches, so "last note" on
+      // touch 2 would be a lie — the decay touch is the true final; everything
+      // between touch 1 and decay is the honest 'mid' check-in.
+      const isRailB =
+        !String(r['Deposit Requested At'] || '').trim() &&
+        !!String(r['Deposit Invite Sent At'] || '').trim();
+      let touch: 1 | 2 | 'mid';
+      if (priorCount === 0) touch = 1;
+      else if (isRailB) touch = depositAbandonPlan(r, nowMs)?.tier === 'decay' ? 2 : 'mid';
+      else touch = 2;
 
       // CLAIM BEFORE SEND + verify-persist (fields-missing abort).
       const updated: any = await updateRecord(TABLES.REFERRALS, r.id, {
