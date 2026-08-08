@@ -121,8 +121,38 @@ export async function PATCH(
           message: currentInquiry['Message'],
           inquiryId: id,
         });
-      } catch (emailError) {
+        // Money-path truth (audit 2026-08-08): persist that the rancher was
+        // actually told. Notes marker — no schema addition needed.
+        try {
+          const prevNotes = String(currentInquiry['Notes'] || '');
+          await updateRecord(TABLES.INQUIRIES, id, {
+            'Notes': `${prevNotes ? prevNotes + '\n' : ''}[Rancher notified ${new Date().toISOString()}]`,
+          });
+        } catch (stampErr: any) {
+          console.warn('[inquiries PATCH] notify stamp failed (non-fatal):', stampErr?.message);
+        }
+      } catch (emailError: any) {
         console.error('Error sending approval email to rancher:', emailError);
+        // Approved-but-never-told was silent before — the inquiry sat
+        // Approved with nothing recording the rancher never heard. Persist
+        // the failure and page Ben.
+        try {
+          const prevNotes = String(currentInquiry['Notes'] || '');
+          await updateRecord(TABLES.INQUIRIES, id, {
+            'Notes': `${prevNotes ? prevNotes + '\n' : ''}[Rancher notify FAILED ${new Date().toISOString()}: ${String(emailError?.message || 'unknown').slice(0, 120)}]`,
+          });
+        } catch { /* best-effort */ }
+        try {
+          const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+          await sendOperatorSignal({
+            urgency: 'loud',
+            kind: 'system-error',
+            summary: 'Inquiry approved but rancher email FAILED',
+            detail: `Inquiry ${id} was approved and the rancher notification email failed to send. The rancher does not know about this lead — resend from the admin inquiries view.`,
+            dedupeKey: `inquiry-notify-fail-${id}`,
+            dedupeWindowMs: 60 * 60 * 1000,
+          });
+        } catch { /* alert best-effort */ }
         // Don't fail the request if email fails
       }
     }

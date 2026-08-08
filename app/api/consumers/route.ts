@@ -1128,7 +1128,10 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      consumer: record,
+      // Minimal DTO — the raw Airtable SDK record leaked _table/_base
+      // internals (incl. the base id) to the public API (money-audit
+      // 2026-08-08). No client reads beyond presence + id.
+      consumer: { id: record.id },
       rancherAvailable,
       // /access form checks for qualifyUrl and router.push() if present.
       // Hot signups (intent>=60 + in-state rancher + concrete tier/budget/timing)
