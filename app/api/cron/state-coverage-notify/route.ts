@@ -11,12 +11,18 @@
 //      (default OFF — the operator flips it deliberately; until then the
 //      cron reports what it WOULD do and sends nothing);
 //   2. daily, computes the operationally covered states from the live
-//      rancher pool (isRancherOperationalForBuyers +
-//      getOperationalServedStates — the same truth the signup gate uses);
-//   3. selects waitlist buyers whose captured state is now covered
-//      (pure helper ./selection.ts, unit-tested), capped at 50/run —
-//      already-notified rows are excluded by the durable Notes stamp, so
-//      the cap walks the tail across runs;
+//      rancher pool (lib/routingSegment.getServedStates — the shared P1′
+//      helper, capacity-OUT, same truth the signup gate uses);
+//   3. selects buyers whose state flipped unserved→served (pure helper
+//      ./selection.ts, unit-tested), capped at 50/run — already-notified
+//      rows are excluded by the durable Notes stamp, so the cap walks the
+//      tail across runs. WIDENED (P1′, 2026-08-08): the pool is no longer
+//      just Source='relaunch_waitlist' — any consumer whose stored Routing
+//      Segment is STATE_WAITLIST (i.e. classified while their state was
+//      unserved) joins it, so every lane-2→1 flip gets the promised letter,
+//      not only the /api/waitlist captures. If Airtable ever rejects the
+//      {Routing Segment} clause the read degrades to the legacy
+//      waitlist-only formula instead of killing the run;
 //   4. sends ONE whitelisted 'state_coverage_opened' email per buyer, ever.
 //      Once-ever = a durable AREA_OPENED_MARKER appended to the row's Notes
 //      after the outcome (hard rule 2: send truth persisted on the record),
@@ -25,14 +31,11 @@
 //      a duplicate. Suppression (unsub/bounce/complaint) is checked both in
 //      selection and again by the send wrapper.
 
-import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
+import { getAllRecords, updateRecord, TABLES, isInvalidFilterFormulaError } from '@/lib/airtable';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendStateCoverageOpened } from '@/lib/email';
 import { claimOnce } from '@/lib/rancherCapacity';
-import {
-  isRancherOperationalForBuyers,
-  getOperationalServedStates,
-} from '@/lib/rancherEligibility';
+import { getServedStates } from '@/lib/routingSegment';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 import { selectStateCoverageTargets, DEFAULT_NOTIFY_CAP, AREA_OPENED_MARKER } from './selection';
@@ -50,21 +53,38 @@ async function realHandler(_request: Request): Promise<{
 
   const enabled = process.env.STATE_COVERAGE_NOTIFY_ENABLED === 'true';
 
-  // Covered states from the live rancher pool — identical semantics to the
-  // signup-time "rancher available in your state?" gate.
+  // Covered states from the live rancher pool — the shared P1′ helper
+  // (capacity-OUT, identical semantics to the loop it replaced and to the
+  // signup-time "rancher available in your state?" gate).
   const ranchers = (await getAllRecords(TABLES.RANCHERS)) as any[];
-  const covered = new Set<string>();
-  for (const r of ranchers) {
-    if (!isRancherOperationalForBuyers(r)) continue;
-    for (const s of getOperationalServedStates(r)) covered.add(s);
+  const covered = getServedStates(ranchers);
+
+  // WIDENED POOL (P1′): waitlist captures PLUS any consumer whose stored
+  // Routing Segment says STATE_WAITLIST. The stored segment is yesterday's
+  // truth (nightly reclassify-buyers) — "segment says unserved" ∩ "state is
+  // covered NOW" = exactly the unserved→served flip this cron exists to
+  // announce. One OR read, so no client-side union; selection dedupes by id
+  // as a belt. Degrades to the legacy waitlist-only formula if the segment
+  // clause is ever rejected (unknown-field errors kill the whole query —
+  // the deposit-accept-sla {Refunded At} lesson).
+  let poolRows: any[];
+  let widened = true;
+  try {
+    poolRows = (await getAllRecords(
+      TABLES.CONSUMERS,
+      `OR({Source} = "relaunch_waitlist", {Routing Segment} = "STATE_WAITLIST")`,
+    )) as any[];
+  } catch (e: any) {
+    if (!isInvalidFilterFormulaError(e)) throw e;
+    console.warn('[state-coverage-notify] widened formula rejected; falling back to waitlist-only pool:', e?.message);
+    widened = false;
+    poolRows = (await getAllRecords(
+      TABLES.CONSUMERS,
+      `{Source} = "relaunch_waitlist"`,
+    )) as any[];
   }
 
-  const waitlistRows = (await getAllRecords(
-    TABLES.CONSUMERS,
-    `{Source} = "relaunch_waitlist"`,
-  )) as any[];
-
-  const targets = selectStateCoverageTargets(waitlistRows, covered, DEFAULT_NOTIFY_CAP);
+  const targets = selectStateCoverageTargets(poolRows, covered, DEFAULT_NOTIFY_CAP);
 
   if (!enabled) {
     // DRY by default (the LOSS_RECOVERY precedent): report the would-send
@@ -72,7 +92,7 @@ async function realHandler(_request: Request): Promise<{
     return {
       status: 'success',
       recordsTouched: 0,
-      notes: `DISABLED (STATE_COVERAGE_NOTIFY_ENABLED!=='true') — would notify ${targets.length} of ${waitlistRows.length} waitlist rows; covered states=${covered.size}`,
+      notes: `DISABLED (STATE_COVERAGE_NOTIFY_ENABLED!=='true') — would notify ${targets.length} of ${poolRows.length} pool rows (${widened ? 'widened: waitlist+STATE_WAITLIST segment' : 'FALLBACK: waitlist-only'}); covered states=${covered.size}`,
     };
   }
 
@@ -88,7 +108,7 @@ async function realHandler(_request: Request): Promise<{
   // stamp write lands in errors[] (run goes partial); the Redis claim covers
   // the retry window until the next attempt re-stamps.
   const notesById = new Map<string, string>();
-  for (const row of waitlistRows) notesById.set(String(row.id), String(row['Notes'] || ''));
+  for (const row of poolRows) notesById.set(String(row.id), String(row['Notes'] || ''));
   const stampNotes = async (consumerId: string, outcome: 'sent' | 'suppressed') => {
     const day = new Date().toISOString().slice(0, 10);
     const line = `${AREA_OPENED_MARKER} ${day}] area-opened email ${outcome} (state-coverage-notify)`;
@@ -135,7 +155,7 @@ async function realHandler(_request: Request): Promise<{
   return {
     status: errors.length ? 'partial' : 'success',
     recordsTouched: sent,
-    notes: `waitlist=${waitlistRows.length} covered-states=${covered.size} targets=${targets.length} sent=${sent} skipped=${skipped} errs=${errors.length}${errors.length ? ' err1=' + errors[0] : ''}`,
+    notes: `pool=${poolRows.length} (${widened ? 'widened' : 'FALLBACK waitlist-only'}) covered-states=${covered.size} targets=${targets.length} sent=${sent} skipped=${skipped} errs=${errors.length}${errors.length ? ' err1=' + errors[0] : ''}`,
   };
 }
 

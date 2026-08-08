@@ -5,10 +5,19 @@
 // Airtable: the cron does the reads, computes the operational covered-state
 // set (lib/rancherEligibility), and hands the rows here.
 //
-// A waitlist row is a Consumers record created by /api/waitlist
-// (Source='relaunch_waitlist') — the "no rancher in your state yet, we'll
-// email you when there is" capture. This helper answers: which of those
-// buyers should get their ONE "your area opened" email this run?
+// The pool WIDENED with P1′ (MARKETING-REVAMP-2026-08 §5, 2026-08-08).
+// Originally only /api/waitlist captures (Source='relaunch_waitlist') — the
+// "no rancher in your state yet, we'll email you when there is" promise. Now
+// the cron also feeds consumers whose stored Routing Segment is
+// STATE_WAITLIST: the segment is yesterday's nightly classification, so
+// "segment says unserved" ∩ "state covered now" = an unserved→served flip
+// (lane 2 → lane 1), and those buyers were promised the same letter by the
+// lane architecture. Selection itself stays cohort-agnostic — the covered-
+// state check IS the flip detection — and dedupes by record id since a
+// waitlist capture can also carry the segment. The Redis claimOnce +
+// AREA_OPENED_MARKER once-ever guards are untouched and apply identically
+// to both cohorts. This helper answers: which of those buyers should get
+// their ONE "your area opened" email this run?
 
 import { normalizeState } from '@/lib/states';
 
@@ -21,6 +30,9 @@ export interface WaitlistRowLike {
   Unsubscribed?: unknown;
   Bounced?: unknown;
   Complained?: unknown;
+  /** Present on widened-pool rows; informational — selection never gates on it. */
+  Source?: unknown;
+  'Routing Segment'?: unknown;
 }
 
 /**
@@ -46,11 +58,16 @@ export interface StateCoverageTarget {
 export const DEFAULT_NOTIFY_CAP = 50;
 
 /**
- * Select waitlist buyers whose captured state is now operationally covered.
+ * Select pool buyers whose state is now operationally covered — i.e. the
+ * unserved→served flip. The pool is waitlist captures + STATE_WAITLIST-
+ * segment consumers (see header); both were recorded while the state was
+ * unserved, so `coveredStates.has(state)` IS the flip detection.
  *
  * Rules:
  *   - must have a deliverable email and a normalizable State;
  *   - state must be in `coveredStates` (2-letter codes);
+ *   - duplicate record ids are selected once (a waitlist capture can also
+ *     carry Routing Segment=STATE_WAITLIST and reach here from both cohorts);
  *   - Unsubscribed / Bounced / Complained rows are excluded (the send-side
  *     suppression list is the belt; this keeps them out of the claim loop
  *     entirely so a suppressed buyer never burns a Redis claim);
@@ -69,9 +86,12 @@ export function selectStateCoverageTargets(
   cap: number = DEFAULT_NOTIFY_CAP,
 ): StateCoverageTarget[] {
   const out: StateCoverageTarget[] = [];
+  const seen = new Set<string>();
   for (const row of rows || []) {
     if (out.length >= cap) break;
     if (!row || !row.id) continue;
+    if (seen.has(String(row.id))) continue;
+    seen.add(String(row.id));
     if (row.Unsubscribed || row.Bounced || row.Complained) continue;
     // Already notified (durable Notes stamp) — out of the pool forever, so
     // buyers past the cap are reached on subsequent runs.

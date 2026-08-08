@@ -98,3 +98,67 @@ test('cap override respected and deterministic order preserved', () => {
   const targets = selectStateCoverageTargets(rows, MT, 2);
   assert.deepEqual(targets.map((t) => t.consumerId), ['r1', 'r2']);
 });
+
+// ── P1′ widened pool (waitlist + STATE_WAITLIST-segment consumers) ──────────
+
+test('WIDENED: a STATE_WAITLIST-segment consumer (no waitlist Source) is selected when their state flips covered', () => {
+  const targets = selectStateCoverageTargets(
+    [
+      {
+        id: 'recSeg',
+        Email: 'seg@x.com',
+        'Full Name': 'Seg Buyer',
+        State: 'MT',
+        'Routing Segment': 'STATE_WAITLIST',
+      },
+    ],
+    MT,
+  );
+  assert.deepEqual(targets, [
+    { consumerId: 'recSeg', email: 'seg@x.com', firstName: 'Seg', state: 'MT' },
+  ]);
+});
+
+test('WIDENED: segment consumers still-unserved states are NOT selected (covered-state check IS the flip detection)', () => {
+  const targets = selectStateCoverageTargets(
+    [{ id: 'recFL', Email: 'fl@x.com', State: 'FL', 'Routing Segment': 'STATE_WAITLIST' }],
+    MT,
+  );
+  assert.equal(targets.length, 0);
+});
+
+test('WIDENED: duplicate record ids select once (waitlist capture that also carries the segment)', () => {
+  const row = {
+    id: 'recDup',
+    Email: 'dup@x.com',
+    State: 'MT',
+    Source: 'relaunch_waitlist',
+    'Routing Segment': 'STATE_WAITLIST',
+  };
+  const targets = selectStateCoverageTargets([row, { ...row }], MT);
+  assert.equal(targets.length, 1);
+  assert.equal(targets[0].consumerId, 'recDup');
+});
+
+test('WIDENED: once-ever guards apply identically to segment-cohort rows (Notes marker + suppression)', () => {
+  const targets = selectStateCoverageTargets(
+    [
+      {
+        id: 'recStamped',
+        Email: 'a@x.com',
+        State: 'MT',
+        'Routing Segment': 'STATE_WAITLIST',
+        Notes: `${AREA_OPENED_MARKER} 2026-08-02] area-opened email sent (state-coverage-notify)`,
+      },
+      {
+        id: 'recUnsub',
+        Email: 'b@x.com',
+        State: 'MT',
+        'Routing Segment': 'STATE_WAITLIST',
+        Unsubscribed: true,
+      },
+    ],
+    MT,
+  );
+  assert.equal(targets.length, 0);
+});

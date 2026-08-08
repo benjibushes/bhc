@@ -26,8 +26,8 @@ import {
   sendIncompleteProfileAsk,
 } from '@/lib/email';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
-import { normalizeState, normalizeStates } from '@/lib/states';
-import { isRancherOperationalForBuyers, isRancherOnConnect } from '@/lib/rancherEligibility';
+import { normalizeState } from '@/lib/states';
+import { isRancherOnConnect } from '@/lib/rancherEligibility';
 
 import jwt from 'jsonwebtoken';
 
@@ -206,8 +206,6 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
         !c['Unsubscribed'] &&
         String((c['Lead Source'] as any)?.name || c['Lead Source'] || '').trim() !== 'rancher-crm',
     );
-    const activeRanchers = await getAllRecords(TABLES.RANCHERS, '{Active Status} = "Active"') as any[];
-
     // Cache active referrals ONCE (was re-fetched per Day-7 buyer inside the
     // loop — turned a 500ms call into 50 × 500ms = 25s per cron run, the
     // primary timeout cause). Now indexed by buyer ID for O(1) lookup.
@@ -222,29 +220,10 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
       if (id && !referralsByBuyer.has(id)) referralsByBuyer.set(id, r);
     }
 
-    // Helper: does this consumer have a rancher available IN THEIR STATE?
-    // Local-only routing policy — Ships Nationwide is no longer honored.
-    // Checks both primary State and States Served (multi-state ranchers).
-    //
-    // Uses normalizeState() so "Montana" (full name) and "MT" (abbreviation)
-    // both resolve to the same canonical 2-letter code. Without this, buyers
-    // who entered their state as "Montana" got compared against rancher states
-    // stored as "MT" and silently failed — stranded in nurture forever.
-    //
-    // Also enforces the unified rancher-eligibility check, NOT just Active
-    // Status. Otherwise a rancher who's Active but hasn't signed/onboarded
-    // would qualify here while being rejected by the actual matching engine.
-    function hasRancherAvailable(consumerState: string): boolean {
-      const target = normalizeState(consumerState || '');
-      if (!target) return false;
-      return activeRanchers.some((r: any) => {
-        if (!isRancherOperationalForBuyers(r)) return false;
-        const primary = normalizeState(r['State'] || '');
-        if (primary === target) return true;
-        const served = normalizeStates(r['States Served'] || '');
-        return served.includes(target);
-      });
-    }
+    // hasRancherAvailable + its Ranchers fetch deleted (P1′, 2026-08-08):
+    // zero call sites — the state-machine rebuild left it behind, and it was
+    // ALSO a fifth divergent served-states definition (missed the multi-state
+    // admin gate). The shared truth is lib/routingSegment.getServedStates.
 
     // ── Buyer Stage state-machine driver (the rebuilt cron heart) ────────────
     // Replaces the prior parallel nurture/segment/intro-checkin tangle. One
