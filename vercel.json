@@ -261,6 +261,10 @@
       "schedule": "7 6 * * *"
     },
     {
+      "path": "/api/cron/ranch-stand-digest",
+      "schedule": "52 14 * * *"
+    },
+    {
       "path": "/api/cron/marketing-sunset",
       "schedule": "17 7 * * *"
     }
