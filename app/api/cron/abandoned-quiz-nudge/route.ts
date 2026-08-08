@@ -13,9 +13,12 @@
 // — only buyers whose state has an operational rancher (else they'd qualify
 // straight onto a waitlist with no rancher to route to).
 //
-// Cadence: 4 touches, spaced — touch 1 on first sight, then +2d, +4d, +7d
-// (≈ days 0 / 2 / 6 / 13). Copy escalates: invite → reminder → scarcity →
-// last call. After 4 touches (or aging out of the window) the buyer stops.
+// Cadence (P5′ tiered intent window, 2026-08-08 — lib/intentWindows 'quiz'
+// policy): 7-day sprint anchored on the FIRST touch, max 3 touches ~48h apart
+// (days 0 / 2 / 4), then ONE decay touch in the following 7 days, then done
+// forever. Copy escalates: invite → reminder → scarcity → last call (the
+// decay touch IS the "last call" variant). The old 0/2/6/13 schedule did NOT
+// equal the panel's 7d/3-touch policy, so this is a real rescope, not churn.
 //
 // Progress tracking (email-hygiene 2026-08-02): stage truth lives in the
 // dedicated Consumers field `Quiz Nudge Log` (`t1:2026-08-02;t2:2026-08-04`).
@@ -200,10 +203,11 @@ async function realHandler(_request: Request): Promise<CronResult> {
     const notes = String(c['Notes'] || '');
     const nudgeLog = String(c[QUIZ_NUDGE_LOG_FIELD] || '');
 
-    // Durable dedup (email-hygiene 2026-08-02): one touch/day, 4 lifetime,
-    // [0,2,4,7]-day spacing — counted from the UNION of the durable log field
-    // and any surviving Notes markers, so Notes truncation can never restart
-    // the drip. Pure + tested in lib/quizNudgeLog.ts.
+    // Durable dedup (email-hygiene 2026-08-02) + P5′ tiered window: one
+    // touch/day, 3 sprint touches (days 0/2/4) + 1 decay touch (days 7-14),
+    // counted from the UNION of the durable log field and any surviving Notes
+    // markers, so Notes truncation can never restart the drip. Pure + tested
+    // in lib/quizNudgeLog.ts on top of lib/intentWindows.
     const decision = decideQuizNudge({ notes, log: nudgeLog, today });
     if (decision.action === 'skip') { skipped++; continue; }
 

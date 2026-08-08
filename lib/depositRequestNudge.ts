@@ -26,6 +26,8 @@
 // is enforced by the cron via the consumer record + guardedSend's global
 // suppression list — belt and braces.
 
+import { sprintPlanFor, type SprintPlan } from './intentWindows';
+
 export const DEPOSIT_NUDGE_LIFETIME_CAP = 2;
 export const DEPOSIT_NUDGE_MIN_AGE_MS = 24 * 60 * 60 * 1000; // 24h after request
 export const DEPOSIT_NUDGE_COOLDOWN_MS = 48 * 60 * 60 * 1000; // 48h between nudges
@@ -104,15 +106,26 @@ export function selectDepositNudges<T extends DepositNudgeReferralLike>(
     .slice(0, cap);
 }
 
-// ── DEPOSIT-ABANDON RAIL (2026-07-05) ────────────────────────────────────────
+// ── DEPOSIT-ABANDON RAIL (2026-07-05; P5′ tiered window 2026-08-08) ─────────
 // The rancher-request rail above only fires when a RANCHER hit "request
 // deposit" (Deposit Requested At set). But a quiz-complete buyer routed to a
 // deposit-capable rancher gets a deposit link too — sendQuizCompleteDepositInvite
 // stamps 'Deposit Invite Sent At' — and if they don't pay, NOTHING chased them.
 // That's the "abandoned cart" of the funnel (the single highest-ROI trigger in
-// the research). Same copy, same caps, same claim-before-send; only the entry
+// the research). Same claim-before-send stamps as rail A; only the entry
 // signal differs. Deliberately mutually exclusive with the rail above
 // (requires Deposit Requested At EMPTY) so a referral is never double-nudged.
+//
+// P5′ CADENCE (MARKETING-REVAMP-2026-08 §5, panel-amended): this rail now
+// rides lib/intentWindows' 'deposit-invite' policy — 14-day window, up to 5
+// touches on a ramping schedule (days 1/3/6/9/13 after the invite), then ONE
+// decay touch in the following 7 days, then permanent silence. Replaces the
+// old flat cap-2/48h-cooldown cadence, which closed before the median buyer
+// decides (quiz→close median is 2-21d; ~90% of considered conversions land by
+// day 12). The stamp fields are UNCHANGED — 'Deposit Nudge Count' + 'Deposit
+// Nudge Last Sent At' stay the touch-count truth; the planner only answers
+// due/not-due. Rail A above deliberately keeps its 2-touch cap (a rancher-
+// initiated request has the rancher-facing 14d chase behind it).
 //
 // Terminal statuses stop the nudge: a paid, accepted (Slot Locked), or closed
 // referral is done. Denylist (not allowlist) so a new mid-funnel status can't
@@ -122,40 +135,50 @@ export function selectDepositNudges<T extends DepositNudgeReferralLike>(
 const ABANDON_STOP_STATUSES = new Set(['Closed Won', 'Closed Lost', 'Slot Locked']);
 
 /**
- * Pure per-row predicate for the deposit-ABANDON rail: a quiz-complete deposit
- * invite that was sent, never paid, and isn't terminal. Shares the same cap +
- * cooldown fields as the rancher-request rail so a referral that somehow
- * qualifies for both is still capped once.
+ * The tiered-window plan for a deposit-abandon row: structural guards first
+ * (invite stamp set, NOT a rancher request, unpaid, non-terminal, no corrupt
+ * stamps), then lib/intentWindows decides due/exhausted/tier. Returns null
+ * when the row isn't a rail-B row at all (or its stamps are corrupt — fail
+ * closed, never storm). The cron uses `tier` to pick the copy variant
+ * (urgency → mid → decay "last note").
  */
+export function depositAbandonPlan(
+  r: DepositNudgeReferralLike,
+  nowMs: number,
+): SprintPlan | null {
+  // Must be a quiz-complete invite (invite stamp set) — and NOT a rancher
+  // request (that's the other rail; keeps the two disjoint).
+  const invitedMs = parseMs(r['Deposit Invite Sent At']);
+  if (invitedMs === null) return null;
+  if (String(r['Deposit Requested At'] || '').trim()) return null;
+
+  // Unpaid + not past the deposit ask.
+  if (String(r['Deposit Paid At'] || '').trim()) return null;
+  if (ABANDON_STOP_STATUSES.has(statusName(r['Status']))) return null;
+
+  // Corrupt last-sent stamp => fail closed (the planner also fails closed on
+  // a count>0/no-anchor mismatch — no nudge storm on data drift).
+  const lastRaw = String(r['Deposit Nudge Last Sent At'] || '').trim();
+  let lastMs: number | null = null;
+  if (lastRaw) {
+    const t = Date.parse(lastRaw);
+    if (!Number.isFinite(t)) return null;
+    lastMs = t;
+  }
+
+  // 24h min-age is subsumed by the policy's day-1 first offset; the ramping
+  // deltas subsume the old 48h cooldown (every gap >= 2 days).
+  return sprintPlanFor('deposit-invite', invitedMs, nudgeCount(r), nowMs, {
+    lastTouchAt: lastMs,
+  });
+}
+
+/** Pure per-row predicate — planner-backed since P5′. */
 export function isDepositAbandonEligible(
   r: DepositNudgeReferralLike,
   nowMs: number,
 ): boolean {
-  // Must be a quiz-complete invite (invite stamp set) — and NOT a rancher
-  // request (that's the other rail; keeps the two disjoint).
-  const invitedMs = parseMs(r['Deposit Invite Sent At']);
-  if (invitedMs === null) return false;
-  if (String(r['Deposit Requested At'] || '').trim()) return false;
-
-  // Unpaid + not past the deposit ask.
-  if (String(r['Deposit Paid At'] || '').trim()) return false;
-  if (ABANDON_STOP_STATUSES.has(statusName(r['Status']))) return false;
-
-  // Give the original invite 24h before the first nudge.
-  if (nowMs - invitedMs < DEPOSIT_NUDGE_MIN_AGE_MS) return false;
-
-  // Shared lifetime cap: 2 buyer nudges, then silence.
-  if (nudgeCount(r) >= DEPOSIT_NUDGE_LIFETIME_CAP) return false;
-
-  // Shared cooldown. Corrupt stamp => treat as recent (skip) — no nudge storm.
-  const lastRaw = String(r['Deposit Nudge Last Sent At'] || '').trim();
-  if (lastRaw) {
-    const lastMs = Date.parse(lastRaw);
-    if (!Number.isFinite(lastMs)) return false;
-    if (nowMs - lastMs < DEPOSIT_NUDGE_COOLDOWN_MS) return false;
-  }
-
-  return true;
+  return depositAbandonPlan(r, nowMs)?.due === true;
 }
 
 /** Select deposit-abandon referrals to nudge this run — oldest invite first. */

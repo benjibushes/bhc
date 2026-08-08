@@ -19,11 +19,23 @@
 // Legacy `[abandoned-quiz-nudge YYYY-MM-DD]` stamps from the old single-shot
 // cron also contain "quiz-nudge <date>", so those buyers continue mid-drip —
 // same back-compat the inline logic had.
+//
+// P5′ CADENCE (2026-08-08, MARKETING-REVAMP-2026-08 §5): the drip now rides
+// lib/intentWindows' 'quiz' policy — 7-day sprint window anchored on the
+// FIRST touch (the moment the drip first saw the buyer, which preserves the
+// 2026-07-22 reactivated-WAITING behavior: record age never matters, drip age
+// does), max 3 touches ~48h apart (days 0/2/4), then ONE decay touch in the
+// following 7 days (buildEmail variant 4, the "last call" copy), then done.
+// EQUIVALENCE CHECK (the brief demanded it): the old cadence was 4 touches at
+// days 0/2/6/13 over 21 days — NOT equal to the 7d/3-touch panel policy, so
+// the wiring below is a real behavior change, not churn. The claim/stamp
+// discipline is untouched: `Quiz Nudge Log` + the Notes marker stay the touch
+// truth, one-touch-per-day stays, and legacy 4-touch buyers read as exhausted.
 
-/** Days to wait BEFORE each touch, indexed by touches-already-sent.
- *  [0,2,4,7] → touch1 immediately, touch2 +2d after touch1, etc. */
-export const QUIZ_NUDGE_CADENCE_SPACING_DAYS = [0, 2, 4, 7] as const;
-export const QUIZ_NUDGE_MAX_TOUCHES = QUIZ_NUDGE_CADENCE_SPACING_DAYS.length;
+import { sprintPlanFor, INTENT_WINDOW_POLICIES } from './intentWindows';
+
+/** Sprint touches + the one decay touch — buildEmail has exactly 4 variants. */
+export const QUIZ_NUDGE_MAX_TOUCHES = INTENT_WINDOW_POLICIES.quiz.maxTouches + 1;
 
 /** Exact Airtable field name on Consumers (created 2026-08-02, exists in prod). */
 export const QUIZ_NUDGE_LOG_FIELD = 'Quiz Nudge Log';
@@ -48,10 +60,10 @@ export type QuizNudgeDecision =
   | { action: 'send'; touchNum: number };
 
 /**
- * Should this buyer get a drip touch today — and which one? Mirrors the
- * cron's original inline logic exactly (one touch/day max, 4 touches
- * lifetime, [0,2,4,7]-day spacing), but counts touches from the merged
- * durable state instead of Notes alone.
+ * Should this buyer get a drip touch today — and which one? One touch/day max
+ * (sent-today guard), then lib/intentWindows' 'quiz' policy decides
+ * due/exhausted. Touch counts come from the merged durable state (log field +
+ * surviving Notes markers) — the planner never invents state.
  */
 export function decideQuizNudge(opts: {
   notes?: unknown;
@@ -62,15 +74,17 @@ export function decideQuizNudge(opts: {
   const dates = parseQuizNudgeDates(opts.notes, opts.log);
   if (dates.includes(opts.today)) return { action: 'skip', reason: 'sent-today' };
   const touchesSent = dates.length;
-  if (touchesSent >= QUIZ_NUDGE_MAX_TOUCHES) return { action: 'skip', reason: 'exhausted' };
-  if (touchesSent > 0) {
-    const lastDate = dates[dates.length - 1];
-    const daysSinceLast = Math.floor((Date.parse(opts.today) - Date.parse(lastDate)) / 86_400_000);
-    if (daysSinceLast < QUIZ_NUDGE_CADENCE_SPACING_DAYS[touchesSent]) {
-      return { action: 'skip', reason: 'spacing' };
-    }
+  // First sight = intent moment: touch 1 fires immediately (offset 0), and
+  // the 7d+decay clock starts at THAT touch — never at record creation, so
+  // reactivated buyers created long ago still get a full drip.
+  if (touchesSent === 0) return { action: 'send', touchNum: 1 };
+  const plan = sprintPlanFor('quiz', Date.parse(dates[0]), touchesSent, Date.parse(opts.today), {
+    lastTouchAt: Date.parse(dates[dates.length - 1]),
+  });
+  if (!plan.due) {
+    return { action: 'skip', reason: plan.exhausted ? 'exhausted' : 'spacing' };
   }
-  return { action: 'send', touchNum: touchesSent + 1 };
+  return { action: 'send', touchNum: Math.min(touchesSent + 1, QUIZ_NUDGE_MAX_TOUCHES) };
 }
 
 /**

@@ -69,15 +69,35 @@ test('spacing: touch 2 waits 2 days after touch 1', () => {
   });
 });
 
-test('spacing: touch 4 waits 7 days after touch 3', () => {
-  const base = 't1:2026-07-10;t2:2026-07-12;t3:2026-07-27';
-  assert.deepEqual(decideQuizNudge({ notes: '', log: base, today: TODAY }), {
-    action: 'skip',
-    reason: 'spacing', // only 6 days since t3
-  });
+test('P5′: touch 3 due at day 4 (~48h after touch 2)', () => {
   assert.deepEqual(
-    decideQuizNudge({ notes: '', log: 't1:2026-07-10;t2:2026-07-12;t3:2026-07-26', today: TODAY }),
+    decideQuizNudge({ notes: '', log: 't1:2026-07-29;t2:2026-07-31', today: TODAY }),
+    { action: 'send', touchNum: 3 },
+  );
+  // Inside the 48h gap → held.
+  assert.deepEqual(
+    decideQuizNudge({ notes: '', log: 't1:2026-07-30;t2:2026-08-01', today: TODAY }),
+    { action: 'skip', reason: 'spacing' },
+  );
+});
+
+test('P5′: touch 4 is the ONE decay touch — after the 7d window, "last call"', () => {
+  // t1 07-24 → window ends 07-31; today 08-02 is decay; 5d since t3 → send.
+  assert.deepEqual(
+    decideQuizNudge({ notes: '', log: 't1:2026-07-24;t2:2026-07-26;t3:2026-07-28', today: TODAY }),
     { action: 'send', touchNum: 4 },
+  );
+  // Sprint budget spent but window still open → silent (decay comes later).
+  assert.deepEqual(
+    decideQuizNudge({ notes: '', log: 't1:2026-07-28;t2:2026-07-30;t3:2026-08-01', today: TODAY }),
+    { action: 'skip', reason: 'spacing' },
+  );
+});
+
+test('P5′: decay window expired (t1 + 14d) → exhausted, never a late touch 4', () => {
+  assert.deepEqual(
+    decideQuizNudge({ notes: '', log: 't1:2026-07-10;t2:2026-07-12;t3:2026-07-16', today: TODAY }),
+    { action: 'skip', reason: 'exhausted' },
   );
 });
 
