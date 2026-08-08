@@ -12,6 +12,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { ADMIN_NAV } from '../nav';
 import type { CockpitDialRow } from '@/lib/cockpitDialList';
+import MarketingScoreboard from './MarketingScoreboard';
 
 const POLL_MS = 120_000;
 
@@ -261,6 +262,9 @@ export default function TodayClient() {
           </p>
         )}
       </section>
+
+      {/* P6′ — per-lane marketing scoreboard (self-contained block) */}
+      <MarketingScoreboard />
 
       {/* Everything else — plain links, no data re-rendered */}
       <details className="pt-2">
