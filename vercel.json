@@ -259,6 +259,10 @@
     {
       "path": "/api/cron/supabase-keepalive",
       "schedule": "7 6 * * *"
+    },
+    {
+      "path": "/api/cron/marketing-sunset",
+      "schedule": "17 7 * * *"
     }
   ]
 }
