@@ -76,7 +76,9 @@ function toRancherView(record: any) {
       current_active_referrals: record['Current Active Referrals'] || 0,
       last_assigned_at: record['Last Assigned At'] || '',
       performance_score: record['Performance Score'] || 50,
-      onboarding_complete: record['Onboarding Complete'] || false,
+      // P7a teardown: onboarding_complete deleted — `Onboarding Complete` has
+      // zero writers in any repo (2 stale hand-set values of 80+ ranchers);
+      // `Onboarding Status` below is the live field.
       onboarding_status: record['Onboarding Status'] || '',
       call_notes: record['Call Notes'] || '',
       call_completed_at: record['Call Completed At'] || '',

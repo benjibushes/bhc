@@ -41,8 +41,6 @@ export async function GET(
       admin_notes: record['Admin Notes'] || '',
       last_contacted: record['Last Contacted'] || '',
       next_follow_up_at: record['Next Follow Up At'] || '',
-      backfill_email_sent: !!record['Backfill Emails Sent'],
-      backfill_email_sent_at: record['Backfill Emails Sent At'] || '',
       referred_by: record['Referred By'] || '',
       campaign: record['Campaign'] || '',
       created_at: record['Created'] || record.createdTime || new Date().toISOString(),
@@ -50,8 +48,10 @@ export async function GET(
       sequence_stage: record['Sequence Stage'] || '',
       sequence_sent_at: record['Sequence Sent At'] || '',
       approved_at: record['Approved At'] || '',
-      ai_qualification_summary: record['AI Qualification Summary'] || '',
-      ai_recommended_action: record['AI Recommended Action'] || '',
+      // P7a teardown: backfill_email_sent(_at) + ai_qualification_summary +
+      // ai_recommended_action deleted — zero writers (one-shot backfill script
+      // archived 07-28; AI qualifier dead since before 06-22). The AI Email
+      // Draft pair below is LIVE (telegram draft flow writes + clears it).
       ai_email_draft: record['AI Email Draft'] || '',
       ai_email_draft_subject: record['AI Email Draft Subject'] || '',
     });

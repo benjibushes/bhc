@@ -32,8 +32,6 @@ interface ConsumerDetail {
   sequence_stage: string;
   sequence_sent_at: string;
   approved_at: string;
-  ai_qualification_summary: string;
-  ai_recommended_action: string;
   ai_email_draft: string;
   ai_email_draft_subject: string;
 }
@@ -326,7 +324,7 @@ export default function ConsumerDetailPage() {
             </div>
 
             {/* AI & Email Sequence */}
-            {(consumer.sequence_stage || consumer.ai_qualification_summary || consumer.ai_recommended_action || consumer.ai_email_draft) && (
+            {(consumer.sequence_stage || consumer.ai_email_draft) && (
               <div className="p-6 border border-dust bg-white space-y-4">
                 <h2 className="font-serif text-xl">AI & Email Sequence</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
@@ -351,18 +349,9 @@ export default function ConsumerDetailPage() {
                     </div>
                   )}
                 </div>
-                {consumer.ai_qualification_summary && (
-                  <div>
-                    <p className="text-sm font-medium text-saddle mb-1">AI Qualification Summary</p>
-                    <p className="text-sm bg-bone p-3 border-l-2 border-saddle">{consumer.ai_qualification_summary}</p>
-                  </div>
-                )}
-                {consumer.ai_recommended_action && (
-                  <div>
-                    <p className="text-sm font-medium text-saddle mb-1">AI Recommended Action</p>
-                    <p className="text-sm bg-amber/10 p-3 border-l-2 border-amber/60 text-amber-dark">{consumer.ai_recommended_action}</p>
-                  </div>
-                )}
+                {/* AI Qualification Summary / AI Recommended Action panels deleted
+                    (P7a teardown) — the AI qualifier that wrote them is gone;
+                    the fields hold only stale pre-06-22 values. */}
                 {consumer.ai_email_draft && (
                   <div>
                     <p className="text-sm font-medium text-saddle mb-1">

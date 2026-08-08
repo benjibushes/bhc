@@ -24,7 +24,6 @@ export interface ConsumerForScore {
   'Qualified At'?: string;
   'Phone'?: string;
   'Source'?: string;
-  'UTM Source'?: string;
 }
 
 export interface LeadScoreResult {
@@ -62,8 +61,9 @@ export function computeLeadScore(c: ConsumerForScore): LeadScoreResult {
     reasons.push('phone');
   }
 
-  // Paid acquisition source
-  const src = String(c['Source'] || c['UTM Source'] || '').toLowerCase();
+  // Paid acquisition source. (P7a teardown: the `UTM Source` fallback leg was
+  // deleted — the field does not exist on the Consumers table.)
+  const src = String(c['Source'] || '').toLowerCase();
   if (PAID_SOURCES.some((p) => src.includes(p))) {
     score += 5;
     reasons.push(`paid:${src}`);

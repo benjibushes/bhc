@@ -30,8 +30,6 @@ export async function GET(request: Request) {
       referral_status: record['Referral Status'] || 'Unmatched',
       admin_notes: record['Admin Notes'] || '',
       last_contacted: record['Last Contacted'] || '',
-      backfill_email_sent: !!record['Backfill Emails Sent'],
-      backfill_email_sent_at: record['Backfill Emails Sent At'] || '',
       referred_by: record['Referred By'] || '',
       campaign: record['Campaign'] || '',
       created_at: record['Created'] || record.createdTime || record._createdTime || new Date().toISOString(),
@@ -39,8 +37,9 @@ export async function GET(request: Request) {
       sequence_stage: record['Sequence Stage'] || '',
       sequence_sent_at: record['Sequence Sent At'] || '',
       approved_at: record['Approved At'] || '',
-      ai_qualification_summary: record['AI Qualification Summary'] || '',
-      ai_recommended_action: record['AI Recommended Action'] || '',
+      // P7a teardown: backfill_email_sent(_at) + ai_qualification_summary +
+      // ai_recommended_action deleted — zero writers (one-shot backfill script
+      // archived 07-28; AI qualifier dead since before 06-22).
     }));
     
     return NextResponse.json(consumers);

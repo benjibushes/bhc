@@ -107,7 +107,8 @@ function formatBooking(b: any, consumerByEmail?: Map<string, any>) {
     consumerId: c?.id ? String(c.id) : '',
     qualificationScore: c && c['Qualification Score'] != null ? Number(c['Qualification Score']) : null,
     qualificationAnswers: String(c?.['Qualification Answers'] || ''),
-    leadScore: c && c['Lead Score'] != null ? Number(c['Lead Score']) : null,
+    // P7a teardown: the `leadScore` dossier field was deleted — it read a
+    // `Lead Score` Airtable field that does not exist on Consumers (always null).
     phone: String(c?.['Phone'] || ''),
     state: String(c?.['State'] || ''),
   };

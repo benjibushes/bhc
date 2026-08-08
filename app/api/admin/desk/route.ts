@@ -259,16 +259,17 @@ function formatCallbackRequest(c: any) {
 // Parses "State: XX" out of structured Notes (best signal until schema
 // adds a clean column). Returns the same shape as the retail rows so
 // the NBA engine + UI can stay consistent.
-// R2 (2026-06-10): Inquiries schema fields are `Created` (date) +
-// `Last Activity At` (dateTime, added today). Airtable metadata
-// `createdTime` is the only universal fallback when both are empty.
+// R2 (2026-06-10): Inquiries schema field is `Created` (date). Airtable
+// metadata `createdTime` is the universal fallback when it's empty.
+// (P7a teardown: the `Last Activity At` leg was deleted — the field exists
+// in the schema but has ZERO values ever and zero writers in any repo.)
 function formatWholesale(i: any) {
   const notes = String(i['Notes'] || i['Message'] || '');
   const stateMatch = notes.match(/^State:\s*(.+)$/m);
   const businessMatch = notes.match(/^Business:\s*(.+)$/m);
   const businessTypeMatch = notes.match(/^Business Type:\s*(.+)$/m);
   const volumeMatch = notes.match(/^Monthly Volume:\s*(.+)$/m);
-  const lastActivity = i['Last Activity At'] || i['Created'] || i._createdTime || '';
+  const lastActivity = i['Created'] || i._createdTime || '';
   const ageDays = lastActivity
     ? Math.floor((Date.now() - new Date(String(lastActivity)).getTime()) / (1000 * 60 * 60 * 24))
     : null;
