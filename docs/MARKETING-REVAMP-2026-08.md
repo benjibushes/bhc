@@ -148,6 +148,18 @@ parallel ONLY where file sets are disjoint; within a track, sequential)
   low risk.
 
 **Convergence (after P1′ + P2.5):**
+- **P3′ — SHIPPED 2026-08-08 (PR p3-digest).** Cron
+  `ranch-stand-digest` daily 14:52 UTC, day-1-to-4 tier window, registered
+  in EXPECTED_CRONS_24H (gate inside realHandler → daily Cron Runs row).
+  Pure selectors + renderer in lib/ranchStandDigest.ts; template
+  `ranch_stand_digest` classified marketing (#575 headers auto-inject);
+  cadence cap = dated `[RANCH-STAND-DIGEST YYYY-MM-DD]` Notes marker,
+  1-per-25-days (no new Airtable fields) + Redis claimOnce per
+  (consumer, month) claim-before-send; 200/run cap; sunset cohorts
+  (180d/12mo never-engaged) excluded and counted — P5′ still owns
+  re-permission. DRY-RUN by default until Ben sets
+  `RANCH_STAND_DIGEST_ENABLED=true` (first dry-run note carries the live
+  tier math). Original spec:
 - **P3′ — Ranch Stand Digest.** DAILY cron + date-1 guard registered in
   EXPECTED_CRONS_24H (Vercel has silently dropped monthly slots on this
   project; the watchdog test forces classification). First send

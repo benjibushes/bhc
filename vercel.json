@@ -259,6 +259,10 @@
     {
       "path": "/api/cron/supabase-keepalive",
       "schedule": "7 6 * * *"
+    },
+    {
+      "path": "/api/cron/ranch-stand-digest",
+      "schedule": "52 14 * * *"
     }
   ]
 }

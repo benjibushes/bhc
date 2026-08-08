@@ -70,6 +70,9 @@ export const MARKETING_TEMPLATES: readonly string[] = [
   'sendPilotUpsellEmail',
   'sendMerchEmail',
   // Letters / digests / waitlist
+  // Ranch Stand Digest (P3′): monthly merchandising digest, all marketing
+  // lanes, engagement-tiered over days 1-4. Sent via lib/emailMinimal.ts.
+  'ranch_stand_digest',
   'sendFounderLetterWaiting',
   'sendBackerMonthlyLetter',
   'sendClosedMonthlyLetter',

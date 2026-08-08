@@ -1,7 +1,8 @@
 // lib/emailMinimal.ts
 //
 // Sales-floor pivot 2026-06-09: BHC's minimal buyer-facing email pipeline.
-// Transactional templates only. No drip. No nurture.
+// Transactional templates, plus (P3′ 2026-08) the one monthly marketing
+// digest — no drip, no nurture.
 //
 //   1. sendQuizCompleteCalInvite       — quiz done → book Ben's Cal
 //   2. sendQuizCompleteDepositInvite   — quiz done → deposit-primary invite
@@ -303,6 +304,31 @@ function escape(s: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+// ── Ranch Stand Digest (P3′, MARKETING-REVAMP-2026-08 §5 Convergence) ───────
+// The ONE marketing template in this file: the monthly merchandising digest
+// for every marketing-lane consumer. Rendering + recipient/tier selection are
+// pure in lib/ranchStandDigest.ts; the cron at
+// app/api/cron/ranch-stand-digest/route.ts owns the loop.
+//
+// Stream: 'ranch_stand_digest' is classified marketing in lib/emailStreams.ts
+// — the #575 central wrapper injects List-Unsubscribe + one-click headers and
+// (once MARKETING_SEND_DOMAIN is live) moves it off the apex automatically.
+// Cap lane: deliberately NOT in TRANSACTIONAL_WHITELIST — the generic 3/week
+// cap applies, and the digest's own 1-per-25-days cadence is owned by the
+// dated Notes marker the cron stamps (DIGEST_MARKER, claim-before-send).
+export async function sendRanchStandDigest(opts: {
+  to: string;
+  subject: string;
+  html: string;
+}) {
+  return sendEmail({
+    to: opts.to,
+    subject: opts.subject,
+    html: opts.html,
+    templateName: 'ranch_stand_digest',
+  });
 }
 
 // ── Rancher STOP-SHIP notice (Wave A 2026-07-14) ────────────────────────────

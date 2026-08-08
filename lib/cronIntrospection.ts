@@ -105,6 +105,13 @@ export const EXPECTED_CRONS_24H = [
   // closed-lost recovery rails (Loss Reason → re-engage/downsell/nurture) —
   // dry-run by default (LOSS_RECOVERY_ENABLED), writes a Cron Runs row daily.
   'loss-recovery',
+  // Ranch Stand Digest (P3′, marketing revamp 2026-08) — daily at 14:52 UTC
+  // with a day-1-to-4 tier window (the commission-invoices monthly-slot
+  // workaround, widened to 4 days). Dry-run by default
+  // (RANCH_STAND_DIGEST_ENABLED), gate INSIDE realHandler — a Cron Runs row
+  // is written every day (skipped/dry-run/live alike), so a missing row
+  // means a REAL missed run.
+  'ranch-stand-digest',
 ] as const;
 
 /**
