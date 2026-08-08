@@ -89,32 +89,89 @@ KEEP, recorded here.
 | Dead env flags (Threads flag, etc.) | Flag dead, feature live — verify per flag | Per-item |
 | Per-template caps sized for old volume | 67 cap-exceeded/48h | RETUNE with lane policy |
 
-## 5 · BUILD PHASES (one PR each, in order)
+## 5 · BUILD PHASES — v2, panel-amended (one PR each; tracks may run in
+parallel ONLY where file sets are disjoint; within a track, sequential)
 
 - **P0 — SHIPPED 2026-08-08:** `Deposit Invite Sent At` stamped by all 8
-  intro senders (#570). Invite-abandon rail now sees every deposit link.
-- **P1 — Lane engine.** `lib/lanes.ts`: pure `laneFor(consumer,
-  servedStates)` + served-states helper reading Active ranchers. Nightly
-  cron stamps `Marketing Lane` on Consumers + fires
-  `state_coverage_opened` migration on lane change. TDD on the pure fn.
-- **P2 — Selector rescope.** Every nurture/nudge cron selector gains the
-  lane gate per the teardown ledger verdicts (each verified per the
-  2-step check first). This is the single biggest spam-kill.
-- **P3 — Ranch Stand Digest.** Monthly cron; selector = new sellable
-  products since last digest; skip-if-thin (<3); per-state layout (local
-  stand → nationwide ships) with operation-type labels; own cap lane;
-  `Digest Last Sent At` stamps; latest-close social proof from stats.
-- **P4 — Operation-type labels.** Surface `ships nationwide` / `local
-  share — [state]` on shop cards, PDPs, digest blocks, and intro/receipt
-  emails from one shared helper. (Principle 4 made code.)
-- **P5 — Intent-sprint windows.** Encode pressure policy: intent event
-  opens a 7d/3-touch window (existing nudge rails re-pointed at window
-  state instead of ad-hoc criteria); cold = digest-only.
-- **P6 — Per-lane scoreboard.** /admin/today block: lane sizes, sends by
-  lane, deposit invites → opens → paid, digest CTR → shop revenue,
-  weekly close count. The needle Ben watches.
-- **P7 — Teardown execution + cleanup.** Ledger verdicts applied; dead
-  gauges deleted; caps retuned; this doc updated with what died.
+  intro senders (#570).
+
+**Track 1 — lanes + pressure (sequential):**
+- **P1′ — Lane projection, NOT a new engine.** The lane engine already
+  exists: `app/api/cron/reclassify-buyers` + `lib/routingSegment.ts`
+  (nightly, delta-writes, stored `Routing Segment`). Lane = 3-way
+  projection of the existing segments. Work: fix the
+  INCOMPLETE_PROFILE-before-state ordering bug (routingSegment.ts ~:100 —
+  this alone kills the 179/wk profile-asks to stranded buyers); extract
+  ONE shared `servedStates()` helper (capacity-OUT definition — at-capacity
+  ranchers still count as coverage, so states never lane-flap when one
+  rancher fills; defend the `Max Active Referalls` single-L field);
+  widen `state-coverage-notify/selection.ts` beyond `relaunch_waitlist`
+  to lane-2→1 flips, KEEPING its Redis+Notes once-ever guards. NO new
+  field, NO new cron, NO new sender.
+- **P2′ — Gate the actually-ungated.** Panel finding: 3 of 5 suspected
+  senders are already supply-gated. Real targets: `nurture-drip` (no
+  Ranchers fetch at all — the ~220/wk), `matching/suggest`'s
+  still-looking branch (request path — gate around operatorOverride
+  carefully), and migrate the 5 copy-paste served-states loops onto the
+  P1′ helper. Delete dead `hasRancherAvailable` (email-sequences:237).
+- **P5′ — Tiered intent windows + sunset.** Quiz-complete = 7d/3-touch.
+  Deposit-link-opened / product-carted = 14d/4-5-touch + decay week
+  (median quiz→close is 2-21d; ~90% of considered conversions land by
+  day 12 — the old flat 7d closed before our own median buyer decides).
+  Sunset: 6 clickless digests OR 180d zero engagement (clicks + site
+  activity, not opens — MPP) → ONE re-permission email → suppress.
+  12mo+ never-engaged: suppress without contact. Lane 3 gets a longer
+  leash (purchase = engagement).
+
+**Track 2 — email stream infra (sequential; parallel-safe vs Track 1):**
+- **P2.5 — Stream-keyed sending.** Kill the `SEND_DOMAINS` round-robin
+  (lib/email.ts:462-469) — replace with per-stream domain selection:
+  transactional stays on the apex; ALL marketing lanes ride the
+  marketing subdomain once Ben verifies it in Resend (until then, both
+  streams map to apex — the mapping ships first, the DNS flip is
+  config). Centralize List-Unsubscribe/one-click headers into the send
+  wrapper (per-caller opt-in today = a future sender can silently drop
+  them); explicit transactional bypass. Complaint telemetry: count
+  `email.complained`/wk, alert at 3+ (the kill line at this list size is
+  ~5/wk).
+- **P4 — Operation-type labels.** Shared helper renders "ships frozen,
+  nationwide" vs "local share — serves [state]" on shop cards, PDPs,
+  digest blocks, intro/receipt emails. Panel: no existing competitor,
+  low risk.
+
+**Convergence (after P1′ + P2.5):**
+- **P3′ — Ranch Stand Digest.** DAILY cron + date-1 guard registered in
+  EXPECTED_CRONS_24H (Vercel has silently dropped monthly slots on this
+  project; the watchdog test forces classification). First send
+  engagement-tiered over 3-4 days, most-engaged first — never one
+  2,744-send day. Re-permission gate: 180d+ never-engaged get ONE
+  re-permission email instead of the digest; 12mo+ suppressed. v1 layout
+  = exactly two blocks (ships-nationwide + your-state-if-any) — the
+  per-state stall layout was YAGNI. skip-if-thin applies ONLY to the
+  product section; a restock/ranch-story fallback guarantees Lane 2 is
+  never silent a full month (cadence consistency is itself a
+  deliverability input). Own cap lane; `Digest Last Sent At` stamps.
+- **P6′ — Scoreboard.** Lane sizes seeded free from reclassify-buyers'
+  Cron Runs notes; sends by lane; deposit invites → opens → paid; digest
+  clicks (weekly manual revenue count — attribution plumbing at tens of
+  clicks/month measures noise, cut as YAGNI); complaint rate/wk with the
+  3+ alert; weekly closes. Evaluation gates are EVENT-COUNT based
+  ("evaluate after 200 digest deliveries / 20 sprint entries"), never
+  fixed 2-week windows — at current volume a fortnight can't tell a
+  working phase from a dead one.
+- **P7 — Teardown execution** per ledger verdicts (verify-then-kill),
+  dead gauges deleted, caps retuned to lane policy.
+
+**Wave 2 (after Wave 1 ships + first campaign fires — the revenue flows
+the panel ranked highest for Lane 2, needing event instrumentation):**
+- **W2a — Triggered product flows:** browse-abandon, back-in-stock,
+  price-drop (highest revenue-per-send flow class in 2025-26 benchmarks;
+  back-in-stock = honest scarcity by construction).
+- **W2b — Ladder bridge rung:** product buyer → large-box rung →
+  "graduate to a share" deposit, triggered within days of delivery while
+  warm (a $14→$3,000 jump violates every price-delta heuristic).
+- **W2c — SMS deposit nudge** on opened-unpaid links (asset half-built;
+  blocked on TCPA opt-in capture — Ben dependency).
 
 ## 6 · BEN-SIDE DEPENDENCIES (the machine can't do these)
 
@@ -124,6 +181,13 @@ KEEP, recorded here.
 3. **Fire the staged 300-campaign** (fresh dry-run first — standing).
 4. **Meta env vars + budget** — ads into /shop, not /access.
 5. **Content cadence + food photography** — no code substitute exists.
+6. **Marketing subdomain in Resend** — add + verify DKIM for
+   `updates.buyhalfcow.com` (DMARC is `sp=quarantine`: an unverified
+   subdomain send quarantines day one). Then 3-6 weeks warmup riding all
+   marketing lanes before any volume increase.
+7. **Flip `STATE_COVERAGE_NOTIFY_ENABLED`** — the state-opened letter
+   rail is built, guarded, and DARK by default.
+8. **TCPA SMS opt-in capture** — unblocks W2c.
 
 ## 7 · WHAT "WORKED" MEANS
 
@@ -132,3 +196,17 @@ digest CTR and attributed shop revenue, Lane 2 first-purchases, closes.
 Success = consistent weekly closes from BOTH lanes within 30 days of
 P1-P5 landing + campaign fire. If a phase doesn't move its metric in two
 weeks, it gets the same teardown treatment as everything else.
+
+## 8 · VALIDATION RECORD (2026-08-08 panel — 3 independent lenses)
+
+Growth, deliverability, and engineering-risk agents each researched
+current best practice and attempted to break the v1 plan. 24 verdicts
+folded into v2 above. Highlights: state-supply axis CONFIRMED (RFM
+impossible at 22 closes); flat 7d sprint REJECTED against our own 2-21d
+close median; "full consented list" digest REJECTED as a complaint-spike
+risk (re-permission + tiered rollout instead); v1's P1 lane engine
+REJECTED as a duplicate of the live `reclassify-buyers`/`Routing
+Segment` machine; sunset policy ADDED (both marketing lenses converged
+on it independently); SEND_DOMAINS rotation flagged as a
+reputation-cross-contamination footgun and scheduled for death in P2.5.
+Full agent reports in the session transcript, 2026-08-08.
