@@ -224,7 +224,11 @@ export function buildCockpitDialList({
       why: buyerWhy(b),
       phone: String(b.phone || '').trim(),
       priority: buyerPriority(b.tier),
-      outcomeKind: 'buyer',
+      // Audit C3 (2026-08-10): a Buyer-link-less deposit row is keyed on the
+      // REFERRAL id (dialCandidates falls back so the row isn't dropped) —
+      // stamping it as 'buyer' would look the referral id up in Consumers
+      // and 404. Route those rows to the referral ('deal') stamp path.
+      outcomeKind: b.referralId && b.id === b.referralId ? 'deal' : 'buyer',
       ...(b.referralId ? { referralId: b.referralId } : {}),
     };
     rows.push(row);
