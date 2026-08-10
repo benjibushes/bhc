@@ -67,9 +67,11 @@ export async function POST(request: Request) {
     listRows: async () => {
       // Formula narrows server-side; isBackfillCandidate re-verifies in JS
       // (case-insensitive Direction, ig:-prefixed DM rows, @-less From).
+      // Covers BOTH pending classes: empty Body Plain (pre-fix blind rows)
+      // and fetch-failed marker rows (2026-08-10 — previously untouchable).
       const rows = await getAllRecords(
         TABLES.CONVERSATIONS,
-        `AND(LOWER({Direction}) = "inbound", {Body Plain} = "")`,
+        `AND(LOWER({Direction}) = "inbound", OR({Body Plain} = "", FIND("[content fetch failed", {Body Plain}) = 1))`,
       );
       return rows as any[];
     },
@@ -111,7 +113,7 @@ export async function GET(request: Request) {
   try {
     const rows = (await getAllRecords(
       TABLES.CONVERSATIONS,
-      `AND(LOWER({Direction}) = "inbound", {Body Plain} = "")`,
+      `AND(LOWER({Direction}) = "inbound", OR({Body Plain} = "", FIND("[content fetch failed", {Body Plain}) = 1))`,
     )) as any[];
     const { isBackfillCandidate } = await import('@/lib/inboundBackfill');
     pending = rows.filter(isBackfillCandidate).length;

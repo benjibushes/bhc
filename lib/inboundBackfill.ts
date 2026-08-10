@@ -13,8 +13,10 @@
 //   - NO autoresponse, NO staged-reply sending, NO per-row Telegram. This
 //     module must never import or call any send path. The admin route fires
 //     ONE summary operator signal at the end of a run.
-//   - Idempotent: rows with a non-empty Body Plain are never touched — that
-//     includes rows already stamped with a marker.
+//   - Idempotent: rows with a REAL non-empty Body Plain are never touched.
+//     Fetch-failed marker rows re-qualify (2026-08-10 — they're pending, not
+//     terminal; the rid in the marker gives an exact fetch key). Only the
+//     unrecoverable marker is terminal.
 //   - Capped per invocation (default 50) + paced between Resend fetches
 //     (default 500ms) so a run can't hammer Resend or blow the lambda budget.
 //     Re-run until drained.
@@ -31,6 +33,8 @@
 import {
   CONTENT_UNRECOVERABLE_MARKER,
   htmlToPlain,
+  isContentFetchFailedMarker,
+  parseMarkerRid,
   type FetchContentResult,
   type ListReceivedResult,
   type ReceivedEmailListItem,
@@ -59,16 +63,24 @@ export function parseTs(v: unknown): number {
 }
 
 /**
- * A row qualifies for backfill ONLY when it is an inbound EMAIL row with an
- * empty Body Plain. Direction is matched case-insensitively ('inbound' from
- * the email webhook, 'Inbound' from ManyChat). IG DM rows (From "ig:…") have
- * no Resend counterpart and are excluded. Any non-empty Body Plain —
- * including a previously stamped marker — makes the row untouchable.
+ * A row qualifies for backfill when it is an inbound EMAIL row whose Body
+ * Plain is either EMPTY or a fetch-failed marker. Direction is matched
+ * case-insensitively ('inbound' from the email webhook, 'Inbound' from
+ * ManyChat). IG DM rows (From "ig:…") have no Resend counterpart and are
+ * excluded.
+ *
+ * COVERAGE CHANGE (2026-08-10, recVUDVwrSvVrDZNz post-mortem): fetch-failed
+ * marker rows used to be untouchable ("recovered by clearing the marker
+ * first") — nobody ever cleared one, so a failed webhook fetch was permanent
+ * blindness. They now qualify directly; the runner prefers the rid embedded
+ * in the marker for an exact fetch. Only CONTENT_UNRECOVERABLE_MARKER (and
+ * any real body) stays terminal.
  */
 export function isBackfillCandidate(row: ConversationRowLike): boolean {
   if (!row?.id) return false;
   if (String(row['Direction'] || '').toLowerCase() !== 'inbound') return false;
-  if (String(row['Body Plain'] || '').trim() !== '') return false;
+  const bodyPlain = String(row['Body Plain'] || '').trim();
+  if (bodyPlain !== '' && !isContentFetchFailedMarker(bodyPlain)) return false;
   const from = String(row['From'] || '');
   if (from.startsWith('ig:')) return false;
   if (!from.includes('@')) return false;
@@ -180,28 +192,48 @@ export async function runInboundBackfill(deps: BackfillDeps): Promise<BackfillSu
     if (!first) await sleep(paceMs); // pace ALL Resend traffic, including per-id fetches
     first = false;
 
-    const match = matchReceivedEmail(row, listing.items);
-    if (!match) {
-      base.unrecoverable++;
-      if (!dryRun) {
-        await deps.updateRow(row.id, { 'Body Plain': CONTENT_UNRECOVERABLE_MARKER });
+    // ── rid path (2026-08-10): a fetch-failed marker written by the webhook
+    // after the fix carries the exact Resend received-email id — fetch it
+    // directly, no fuzzy matching. A gone rid (404/410) falls through to the
+    // listing match; a transient error leaves the row for the next run.
+    let fetched: FetchContentResult | null = null;
+    let match: ReceivedEmailListItem | null = null;
+    const rid = parseMarkerRid(row['Body Plain']);
+    if (rid) {
+      const byRid = await deps.fetchContent(rid);
+      if (byRid.ok) {
+        fetched = byRid;
+      } else if (byRid.status !== 404 && byRid.status !== 410) {
+        base.skippedTransient++;
+        continue;
       }
-      continue;
     }
 
-    const fetched = await deps.fetchContent(match.id);
-    if (!fetched.ok) {
-      if (fetched.status === 404 || fetched.status === 410) {
-        // Resend no longer retains this email's content — stop it looking pending.
+    if (!fetched) {
+      match = matchReceivedEmail(row, listing.items);
+      if (!match) {
         base.unrecoverable++;
         if (!dryRun) {
           await deps.updateRow(row.id, { 'Body Plain': CONTENT_UNRECOVERABLE_MARKER });
         }
-      } else {
-        // Transient (timeout / 5xx / network) — leave untouched for the next run.
-        base.skippedTransient++;
+        continue;
       }
-      continue;
+
+      const byMatch = await deps.fetchContent(match.id);
+      if (!byMatch.ok) {
+        if (byMatch.status === 404 || byMatch.status === 410) {
+          // Resend no longer retains this email's content — stop it looking pending.
+          base.unrecoverable++;
+          if (!dryRun) {
+            await deps.updateRow(row.id, { 'Body Plain': CONTENT_UNRECOVERABLE_MARKER });
+          }
+        } else {
+          // Transient (timeout / 5xx / network) — leave untouched for the next run.
+          base.skippedTransient++;
+        }
+        continue;
+      }
+      fetched = byMatch;
     }
 
     const { text, html, headers, messageId } = fetched.content;
@@ -231,7 +263,7 @@ export async function runInboundBackfill(deps: BackfillDeps): Promise<BackfillSu
         'Body': html || text,
         'Body Plain': bodyPlain,
         'Raw Headers': JSON.stringify(headers || {}),
-        'Message Id': messageId || match.messageId || '',
+        'Message Id': messageId || match?.messageId || '',
         'Sender Type': classification.senderType,
         'Objection Category': classification.objectionCategory,
         'Sentiment': classification.sentiment,

@@ -28,6 +28,32 @@
 export const CONTENT_FETCH_FAILED_MARKER = '[content fetch failed — see inbox]';
 export const CONTENT_UNRECOVERABLE_MARKER = '[content unrecoverable]';
 
+/**
+ * Fetch-failed marker WITH the Resend received-email id embedded, e.g.
+ *   "[content fetch failed — see inbox] [rid:1a2b3c4d-...]"
+ *
+ * WHY (2026-08-10, recVUDVwrSvVrDZNz post-mortem): the webhook never persisted
+ * data.email_id anywhere, so once a fetch failed the ONLY recovery path was
+ * the backfill's fuzzy From+timestamp match against the listing. Embedding
+ * the id in the marker gives the backfill a direct, exact fetch key. The bare
+ * marker (no id) remains valid — pre-existing rows carry it.
+ */
+export function contentFetchFailedMarker(emailId?: string): string {
+  const id = String(emailId || '').trim();
+  return id ? `${CONTENT_FETCH_FAILED_MARKER} [rid:${id}]` : CONTENT_FETCH_FAILED_MARKER;
+}
+
+/** True when a Body Plain value is a fetch-failed marker (with or without rid). */
+export function isContentFetchFailedMarker(bodyPlain: unknown): boolean {
+  return String(bodyPlain || '').trim().startsWith(CONTENT_FETCH_FAILED_MARKER);
+}
+
+/** Extract the embedded Resend received-email id from a marker, '' if absent. */
+export function parseMarkerRid(bodyPlain: unknown): string {
+  const m = String(bodyPlain || '').match(/\[rid:([A-Za-z0-9_-]+)\]/);
+  return m ? m[1] : '';
+}
+
 const RECEIVING_API_BASE = 'https://api.resend.com/emails/receiving';
 const DEFAULT_TIMEOUT_MS = 5000;
 
@@ -178,6 +204,40 @@ export async function fetchReceivedEmailContent(
       messageId: String(b.message_id || headerValue(headers, 'message-id') || ''),
     },
   };
+}
+
+/** Default retry schedule for the webhook's content fetch (ms between tries). */
+export const CONTENT_FETCH_RETRY_BACKOFF_MS = [400, 900];
+
+/**
+ * fetchReceivedEmailContent with bounded retries — the webhook's entry point.
+ *
+ * WHY (2026-08-10): a single 5s attempt made ANY transient Resend hiccup —
+ * timeout, 5xx, or the ingest race where `email.received` fires before the
+ * stored content is readable (404) — permanently blind the row (marker, no
+ * body). Up to 3 attempts, short backoff, still bounded well under the
+ * route's maxDuration. NOT retried: 401/403 (dead/revoked key — retrying
+ * can't help and burns the lambda budget; the email-canary cron owns that
+ * alarm) and 400 (malformed id).
+ */
+export async function fetchReceivedEmailContentWithRetry(
+  emailId: string,
+  deps?: ResendReceivingDeps & { attempts?: number; backoffMs?: number[]; sleep?: (ms: number) => Promise<void> },
+): Promise<FetchContentResult> {
+  const attempts = Math.max(1, deps?.attempts ?? 3);
+  const backoff = deps?.backoffMs ?? CONTENT_FETCH_RETRY_BACKOFF_MS;
+  const sleep = deps?.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+
+  let last: FetchContentResult = { ok: false, error: 'no attempt made' };
+  for (let i = 0; i < attempts; i++) {
+    last = await fetchReceivedEmailContent(emailId, deps);
+    if (last.ok) return last;
+    const s = last.status;
+    const retryable = s === undefined || s === 404 || s === 429 || s >= 500;
+    if (!retryable) return last;
+    if (i < attempts - 1) await sleep(backoff[Math.min(i, backoff.length - 1)] ?? 500);
+  }
+  return last;
 }
 
 /**
