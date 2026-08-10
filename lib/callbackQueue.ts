@@ -100,6 +100,13 @@ export interface DialCandidate {
   referralId?: string;
   cutLabel?: string;
   dealAmount?: number;
+  // ── C1/C2 write-back truth (cockpit CRM-parity). NEVER a ranking input in
+  //    this module — rankDialQueue ignores both. lib/cockpitDialList reads
+  //    them to keep an operator-deferred / just-dialed row off today's list.
+  /** Consumers.'Next Follow Up At' — a future date means deliberately deferred. */
+  nextFollowUpAt?: string;
+  /** Referrals.'Last Chased At' on the attached referral — operator touched it. */
+  lastChasedAt?: string;
 }
 
 export interface RankedDialCandidate extends DialCandidate {

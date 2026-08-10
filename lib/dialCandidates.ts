@@ -53,6 +53,7 @@ export function buildDialCandidates(
       callbackNote: String(c[F_CALLBACK_NOTE] || '').trim(),
       qualifiedAt: String(c['Qualified At'] || ''),
       hasCutOnFile: !!orderTypeToCut(c['Order Type']),
+      nextFollowUpAt: String(c['Next Follow Up At'] || ''),
     });
   }
 
@@ -69,6 +70,7 @@ export function buildDialCandidates(
       email: String(r['Buyer Email'] || '').trim(),
       depositLinkOpenedAt: String(r['Deposit Link Opened At'] || ''),
       depositPaidAt: String(r['Deposit Paid At'] || ''),
+      lastChasedAt: String(r['Last Chased At'] || ''),
       referralId: r.id,
       rancherName: String(r['Rancher Name'] || r['Suggested Rancher Name'] || '').trim(),
       cutLabel: String(r['Order Type'] || '').trim(),
@@ -89,6 +91,7 @@ export function buildDialCandidates(
       email: String(c['Email'] || '').trim(),
       qualifiedAt: String(c['Qualified At'] || ''),
       hasCutOnFile: !!orderTypeToCut(c['Order Type']),
+      nextFollowUpAt: String(c['Next Follow Up At'] || ''),
     });
   }
 
