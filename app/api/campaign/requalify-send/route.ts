@@ -153,13 +153,21 @@ export async function POST(request: Request) {
 
   // ── Decide + build the CTA per recipient ─────────────────────────────────
   const planned = recipients.map((r) => {
+    const matchedConsumers = consumersByEmail.get(r.email) || [];
     const decision = decideRequalifyCta({
-      consumers: consumersByEmail.get(r.email) || [],
+      consumers: matchedConsumers,
       rancher: rancherRec,
       buyerReferrals: referralsByEmail.get(r.email) || [],
       servedStates,
       commissionRate,
     });
+    // Reply threading: prefer the decision's resolved consumer (one-tap),
+    // else the first matched record from the same lookup. A recipient with
+    // no Consumer record falls through to the generic inbox Reply-To.
+    const replyConsumerId: string | null =
+      (decision.mode === 'one-tap' ? decision.consumerId : null) ||
+      (matchedConsumers[0] as any)?.id ||
+      null;
     let cta: RequalifyCta = { mode: 'quiz', url: requalifyCta(r.state, rancher.slug) };
     let reason: RequalifyQuizReason | 'mint-failed' | undefined =
       decision.mode === 'quiz' ? decision.reason : undefined;
@@ -185,7 +193,7 @@ export async function POST(request: Request) {
         reason = 'mint-failed';
       }
     }
-    return { r, cta, reason };
+    return { r, cta, replyConsumerId, reason };
   });
 
   // Counts reflect what will ACTUALLY be sent (a mint failure counts as quiz).
@@ -262,7 +270,14 @@ export async function POST(request: Request) {
         subject: rendered.subject,
         html: rendered.html,
         templateName: `campaign_${campaign}`,
-      });
+        // Thread replies to the buyer's Consumer record (usr-<id>@replies…)
+        // so the inbound webhook logs the conversation against the right
+        // person and the buyer arm can adapt their state. No consumer match
+        // → wrapper falls back to the generic inbox (still captured+logged).
+        ...(p.replyConsumerId
+          ? { _replyContext: { type: 'usr', recordId: p.replyConsumerId } }
+          : {}),
+      } as any);
       if (res.success) sent += 1;
       else if (res.suppressed) suppressed += 1;
       else failed += 1;
