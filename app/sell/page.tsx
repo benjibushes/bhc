@@ -148,6 +148,10 @@ export default function SellPage() {
               <a href={MAP_HREF} className="underline hover:text-charcoal transition-colors">
                 Put your ranch on the map &rarr;
               </a>
+              {' '}· Want the whole story?{' '}
+              <a href="/pitch" className="underline hover:text-charcoal transition-colors">
+                See exactly how it works &rarr;
+              </a>
             </p>
 
             <p className="text-xs text-saddle pt-2">
