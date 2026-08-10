@@ -1,0 +1,144 @@
+# Adaptive Marketing System — design (v2 FINAL, 2026-08-08 — two-panel adversarial review folded)
+
+Goal: the marketing machine fires itself (autopilot), measures itself
+(existing scoreboard), and improves its own conversion over time
+(adaptive layer) — with Ben holding only kill switches and approvals.
+This doc must survive adversarial review BEFORE any build.
+
+**Panel verdict summary:** the autopilot skeleton, safety invariants, and
+non-goals SURVIVED. The adaptive knobs mostly DIED — underpowered by
+40-60x at current volume (stats panel) — and the idempotency premise was
+FALSE (eng panel: nothing writes `Campaign Last Sent At` on this rail).
+v2 is the honest system: autopilot + measurement substrate + a gated
+report that is allowed to find nothing. Adaptive knobs return at their
+recorded volume triggers.
+
+## 0 · What v2 builds (three PRs, sequential)
+
+### PR 1 — Measurement substrate (the part learning stands on later)
+- **Message-id attribution**: `guardedSend` captures `result.data.id`,
+  stores it on the Email Sends row; the Resend webhook matches events by
+  id instead of the latest-row-within-7d heuristic (which lets any
+  intervening send steal the click stamp). Every future experiment
+  label depends on this.
+- **`Variant` field on Email Sends** + deterministic 50/50 hash split
+  (`hash(consumerId+templateName) % 2`) between two REPO-VERSIONED
+  subject variants (`lib/campaignVariants.ts`). Instrumentation only:
+  no epsilon, no commit rule, no explore loop. ONE prespecified
+  Fisher's exact test per template when its wave exhausts the eligible
+  pool; report the CI; "inconclusive" is the expected result.
+  (Stats panel: detecting +20% at our click rate needs ~8-17k/arm;
+  the pool caps at ~239/arm. A real bandit's volume trigger:
+  sustained ≥1,000 sends/day or eligible pool ≥10k.)
+- **Campaign-rail claim stamps** — the false-premise fix: the send loop
+  stamps `Campaign Last Sent At` + `Campaign Rail` claim-BEFORE-send
+  with the demand-router revert-on-failure pattern
+  (demand-router/route.ts:383-390, :519-533 is the template). Without
+  this, any scheduled fire re-sends its cohort daily.
+
+### PR 2 — Autopilot (the trigger removal)
+- **New `lib/campaignWaves.ts`** (the derivation that previously lived
+  nowhere): Consumers scan → mailable + lane + state ∈ servedStates +
+  unclaimed (per PR 1 stamps) → **rancher-for-state policy** (exclusivity
+  sort from lib/demandRouter; explicit per-state slug table, Ben-visible
+  in the doc) → engagement-recency order → chunks of MAX_BATCH=60.
+  Full TDD; pure function over injected rows.
+- **Cron `campaign-autopilot`** (daily, gate INSIDE realHandler so
+  dark/dry-run still writes Cron Runs rows; EXPECTED_CRONS_24H): works
+  the derived queue through the requalify-send internals (extracted to
+  lib, or self-call with CRON_SECRET — implementation's choice, no new
+  Resend-facing code either way). Tri-state
+  `CAMPAIGN_AUTOPILOT_ENABLED` (false/dry-run/true), ramp 30/day × 3
+  days on any volume-character change, budget 120/day.
+- **Rail coordination — the two-autopilots fix**: campaign rail owns
+  FIRST TOUCH of never-campaigned buyers; demand-router owns
+  post-engagement arcs (its own claims, unchanged). Mutual exclusion:
+  autopilot skips any buyer the demand-router touched <7d ago (reads
+  its stamps); demand-router already ignores campaign stamps by design
+  — acceptable because the shared 3/week frequency cap is the backstop
+  fuse and the rails now target disjoint cohorts by construction.
+- **Auto-pause, fail-closed** (checked before every run): complaints
+  ≥3/7d · send-failure >10% prior run · >5 hard bounces/24h · env not
+  true. Plus a **cancel-scheduled sweep**: pause cancels any
+  still-pending `scheduledAt` sends via Resend's cancel API (submit-time
+  suppression semantics are otherwise acknowledged: an unsubscribe
+  between submit and delivery still delivers ONE email — bounded by
+  same-day scheduling only).
+- **Domain-warmup interaction**: while `MARKETING_SEND_DOMAIN` is in
+  DKIM warmup, autopilot holds at ramp volume (30/day) regardless of
+  gates.
+- Timing: same-day `scheduledAt` per recipient is available cheaply
+  (lib/email.ts:4293) but v1 sends at cron hour — per-recipient
+  send-hour optimization is KILLED at this volume (stats panel: ~95%
+  of the list can't reach a 3-click history; the rest is coin-flip
+  personalization). Volume trigger to revisit: >500 recipients with
+  ≥10 lifetime clicks.
+
+### PR 3 — Gated weekly report (the founder-protection layer)
+Cron `learning-report`, DAILY + Monday-guard inside realHandler (a true
+weekly slot is watchdog-blind; EXCLUDED crons never alarm), EXPECTED
+registry. Content rules — each one a hard gate, not a style note:
+1. Counts, never bare rates: every finding shows raw x/n with a Wilson
+   95% CI; percentages forbidden below n=50.
+2. Evidence gate: no finding enters the ranked list under 10 outcome
+   events. Ranking noisy metrics and reading the top is winner's curse.
+3. **A null report is a normal report.** "Nothing passed the gate this
+   week" ships as-is. A synthesis that always finds something is a
+   noise generator.
+4. Replication ledger: last week's top finding gets a mandatory
+   follow-up line (held / reversed / insufficient). The reversal rate
+   is the report's own honesty meter.
+5. Objection/sentiment categories under 10 rows: quote the
+   conversations verbatim instead of counting them.
+6. Every drafted challenger variant states the n required to judge it.
+   At current volume that line often reads "not judgeable before the
+   list is ~20x larger" — that IS the decision information.
+Promotion path unchanged: report drafts → Ben approves → variant lands
+in the repo via PR → judged by PR 1's instrumentation.
+
+## 1 · Killed knobs and their return triggers (recorded so we don't re-litigate)
+- Subject bandit (ε-greedy/commit): return at ≥1,000 sends/day.
+- Per-recipient send-hour: return at >500 recipients w/ ≥10 clicks.
+- State-level cut preselect: return at ≥25 outcomes/state AND a 10%
+  random-exploration share (the argmax feedback loop manufactures its
+  own evidence). Until then: NATIONAL default cut only, labeled
+  "default", banned from the report as a "learning".
+- Opens as ANY learning signal: never. Click-only. (MPP prefetch fires
+  25min-to-hours after delivery; no discard window survives that.)
+
+## 2 · Safety invariants (v2, each testable)
+1. No runtime-generated prose is ever sent. Scoped precisely: the
+   autopilot/campaign module import graph contains no `lib/ai` (the
+   repo-wide version is already false — the inbound reply classifier
+   legitimately selects baked autoresponses; that path is out of
+   scope and unchanged).
+2. Adaptive/scheduling choices select only among pre-approved artifacts
+   and timing inside existing caps; eligibility, suppression, and
+   sunset sit upstream, untouched.
+3. Complaint alarm pauses autopilot before the next run + cancels
+   pending scheduled sends; telemetry read failure ⇒ treated as alarm.
+4. Every run logs its decision inputs (Cron Runs notes; Variant +
+   message-id on Email Sends). Full audit trail.
+5. Kill switches per subsystem, tri-state, fail-to-off:
+   CAMPAIGN_AUTOPILOT_ENABLED, ADAPTIVE_VARIANTS_ENABLED.
+6. Claim-before-send everywhere (PR 1 closes the campaign-rail hole);
+   idempotent by stamps, not by memory.
+7. Read-only on money tables.
+8. Ramp on volume-character change; warmup-capped while the marketing
+   domain warms.
+9. Rail disjointness: first-touch (autopilot) vs arcs (demand-router),
+   with the 7d cross-rail skip and the 3/week cap as fuse.
+
+## 3 · Rollout gates
+- L0 Shadow: all tri-states at dry-run ≥1 week; logged plans reviewed;
+  gate = 7 clean days, zero guard violations, plans match expectation.
+- L1 Live at ramp (30/day): gate = 200 sends, zero violations,
+  complaint rate <2/7d.
+- L2 Full budget (120/day): gate = two consecutive clean weeks.
+- L3 (future, at volume triggers): the killed knobs, each with its own
+  doc + panel.
+
+## 4 · Explicit non-goals (unchanged from v1, panel-confirmed)
+Per-user ML at 22 lifetime conversions · runtime LLM copywriting into
+sends · adaptive cadence/windows · dynamic pricing/deposits · SMS
+adaptation before TCPA capture.
