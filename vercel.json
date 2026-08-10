@@ -267,6 +267,10 @@
     {
       "path": "/api/cron/marketing-sunset",
       "schedule": "17 7 * * *"
+    },
+    {
+      "path": "/api/cron/inbound-body-backfill",
+      "schedule": "40 6 * * *"
     }
   ]
 }

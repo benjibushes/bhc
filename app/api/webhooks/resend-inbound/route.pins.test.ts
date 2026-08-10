@@ -28,21 +28,22 @@ test('PIN: content fetch fires ONLY when both text and html are blank and an ema
     /if \(!String\(text\)\.trim\(\) && !String\(html\)\.trim\(\) && emailId\) \{/,
     'fetch guard must require blank text AND blank html AND an email id',
   );
-  assert.match(src, /fetchReceivedEmailContent\(emailId\)/);
+  // 2026-08-10: single attempt → retried fetch. One transient Resend hiccup
+  // must never blind a row permanently.
+  assert.match(src, /fetchReceivedEmailContentWithRetry\(emailId\)/);
 });
 
 test('PIN: fetch failure fails SOFT — envelope row still written, with the visible marker', () => {
-  assert.match(src, /CONTENT_FETCH_FAILED_MARKER/);
   assert.match(
     src,
-    /contentFetchFailed && !bodyForClassify \? CONTENT_FETCH_FAILED_MARKER : \(text \|\| bodyForClassify\)/,
-    'Body Plain must carry the marker exactly when the fetch failed and no content exists',
+    /contentFetchFailed && !bodyForClassify \? contentFetchFailedMarker\(emailId\) : \(text \|\| bodyForClassify\)/,
+    'Body Plain must carry the rid-bearing marker exactly when the fetch failed and no content exists',
   );
   assert.match(src, /CONTENT FETCH FAILED/, 'loud console.error on fetch failure');
 });
 
 test('PIN: classifier runs AFTER content resolution', () => {
-  const fetchIdx = src.indexOf('fetchReceivedEmailContent(emailId)');
+  const fetchIdx = src.indexOf('fetchReceivedEmailContentWithRetry(emailId)');
   const classifyIdx = src.indexOf('classifyInboundReply({');
   assert.ok(fetchIdx > -1 && classifyIdx > -1);
   assert.ok(fetchIdx < classifyIdx, 'content fetch must precede classification');

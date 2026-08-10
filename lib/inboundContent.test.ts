@@ -2,10 +2,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   fetchReceivedEmailContent,
+  fetchReceivedEmailContentWithRetry,
   listReceivedEmails,
   normalizeHeaders,
   headerValue,
   htmlToPlain,
+  contentFetchFailedMarker,
+  isContentFetchFailedMarker,
+  parseMarkerRid,
   CONTENT_FETCH_FAILED_MARKER,
   CONTENT_UNRECOVERABLE_MARKER,
 } from './inboundContent';
@@ -168,4 +172,96 @@ test('htmlToPlain strips tags, styles, and entities', () => {
     htmlToPlain('<style>b{}</style><p>Hi &amp; welcome<br>to the ranch</p>'),
     'Hi & welcome to the ranch',
   );
+});
+
+// ── rid-bearing marker helpers (2026-08-10) ──────────────────────────────────
+// The webhook embeds the Resend received-email id in the fetch-failed marker
+// so the backfill can fetch content directly instead of fuzzy-matching the
+// listing. Bare markers (pre-existing rows) must keep parsing cleanly.
+
+test('contentFetchFailedMarker embeds the rid; bare form without one', () => {
+  assert.equal(
+    contentFetchFailedMarker('re-abc-123'),
+    `${CONTENT_FETCH_FAILED_MARKER} [rid:re-abc-123]`,
+  );
+  assert.equal(contentFetchFailedMarker(''), CONTENT_FETCH_FAILED_MARKER);
+  assert.equal(contentFetchFailedMarker(undefined), CONTENT_FETCH_FAILED_MARKER);
+});
+
+test('isContentFetchFailedMarker: bare + rid forms yes; unrecoverable + real bodies no', () => {
+  assert.equal(isContentFetchFailedMarker(CONTENT_FETCH_FAILED_MARKER), true);
+  assert.equal(isContentFetchFailedMarker(contentFetchFailedMarker('re-x')), true);
+  assert.equal(isContentFetchFailedMarker(CONTENT_UNRECOVERABLE_MARKER), false);
+  assert.equal(isContentFetchFailedMarker('a real reply body'), false);
+  assert.equal(isContentFetchFailedMarker(''), false);
+});
+
+test('parseMarkerRid round-trips; bare marker and junk give empty string', () => {
+  assert.equal(parseMarkerRid(contentFetchFailedMarker('re-abc-123')), 're-abc-123');
+  assert.equal(parseMarkerRid(CONTENT_FETCH_FAILED_MARKER), '');
+  assert.equal(parseMarkerRid('no marker here'), '');
+  assert.equal(parseMarkerRid(undefined), '');
+});
+
+// ── fetchReceivedEmailContentWithRetry (2026-08-10) ──────────────────────────
+// One transient hiccup (timeout / 5xx / the email.received-outruns-storage
+// 404 race) must not blind the row permanently; a dead key (401) must not
+// burn the lambda budget retrying.
+
+test('retry: transient failure then success — retries with backoff, returns content', async () => {
+  let calls = 0;
+  const sleeps: number[] = [];
+  const res = await fetchReceivedEmailContentWithRetry('re-retry-1', {
+    apiKey: 'test-key',
+    fetchImpl: async () => {
+      calls++;
+      if (calls === 1) return errJson(500);
+      return okJson({ text: 'second try body', html: '', headers: {}, message_id: '<m2@example.com>' });
+    },
+    sleep: async (ms: number) => { sleeps.push(ms); },
+  });
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+  assert.equal(res.content.text, 'second try body');
+  assert.equal(calls, 2);
+  assert.deepEqual(sleeps, [400], 'backoff before the second attempt only');
+});
+
+test('retry: 404 is retried (ingest race) and can recover', async () => {
+  let calls = 0;
+  const res = await fetchReceivedEmailContentWithRetry('re-race-1', {
+    apiKey: 'test-key',
+    fetchImpl: async () => {
+      calls++;
+      if (calls < 3) return errJson(404);
+      return okJson({ text: 'stored now', html: '', headers: {}, message_id: '<m3@example.com>' });
+    },
+    sleep: async () => {},
+  });
+  assert.equal(res.ok, true);
+  assert.equal(calls, 3);
+});
+
+test('retry: exhausted attempts return the LAST failure', async () => {
+  let calls = 0;
+  const res = await fetchReceivedEmailContentWithRetry('re-dead-1', {
+    apiKey: 'test-key',
+    fetchImpl: async () => { calls++; return errJson(503); },
+    sleep: async () => {},
+  });
+  assert.equal(res.ok, false);
+  if (res.ok) return;
+  assert.equal(res.status, 503);
+  assert.equal(calls, 3, 'default 3 attempts');
+});
+
+test('retry: 401 (dead key) is NOT retried', async () => {
+  let calls = 0;
+  const res = await fetchReceivedEmailContentWithRetry('re-key-dead', {
+    apiKey: 'test-key',
+    fetchImpl: async () => { calls++; return errJson(401); },
+    sleep: async () => { throw new Error('must not sleep on a non-retryable failure'); },
+  });
+  assert.equal(res.ok, false);
+  assert.equal(calls, 1);
 });

@@ -117,6 +117,10 @@ export const EXPECTED_CRONS_24H = [
   // (demand-router pattern): a daily 'skipped' Cron Runs row is written
   // while dark, so a missing row always means a REAL missed run.
   'marketing-sunset',
+  // Nightly blind-inbound-row recovery (2026-08-10, recVUDVwrSvVrDZNz
+  // post-mortem) — no env latch, withCronRun writes a daily Cron Runs row
+  // even when zero rows are pending.
+  'inbound-body-backfill',
 ] as const;
 
 /**
