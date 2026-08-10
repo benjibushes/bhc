@@ -271,6 +271,10 @@
     {
       "path": "/api/cron/campaign-autopilot",
       "schedule": "10 15 * * *"
+    },
+    {
+      "path": "/api/cron/inbound-body-backfill",
+      "schedule": "40 6 * * *"
     }
   ]
 }

@@ -124,6 +124,10 @@ export const EXPECTED_CRONS_24H = [
   // (disabled/dry-run/live/auto-paused), so a missing row means a REAL missed
   // run.
   'campaign-autopilot',
+  // Nightly blind-inbound-row recovery (2026-08-10, recVUDVwrSvVrDZNz
+  // post-mortem) — no env latch, withCronRun writes a daily Cron Runs row
+  // even when zero rows are pending.
+  'inbound-body-backfill',
 ] as const;
 
 /**

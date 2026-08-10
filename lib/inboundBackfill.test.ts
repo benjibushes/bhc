@@ -101,7 +101,7 @@ function deps(overrides: Partial<BackfillDeps> = {}): BackfillDeps & {
 
 // ── Selection ────────────────────────────────────────────────────────────────
 
-test('selection: ONLY empty-body inbound email rows qualify', () => {
+test('selection: empty-body and fetch-failed-marker inbound email rows qualify', () => {
   assert.equal(isBackfillCandidate(row()), true);
   assert.equal(isBackfillCandidate(row({ Direction: 'Inbound' })), true, 'case-insensitive Direction');
   assert.equal(isBackfillCandidate(row({ Direction: 'outbound' })), false);
@@ -109,16 +109,38 @@ test('selection: ONLY empty-body inbound email rows qualify', () => {
   assert.equal(
     isBackfillCandidate(row({ 'Body Plain': CONTENT_UNRECOVERABLE_MARKER })),
     false,
-    'marker-stamped rows never re-qualify',
+    'unrecoverable-stamped rows never re-qualify',
   );
+  // COVERAGE CHANGE 2026-08-10 (recVUDVwrSvVrDZNz post-mortem): fetch-failed
+  // marker rows are PENDING, not terminal — nobody ever cleared a marker by
+  // hand, so a failed webhook fetch used to be permanent blindness.
   assert.equal(
     isBackfillCandidate(row({ 'Body Plain': CONTENT_FETCH_FAILED_MARKER })),
-    false,
-    'fetch-failed marker rows are recovered by CLEARING the marker first, never auto-rewritten',
+    true,
+    'bare fetch-failed marker rows qualify',
+  );
+  assert.equal(
+    isBackfillCandidate(row({ 'Body Plain': `${CONTENT_FETCH_FAILED_MARKER} [rid:re-fake-id]` })),
+    true,
+    'rid-bearing fetch-failed marker rows qualify',
   );
   assert.equal(isBackfillCandidate(row({ From: 'ig:some_handle' })), false, 'IG DM rows excluded');
   assert.equal(isBackfillCandidate(row({ From: 'no-at-sign' })), false);
   assert.equal(isBackfillCandidate({ id: '', Direction: 'inbound' } as any), false);
+});
+
+test('selection: REGRESSION recVUDVwrSvVrDZNz — pre-fix blind row shape (fields ABSENT, not empty strings) qualifies', () => {
+  // Airtable omits empty fields entirely: no Body, no Body Plain, no Message
+  // Id keys at all; Raw Headers is the literal string '{}'. Synthetic sender.
+  const blind: ConversationRowLike = {
+    id: 'recBlindRow',
+    Direction: 'inbound',
+    From: 'Fake Rancher <fake-rancher@example.com>',
+    Subject: 'Re: Commission Invoice — synthetic',
+    Timestamp: T0,
+    'Raw Headers': '{}',
+  };
+  assert.equal(isBackfillCandidate(blind), true);
 });
 
 test('selection: cap respected (default 50)', () => {
@@ -199,6 +221,65 @@ test('fetch 404 → unrecoverable; transient error → untouched for next run', 
   assert.equal(s2.unrecoverable, 0);
   assert.equal(s2.skippedTransient, 1);
   assert.equal(flaky.updates.length, 0, 'transient failure must not stamp the row');
+});
+
+// ── rid path (2026-08-10): marker rows carry the exact Resend id ────────────
+
+test('rid path: marker row fetches directly by rid — no listing match needed', async () => {
+  const d = deps({
+    listRows: async () => [
+      row({ 'Body Plain': `${CONTENT_FETCH_FAILED_MARKER} [rid:re-direct-1]` }),
+    ],
+    listReceived: async () => ({ ok: true, items: [] }), // listing would find NOTHING
+  });
+  const summary = await runInboundBackfill(d);
+  assert.equal(summary.recovered, 1);
+  assert.equal(summary.unrecoverable, 0);
+  assert.deepEqual(d.fetchCalls, ['re-direct-1']);
+  assert.equal(d.updates[0].fields['Body Plain'], 'recovered plain body');
+  assert.equal(d.updates[0].fields['Message Id'], '<m1@example.com>');
+});
+
+test('rid path: gone rid (404) falls back to the listing match', async () => {
+  const d = deps({
+    listRows: async () => [
+      row({ 'Body Plain': `${CONTENT_FETCH_FAILED_MARKER} [rid:re-stale]` }),
+    ],
+  });
+  const inner = d.fetchContent;
+  d.fetchContent = async (id: string) => {
+    if (id === 're-stale') {
+      d.fetchCalls.push(id);
+      return { ok: false, status: 404, error: 'gone' };
+    }
+    return inner(id);
+  };
+  const summary = await runInboundBackfill(d);
+  assert.equal(summary.recovered, 1);
+  assert.deepEqual(d.fetchCalls, ['re-stale', 're-1']);
+});
+
+test('rid path: transient rid failure leaves the marker row untouched for the next run', async () => {
+  const d = deps({
+    listRows: async () => [
+      row({ 'Body Plain': `${CONTENT_FETCH_FAILED_MARKER} [rid:re-flaky]` }),
+    ],
+    fetchContent: async () => ({ ok: false, status: 503, error: 'resend receiving GET 503' }),
+  });
+  const summary = await runInboundBackfill(d);
+  assert.equal(summary.skippedTransient, 1);
+  assert.equal(summary.recovered, 0);
+  assert.equal(d.updates.length, 0, 'transient rid failure must not stamp the row');
+});
+
+test('rid-less marker row: listing-match path; unmatched → unrecoverable replaces the marker', async () => {
+  const d = deps({
+    listRows: async () => [row({ 'Body Plain': CONTENT_FETCH_FAILED_MARKER })],
+    listReceived: async () => ({ ok: true, items: [] }),
+  });
+  const summary = await runInboundBackfill(d);
+  assert.equal(summary.unrecoverable, 1);
+  assert.deepEqual(d.updates[0].fields, { 'Body Plain': CONTENT_UNRECOVERABLE_MARKER });
 });
 
 test('idempotent: rows with non-empty Body Plain are never touched', async () => {
@@ -302,4 +383,42 @@ test('PIN: backfill route is double-latched (admin auth + env gate) and capped',
   assert.match(backfillRouteSrc, /requireAdmin\(request\)/);
   assert.match(backfillRouteSrc, /INBOUND_BACKFILL_ENABLED/);
   assert.match(backfillRouteSrc, /BACKFILL_CAP_DEFAULT/);
+});
+
+// ── Nightly cron (2026-08-10) — same send boundaries, cron-authed, NO env
+// latch (the latch is why 54 blind rows sat pending 7 days: the env var was
+// never set and the manual route was never POSTed).
+const backfillCronSrc = readFileSync(
+  path.join(HERE, '..', 'app', 'api', 'cron', 'inbound-body-backfill', 'route.ts'),
+  'utf8',
+);
+
+test('PIN: nightly backfill cron sends nothing except the single summary operator signal', () => {
+  for (const forbidden of [
+    'sendEmail',
+    'sendTelegramMessage',
+    'autoRespond',
+    'maybeAutoRespond',
+    '@/lib/email',
+    '@/lib/telegram',
+  ]) {
+    assert.equal(
+      backfillCronSrc.includes(forbidden),
+      false,
+      `backfill cron must not reference ${forbidden}`,
+    );
+  }
+  const signalCalls = backfillCronSrc.match(/sendOperatorSignal\(/g) || [];
+  assert.equal(signalCalls.length, 1, 'exactly one summary signal call site');
+});
+
+test('PIN: nightly backfill cron is cron-authed, capped, and NOT env-latched', () => {
+  assert.match(backfillCronSrc, /requireCron\(request\)/);
+  assert.match(backfillCronSrc, /withCronRun\('inbound-body-backfill'/);
+  assert.match(backfillCronSrc, /BACKFILL_CAP_DEFAULT/);
+  assert.equal(
+    backfillCronSrc.includes('INBOUND_BACKFILL_ENABLED'),
+    false,
+    'self-heal must be default-ON — no env latch on the cron path',
+  );
 });

@@ -57,9 +57,9 @@ import { findReplyContext, type ReplyContext } from '@/lib/replyAddressing';
 import { logAuditEntry } from '@/lib/auditLog';
 import { classifyInboundReply } from '@/lib/inboundClassify';
 import {
-  fetchReceivedEmailContent,
+  fetchReceivedEmailContentWithRetry,
   headerValue,
-  CONTENT_FETCH_FAILED_MARKER,
+  contentFetchFailedMarker,
 } from '@/lib/inboundContent';
 import {
   matchSenderByEmail,
@@ -234,13 +234,16 @@ export async function POST(request: Request) {
     // payload and must be fetched from GET /emails/receiving/{email_id}.
     // Before this fix every real reply logged an envelope-only row (empty
     // Body/Body Plain, Raw Headers '{}') and the classifier read an empty
-    // string → the entire reply machine was blind. Timeout-guarded (5s) and
-    // fail-soft: on fetch failure we still write the envelope row, with a
-    // visible marker in Body Plain instead of silent emptiness.
+    // string → the entire reply machine was blind. Timeout-guarded (5s per
+    // attempt), RETRIED (up to 3 tries with short backoff — a single-attempt
+    // transient hiccup used to blind the row permanently; 2026-08-10), and
+    // fail-soft: on persistent failure we still write the envelope row, with
+    // a visible marker in Body Plain that embeds the Resend email id so the
+    // backfill can fetch the content directly later.
     let contentFetched = false;
     let contentFetchFailed = false;
     if (!String(text).trim() && !String(html).trim() && emailId) {
-      const fetched = await fetchReceivedEmailContent(emailId);
+      const fetched = await fetchReceivedEmailContentWithRetry(emailId);
       if (fetched.ok) {
         text = fetched.content.text;
         html = fetched.content.html;
@@ -691,7 +694,7 @@ export async function POST(request: Request) {
       'Subject': subject,
       'Body': html || text,
       'Body Plain':
-        contentFetchFailed && !bodyForClassify ? CONTENT_FETCH_FAILED_MARKER : (text || bodyForClassify),
+        contentFetchFailed && !bodyForClassify ? contentFetchFailedMarker(emailId) : (text || bodyForClassify),
       'Sender Type': classification.senderType,
       'Objection Category': classification.objectionCategory,
       'Sentiment': classification.sentiment,
