@@ -185,7 +185,13 @@ export async function createCommissionInvoice(
 
   const customerId = await ensureStripeCustomer(stripe, args.rancher);
   const amountCents = Math.round(args.referral.commissionDue * 100);
-  const description = `Commission · ${args.referral.buyerName} · ${args.referral.orderType} · $${args.referral.saleAmount.toFixed(2)} sale (10%)`;
+  // Rate label computed from the row, not assumed — negotiated rates exist
+  // (Ashcraft 6%, 2026-08-10); a hardcoded "(10%)" on their invoice line is
+  // a money-copy lie.
+  const ratePct = ((args.referral.commissionDue / args.referral.saleAmount) * 100)
+    .toFixed(1)
+    .replace(/\.0$/, '');
+  const description = `Commission · ${args.referral.buyerName} · ${args.referral.orderType} · $${args.referral.saleAmount.toFixed(2)} sale (${ratePct}%)`;
 
   // Order matters with API 2026: create draft invoice FIRST, then attach
   // line item to it explicitly with `invoice` field, then finalize + send.
