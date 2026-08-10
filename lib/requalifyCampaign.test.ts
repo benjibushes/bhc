@@ -341,3 +341,30 @@ test('links: both modes carry the same utm triple', () => {
   assert.match(requalifyOneTapCta('NE', 'abc.def.ghi'), /^https:\/\/www\.buyhalfcow\.com\/r\/d\/abc\.def\.ghi\?utm_source=email&utm_medium=drip&utm_campaign=waiting-wake-ne$/);
   assert.match(requalifyCta('NE', CV.slug), /utm_campaign=waiting-wake-ne$/);
 });
+
+// ── validateRequalifyBatch: rail attribution (ADAPTIVE PR 2) ────────────────
+
+const VALID_BODY = {
+  campaign: 'autopilot-tx',
+  rancher: { name: 'Lone Star', slug: 'lone-star' },
+  recipients: [{ email: 'buyer@example.com', name: 'Buyer', state: 'TX' }],
+};
+
+test('validate: rail defaults to requalify (operator scripts unchanged)', () => {
+  const parsed = validateRequalifyBatch(VALID_BODY);
+  assert.ok(!('error' in parsed));
+  assert.equal(parsed.rail, 'requalify');
+});
+
+test('validate: explicit rail slug is accepted and returned', () => {
+  const parsed = validateRequalifyBatch({ ...VALID_BODY, rail: 'autopilot' });
+  assert.ok(!('error' in parsed));
+  assert.equal(parsed.rail, 'autopilot');
+});
+
+test('validate: junk rail is rejected, never silently defaulted', () => {
+  for (const rail of ['', '  ', 'Auto Pilot', 'x', 'UPPER', 'way-way-way-too-long-rail-name', 42, null]) {
+    const parsed = validateRequalifyBatch({ ...VALID_BODY, rail });
+    assert.ok('error' in parsed, `rail=${JSON.stringify(rail)} must be rejected`);
+  }
+});

@@ -390,12 +390,19 @@ ${opener}
 }
 
 export function validateRequalifyBatch(body: unknown):
-  | { recipients: RequalifyRecipient[]; campaign: string; dryRun: boolean; rancher: CampaignRancher }
+  | { recipients: RequalifyRecipient[]; campaign: string; dryRun: boolean; rancher: CampaignRancher; rail: string }
   | { error: string } {
   if (!body || typeof body !== 'object') return { error: 'body must be an object' };
   const b = body as Record<string, unknown>;
   const campaign = String(b.campaign || '').trim();
   if (!/^[a-z0-9-]{3,40}$/.test(campaign)) return { error: 'campaign must be a kebab-case slug' };
+  // Claim attribution (ADAPTIVE-MARKETING-DESIGN PR 2): which rail this batch
+  // belongs to — stamped to Consumers `Campaign Rail` claim-before-send. The
+  // operator script omits it (default 'requalify', byte-identical behavior);
+  // the campaign-autopilot cron passes 'autopilot' so an audit can tell a
+  // machine wave from a hand-fired one. Optional-with-default, never blank.
+  const rail = b.rail === undefined ? 'requalify' : String(b.rail || '').trim();
+  if (!/^[a-z0-9-]{3,20}$/.test(rail)) return { error: 'rail must be a kebab-case slug' };
   const rr = b.rancher as Record<string, unknown> | undefined;
   const rancherName = String(rr?.name || '').trim();
   const rancherSlug = String(rr?.slug || '').trim();
@@ -410,5 +417,5 @@ export function validateRequalifyBatch(body: unknown):
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { error: `invalid email: ${email.slice(0, 40)}` };
     recipients.push({ email, name: String(rec?.name || '').slice(0, 80), state: String(rec?.state || '').slice(0, 2) });
   }
-  return { recipients, campaign, dryRun: b.dryRun === true, rancher: { name: rancherName, slug: rancherSlug } };
+  return { recipients, campaign, dryRun: b.dryRun === true, rancher: { name: rancherName, slug: rancherSlug }, rail };
 }
