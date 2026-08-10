@@ -117,6 +117,13 @@ export const EXPECTED_CRONS_24H = [
   // (demand-router pattern): a daily 'skipped' Cron Runs row is written
   // while dark, so a missing row always means a REAL missed run.
   'marketing-sunset',
+  // Campaign autopilot (ADAPTIVE-MARKETING-DESIGN PR 2) — daily 15:10 UTC,
+  // first-touch requalify waves via self-call to /api/campaign/requalify-send.
+  // Tri-state CAMPAIGN_AUTOPILOT_ENABLED (off/'dry-run'/'true'), fail-to-off,
+  // gate INSIDE realHandler: a daily Cron Runs row is written in every mode
+  // (disabled/dry-run/live/auto-paused), so a missing row means a REAL missed
+  // run.
+  'campaign-autopilot',
 ] as const;
 
 /**

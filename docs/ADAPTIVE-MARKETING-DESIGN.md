@@ -74,6 +74,43 @@ recorded volume triggers.
   personalization). Volume trigger to revisit: >500 recipients with
   ≥10 lifetime clicks.
 
+**PR 2 — SHIPPED (branch adaptive-pr2).** Implementation record:
+- `lib/campaignWaves.ts` (pure, unit-tested) + cron
+  `campaign-autopilot` (daily 15:10 UTC, gate INSIDE realHandler,
+  EXPECTED_CRONS_24H). Live dispatch = self-call POST
+  /api/campaign/requalify-send with CRON_SECRET (the
+  triggerLaunchWarmup precedent) — zero new Resend-facing code; the
+  endpoint's claim stamps now record `Campaign Rail`='autopilot' via a
+  validated optional `rail` body field (default 'requalify').
+- **Rancher-for-state policy (the Ben-visible table):** computed each
+  run from live supply, logged in every Cron Runs row as
+  `states: TX→<slug> …`. Rule, in order: operational
+  (isRancherOperationalForBuyers) + has a Slug; NO exclusive-ZIP
+  rancher takes a whole state while a non-gated rancher serves it (a
+  Service ZIP Prefixes territory is sub-state — Thomas/Houston);
+  primary state beats routing-states coverage; fewer Current Active
+  Referrals; slug ascending. Pin a state manually by firing the
+  operator script — the autopilot only touches never-campaigned
+  buyers, so hand waves and machine waves cannot double-send.
+- First-touch pool = NO campaign claim of any kind (Campaign Last Sent
+  At / Campaign Rail / Campaign Stage all empty) + 7d cross-rail belt
+  over the demand-router's Consumer-side stamps (incl. SMS recovery) +
+  referral-truth mid-deal exclusion (activeDealBuyerKeys) + lane gate
+  on stored Routing Segment ONLY (reclassify-buyers stays the only
+  lane engine) + P5′ sunset-suppression marker respected.
+- Budget: ramp 30/day until 3 distinct live-send days (Email Sends
+  truth, `campaign_autopilot*` templates), then 120/day; the endpoint
+  re-enforces the domain ceiling server-side. Warmup hold: while
+  MARKETING_SEND_DOMAIN is set and MARKETING_DOMAIN_WARMED≠'true',
+  ceiling stays 30.
+- Auto-pause implemented as specified (complaints ≥3/7d via
+  complaintTelemetry · >5 hard bounces/24h via webhook Notes stamps ·
+  prior-run failure >10% at ≥10 attempts via a machine-readable
+  stats[] token in Cron Runs notes · any telemetry read failure =
+  alarm). NOT built: the cancel-scheduled sweep — this rail never uses
+  Resend `scheduledAt` (v1 sends at cron hour), so there is nothing to
+  cancel; revisit with the send-hour knob at its volume trigger.
+
 ### PR 3 — Gated weekly report (the founder-protection layer)
 Cron `learning-report`, DAILY + Monday-guard inside realHandler (a true
 weekly slot is watchdog-blind; EXCLUDED crons never alarm), EXPECTED

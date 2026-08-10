@@ -116,7 +116,7 @@ export async function POST(request: Request) {
   const parsed = validateRequalifyBatch(body);
   if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
 
-  const { recipients, campaign, dryRun, rancher } = parsed;
+  const { recipients, campaign, dryRun, rancher, rail } = parsed;
 
   // ── Resolve the campaign rancher ─────────────────────────────────────────
   // A THROW is an Airtable failure (fail closed below). A null is a legitimate
@@ -362,7 +362,9 @@ export async function POST(request: Request) {
       try {
         await updateRecord(TABLES.CONSUMERS, row.id, {
           'Campaign Last Sent At': nowIso,
-          'Campaign Rail': 'requalify',
+          // 'requalify' for operator batches; 'autopilot' when the
+          // campaign-autopilot cron drove the wave (validated slug, PR 2).
+          'Campaign Rail': rail,
         });
         claimed.push(row);
       } catch (e: unknown) {
