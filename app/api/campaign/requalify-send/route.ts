@@ -38,6 +38,18 @@
 // one-tap recipient becomes a real lead the normal way: by PAYING a deposit,
 // which the existing deposit rail settles end to end — the same rule the
 // self-serve reserve path follows, and a stronger signal than a quiz answer.
+//
+// ── MEASUREMENT SUBSTRATE (ADAPTIVE-MARKETING-DESIGN PR 1, 2026-08-10) ────
+//   • CLAIM STAMPS: every matched Consumers row gets `Campaign Last Sent At`
+//     + `Campaign Rail` stamped claim-BEFORE-send, with the demand-router
+//     revert-on-failure pattern — closes the idempotency hole where a re-run
+//     re-emailed the whole "uncampaigned" cohort (nothing wrote the field
+//     this rail's pool filter reads).
+//   • VARIANTS: deterministic 50/50 subject split (lib/campaignVariants),
+//     gated by tri-state ADAPTIVE_VARIANTS_ENABLED (fail-to-off); the arm
+//     actually sent is stamped to Email Sends `Variant`.
+//   • MESSAGE ID: guardedSend persists the Resend send id to Email Sends
+//     `Resend Id`, and the engagement webhook attributes events by that id.
 
 import { NextResponse } from 'next/server';
 import { requireCron } from '@/lib/cronAuth';
@@ -52,7 +64,8 @@ import {
   type RequalifyCta,
   type RequalifyQuizReason,
 } from '@/lib/requalifyCampaign';
-import { getAllRecords, getRancherBySlug, escapeAirtableValue, TABLES } from '@/lib/airtable';
+import { getAllRecords, getRancherBySlug, updateRecord, escapeAirtableValue, TABLES } from '@/lib/airtable';
+import { campaignVariant, variantMode, type CampaignVariant } from '@/lib/campaignVariants';
 import { mintCampaignReserveToken } from '@/lib/campaignReserve';
 import { getOperationalServedStates } from '@/lib/rancherEligibility';
 import { depositCommissionRate, tierFor } from '@/lib/tiers';
@@ -152,6 +165,13 @@ export async function POST(request: Request) {
   }
 
   // ── Decide + build the CTA per recipient ─────────────────────────────────
+  // Variant instrumentation (ADAPTIVE-MARKETING-DESIGN PR 1): deterministic
+  // 50/50 subject split, keyed on (consumerId, templateName). Tri-state
+  // kill switch fails to OFF — 'live' sends the assigned arm, 'shadow'
+  // (dry-run) surfaces the assignment in the response but still sends A,
+  // off sends A. The arm actually SENT is stamped to Email Sends `Variant`.
+  const templateName = `campaign_${campaign}`;
+  const vmode = variantMode();
   const planned = recipients.map((r) => {
     const matchedConsumers = consumersByEmail.get(r.email) || [];
     const decision = decideRequalifyCta({
@@ -168,6 +188,31 @@ export async function POST(request: Request) {
       (decision.mode === 'one-tap' ? decision.consumerId : null) ||
       (matchedConsumers[0] as any)?.id ||
       null;
+    // Claim targets: EVERY matched Consumers row for this email. The
+    // "uncampaigned" pool filters per row on isEmpty(Campaign Last Sent At),
+    // so a duplicate pair must BOTH be claimed or a re-run re-emails the
+    // buyer through the unclaimed twin. Pre-claim values ride along so a
+    // failed send can revert (demand-router pattern).
+    const claimRows = matchedConsumers
+      .filter((row: any) => row && typeof row.id === 'string' && row.id)
+      .map((row: any) => ({
+        id: String(row.id),
+        prior: {
+          lastSent: row['Campaign Last Sent At'] ? String(row['Campaign Last Sent At']) : null,
+          rail: row['Campaign Rail'] ? String(row['Campaign Rail']) : null,
+        },
+      }));
+    // Only a recipient with a resolved consumer identity enters the split —
+    // the hash needs a stable unit id, and unrandomized rows would pollute
+    // the arms. Everyone else gets the baseline A subject, unstamped.
+    const variantAssigned: CampaignVariant | null = replyConsumerId
+      ? campaignVariant(replyConsumerId, templateName)
+      : null;
+    const variantSent: CampaignVariant | null = variantAssigned
+      ? vmode === 'live'
+        ? variantAssigned
+        : 'A'
+      : null;
     let cta: RequalifyCta = { mode: 'quiz', url: requalifyCta(r.state, rancher.slug) };
     let reason: RequalifyQuizReason | 'mint-failed' | undefined =
       decision.mode === 'quiz' ? decision.reason : undefined;
@@ -193,7 +238,7 @@ export async function POST(request: Request) {
         reason = 'mint-failed';
       }
     }
-    return { r, cta, replyConsumerId, reason };
+    return { r, cta, replyConsumerId, reason, claimRows, variantAssigned, variantSent };
   });
 
   // Counts reflect what will ACTUALLY be sent (a mint failure counts as quiz).
@@ -203,12 +248,15 @@ export async function POST(request: Request) {
     email: p.r.email,
     mode: p.cta.mode,
     ...(p.reason ? { ctaReason: p.reason } : {}),
+    ...(p.variantAssigned ? { variant: p.variantAssigned, variantSent: p.variantSent } : {}),
   }));
 
   if (dryRun) {
     const sampleFor = (mode: 'one-tap' | 'quiz') => {
       const hit = planned.find((p) => p.cta.mode === mode);
-      return hit ? renderRequalifyEmail(hit.r.name, hit.r.state, rancher, hit.cta) : undefined;
+      return hit
+        ? renderRequalifyEmail(hit.r.name, hit.r.state, rancher, hit.cta, hit.variantSent ?? 'A')
+        : undefined;
     };
     const previews: Record<string, unknown> = {};
     // Render a sample of EVERY mode present, so a dry run shows exactly what
@@ -222,12 +270,19 @@ export async function POST(request: Request) {
       count: recipients.length,
       rancher: rancher.slug,
       rancherResolved: !!rancherRec,
+      variantMode: vmode,
       oneTap,
       quizFallback,
       recipients: split,
       previews,
       // Back-compat with the original operator script (first recipient's body).
-      preview: renderRequalifyEmail(planned[0].r.name, planned[0].r.state, rancher, planned[0].cta),
+      preview: renderRequalifyEmail(
+        planned[0].r.name,
+        planned[0].r.state,
+        rancher,
+        planned[0].cta,
+        planned[0].variantSent ?? 'A',
+      ),
     });
   }
 
@@ -258,18 +313,111 @@ export async function POST(request: Request) {
     ok: boolean;
     mode: 'one-tap' | 'quiz';
     ctaReason?: string;
+    variant?: string;
     suppressed?: boolean;
     reason?: string;
   }> = [];
+  // Claim-stamp anomalies (skipped sends, burned claims) — counts + short
+  // reasons only, surfaced so the operator log shows every row the
+  // idempotency belt touched abnormally.
+  const claimFailures: string[] = [];
+  const pace = () => new Promise((resolve) => setTimeout(resolve, 600));
   for (const p of planned) {
     const { r, cta } = p;
+
+    // RENDER FIRST (pure, no side effects — demand-router ordering): a render
+    // failure must consume nothing, so it aborts before any claim stamp.
+    let rendered: { subject: string; html: string };
     try {
-      const rendered = renderRequalifyEmail(r.name, r.state, rancher, cta);
+      rendered = renderRequalifyEmail(r.name, r.state, rancher, cta, p.variantSent ?? 'A');
+    } catch (e: unknown) {
+      failed += 1;
+      results.push({
+        email: r.email,
+        ok: false,
+        mode: cta.mode,
+        ...(p.reason ? { ctaReason: p.reason } : {}),
+        reason: `render failed, NOT stamped/sent — ${String((e as Error)?.message || 'unknown').slice(0, 100)}`,
+      });
+      await pace();
+      continue;
+    }
+
+    // ── CLAIM BEFORE SEND (ADAPTIVE-MARKETING-DESIGN PR 1 — the idempotency
+    // hole). Nothing on this rail ever wrote `Campaign Last Sent At`, so the
+    // "uncampaigned" pool (isEmpty on that field) passed the same buyers
+    // forever and any re-run re-emailed the whole cohort. Stamp Campaign
+    // Last Sent At + Campaign Rail on every matched Consumers row BEFORE the
+    // send — the demand-router pattern (stampSend/revertClaim in
+    // app/api/cron/demand-router/route.ts): a crash or timeout after this
+    // point can never re-send on the next run. If ANY row's claim fails we
+    // SKIP the send (better a missed campaign touch than a double-send),
+    // reverting rows already claimed. `Campaign Rail` may not exist yet —
+    // updateRecord auto-strips unknown fields (deduped operator alert), so
+    // the core idempotency stamp still lands.
+    const nowIso = new Date().toISOString();
+    const claimed: typeof p.claimRows = [];
+    let claimOk = true;
+    for (const row of p.claimRows) {
+      try {
+        await updateRecord(TABLES.CONSUMERS, row.id, {
+          'Campaign Last Sent At': nowIso,
+          'Campaign Rail': 'requalify',
+        });
+        claimed.push(row);
+      } catch (e: unknown) {
+        claimOk = false;
+        claimFailures.push(
+          `${r.email}: claim stamp failed, send SKIPPED — ${String((e as Error)?.message || 'unknown').slice(0, 80)}`,
+        );
+        break;
+      }
+    }
+
+    // Revert claimed rows to their pre-claim values so a later run retries
+    // this buyer. A failed revert leaves the claim burned — surfaced, never
+    // retried blind — the same trade the router makes (no double-send risk).
+    const revertClaims = async (why: string): Promise<void> => {
+      for (const row of claimed) {
+        try {
+          await updateRecord(TABLES.CONSUMERS, row.id, {
+            'Campaign Last Sent At': row.prior.lastSent,
+            'Campaign Rail': row.prior.rail,
+          });
+        } catch (e: unknown) {
+          claimFailures.push(
+            `${r.email}: claim revert failed after ${why} — claim burned — ${String((e as Error)?.message || 'unknown').slice(0, 80)}`,
+          );
+        }
+      }
+    };
+
+    if (!claimOk) {
+      await revertClaims('claim failure');
+      failed += 1;
+      results.push({
+        email: r.email,
+        ok: false,
+        mode: cta.mode,
+        ...(p.reason ? { ctaReason: p.reason } : {}),
+        reason: 'claim stamp failed — send skipped',
+      });
+      await pace();
+      continue;
+    }
+
+    try {
       const res = await sendEmail({
         to: r.email,
         subject: rendered.subject,
         html: rendered.html,
-        templateName: `campaign_${campaign}`,
+        templateName,
+        // Email Sends attribution (PR 1): consumer link + campaign tag +
+        // the variant arm actually sent ride to the audit row. The Resend
+        // message id is captured inside guardedSend on the same row.
+        recipientConsumerId: p.replyConsumerId || undefined,
+        campaign,
+        variant: p.variantSent || undefined,
         // Thread replies to the buyer's Consumer record (usr-<id>@replies…)
         // so the inbound webhook logs the conversation against the right
         // person and the buyer arm can adapt their state. No consumer match
@@ -279,27 +427,52 @@ export async function POST(request: Request) {
           : {}),
       } as any);
       if (res.success) sent += 1;
-      else if (res.suppressed) suppressed += 1;
-      else failed += 1;
+      else if (res.suppressed) {
+        suppressed += 1;
+        // Claim disposition on suppression: unsub/bounce/complaint is
+        // TERMINAL — keep the stamp, never retry into a suppression (router
+        // rule). A cap/pause suppression is TRANSIENT — nothing was
+        // delivered and the buyer is sendable again within days, so revert
+        // rather than marking them campaigned forever with zero emails.
+        if (res.reason !== 'unsubscribed-bounced-or-complained') {
+          await revertClaims('transient suppression');
+        }
+      } else {
+        failed += 1;
+        await revertClaims('send failure');
+      }
       results.push({
         email: r.email,
         ok: !!res.success,
         mode: cta.mode,
         ...(p.reason ? { ctaReason: p.reason } : {}),
+        ...(p.variantSent ? { variant: p.variantSent } : {}),
         suppressed: res.suppressed,
         reason: res.reason,
       });
     } catch (e: unknown) {
       failed += 1;
+      await revertClaims('send throw');
       results.push({
         email: r.email,
         ok: false,
         mode: cta.mode,
         ...(p.reason ? { ctaReason: p.reason } : {}),
+        ...(p.variantSent ? { variant: p.variantSent } : {}),
         reason: String((e as Error)?.message || 'send threw').slice(0, 120),
       });
     }
-    await new Promise((resolve) => setTimeout(resolve, 600));
+    await pace();
   }
-  return NextResponse.json({ campaign, sent, suppressed, failed, oneTap, quizFallback, results });
+  return NextResponse.json({
+    campaign,
+    variantMode: vmode,
+    sent,
+    suppressed,
+    failed,
+    oneTap,
+    quizFallback,
+    results,
+    ...(claimFailures.length > 0 ? { claimFailures } : {}),
+  });
 }

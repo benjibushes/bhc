@@ -33,6 +33,28 @@ test('render: blank name → "there"; junk state degrades gracefully', () => {
   assert.match(requalifyCta('Colorado', CV.slug), /waiting-wake-xx/);
 });
 
+// ── subject variants (ADAPTIVE-MARKETING-DESIGN PR 1) ──────────────────────
+
+test('render: default/A variant subject is byte-identical to the historical subject', () => {
+  const plain = renderRequalifyEmail('Jane Doe', 'CO', CV);
+  const explicitA = renderRequalifyEmail('Jane Doe', 'CO', CV, undefined, 'A');
+  assert.equal(plain.subject, `Jane, there's a ranch for you now`);
+  assert.equal(explicitA.subject, plain.subject);
+});
+
+test('render: variant B changes ONLY the subject — body identical across arms', () => {
+  const a = renderRequalifyEmail('Jane Doe', 'CO', CV, undefined, 'A');
+  const b = renderRequalifyEmail('Jane Doe', 'CO', CV, undefined, 'B');
+  assert.notEqual(a.subject, b.subject);
+  assert.equal(a.html, b.html, 'variants are a SUBJECT experiment only');
+  // One-tap mode too: variant must not touch the money copy.
+  const cta = { mode: 'one-tap' as const, url: 'https://x/r/d/t', cutLabel: 'Half Cow', dueNowDollars: 375 };
+  const oa = renderRequalifyEmail('Jane Doe', 'CO', CV, cta, 'A');
+  const ob = renderRequalifyEmail('Jane Doe', 'CO', CV, cta, 'B');
+  assert.equal(oa.html, ob.html);
+  assert.notEqual(oa.subject, ob.subject);
+});
+
 test('validate: strict shape — batch cap, email format, campaign slug', () => {
   const good = { campaign: 'cv-requalify', rancher: CV, recipients: [{ email: 'A@B.co', name: 'A', state: 'NE' }] };
   const ok = validateRequalifyBatch(good);

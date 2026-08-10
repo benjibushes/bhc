@@ -640,6 +640,19 @@ export async function logEmailSend(input: {
    * Left unset for transactional/one-off sends — backward-compatible.
    */
   campaign?: string;
+  /**
+   * The Resend send id (result.data.id) — ADAPTIVE-MARKETING-DESIGN PR 1.
+   * Written to `Resend Id` so the engagement webhook can attribute
+   * delivered/opened/clicked events to the EXACT row instead of the
+   * latest-row-within-7d heuristic. Only guardedSend's sent path has one.
+   */
+  resendId?: string;
+  /**
+   * Subject-variant letter actually sent ('A' | 'B') — written to `Variant`
+   * so the gated learning report can join sends → outcomes. Campaign rail
+   * only; unset everywhere else.
+   */
+  variant?: string;
 }): Promise<void> {
   try {
     const fields: any = {
@@ -657,6 +670,15 @@ export async function logEmailSend(input: {
     }
     if (input.campaign) {
       fields['Campaign'] = input.campaign;
+    }
+    // Both fields may not exist on the table yet — createRecord auto-strips
+    // unknown fields (with a deduped operator alert naming the field), so a
+    // missing column can never fail the audit-log write, let alone the send.
+    if (input.resendId) {
+      fields['Resend Id'] = input.resendId;
+    }
+    if (input.variant) {
+      fields['Variant'] = input.variant;
     }
     await createRecord(TABLES.EMAIL_SENDS, fields);
   } catch (e: any) {

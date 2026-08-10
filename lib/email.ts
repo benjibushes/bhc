@@ -562,7 +562,14 @@ async function guardedSend(opts: {
    * pass it.
    */
   campaign?: string;
-}): Promise<{ success: boolean; suppressed?: boolean; reason?: string }> {
+  /**
+   * Optional subject-variant letter ('A' | 'B') — ADAPTIVE-MARKETING-DESIGN
+   * PR 1. Threaded to the Email Sends `Variant` field on every outcome row
+   * (sent AND suppressed/failed, so the assignment is never invisible).
+   * Campaign rail only; every other caller leaves it unset.
+   */
+  variant?: string;
+}): Promise<{ success: boolean; suppressed?: boolean; reason?: string; id?: string }> {
   // DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
   // lib/demo/demoMode.ts. The single chokepoint for every outbound email
   // (sendEmail, sendMagicLink, and every template sender route through here) —
@@ -580,6 +587,7 @@ async function guardedSend(opts: {
       status: 'suppressed',
       suppressionReason: gate.reason || 'unknown',
       campaign: opts.campaign,
+      variant: opts.variant,
     });
     return { success: false, suppressed: true, reason: gate.reason };
   }
@@ -607,6 +615,7 @@ async function guardedSend(opts: {
         status: 'failed',
         suppressionReason: reason,
         campaign: opts.campaign,
+        variant: opts.variant,
       });
       return { success: false, suppressed: false, reason };
     }
@@ -616,6 +625,15 @@ async function guardedSend(opts: {
     // Without this check, we'd log status='sent' for blocked sends —
     // poisoning the audit log + frequency-cap denominators.
     const isSuppressed = result?.data?.id === 'skipped-suppressed';
+    // MESSAGE-ID ATTRIBUTION (ADAPTIVE-MARKETING-DESIGN PR 1): a real send
+    // resolves { data: { id } } — the same id Resend later puts in webhook
+    // events as data.email_id. Persist it on the Email Sends row so the
+    // engagement webhook stamps the EXACT row instead of guessing
+    // latest-within-7d (which let any intervening send steal the click).
+    const resendId =
+      !isSuppressed && typeof result?.data?.id === 'string' && result.data.id
+        ? String(result.data.id)
+        : undefined;
     await logEmailSend({
       recipientEmail: opts.recipientEmail,
       recipientConsumerId: opts.recipientConsumerId,
@@ -624,11 +642,13 @@ async function guardedSend(opts: {
       status: isSuppressed ? 'suppressed' : 'sent',
       suppressionReason: isSuppressed ? 'unsubscribed-bounced-or-complained' : undefined,
       campaign: opts.campaign,
+      variant: opts.variant,
+      resendId,
     });
     if (isSuppressed) {
       return { success: false, suppressed: true, reason: 'unsubscribed-bounced-or-complained' };
     }
-    return { success: true };
+    return { success: true, id: resendId };
   } catch (error: any) {
     // THROW-SHAPED FAILURE (2026-07-23, onboarding hardening P3c): the Resend
     // SDK usually RESOLVES API errors as { error } (logged 'failed' above), but
@@ -647,6 +667,7 @@ async function guardedSend(opts: {
       status: 'failed',
       suppressionReason: reason,
       campaign: opts.campaign,
+      variant: opts.variant,
     });
     throw error;
   }
@@ -4301,10 +4322,21 @@ export async function sendEmail(params: {
   // 'sendRancherIntroNotification' so they bypass the cap — otherwise
   // high-volume routing weeks silently drop 60%+ of rancher introductions.
   templateName?: string;
+  // ── Email Sends attribution passthroughs (ADAPTIVE-MARKETING-DESIGN PR 1) ──
+  // All three land on the audit row via guardedSend → logEmailSend; none
+  // changes what is sent. recipientConsumerId links the row to the Consumers
+  // record; campaign fills the `Campaign` field; variant fills `Variant`
+  // (the subject arm the campaign rail actually sent).
+  recipientConsumerId?: string;
+  campaign?: string;
+  variant?: string;
 }) {
   return guardedSend({
     templateName: params.templateName || 'sendEmail',
     recipientEmail: params.to,
+    recipientConsumerId: params.recipientConsumerId,
+    campaign: params.campaign,
+    variant: params.variant,
     subject: params.subject,
     send: () => {
       const emailData: any = {

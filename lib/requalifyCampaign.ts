@@ -33,6 +33,7 @@ import { depositDisplay, MIN_TIER_PRICE } from '@/lib/pricing';
 import { isActiveDealReferral } from '@/lib/capacityCount';
 import { normalizeState } from '@/lib/states';
 import { hasServiceZipGate, buyerZipServedBy } from '@/lib/exclusiveZip';
+import { requalifySubject, type CampaignVariant } from '@/lib/campaignVariants';
 
 export type { Cut };
 
@@ -343,16 +344,22 @@ const SHELL_OPEN =
  * COPY RULES (both modes): no hyphens in prose (Ben), money model stays true —
  * the rancher keeps 100% of the beef price and BHC's cut rides on top of the
  * buyer's reservation, never itemized buyer-side (fee-invisible directive).
+ *
+ * `variant` (ADAPTIVE-MARKETING-DESIGN PR 1) selects between the two
+ * repo-versioned SUBJECTS in lib/campaignVariants — the body is identical
+ * across arms. Default 'A' is byte-identical to the pre-variant subject, so
+ * every existing caller renders exactly what it always rendered.
  */
 export function renderRequalifyEmail(
   name: string,
   state: string,
   rancher: CampaignRancher,
   cta?: RequalifyCta,
+  variant: CampaignVariant = 'A',
 ): { subject: string; html: string } {
   const first = (name || '').trim().split(/\s+/)[0] || 'there';
   const st = /^[A-Za-z]{2}$/.test(state) ? state.toUpperCase() : 'your state';
-  const subject = `${first}, there's a ranch for you now`;
+  const subject = requalifySubject(name, variant);
 
   const opener = `<p>${first} — you signed up for the waitlist a while back and then heard nothing from me. That silence was real: we didn't have a ranch serving ${st}, and I wasn't going to send you hype about beef you couldn't buy.</p>`;
 

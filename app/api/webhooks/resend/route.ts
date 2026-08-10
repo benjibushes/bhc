@@ -284,28 +284,51 @@ export async function POST(request: Request) {
           }
         }
 
-        // Stamp latest Email Sends row for this recipient (within 7d)
+        // Stamp the Email Sends row for this event.
+        //
+        // MESSAGE-ID ATTRIBUTION (ADAPTIVE-MARKETING-DESIGN PR 1): the event
+        // carries data.email_id — the same id guardedSend persists to
+        // `Resend Id` at send time — so match the EXACT row first. The old
+        // latest-row-within-7d heuristic let any intervening send steal the
+        // delivered/open/click stamp. The heuristic stays ONLY as a fallback:
+        // rows sent before the field existed (or before Ben creates it —
+        // the formula read on a missing field throws and we fall through).
         try {
-          const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-          const sends = await getAllRecords(
-            TABLES.EMAIL_SENDS,
-            `AND({Recipient Email} = "${safeEmail}", IS_AFTER({Sent At}, "${cutoff}"))`
-          ) as any[];
-          sends.sort((a, b) => String(b['Sent At'] || '').localeCompare(String(a['Sent At'] || '')));
-          const latest = sends[0];
-          if (latest) {
+          const resendId = String(data.email_id || '').trim();
+          let target: any = null;
+          if (resendId) {
+            try {
+              const byId = await getAllRecords(
+                TABLES.EMAIL_SENDS,
+                `{Resend Id} = "${escapeAirtableValue(resendId)}"`
+              ) as any[];
+              if (byId.length > 0) target = byId[0];
+            } catch (e: any) {
+              console.warn('[resend] Resend Id lookup failed (falling back to latest-row heuristic):', e?.message);
+            }
+          }
+          if (!target) {
+            const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+            const sends = await getAllRecords(
+              TABLES.EMAIL_SENDS,
+              `AND({Recipient Email} = "${safeEmail}", IS_AFTER({Sent At}, "${cutoff}"))`
+            ) as any[];
+            sends.sort((a, b) => String(b['Sent At'] || '').localeCompare(String(a['Sent At'] || '')));
+            target = sends[0];
+          }
+          if (target) {
             const updates: Record<string, any> = { 'Last Event At': now };
             if (eventType === 'email.delivered') updates['Delivered At'] = now;
             if (eventType === 'email.opened') {
-              updates['Opened At'] = latest['Opened At'] || now;
-              updates['Open Count'] = Number(latest['Open Count'] || 0) + 1;
+              updates['Opened At'] = target['Opened At'] || now;
+              updates['Open Count'] = Number(target['Open Count'] || 0) + 1;
             }
             if (eventType === 'email.clicked') {
-              updates['Clicked At'] = latest['Clicked At'] || now;
-              updates['Click Count'] = Number(latest['Click Count'] || 0) + 1;
+              updates['Clicked At'] = target['Clicked At'] || now;
+              updates['Click Count'] = Number(target['Click Count'] || 0) + 1;
             }
             try {
-              await updateRecord(TABLES.EMAIL_SENDS, latest.id, updates);
+              await updateRecord(TABLES.EMAIL_SENDS, target.id, updates);
             } catch (e: any) {
               console.warn('[resend] Email Sends update skipped (schema?):', e?.message);
             }
