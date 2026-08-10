@@ -138,6 +138,42 @@ in the repo via PR → judged by PR 1's instrumentation.
 - L3 (future, at volume triggers): the killed knobs, each with its own
   doc + panel.
 
+## 3.5 · CRM-parity layer (2026-08-08 research + gap-map)
+
+Two-agent finding: 7 of 8 standard automated-CRM capability classes
+already exist in this stack (scoring, NBA engine, deal-rot/SLA layer,
+behavior-triggered enrollment, buyer timeline, task generation, AI
+reply staging). The gaps are DELIVERY, not capability — computed
+outputs that never reach /admin/today, and one missing join. Rule
+inherited from the gap-map: extend the cockpit, never build a second
+engine.
+
+Four builds (C1-C3 = one cohesive cockpit PR; C4 separate):
+- **C1 Dial-outcome write-back (S)** — 3 buttons per dial card (No
+  answer / Talked, follow up in N days / Drop) → thin POST → existing
+  `Last Chased At` + `Next Follow Up At` writers (the telegram `skip`
+  handler and /api/admin/follow-ups are the templates). Closes the
+  fire-and-forget leak that starves closeQueue staleness and
+  followUpQueue promises.
+- **C2 Cockpit queue fusion (S/M)** — merge `followUpsDue` +
+  `rankCloseQueue` rows (already computed server-side in the desk API)
+  into `buildCockpitDialList` as `promise` and `deal` row kinds, each
+  with its NBA one-liner — the orphaned lib/nextBestAction output
+  finally rendered on the one screen Ben opens. No new ranker.
+- **C3 Replies-waiting band (S)** — cockpit block listing Conversations
+  with Reply Status staged/escalated + one-tap Send; lift the telegram
+  `bsend` claim/sanitize/thread logic into a shared lib. Kills the
+  scrolled-away-Telegram-card failure mode.
+- **C4 Per-flow revenue stamp (M, once sends scale)** — at Deposit
+  Paid, last-touch lookback over Email Sends (5-day window) stamps
+  `Attributed Campaign` on the Referral; one scoreboard row. The cheap
+  80% of flow attribution; full cohort plumbing stays YAGNI.
+
+Deferred with recorded trigger: missed-call text-back (62% of SMB calls
+missed; 25-45% recoverable) — rides the TCPA/SMS wave W2c. Rejected on
+2025-26 evidence: autonomous AI SDRs (50-70% churn, fabricated-metrics
+scandals) — never build.
+
 ## 4 · Explicit non-goals (unchanged from v1, panel-confirmed)
 Per-user ML at 22 lifetime conversions · runtime LLM copywriting into
 sends · adaptive cadence/windows · dynamic pricing/deposits · SMS
