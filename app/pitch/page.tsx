@@ -140,6 +140,36 @@ const TIERS = [
   },
 ];
 
+// À la carte services — lib/tiers.ts ADD_ONS is the price truth. Any tier
+// can buy these; the two percent-priced ones are billed manually.
+const SERVICES = [
+  {
+    name: 'Custom on-site video shoot',
+    price: '$2,500 + travel',
+    d: 'Ben travels to your ranch and shoots the story buyers actually convert on.',
+  },
+  {
+    name: 'Annual brand photo refresh',
+    price: '$1,500',
+    d: 'On-site photo shoot, full delivery within 30 days.',
+  },
+  {
+    name: 'Founder-letter campaign',
+    price: '$750',
+    d: 'A 3-email sequence written and sent to your own customer list, in your voice.',
+  },
+  {
+    name: 'Brand partner intro + negotiation',
+    price: '15% of the closed deal',
+    d: 'We pair you with cooler, knife, and supplement brands looking for D2C rancher partners.',
+  },
+  {
+    name: 'PPC management for your own site',
+    price: '15% of ad spend, $500/mo min',
+    d: 'Google + Meta ads pointed at your ranch site — not ours.',
+  },
+];
+
 const COMPETITORS = [
   {
     who: 'Barn2Door',
@@ -302,6 +332,22 @@ export default async function PitchPage({
                 </tbody>
               </table>
             </div>
+            <div className="max-w-2xl mx-auto text-center space-y-3">
+              <p className="text-sm text-saddle">
+                <strong className="text-charcoal">How the money moves:</strong>{' '}
+                buyers pay by card on your page through Stripe. Deposits and
+                product sales land in your own Stripe account and pay out to
+                your bank on Stripe&rsquo;s normal schedule. No holds, no
+                waiting on us.
+              </p>
+              <p className="text-sm text-saddle">
+                <strong className="text-charcoal">Selling wholesale-style?</strong>{' '}
+                There is also a representation arrangement: we market your
+                beef, collect the deposits, and the deposit is our entire
+                fee — the family pays you the balance direct at handoff. Ask
+                about it on the call if your operation fits.
+              </p>
+            </div>
           </div>
         </Container>
       </section>
@@ -396,6 +442,34 @@ export default async function PitchPage({
                 <div key={o.q} className="border-l-4 border-rust pl-5 space-y-1">
                   <p className="font-serif text-lg text-charcoal">{o.q}</p>
                   <p className="text-saddle leading-relaxed">{o.a}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </Container>
+      </section>
+
+      <Divider />
+
+      {/* ── À LA CARTE SERVICES ───────────────────────────────────────── */}
+      <section className="py-16 md:py-20">
+        <Container>
+          <div className="max-w-4xl mx-auto space-y-10">
+            <div className="text-center space-y-4">
+              <h2 className="font-serif text-3xl md:text-5xl lowercase">
+                services, à la carte
+              </h2>
+              <p className="text-lg text-saddle max-w-2xl mx-auto">
+                Any plan can add these. One-time or as-needed — no bundles,
+                no upsell ladder.
+              </p>
+            </div>
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+              {SERVICES.map((s) => (
+                <div key={s.name} className="border border-dust bg-white p-5 space-y-2">
+                  <p className="font-serif text-lg text-charcoal leading-snug">{s.name}</p>
+                  <p className="text-rust font-semibold text-sm">{s.price}</p>
+                  <p className="text-sm text-saddle leading-relaxed">{s.d}</p>
                 </div>
               ))}
             </div>
