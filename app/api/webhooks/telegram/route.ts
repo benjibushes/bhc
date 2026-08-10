@@ -22,6 +22,7 @@ import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
 import { normalizeState, normalizeStates } from '@/lib/states';
 import { buildCronStatusCard, pauseCron, resumeCron } from '@/lib/cronIntrospection';
 import { tierFor, commissionRateForTier, TIERS } from '@/lib/tiers';
+import { sendStagedReply } from '@/lib/stagedReply';
 import jwt from 'jsonwebtoken';
 
 import { JWT_SECRET, generateMemberLoginToken } from '@/lib/secrets';
@@ -2042,52 +2043,25 @@ Output ONLY the email body. First line should be the subject line prefixed with 
           return NextResponse.json({ ok: true, deduped: true });
         }
         try {
-          const conv: any = await getRecordById('Conversations', fullReferralId);
-          if (!conv) {
+          // Load/guard/sanitize/thread/send/stamp — lifted to lib/stagedReply
+          // (cockpit CRM-parity §3.5 C3) so this button and the /admin/today
+          // replies band ride ONE send path. Behavior is unchanged.
+          const result = await sendStagedReply(fullReferralId);
+          if (result.status === 'not-found') {
             await answerCallbackQuery(queryId, 'Conversation not found.');
             return NextResponse.json({ ok: true });
           }
-          if (String(conv['Reply Status'] || '') === 'sent') {
+          if (result.status === 'already-sent') {
             await answerCallbackQuery(queryId, 'Already sent.');
             return NextResponse.json({ ok: true });
           }
-          const draft = String(conv['Staged Reply'] || '').trim();
-          const fromRaw = String(conv['From'] || '');
-          const addrMatch = fromRaw.match(/<([^>]+)>/);
-          const buyerEmail = (addrMatch ? addrMatch[1] : fromRaw).toLowerCase().trim();
-          const subject = String(conv['Subject'] || '').trim();
-          if (!draft || !buyerEmail.includes('@')) {
+          if (result.status === 'no-draft') {
             await answerCallbackQuery(queryId, 'No draft / buyer email on record.');
             return NextResponse.json({ ok: true });
           }
-          // Sanitize outbound links defensively (draft is template-derived,
-          // but the buyer's own inbound text could have influenced context).
-          const safe = draft.replace(/https?:\/\/[^\s<>"')]+/gi, (u: string) => {
-            try {
-              const h = new URL(u).hostname;
-              return /(^|\.)(cal\.com|buyhalfcow\.com)$/i.test(h) ? u : '[link removed]';
-            } catch {
-              return '[link removed]';
-            }
-          });
-          // Thread back onto the buyer's message if we captured its id.
-          let inReplyTo = '';
-          try {
-            const hdrs = JSON.parse(String(conv['Raw Headers'] || '{}'));
-            inReplyTo = String(hdrs['message-id'] || hdrs['Message-Id'] || hdrs['Message-ID'] || '');
-          } catch {}
-          await sendEmail({
-            to: buyerEmail,
-            subject: subject ? `Re: ${subject}`.slice(0, 200) : 'Re: your beef question',
-            html: `<p>${safe.replace(/\n/g, '<br>')}</p>`,
-            ...(inReplyTo ? { headers: { 'In-Reply-To': inReplyTo, References: inReplyTo } } : {}),
-          } as any);
-          try {
-            await updateRecord('Conversations', fullReferralId, { 'Reply Status': 'sent' });
-          } catch { /* field may not exist; send already happened */ }
           await answerCallbackQuery(queryId, '📧 Sent!');
           if (chatId && messageId) {
-            await editTelegramMessage(chatId, messageId, `✅ <b>REPLY SENT</b> to ${buyerEmail}`);
+            await editTelegramMessage(chatId, messageId, `✅ <b>REPLY SENT</b> to ${result.to}`);
           }
         } catch (e: any) {
           await answerCallbackQuery(queryId, `Error: ${e.message}`);
