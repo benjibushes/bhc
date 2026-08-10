@@ -332,21 +332,88 @@ export default async function PitchPage({
                 </tbody>
               </table>
             </div>
-            <div className="max-w-2xl mx-auto text-center space-y-3">
-              <p className="text-sm text-saddle">
-                <strong className="text-charcoal">How the money moves:</strong>{' '}
-                buyers pay by card on your page through Stripe. Deposits and
-                product sales land in your own Stripe account and pay out to
-                your bank on Stripe&rsquo;s normal schedule. No holds, no
-                waiting on us.
-              </p>
-              <p className="text-sm text-saddle">
-                <strong className="text-charcoal">Selling wholesale-style?</strong>{' '}
-                There is also a representation arrangement: we market your
-                beef, collect the deposits, and the deposit is our entire
-                fee — the family pays you the balance direct at handoff. Ask
-                about it on the call if your operation fits.
-              </p>
+            <p className="max-w-2xl mx-auto text-center text-sm text-saddle">
+              <strong className="text-charcoal">How the money moves:</strong>{' '}
+              buyers pay by card through Stripe. Deposits and product sales
+              land in your own Stripe account and pay out to your bank on
+              Stripe&rsquo;s normal schedule. No holds, no waiting on us.
+            </p>
+
+            {/* Three money geometries — docs/BUSINESS-MODEL.md truth. The
+                marketplace fee is ADDED to the buyer; representation carves
+                the fee out of the rancher's price as the prepaid deposit;
+                the product rail's fee is the spread above the rancher's net
+                number. Worked numbers are generic, no real ranch's terms. */}
+            <div className="space-y-6 pt-4">
+              <div className="text-center space-y-2">
+                <h3 className="font-serif text-2xl md:text-3xl lowercase">
+                  three ways the money can work
+                </h3>
+                <p className="text-saddle max-w-2xl mx-auto">
+                  Different operations want different arrangements. Pick the
+                  one that fits — each is the whole deal, no fine print.
+                </p>
+              </div>
+              <div className="grid md:grid-cols-3 gap-5">
+                <div className="border border-dust bg-white p-6 space-y-3">
+                  <p className="font-serif text-xl text-charcoal lowercase">
+                    marketplace — the fee rides on top
+                  </p>
+                  <p className="text-sm text-saddle leading-relaxed">
+                    You set the price, the buyer pays our fee on top of it,
+                    and you keep 100% of your number. The plans above just
+                    set how big that buyer-side fee is.
+                  </p>
+                  <p className="text-sm leading-relaxed">
+                    <span className="text-saddle">Example: </span>
+                    $2,999 half, $300 deposit, free plan — the buyer&rsquo;s
+                    deposit charge is $599.90 ($300 to you + our $299.90
+                    fee). You net the full $2,999.
+                  </p>
+                  <p className="text-xs text-saddle uppercase tracking-wide">
+                    fits: you want the platform working for you
+                  </p>
+                </div>
+                <div className="border border-dust bg-white p-6 space-y-3">
+                  <p className="font-serif text-xl text-charcoal lowercase">
+                    representation — the deposit is the fee
+                  </p>
+                  <p className="text-sm text-saddle leading-relaxed">
+                    We sell your beef under our banner. The family&rsquo;s
+                    deposit is our entire fee; they pay you the balance
+                    direct at handoff. No login, no listing, no bill — ever.
+                    The buyer&rsquo;s total never changes.
+                  </p>
+                  <p className="text-sm leading-relaxed">
+                    <span className="text-saddle">Example: </span>
+                    $1,800 half, $400 deposit — we keep the $400, the family
+                    hands you $1,400 at pickup. Same $1,800 they&rsquo;d pay
+                    buying direct.
+                  </p>
+                  <p className="text-xs text-saddle uppercase tracking-wide">
+                    fits: you want nothing to do with software
+                  </p>
+                </div>
+                <div className="border border-dust bg-white p-6 space-y-3">
+                  <p className="font-serif text-xl text-charcoal lowercase">
+                    products — the spread is the fee
+                  </p>
+                  <p className="text-sm text-saddle leading-relaxed">
+                    For boxes, bundles, and shop items: you name the number
+                    you need to net, we list above it, and the difference is
+                    ours. Your payout is exactly your number plus shipping —
+                    shipping passes through 100%.
+                  </p>
+                  <p className="text-sm leading-relaxed">
+                    <span className="text-saddle">Example: </span>
+                    you need $100 a box — we list at $111.99, you get $100 +
+                    shipping on every sale, automatically.
+                  </p>
+                  <p className="text-xs text-saddle uppercase tracking-wide">
+                    fits: retail volume, Shopify stores
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
         </Container>
@@ -511,8 +578,8 @@ export default async function PitchPage({
                 <p className="font-serif text-2xl">3 · bring your store</p>
                 <p className="text-sm leading-relaxed text-dust">
                   Already selling on Shopify or your own site? Connect it and
-                  keep your whole stack — we route our buyers to your
-                  existing checkout and products.
+                  keep your whole stack. You name the number you net per
+                  product; we list above it and the spread is our fee.
                 </p>
                 <Button href="/book?purpose=rancher" variant="secondary" size="md">
                   Talk it through
