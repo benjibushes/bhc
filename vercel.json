@@ -217,6 +217,10 @@
       "schedule": "0 14 * * 1"
     },
     {
+      "path": "/api/cron/learning-report",
+      "schedule": "10 14 * * *"
+    },
+    {
       "path": "/api/cron/referral-stale-expiry",
       "schedule": "10 13 * * *"
     },

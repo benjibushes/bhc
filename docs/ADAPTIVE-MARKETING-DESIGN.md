@@ -133,6 +133,44 @@ registry. Content rules — each one a hard gate, not a style note:
 Promotion path unchanged: report drafts → Ben approves → variant lands
 in the repo via PR → judged by PR 1's instrumentation.
 
+**PR 3 — SHIPPED (branch adaptive-pr3).** Implementation record:
+- `lib/learningReport.ts` (pure, 50 unit tests incl. hand-computable
+  Fisher's-exact known answers and every null path) + cron
+  `learning-report` (daily 14:10 UTC, Monday guard INSIDE realHandler,
+  EXPECTED_CRONS_24H — exactly as specified above). Delivery = Telegram
+  admin chat, the weekly-scorecard idiom; Mondays it lands 10 minutes
+  after the scoreboard.
+- The prespecified test (deferred from PR 2's record): ONE two-sided
+  Fisher's exact per `campaign_*` template, α=0.05, clicked/sent per
+  arm, cumulative. HARD gates as content rules 1-3: below 10 outcome
+  events the type system carries no p-value at all ("insufficient
+  data: n=X of 10 needed"); bare point-percentages render only at
+  n≥50 (Wilson 95% CI always); the null report is a first-class
+  render. Opens are reported per arm but labeled MPP-inflated and
+  never enter a test or verdict.
+- Replication ledger (rule 4): the top finding is frozen as a
+  machine-readable `ledger[…]` token in the report's own Cron Runs
+  note (the autopilot `stats[]` precedent — the report's ONLY write
+  surface); next Monday's run grades held/reversed/insufficient on
+  the WEEK-DELTA counts (cumulative minus token), never on
+  overlapping data.
+- Volume triggers (§1) restated every week with live distances:
+  sends/day 7d avg + autopilot eligible pool (parsed from its Cron
+  Runs note) vs the bandit's 1,000/day · 10k-pool; recipients with
+  ≥10 lifetime clicks vs the send-hour 500; top-state clicks vs the
+  state-cut 25 (+ the not-built exploration share); opens NEVER.
+  Rule 6 ships as the pooled required-n line (~n/arm for +20% at the
+  observed click rate, power 0.8, with the ×-more-data multiplier).
+- Read-only over Airtable (Email Sends, Consumers, Cron Runs) except
+  its own Cron Runs row; a failed CORE read sends no report (partial +
+  named reason) — a report over unknown data would fabricate
+  conclusions; auxiliary read failures degrade named-and-visible.
+- DEVIATION from rule 5: verbatim conversation quotes are BANNED from
+  the report body (public-repo/PII rule — the report aggregates counts
+  only). No objection/sentiment source exists yet anyway; when one
+  lands, under-10-row categories must POINT to the raw conversations
+  (Airtable/admin) instead of quoting them into the report.
+
 ## 1 · Killed knobs and their return triggers (recorded so we don't re-litigate)
 - Subject bandit (ε-greedy/commit): return at ≥1,000 sends/day.
 - Per-recipient send-hour: return at >500 recipients w/ ≥10 clicks.

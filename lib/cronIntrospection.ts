@@ -128,6 +128,13 @@ export const EXPECTED_CRONS_24H = [
   // post-mortem) — no env latch, withCronRun writes a daily Cron Runs row
   // even when zero rows are pending.
   'inbound-body-backfill',
+  // Gated weekly learning report (ADAPTIVE-MARKETING-DESIGN PR 3) — daily
+  // 14:10 UTC with a Monday guard INSIDE realHandler (design doc, verbatim:
+  // a true weekly slot is watchdog-blind because EXCLUDED crons never alarm).
+  // Six days a week the row reads 'skipped: not Monday'; Mondays it carries
+  // the report summary + the replication-ledger token. EXPECTED, not
+  // EXCLUDED: a missing row always means a REAL missed run.
+  'learning-report',
 ] as const;
 
 /**
