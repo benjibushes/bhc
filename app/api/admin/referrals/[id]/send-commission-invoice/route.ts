@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { requireAdmin } from '@/lib/adminAuth';
 import { isCommissionOwedRow } from '@/lib/commissionOwed';
+import { createCommissionInvoice } from '@/lib/stripe-commission';
 import { sendInstantCommissionInvoice } from '@/lib/email';
 
 export const maxDuration = 30;
@@ -43,10 +44,17 @@ export async function POST(
     );
   }
 
+  // ?mint=1 — mint the hosted Stripe invoice first when the row has none
+  // (idempotent: invoice-${referralId} key), so the email carries a one-click
+  // hosted Pay page instead of the dashboard CTA. A mint-upgrade send skips
+  // the 7-day throttle: it replaces a weaker ask, it doesn't repeat one.
+  const wantMint = new URL(request.url).searchParams.get('mint') === '1';
+  const mintNeeded = wantMint && !referral['Stripe Invoice URL'];
+
   // 7-day nudge throttle off the dated Notes stamp — partners, not debtors.
   const notes = String(referral['Notes'] || '');
   const lastNudge = /\[COMMISSION-NUDGE (\d{4}-\d{2}-\d{2})/.exec(notes);
-  if (lastNudge) {
+  if (lastNudge && !mintNeeded) {
     const ageDays = (Date.now() - Date.parse(lastNudge[1])) / 86_400_000;
     if (Number.isFinite(ageDays) && ageDays < 7) {
       return NextResponse.json(
@@ -63,6 +71,40 @@ export async function POST(
   const email = String(rancher?.['Email'] || '').trim();
   if (!email) return NextResponse.json({ error: 'Rancher has no email' }, { status: 422 });
 
+  let hostedUrl: string = referral['Stripe Invoice URL'] || '';
+  let minted = false;
+  if (mintNeeded) {
+    try {
+      const result = await createCommissionInvoice({
+        rancher: {
+          id: String(rancher.id),
+          operatorName: rancher['Operator Name'] || rancher['Ranch Name'] || '',
+          ranchName: rancher['Ranch Name'] || '',
+          email,
+          stripeCustomerId: rancher['Stripe Customer ID'] || undefined,
+        },
+        referral: {
+          id,
+          buyerName: referral['Buyer Name'] || '',
+          orderType: referral['Order Type'] || 'Beef order',
+          saleAmount: Number(referral['Sale Amount'] || 0),
+          commissionDue: Number(referral['Commission Due'] || 0),
+        },
+      });
+      hostedUrl = result.invoiceUrl;
+      minted = true;
+      await updateRecord(TABLES.REFERRALS, id, {
+        'Stripe Invoice ID': result.invoiceId,
+        'Stripe Invoice URL': result.invoiceUrl,
+      });
+    } catch (e: any) {
+      // Guards (sale floor/ceiling, ratio) and Stripe errors land here.
+      // Refuse rather than silently downgrade to the dashboard CTA — the
+      // caller asked for a hosted invoice and should see why there isn't one.
+      return NextResponse.json({ error: `Mint failed: ${e?.message || 'unknown'}` }, { status: 502 });
+    }
+  }
+
   const res = await sendInstantCommissionInvoice({
     operatorName: rancher['Operator Name'] || rancher['Ranch Name'] || '',
     ranchName: rancher['Ranch Name'] || '',
@@ -72,7 +114,7 @@ export async function POST(
     saleAmount: Number(referral['Sale Amount'] || 0),
     commissionDue: Number(referral['Commission Due'] || 0),
     closedAt: String(referral['Closed At'] || new Date().toISOString()),
-    stripeInvoiceUrl: referral['Stripe Invoice URL'] || undefined,
+    stripeInvoiceUrl: hostedUrl || undefined,
   });
   if (!res?.success) {
     return NextResponse.json(
@@ -82,13 +124,19 @@ export async function POST(
   }
 
   const today = new Date().toISOString().slice(0, 10);
+  const modeLabel = hostedUrl
+    ? minted
+      ? 'hosted invoice, minted this send'
+      : 'hosted invoice'
+    : 'dashboard CTA';
   await updateRecord(TABLES.REFERRALS, id, {
-    Notes: `[COMMISSION-NUDGE ${today}] invoice ask re-sent (${referral['Stripe Invoice URL'] ? 'hosted invoice' : 'dashboard CTA'}). ${notes}`.slice(0, 2000),
+    Notes: `[COMMISSION-NUDGE ${today}] invoice ask re-sent (${modeLabel}). ${notes}`.slice(0, 2000),
   }).catch((e: any) => console.error('[send-commission-invoice] notes stamp failed:', e?.message));
 
   return NextResponse.json({
     ok: true,
-    mode: referral['Stripe Invoice URL'] ? 'hosted-invoice' : 'dashboard-cta',
+    mode: hostedUrl ? 'hosted-invoice' : 'dashboard-cta',
+    minted,
     commissionDue: Number(referral['Commission Due'] || 0),
   });
 }
