@@ -220,3 +220,52 @@ Subject: `your three ways in`
 > whichever it is, no contract and no exclusivity.
 >
 > — Ben
+
+---
+
+# money models — presenting each one (2026-08-10)
+
+Three geometries. Source of truth: docs/BUSINESS-MODEL.md. Pick ONE per
+rancher per deal type; the checkouts refuse cross-rail billing in code.
+
+## 1 · marketplace (Connect) — fee ADDED ON TOP, buyer pays it
+
+$2,999 half, $300 deposit, free plan: buyer pays $599.90 at deposit
+($300 + $299.90 fee), $2,699 balance later with zero fee. Rancher nets
+the full $2,999. Fee computed on the FULL sale, captured entirely at
+deposit. BHC absorbs card processing.
+
+> "you keep 100% of your price. my fee is added on top and the buyer
+> pays it, like a delivery fee. you will never see a bill from me."
+
+NEVER: "we take 10%" / "you keep 90%" / any deduction framing.
+
+## 2 · broker (representation) — fee CARVED OUT, prepaid as the deposit
+
+$1,800 half, $400 deposit: buyer pays $400 to BHC (the entire
+commission), $1,400 to the ranch direct at handoff. Buyer total
+unchanged vs buying direct. Rancher nets price minus deposit. No
+Connect, no listing, no login, no invoice, never routable.
+
+> "I sell your beef under my banner. the deposit the family puts down
+> is my whole fee — you collect the balance direct at handoff. you
+> never touch a login and I never send you a bill."
+
+They agree at /partner/represent BEFORE anything moves. Buyer receipt
+never mentions the split — their price is the ranch's price.
+
+## 3 · product rail — MARKUP, the spread is the fee
+
+Rancher base $100 (what they net) → display $111.99. Buyer pays display
++ shipping; margin = display − base, split atomically on their own
+Stripe; shipping 100% passthrough; null markup = zero margin.
+
+> "you tell me the number you need to net. we list above it, the
+> difference is ours, and your payout is exactly your number plus
+> shipping. we never hold your money."
+
+## picking on a call
+
+- wants the platform → Connect (walk /pitch)
+- wants nothing to do with software, you sell for them → broker
+- has products / Shopify, wants retail volume → markup rail
