@@ -24,6 +24,15 @@ export interface IntegrationConfig {
    * into the beef groups). Unset → rows land in the 'more' group.
    */
   category?: string | null;
+  /**
+   * How this store connected (Shopify App Store review 128658, rule 1.2.1):
+   * 'oauth' = public-app install — the rancher reached us THROUGH Shopify's
+   * surface, so every platform-billing upsell (tier checkouts, upgrade
+   * banners) must be suppressed for them; app-reachable surfaces must be
+   * genuinely free. 'token-paste' / absent = connected on our own site,
+   * outside Shopify's app jurisdiction — normal surfaces apply.
+   */
+  installSource?: 'oauth' | 'token-paste' | null;
 }
 
 export interface PushLineItem { sku: string; quantity: number; title: string }
