@@ -391,6 +391,19 @@ export async function GET(request: Request) {
         })(),
         subscriptionStatus: String(rancher['Subscription Status'] || ''),
         connectStatus: String(rancher['Stripe Connect Status'] || 'not_connected'),
+        // App Store review 128658 (rule 1.2.1): true when the store connected
+        // via the public-app OAuth install — the dashboard suppresses every
+        // platform-billing surface (tier checkouts, upgrade banners) so the
+        // app-reachable experience is genuinely free. Parse is fail-open to
+        // false: token-paste/no-integration ranchers keep normal surfaces.
+        appStoreInstall: (() => {
+          try {
+            const parsed = JSON.parse(String(rancher['Fulfillment Integration'] || '{}'));
+            return parsed?.installSource === 'oauth';
+          } catch {
+            return false;
+          }
+        })(),
       },
       stats: {
         totalReferrals: myReferrals.length,

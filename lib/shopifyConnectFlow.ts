@@ -108,6 +108,10 @@ export async function connectShopifyStore(input: ConnectStoreInput): Promise<{ o
     markupPercent,
     locationId: null,
     category,
+    // App Store review 128658 (rule 1.2.1): a public-app OAuth install means
+    // the rancher reached us through Shopify — platform-billing surfaces must
+    // hide for them. Persisted so the dashboard can tell the difference.
+    installSource: input.source ?? null,
   };
   if (!parseIntegration(JSON.stringify(cfg))) {
     return { ok: false, report: ['Invalid shop domain — need something like ranch-name.myshopify.com'] };
