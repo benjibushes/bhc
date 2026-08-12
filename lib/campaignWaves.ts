@@ -81,6 +81,15 @@ export const AUTOPILOT_CAMPAIGN_PREFIX = 'autopilot';
 /** The `Campaign Rail` claim value autopilot sends stamp on Consumers. */
 export const AUTOPILOT_RAIL = 'autopilot';
 
+/**
+ * Ranchers excluded from the autopilot's first-touch state table. Policy,
+ * not data: Rep Provisions is the specialty grass-finished option, reserved
+ * for buyers who specifically request it (Ben, 2026-08-12) — their
+ * nationwide service range would otherwise make them the default fallback
+ * for 30+ states. Campaign waves only; routing/nudges untouched.
+ */
+export const CAMPAIGN_WAVE_EXCLUDED_SLUGS: ReadonlySet<string> = new Set(['rep-provisions']);
+
 export const RAMP_DAILY_CAP = 30;
 /** Distinct live-send days required before the ramp cap lifts. */
 export const RAMP_LIVE_DAYS = 3;
@@ -293,6 +302,15 @@ export function rancherForStateTable(
     if (!isRancherOperationalForBuyers(r)) continue;
     const slug = String((r as any)['Slug'] || '').trim();
     if (!slug) continue; // requalify-send resolves ranchers by slug — unroutable
+    // CAMPAIGN-ONLY exclusion (Ben, 2026-08-12): Rep Provisions is the
+    // specialty grass-finished option for buyers who specifically request
+    // it — never the nationwide first-touch fallback. Their nationwide
+    // service range was making them the default for 30+ states in the wave
+    // table. Routing/nudges/deals are untouched — this list gates ONLY the
+    // autopilot's first-touch state table. Preference-targeted Rep waves
+    // become possible once the quiz captures a grass-finished preference
+    // (no such Consumers field exists today).
+    if (CAMPAIGN_WAVE_EXCLUDED_SLUGS.has(slug)) continue;
     const name =
       String((r as any)['Ranch Name'] || (r as any)['Operator Name'] || '').trim() || slug;
     const id = String((r as any).id || '');
