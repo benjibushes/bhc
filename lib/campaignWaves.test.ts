@@ -422,3 +422,18 @@ test('countDistinctSendDays: distinct UTC days, garbage ignored', () => {
   );
   assert.equal(countDistinctSendDays([]), 0);
 });
+
+test('rancherForStateTable: campaign-excluded slugs never appear, even as nationwide fallback', () => {
+  const rep = {
+    id: 'recRep', Slug: 'rep-provisions', 'Ranch Name': 'Rep Provisions',
+    State: 'MO', 'Active Status': { name: 'Active' }, 'Current Active Referrals': 0,
+  };
+  const local = {
+    id: 'recLocal', Slug: 'foodstead', 'Ranch Name': 'Foodstead',
+    State: 'MT', 'Active Status': { name: 'Active' }, 'Current Active Referrals': 5,
+  };
+  const table = rancherForStateTable([rep, local] as any[]);
+  for (const [, v] of table) {
+    assert.notEqual(v.slug, 'rep-provisions');
+  }
+});
