@@ -20,7 +20,15 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import { signJwt, verifyJwtWithFallback } from '@/lib/jwt';
 import type { VerifyResult } from '@/lib/campaignReserve';
 
-export const SHOPIFY_OAUTH_SCOPES = 'write_orders,read_orders,read_products';
+// read_product_listings: required by the channel-connection APIs
+// (channelCreate — shopify.dev channel-connections "Requirements"), added for
+// App Store review 128658 (sales-channel conversion). NOTE the app's
+// CLI-managed config (shopify.app.toml, deployed via `shopify app deploy`)
+// must declare the same scope — for declarative-scope apps Shopify honors the
+// TOML, not this URL param. read_only_own_orders is deliberately NOT here:
+// Shopify's review team adds that flag to the sales channel during review
+// (checklist 5.7.1).
+export const SHOPIFY_OAUTH_SCOPES = 'write_orders,read_orders,read_products,read_product_listings';
 
 export const OAUTH_STATE_PURPOSE = 'shopify-oauth-state' as const;
 export const INSTALL_LINK_PURPOSE = 'shopify-install-link' as const;

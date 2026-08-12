@@ -100,6 +100,57 @@ export default async function StoreConnectedPage({
                 ))}
               </div>
 
+              {/* Sales-channel checklist 5.7.8/5.7.15: listings sit in a
+                  pending state until the BuyHalfCow review approves them —
+                  say so, in a banner, so "connected but nothing showing yet"
+                  never reads as broken. */}
+              {rancher && params.sync === '1' && (
+                <div className="mt-8 border border-dust bg-bone px-5 py-4 text-left max-w-md mx-auto">
+                  <p className="text-xs text-charcoal font-medium">⏳ Products pending approval</p>
+                  <p className="text-xs text-saddle mt-1 leading-relaxed">
+                    Every synced product is reviewed by BuyHalfCow before it appears on the
+                    marketplace. Nothing to do on your end — you can track approval status on your
+                    dashboard&rsquo;s Products tab.
+                  </p>
+                </div>
+              )}
+
+              {/* 5.7.6 commission disclosure · 5.7.5 marketplace link ·
+                  5.7.7 terms in a new window. */}
+              <div className="mt-8 border-t border-divider/15 pt-6">
+                <p className="text-xs text-saddle leading-relaxed max-w-md mx-auto">
+                  <span className="text-charcoal font-medium">Our commission:</span> buyers pay our
+                  marketplace fee on top of your price — you keep 100% of the price you set. On
+                  product orders you net your base price + shipping.
+                </p>
+                <p className="mt-5 text-[11px] uppercase tracking-[0.2em] space-x-6">
+                  <a
+                    href="/shop"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-saddle underline underline-offset-4 hover:text-charcoal transition-colors"
+                  >
+                    See the marketplace
+                  </a>
+                  <a
+                    href="/rancher"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-saddle underline underline-offset-4 hover:text-charcoal transition-colors"
+                  >
+                    Seller home
+                  </a>
+                  <a
+                    href="/terms"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-saddle underline underline-offset-4 hover:text-charcoal transition-colors"
+                  >
+                    Terms &amp; Conditions
+                  </a>
+                </p>
+              </div>
+
               <p className="text-xs text-muted mt-10">
                 Questions? Reply to any email from Ben, or text him — a real person answers.
               </p>
