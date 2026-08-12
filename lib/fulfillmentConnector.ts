@@ -77,6 +77,13 @@ export function parseIntegration(raw: unknown): IntegrationConfig | null {
     markupPercent: typeof obj.markupPercent === 'number' ? obj.markupPercent : null,
     locationId: obj.locationId ? String(obj.locationId) : null,
     category: obj.category ? String(obj.category).slice(0, 40) : null,
+    // Persisted by connectShopifyStore since #604; passed through so the
+    // sales-channel rails (ResourceFeedback, channelDelete) can tell a
+    // public-app OAuth install from a token-paste custom app. Unknown values
+    // parse to null — same fail-open-to-normal posture as the dashboard's
+    // appStoreInstall read.
+    installSource:
+      obj.installSource === 'oauth' || obj.installSource === 'token-paste' ? obj.installSource : null,
   };
 }
 
