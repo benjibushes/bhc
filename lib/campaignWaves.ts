@@ -90,6 +90,29 @@ export const AUTOPILOT_RAIL = 'autopilot';
  */
 export const CAMPAIGN_WAVE_EXCLUDED_SLUGS: ReadonlySet<string> = new Set(['rep-provisions']);
 
+/**
+ * Sellability gate (Ben, 2026-08-12: "route them properly"). A first-touch
+ * wave must never land a buyer on a page with nothing to buy — the fleet
+ * audit found Active ranchers with zero prices AND zero payment links
+ * (routed buyers hit a dead end). Sellable = at least one cut priced at or
+ * above the platform floor, OR any payment link (legacy ranchers sell
+ * through links/off-platform). Deliberately independent of the 'Sells'
+ * array: a priced cut is sellable even when the Sells field was never
+ * filled in. States whose only candidate fails this gate drop out of the
+ * wave table honestly (skip, not misroute).
+ */
+export function isWaveSellable(r: Record<string, unknown>): boolean {
+  const MIN = 100; // MIN_TIER_PRICE (lib/pricing.ts) — kept literal to keep this lib pure/import-light
+  const priced = ['Quarter Price', 'Half Price', 'Whole Price'].some((f) => {
+    const n = Number(r[f]);
+    return Number.isFinite(n) && n >= MIN;
+  });
+  if (priced) return true;
+  return ['Quarter Payment Link', 'Half Payment Link', 'Whole Payment Link', 'Payment Link'].some(
+    (f) => String(r[f] || '').trim().length > 0,
+  );
+}
+
 export const RAMP_DAILY_CAP = 30;
 /** Distinct live-send days required before the ramp cap lifts. */
 export const RAMP_LIVE_DAYS = 3;
@@ -311,6 +334,8 @@ export function rancherForStateTable(
     // become possible once the quiz captures a grass-finished preference
     // (no such Consumers field exists today).
     if (CAMPAIGN_WAVE_EXCLUDED_SLUGS.has(slug)) continue;
+    // Sellability gate — never wave buyers at a page with nothing to buy.
+    if (!isWaveSellable(r as Record<string, unknown>)) continue;
     const name =
       String((r as any)['Ranch Name'] || (r as any)['Operator Name'] || '').trim() || slug;
     const id = String((r as any).id || '');
