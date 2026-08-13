@@ -265,7 +265,11 @@ function SignAgreementInner() {
                 <li>Ranch profile created and buyer matching begins</li>
                 <li>Qualified buyer introductions sent directly to you</li>
                 <li>You complete the sale and control pricing</li>
-                <li>10% commission settled monthly on referred sales</li>
+                <li>
+                  The buyer&rsquo;s deposit is paid on your page &mdash; BuyHalfCow&rsquo;s service
+                  fee is added on top and paid by the buyer at that moment. You keep 100% of the
+                  price you set; there is nothing to settle afterward.
+                </li>
               </ol>
             </section>
 
@@ -276,7 +280,7 @@ function SignAgreementInner() {
                 <li>Clear pricing to referred buyers</li>
                 <li>Professional communication with introduced customers</li>
                 <li>Fulfillment responsibility for all orders</li>
-                <li>Transparent reporting of referred sales for commission calculation</li>
+                <li>Mark referred deals closed in your dashboard so your wins and stats stay accurate</li>
               </ul>
             </section>
 
