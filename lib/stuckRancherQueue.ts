@@ -2,12 +2,16 @@
 //
 // THE STUCK-RANCHER QUEUE — "which dead onboarding do I ring first?"
 //
-// Two crons stamp `Stuck Escalated At` on a rancher, fire ONE Telegram ping,
-// and then go permanently silent by design:
+// Crons stamp `Stuck Escalated At` on a rancher and then go silent by design:
 //   app/api/cron/onboarding-stuck/route.ts   → connect-stuck | live-no-deposits
 //                                              | signed-no-page | call-complete
 //                                              | docs-sent
 //   app/api/cron/rancher-followup/route.ts   → new-applicant
+//   app/api/cron/applied-chase/route.ts      → new-applicant | docs-sent (#608)
+//   app/api/cron/pipeline-sla/route.ts       → paused-review (the ONLY bucket
+//                                              written for a PARKED rancher —
+//                                              see the parked-filter carve-out
+//                                              in rankStuckRancherQueue)
 //
 // That silence is CORRECT — it is what stopped the 4-day re-ping spam — but it
 // left the platform with no LIST. 61 of 87 ranchers carry the stamp today and
@@ -128,6 +132,7 @@ export type StuckBucket =
   | 'call-complete'
   | 'docs-sent'
   | 'new-applicant'
+  | 'paused-review'
   | 'resolved';
 
 /** Human label per bucket, for the desk table. */
@@ -138,6 +143,7 @@ export const BUCKET_LABEL: Record<StuckBucket, string> = {
   'call-complete': 'Call complete',
   'docs-sent': 'Docs sent',
   'new-applicant': 'New applicant',
+  'paused-review': 'Paused — re-review',
   resolved: 'Moved on',
 };
 
@@ -224,6 +230,15 @@ function isConnectActive(row: StuckRancherRow): boolean {
  * every stuck condition. Those are filtered out of the queue.
  */
 export function deriveStuckBucket(row: StuckRancherRow): StuckBucket {
+  // Paused-review (pipeline-sla, 2026-08-12): a PAUSED rancher escalated for
+  // pause re-review keeps that bucket for as long as the pause stands — the
+  // onboarding ladder below describes a rancher moving TOWARD money, which a
+  // paused one is not. Gated on BOTH the stamp and the live status so a
+  // resumed rancher immediately falls through to the real ladder (and the
+  // stale 'paused-review' stamp then reads as bucketDrifted, which is true).
+  if (row.activeStatus === 'Paused' && row.stuckEscalatedBucket === 'paused-review') {
+    return 'paused-review';
+  }
   const connectActive = isConnectActive(row);
   const hasConnectAcct = !!String(row.connectAccountId || '').trim();
 
@@ -265,6 +280,8 @@ export function missingSteps(row: StuckRancherRow, bucket = deriveStuckBucket(ro
       return ['Never opened the setup link — resend it and walk them through the wizard'];
     case 'new-applicant':
       return ['Never started the wizard — no onboarding status was ever set'];
+    case 'paused-review':
+      return ['Paused 30d+ with no re-review — decide: resume routing or retire the listing'];
     case 'resolved':
       return [];
   }
@@ -327,6 +344,8 @@ function reasonSentence(
       return 'Took the call, never signed — one signature away.';
     case 'docs-sent':
       return `Has the setup link and never opened it — ${stale}d since we stopped chasing.`;
+    case 'paused-review':
+      return 'Paused 30d+ with no re-review — routing is off until someone decides.';
     default:
       return 'Furthest along of the ranchers nobody has called.';
   }
@@ -404,7 +423,16 @@ export function rankStuckRancherQueue(
 
   for (const row of rows) {
     if (!String(row.stuckEscalatedAt || '').trim()) continue;
-    if (isParked(row)) {
+    // Paused-review carve-out (pipeline-sla, 2026-08-12): the pipeline-sla
+    // cron's WHOLE point for this bucket is "a human re-reviews the pause" —
+    // that call IS the queue's business, so these rows pass the parked
+    // filter. Scoped tight: only 'Paused' (never Non-Compliant), only the
+    // bucket ONLY pipeline-sla writes, and never a Removed (closed) account.
+    const pausedReview =
+      row.activeStatus === 'Paused' &&
+      row.stuckEscalatedBucket === 'paused-review' &&
+      row.verificationStatus !== REMOVED_VERIFICATION_STATUS;
+    if (isParked(row) && !pausedReview) {
       parkedCount++;
       continue;
     }

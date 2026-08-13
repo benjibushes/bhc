@@ -338,3 +338,42 @@ test('without now/today the gates stay off (legacy callers unchanged)', () => {
   });
   assert.equal(rows.length, 2);
 });
+
+// ── pipeline-SLA age badges (2026-08-12) ────────────────────────────────────
+
+test('deal rows carry ageDays + a "<Stage> · day N" slaLabel from closeQueue', () => {
+  const rows = buildCockpitDialList({
+    buyers: [],
+    stuckRanchers: [],
+    coveredStates: new Set(['TX']),
+    closeQueue: [deal('d-badge', 60)],
+  });
+  const d = rows.find((r) => r.kind === 'deal');
+  assert.ok(d);
+  assert.equal(d!.ageDays, 5); // the helper's daysSinceTouch
+  assert.equal(d!.slaLabel, 'Negotiation · day 5');
+});
+
+test('rancher rows carry ageDays + a bucket-labelled slaLabel', () => {
+  const rows = buildCockpitDialList({
+    buyers: [],
+    stuckRanchers: [rancher('r-badge', 80)],
+    coveredStates: new Set(['TX']),
+  });
+  const r = rows.find((x) => x.kind === 'rancher');
+  assert.ok(r);
+  assert.equal(r!.ageDays, 3); // the helper's daysStuck
+  assert.equal(r!.slaLabel, 'Docs sent · day 3');
+});
+
+test('rows with no age source (recruit / promise) carry no slaLabel', () => {
+  const rows = buildCockpitDialList({
+    buyers: [buyer('b-gated', 'qualified-no-deal', 'FL')],
+    stuckRanchers: [],
+    coveredStates: new Set(['TX']),
+    followUpsDue: [promise('p-nobadge')],
+  });
+  for (const r of rows) {
+    assert.equal(r.slaLabel, undefined, r.kind);
+  }
+});

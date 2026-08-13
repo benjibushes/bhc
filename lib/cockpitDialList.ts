@@ -58,7 +58,7 @@
 
 import { normalizeState } from './states';
 import type { RankedDialCandidate } from './callbackQueue';
-import type { RankedStuckRancherRow } from './stuckRancherQueue';
+import { BUCKET_LABEL, type RankedStuckRancherRow } from './stuckRancherQueue';
 import type { DueFollowUp } from './followUpQueue';
 import { followUpContextLine, toFollowUpYmd } from './followUpQueue';
 import type { RankedCloseQueueRow } from './closeQueue';
@@ -102,6 +102,12 @@ export interface CockpitDialRow {
   outcomeKind?: CockpitOutcomeKind;
   /** buyer rows from the deposit-opened tier: the referral to chase-stamp. */
   referralId?: string;
+  /** Pipeline-SLA age (2026-08-12) — whole days the row has sat untouched
+   * (deal rows: closeQueue's daysSinceTouch; rancher rows: daysStuck since
+   * the escalation stamp). Absent when the source carries no age. */
+  ageDays?: number;
+  /** Stage-clock badge, e.g. "Slot Locked · day 24". Read-only display. */
+  slaLabel?: string;
 }
 
 const PRIORITY = {
@@ -252,6 +258,9 @@ export function buildCockpitDialList({
       priority: PRIORITY.rancherBase + PRIORITY.rancherPerScore * (Number(r.score) || 0),
       nextStep: r.missing[0] || '',
       outcomeKind: 'rancher',
+      // Age badge: days since the cron handed this rancher to the human list.
+      ageDays: r.daysStuck,
+      slaLabel: `${BUCKET_LABEL[r.bucket] ?? r.bucket} · day ${r.daysStuck}`,
     });
   }
 
@@ -302,6 +311,11 @@ export function buildCockpitDialList({
       phone: String(d.buyerPhone || '').trim(),
       priority: PRIORITY.dealBase + PRIORITY.dealPerScore * (Number(d.score) || 0),
       outcomeKind: 'deal',
+      // Age badge, e.g. "Slot Locked · day 24" — closeQueue's daysSinceTouch
+      // (newest of Last Chased At / Intro Sent At / created), i.e. "day N of
+      // nobody touching this deal", which is the number the operator acts on.
+      ageDays: d.daysSinceTouch,
+      slaLabel: `${d.status} · day ${d.daysSinceTouch}`,
     };
     rows.push(row);
     byReferralId.set(d.id, row);

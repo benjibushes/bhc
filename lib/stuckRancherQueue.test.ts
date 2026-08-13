@@ -368,3 +368,49 @@ test('an empty input is handled', () => {
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
+
+// ── paused-review carve-out (pipeline-sla, 2026-08-12) ─────────────────────
+
+test('a Paused rancher with the paused-review bucket PASSES the parked filter', () => {
+  const r = row({
+    activeStatus: 'Paused',
+    stuckEscalatedBucket: 'paused-review',
+    stuckEscalatedAt: daysAgo(3),
+    buyersWaiting: 50,
+  });
+  const out = rankStuckRancherQueue([r], { now: NOW });
+  assert.equal(out.parkedCount, 0);
+  assert.equal(out.rows.length, 1);
+  assert.equal(out.rows[0].bucket, 'paused-review');
+  assert.equal(out.rows[0].bucketDrifted, false);
+  assert.equal(out.rows[0].missing[0].includes('resume routing or retire'), true);
+});
+
+test('paused ranchers with any OTHER bucket stay parked; Removed always parks', () => {
+  const otherBucket = row({ activeStatus: 'Paused', stuckEscalatedBucket: 'connect-stuck' });
+  assert.equal(rankStuckRancherQueue([otherBucket], { now: NOW }).parkedCount, 1);
+  const removed = row({
+    activeStatus: 'Paused',
+    verificationStatus: 'Removed',
+    stuckEscalatedBucket: 'paused-review',
+  });
+  assert.equal(rankStuckRancherQueue([removed], { now: NOW }).parkedCount, 1);
+  const nonCompliant = row({ activeStatus: 'Non-Compliant', stuckEscalatedBucket: 'paused-review' });
+  assert.equal(rankStuckRancherQueue([nonCompliant], { now: NOW }).parkedCount, 1);
+});
+
+test('a RESUMED rancher with a stale paused-review stamp falls through to the live ladder', () => {
+  const resumed = row({
+    activeStatus: 'Active',
+    stuckEscalatedBucket: 'paused-review',
+    onboardingStatus: 'Call Complete',
+  });
+  assert.equal(deriveStuckBucket(resumed), 'call-complete');
+  const out = rankStuckRancherQueue([resumed], { now: NOW });
+  assert.equal(out.rows[0]?.bucketDrifted, true);
+});
+
+test('paused-review has a bucket label for the desk', () => {
+  assert.equal(typeof BUCKET_LABEL['paused-review'], 'string');
+  assert.ok(BUCKET_LABEL['paused-review'].length > 0);
+});
