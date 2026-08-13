@@ -20,6 +20,7 @@ import {
   BOUNCE_PAUSE_THRESHOLD,
   type GuardTelemetry,
   type SelectWavesInput,
+  isWaveSellable,
 } from './campaignWaves';
 import { MAX_BATCH } from './requalifyCampaign';
 import { SUNSET_SUPPRESSED_MARKER } from './marketingSunset';
@@ -157,6 +158,11 @@ const OPERATIONAL = {
   'Active Status': 'Active',
   'Agreement Signed': true,
   'Onboarding Status': 'Live',
+  // Sellability gate (2026-08-12): wave candidates need a priced cut or a
+  // payment link; fixtures get a floor-clearing Half so table tests keep
+  // exercising the gates they were written for. Dead-end coverage lives in
+  // the dedicated isWaveSellable test.
+  'Half Price': 2000,
 };
 
 function rancher(over: Record<string, unknown>): Record<string, unknown> {
@@ -436,4 +442,17 @@ test('rancherForStateTable: campaign-excluded slugs never appear, even as nation
   for (const [, v] of table) {
     assert.notEqual(v.slug, 'rep-provisions');
   }
+});
+
+test('isWaveSellable: priced cut or payment link required; dead-end ranchers excluded from table', () => {
+  assert.equal(isWaveSellable({ 'Half Price': 2000 }), true);
+  assert.equal(isWaveSellable({ 'Quarter Price': 50 }), false); // below floor
+  assert.equal(isWaveSellable({ 'Whole Payment Link': 'https://buy.example/x' }), true);
+  assert.equal(isWaveSellable({}), false);
+  const deadEnd = {
+    id: 'recDead', Slug: 'jcs-shaped', 'Ranch Name': 'Dead End Ranch',
+    State: 'NC', 'Active Status': { name: 'Active' }, 'Current Active Referrals': 0,
+  };
+  const table = rancherForStateTable([deadEnd] as any[]);
+  assert.equal(table.size, 0);
 });
