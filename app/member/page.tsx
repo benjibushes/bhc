@@ -58,16 +58,6 @@ interface Rancher {
   'Stripe Connect Status'?: string;
 }
 
-interface LandDeal {
-  id: string;
-  'Property Location': string;
-  State: string;
-  Acreage: number;
-  'Asking Price': string;
-  'Property Type': string;
-  Description: string;
-}
-
 interface Brand {
   id: string;
   'Brand Name': string;
@@ -192,7 +182,7 @@ function formatDate(value?: string): string {
   });
 }
 
-type Tab = 'dashboard' | 'ranchers' | 'land' | 'brands';
+type Tab = 'dashboard' | 'ranchers' | 'brands';
 
 const statusLabels: Record<string, { label: string; style: string }> = {
   // Buyer-facing labels — plain language, not CRM jargon. A buyer never
@@ -258,7 +248,6 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
     hasOrderDetails: boolean;
     stateRanchers: Rancher[];
     otherRanchers: Rancher[];
-    landDeals: LandDeal[];
     brands: Brand[];
     memberReferrals: MemberReferral[];
     shopOrders?: ShopOrder[];
@@ -340,7 +329,6 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
   const tabs: { key: Tab; label: string }[] = [
     { key: 'dashboard', label: 'My Status' },
     { key: 'ranchers', label: `Ranchers${data?.stateRanchers?.length ? ` (${data.stateRanchers.length} in ${data.memberState})` : ''}` },
-    { key: 'land', label: `Land Deals (${data?.landDeals?.length || 0})` },
     { key: 'brands', label: `Promotions (${data?.brands?.length || 0})` },
   ];
 
@@ -1133,10 +1121,6 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                   <p className="text-sm text-saddle mt-1">Ranchers in {data?.memberState}</p>
                 </div>
                 <div className="p-6 border border-dust bg-white text-center">
-                  <div className="font-serif text-3xl">{data?.landDeals?.length || 0}</div>
-                  <p className="text-sm text-saddle mt-1">Land Deals Available</p>
-                </div>
-                <div className="p-6 border border-dust bg-white text-center">
                   <div className="font-serif text-3xl">{data?.brands?.length || 0}</div>
                   <p className="text-sm text-saddle mt-1">Active Promotions</p>
                 </div>
@@ -1176,35 +1160,6 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                     ))}
                   </div>
                 </>
-              )}
-            </div>
-          )}
-
-          {/* Land Deals Tab */}
-          {activeTab === 'land' && (
-            <div className="space-y-8">
-              <h2 className="font-serif text-2xl">Exclusive Land Deals</h2>
-              {data?.landDeals && data.landDeals.length > 0 ? (
-                <div className="space-y-6">
-                  {data.landDeals.map((deal) => (
-                    <div key={deal.id} className="p-6 border border-dust bg-white space-y-4">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <h3 className="font-serif text-xl">
-                            {deal.Acreage} Acres — {deal['Property Location'] || deal.State}
-                          </h3>
-                          <p className="text-sm text-saddle">{deal.State} &middot; {deal['Property Type']}</p>
-                        </div>
-                        <span className="font-serif text-xl">{deal['Asking Price']}</span>
-                      </div>
-                      {deal.Description && <p className="text-sm leading-relaxed">{deal.Description}</p>}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="p-8 border border-dust text-center bg-white">
-                  <p className="text-saddle">No land deals available right now. Check back soon.</p>
-                </div>
               )}
             </div>
           )}

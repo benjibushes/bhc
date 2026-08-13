@@ -2,9 +2,10 @@
 //
 // THE CALL QUEUE — "who do I ring RIGHT NOW to make money today?"
 //
-// /admin/desk already answers "what is stale" by bucketing referrals into
-// urgency lanes. It does NOT answer the only question that matters on a
-// selling day: of the open deals, which ONE is worth the next phone call.
+// The old /admin/desk list bucketed referrals into urgency lanes ("what is
+// stale"); that page is retired and /admin/today (BAND 3) is the feeder now.
+// Neither answers the only question that matters on a selling day: of the
+// open deals, which ONE is worth the next phone call.
 // This module is that answer, and it is deliberately DUMB: a weighted sum of
 // five signals that already exist on the referral row. No model, no learning,
 // no config UI — tune the constants below and the whole desk re-ranks.
@@ -173,7 +174,7 @@ export function estimateDealValue(row: CloseQueueRow): number {
  * the canonical function needs the rancher record (per-rancher locked rates —
  * Operator-tier ranchers sit at 0%), but this module is pure and ranks from
  * CloseQueueRow, which carries no rancher record. Wiring the rate through
- * would mean changing the row shape and its only feeder (/admin/desk) for a
+ * would mean changing the row shape and its only feeder (/api/admin/today) for a
  * display-only number. So: flat platform default, OVERSTATED for 0%-rate
  * ranchers, and every surface that shows it must label it "est.".
  */

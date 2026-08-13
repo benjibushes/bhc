@@ -27,7 +27,6 @@ export const TABLES = {
   CONSUMERS: 'Consumers',
   RANCHERS: 'Ranchers',
   BRANDS: 'Brands',
-  LAND_DEALS: 'Land Deals',
   INQUIRIES: 'Inquiries',
   CAMPAIGNS: 'Campaigns',
   REFERRALS: 'Referrals',

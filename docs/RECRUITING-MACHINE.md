@@ -19,7 +19,7 @@ in outbound copy (Ben's rule).
 |---|---|---|---|---|
 | Cold email | Scraped prospects | ~1,076 | **DARK** — engine built, sends gated | Rancher Prospects Airtable (`tbljw0vdfMpyQ6Nk5`) + bhc-prospects.vercel.app dashboard |
 | Warm chase | Signed up, stalled pre-wizard | 26 tracked | LIVE — daily chase email + Telegram | rancher-followup cron |
-| Stuck queue | Escalated, never worked | 55 callable (52 have phones) | LIVE | `/admin/desk` call queue (#489), demand×proximity scored |
+| Stuck queue | Escalated, never worked | 55 callable (52 have phones) | LIVE | `/admin/today` cockpit queue (#489), demand×proximity scored |
 | Nearest-to-live | Connect started or priced, one step out | Rep Provisions (Connect=onboarding, no price) · Luke Yearout (no Connect/slug/price) | LIVE | go-live-sync flags |
 | Self-serve doors | Inbound | — | LIVE + honest (#505) | /sell · /apply (90s) · /partner · /map/add-a-rancher (+ fan flag) |
 
@@ -118,7 +118,7 @@ Nine of the top ten need one sentence. Email (or text) before the call:
 > you through the last step on a 5 minute call instead? — Ben
 
 Phone scripts: docs/RANCHER-CALL-SCRIPTS.md (lead with Operator tier on
-qualified calls). Work order: `/admin/desk` queue score, top first — 5 Bar
+qualified calls). Work order: `/admin/today` queue score, top first — 5 Bar
 (CA, 220 waiting) · Bear Musgrave (TX) · Rocking B (TX) · Anvil Bar (CA) ·
 Crescent C (TX).
 

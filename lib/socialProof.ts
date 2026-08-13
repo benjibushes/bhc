@@ -5,7 +5,7 @@
 // hesitate (deposit checkout, /shop, the state SEO pages, rancher storefronts)
 // showed zero proof. This helper is the single source for those surfaces.
 //
-// HONESTY RULES (same as /wins + lib/testimonials.ts):
+// HONESTY RULES (same as /wins):
 //   • LIVE-derived only — never a hardcoded count or GMV (they grow).
 //   • Same hygiene filter as /wins: Status = Closed Won, Sale Amount > 0,
 //     a real rancher link. No padding, no floors.
@@ -16,7 +16,7 @@
 // Privacy: this module exposes AGGREGATES ONLY — counts, GMV, and a
 // "half cow — TX, jul 2026" latest-win label. No buyer names ever leave it.
 //
-// Caching: 5-min in-process TTL, mirroring lib/testimonials.ts (Referrals is
+// Caching: 5-min in-process TTL, 5-min in-process TTL (Referrals is
 // deliberately NOT in the airtable.ts L1/L2 allowlist — money reads stay
 // live — so this lib-level cache is what keeps /shop + 50 state pages +
 // rancher pages from full-scanning Referrals per render). Page-level ISR

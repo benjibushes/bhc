@@ -1,7 +1,7 @@
 // ProofStrip — compact one-line social proof for server pages (/shop, the
 // /half-a-cow/[state] SEO pages). Live Closed Won aggregates via
 // lib/socialProof (5-min in-process cache; callers' page-level ISR handles
-// CDN freshness — same layering as lib/testimonials.ts consumers).
+// CDN freshness — same layering as the /wins social-proof consumers).
 //
 // Renders NOTHING when data is unavailable or the count is zero — a failed
 // Airtable read must never surface as "0 deals". Build-safe for statically

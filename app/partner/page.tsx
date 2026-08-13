@@ -12,7 +12,7 @@ import Button from '../components/Button';
 import Link from 'next/link';
 import { trackEvent, metaEventId } from '@/lib/analytics';
 
-type PartnerType = 'rancher' | 'brand' | 'land' | '';
+type PartnerType = 'rancher' | 'brand' | '';
 
 const US_STATES = [
   { value: '', label: 'Select state' },
@@ -118,21 +118,6 @@ function PartnerPageContent() {
     exclusivityAgreed: false,
   });
 
-  // Land deal form data
-  const [landData, setLandData] = useState({
-    sellerName: '',
-    email: '',
-    phone: '',
-    propertyLocation: '',
-    state: '',
-    acreage: '',
-    askingPrice: '',
-    propertyType: '',
-    zoning: '',
-    utilities: '',
-    description: '',
-    exclusiveToMembers: false,
-  });
 
   const handleRancherChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value, type } = e.target;
@@ -152,14 +137,6 @@ function PartnerPageContent() {
     }));
   };
 
-  const handleLandChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
-    const { name, value, type } = e.target;
-    const checked = (e.target as HTMLInputElement).checked;
-    setLandData(prev => ({ 
-      ...prev, 
-      [name]: type === 'checkbox' ? checked : value 
-    }));
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -218,8 +195,6 @@ function PartnerPageContent() {
           return;
         }
         payload = { partnerType: 'brand', ...brandData, ref: ref || undefined };
-      } else if (partnerType === 'land') {
-        payload = { partnerType: 'land', ...landData, ref: ref || undefined };
       }
 
       const response = await fetch('/api/partners', {
@@ -408,7 +383,6 @@ function PartnerPageContent() {
               <option value="">Select partnership type</option>
               <option value="rancher">Rancher — sell beef to members</option>
               <option value="brand">Brand — promote products / merch</option>
-              <option value="land">Land seller — submit exclusive deals</option>
             </select>
           </div>
 
@@ -692,127 +666,6 @@ function PartnerPageContent() {
                     name="exclusivityAgreed"
                     checked={brandData.exclusivityAgreed}
                     onChange={handleBrandChange}
-                    required
-                  />
-                </div>
-              )}
-
-              {/* LAND DEAL FORM */}
-              {partnerType === 'land' && (
-                <div className="space-y-6">
-                  <h2 className="font-serif text-2xl md:text-3xl lowercase">
-                    land deal submission
-                  </h2>
-
-                  <Input
-                    label="Seller Name / Entity"
-                    name="sellerName"
-                    value={landData.sellerName}
-                    onChange={handleLandChange}
-                    required
-                  />
-
-                  <Input
-                    label="Email"
-                    type="email"
-                    name="email"
-                    value={landData.email}
-                    onChange={handleLandChange}
-                    required
-                  />
-
-                  <Input
-                    label="Phone"
-                    type="tel"
-                    name="phone"
-                    value={landData.phone}
-                    onChange={handleLandChange}
-                    required
-                  />
-
-                  <Input
-                    label="Property Location (City, County)"
-                    name="propertyLocation"
-                    value={landData.propertyLocation}
-                    onChange={handleLandChange}
-                    placeholder="e.g., Marfa, Presidio County"
-                    required
-                  />
-
-                  <Select
-                    label="State"
-                    name="state"
-                    value={landData.state}
-                    onChange={handleLandChange}
-                    required
-                  >
-                    {US_STATES.map(state => (
-                      <option key={state.value} value={state.value}>{state.label}</option>
-                    ))}
-                  </Select>
-
-                  <Input
-                    label="Total Acreage"
-                    type="number"
-                    name="acreage"
-                    value={landData.acreage}
-                    onChange={handleLandChange}
-                    required
-                  />
-
-                  <Input
-                    label="Asking Price"
-                    type="text"
-                    name="askingPrice"
-                    value={landData.askingPrice}
-                    onChange={handleLandChange}
-                    placeholder="e.g., $450,000"
-                    required
-                  />
-
-                  <Input
-                    label="Property Type"
-                    name="propertyType"
-                    value={landData.propertyType}
-                    onChange={handleLandChange}
-                    placeholder="e.g., Ranch, Hunting Land, Agricultural"
-                    required
-                  />
-
-                  <Input
-                    label="Zoning"
-                    name="zoning"
-                    value={landData.zoning}
-                    onChange={handleLandChange}
-                    placeholder="e.g., Agricultural, Residential"
-                    required
-                  />
-
-                  <Textarea
-                    label="Utilities Available"
-                    name="utilities"
-                    value={landData.utilities}
-                    onChange={handleLandChange}
-                    rows={2}
-                    placeholder="e.g., Well water, Electric nearby, Septic"
-                    required
-                  />
-
-                  <Textarea
-                    label="Property Description"
-                    name="description"
-                    value={landData.description}
-                    onChange={handleLandChange}
-                    rows={5}
-                    placeholder="Describe the property, terrain, features, etc."
-                    required
-                  />
-
-                  <Checkbox
-                    label="I agree to list this deal exclusively to BuyHalfCow members for 30 days"
-                    name="exclusiveToMembers"
-                    checked={landData.exclusiveToMembers}
-                    onChange={handleLandChange}
                     required
                   />
                 </div>
