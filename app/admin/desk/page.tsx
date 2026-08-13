@@ -201,6 +201,9 @@ const STUCK_PILL: Record<StuckBucket, string> = {
   'call-complete': 'border-amber-600 text-amber-700',
   'docs-sent': 'border-amber-600 text-amber-700',
   'new-applicant': 'border-rust text-rust',
+  // Paused-review (pipeline-sla): a standing pause awaiting a human decision —
+  // neutral saddle, neither money-green nor never-started-rust.
+  'paused-review': 'border-saddle text-saddle',
   resolved: 'border-dust text-dust',
 };
 

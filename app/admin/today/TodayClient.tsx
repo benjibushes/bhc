@@ -376,6 +376,11 @@ function QueueRow({
                 {badge}
               </span>
             )}
+            {row.slaLabel && (
+              <span className="ml-2 text-[11px] tracking-wide text-charcoal border border-dust px-1 whitespace-nowrap">
+                {row.slaLabel}
+              </span>
+            )}
           </p>
           <p className="text-xs text-saddle mt-0.5">{row.why}</p>
           {row.nba && <p className="text-xs text-charcoal mt-0.5">Do: {row.nba}</p>}

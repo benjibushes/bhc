@@ -134,6 +134,12 @@ export const EXPECTED_CRONS_24H = [
   // realHandler (the campaign-autopilot pattern): a daily Cron Runs row is
   // written in every mode, so a missing row means a REAL missed run.
   'applied-chase',
+  // Pipeline-SLA (stage clocks + escalations) — daily 13:20 UTC. Tri-state
+  // PIPELINE_SLA_ENABLED (off/'dry-run'/'true'), fail-to-off, gate INSIDE
+  // realHandler (the applied-chase/campaign-autopilot pattern): a daily Cron
+  // Runs row is written in every mode, so a missing row means a REAL missed
+  // run.
+  'pipeline-sla',
   // Gated weekly learning report (ADAPTIVE-MARKETING-DESIGN PR 3) — daily
   // 14:10 UTC with a Monday guard INSIDE realHandler (design doc, verbatim:
   // a true weekly slot is watchdog-blind because EXCLUDED crons never alarm).

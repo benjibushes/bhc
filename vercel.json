@@ -283,6 +283,10 @@
     {
       "path": "/api/cron/applied-chase",
       "schedule": "40 14 * * *"
+    },
+    {
+      "path": "/api/cron/pipeline-sla",
+      "schedule": "20 13 * * *"
     }
   ]
 }
