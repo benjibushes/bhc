@@ -19,10 +19,12 @@ interface InquiryModalProps {
     email: string;
     state: string;
   };
+  /** Authenticated member's Consumer record id — see ContactRancherButton. */
+  consumerId?: string;
   onClose: () => void;
 }
 
-export default function InquiryModal({ rancher, onClose }: InquiryModalProps) {
+export default function InquiryModal({ rancher, consumerId, onClose }: InquiryModalProps) {
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -71,6 +73,11 @@ export default function InquiryModal({ rancher, onClose }: InquiryModalProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           rancherId: rancher.id,
+          // Member identity (preference-fidelity audit 2026-08-12): every
+          // lifetime inquiry row had a blank `Consumer ID` because the modal
+          // never forwarded it — the route already links it + restores
+          // campaign attribution when present (route.ts consumerId handling).
+          ...(consumerId ? { consumerId } : {}),
           consumerName: formData.name,
           consumerEmail: formData.email,
           consumerPhone: formData.phone,

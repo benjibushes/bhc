@@ -91,3 +91,32 @@ test('settlement pays the stored (metadata) base — no category-margin re-deriv
     'settlement must not re-derive margin from the category table',
   );
 });
+
+// ── Product-buyer bridge State/Source/Created (preference-fidelity 2026-08-12).
+// The bridge used to mint net-new /shop buyers with a Zip but NO State (the
+// "state arrives from Stripe" premise was false — only postal_code was ever
+// harvested), no Source, and no Created. The pure derivation chain is tested
+// in lib/zipCentroids.test.ts + lib/buyerZip.test.ts; these pins hold the
+// settle path to actually writing it on both branches.
+test('product-buyer bridge derives State (Stripe address first, ZIP-centroid fallback) and writes it never-stomp on BOTH branches', () => {
+  assert.match(
+    src,
+    /stateFromStripePayment\(pi\) \|\| stateFromZip\(stripeZip\)/,
+    'State = Stripe address.state first, centroid fallback off the harvested ZIP',
+  );
+  assert.match(
+    src,
+    /buyerStatePatch\(stripeState, c\['State'\]\)/,
+    'existing-consumer branch heals a blank State (never-stomp)',
+  );
+  assert.match(
+    src,
+    /buyerStatePatch\(stripeState, null\)/,
+    'net-new create branch writes the derived State',
+  );
+});
+
+test('net-new product buyer create stamps Source + Created like every other door', () => {
+  assert.match(src, /'Source': 'shop'/, 'provenance stamp');
+  assert.match(src, /'Created': nowIso\.slice\(0, 10\)/, 'signup-date truth (Date field shape)');
+});

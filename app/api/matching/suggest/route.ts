@@ -170,6 +170,25 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: `Buyer record not found: ${buyerId}` }, { status: 404 });
     }
 
+    // ── PIN PERSISTENCE (preference-fidelity audit 2026-08-12) ──────────────
+    // The rancher-page pin used to ride ONLY the request-body `campaign` param.
+    // First-touch routes (signup, qualify) pass it — but every retry and
+    // re-engagement caller (batch-approve, email-sequences, stuck-buyer-
+    // recovery, referral-chase, warmup/engage, reconfirm, ready-to-buy…)
+    // omits it, silently converting an explicit rancher-specific lead into
+    // generic nearest-rancher routing. Fall back to the buyer record's STORED
+    // Campaign (written at signup) — the record is already loaded, so this
+    // fixes every caller at once with no extra read. The operational/price/
+    // capacity/ZIP gates on the pin block below handle a stale pin safely
+    // (falls through to general matching).
+    const storedCampaignForPin = String(buyerRecForGate['Campaign'] || '');
+    const effectiveCampaign =
+      typeof campaign === 'string' && campaign.startsWith('rancher-')
+        ? campaign
+        : storedCampaignForPin.startsWith('rancher-')
+          ? storedCampaignForPin
+          : '';
+
     // QUIZ-REQUIRED QUALIFICATION (locked rule, confirmed 2026-06-28): routing
     // selects ONLY on `Qualified At` (the /qualify quiz stamp), NEVER on
     // Buyer Stage='READY'. This is deliberate — there are ~846 legacy READY-but-
@@ -731,8 +750,10 @@ export async function POST(request: Request) {
     // lib/rancherEligibility.ts (Active + Live + Signed + Sub Status pass).
     let directMatchRancher: any = null;
     let matchType: string | null = null;
-    if (campaign && campaign.startsWith('rancher-')) {
-      const rancherSlug = campaign.replace('rancher-', '');
+    if (effectiveCampaign) {
+      // effectiveCampaign is non-empty ONLY when it starts with 'rancher-'
+      // (request param first, stored Campaign fallback — see PIN PERSISTENCE).
+      const rancherSlug = effectiveCampaign.replace('rancher-', '');
       const pinned = allRanchers.find((r: any) => {
         const slug = r['Slug'] || '';
         return slug === rancherSlug && isRancherOperationalForBuyers(r);

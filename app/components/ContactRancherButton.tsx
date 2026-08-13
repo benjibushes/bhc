@@ -11,9 +11,18 @@ interface ContactRancherButtonProps {
     email: string;
     state: string;
   };
+  /**
+   * The authenticated member's Consumer record id (member.id IS the
+   * session's consumerId — app/api/auth/member/session). This button only
+   * renders inside the member dashboard (MemberAuthGuard), so the identity is
+   * always known; forwarding it lets /api/inquiries link `Consumer ID` and
+   * restore campaign attribution instead of falling back to Source='direct'
+   * (preference-fidelity audit 2026-08-12).
+   */
+  consumerId?: string;
 }
 
-export default function ContactRancherButton({ rancher }: ContactRancherButtonProps) {
+export default function ContactRancherButton({ rancher, consumerId }: ContactRancherButtonProps) {
   const [isModalOpen, setIsModalOpen] = useState(false);
 
   return (
@@ -28,6 +37,7 @@ export default function ContactRancherButton({ rancher }: ContactRancherButtonPr
       {isModalOpen && (
         <InquiryModal
           rancher={rancher}
+          consumerId={consumerId}
           onClose={() => setIsModalOpen(false)}
         />
       )}
