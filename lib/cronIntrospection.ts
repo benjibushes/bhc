@@ -128,6 +128,12 @@ export const EXPECTED_CRONS_24H = [
   // post-mortem) — no env latch, withCronRun writes a daily Cron Runs row
   // even when zero rows are pending.
   'inbound-body-backfill',
+  // Applied-cohort chase (2026-08-12) — daily 14:40 UTC, day-0/2/5 touches +
+  // dial-list handoff for fresh unsigned applications. Tri-state
+  // APPLIED_CHASE_ENABLED (off/'dry-run'/'true'), fail-to-off, gate INSIDE
+  // realHandler (the campaign-autopilot pattern): a daily Cron Runs row is
+  // written in every mode, so a missing row means a REAL missed run.
+  'applied-chase',
   // Gated weekly learning report (ADAPTIVE-MARKETING-DESIGN PR 3) — daily
   // 14:10 UTC with a Monday guard INSIDE realHandler (design doc, verbatim:
   // a true weekly slot is watchdog-blind because EXCLUDED crons never alarm).
