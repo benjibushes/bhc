@@ -1,7 +1,7 @@
 // lib/buyerZip.test.ts
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { zipFromStripePayment, buyerZipPatch, ZIP_OUT_OF_AREA_MESSAGE } from './buyerZip';
+import { zipFromStripePayment, buyerZipPatch, stateFromStripePayment, buyerStatePatch, ZIP_OUT_OF_AREA_MESSAGE } from './buyerZip';
 import { buyerZipServedBy, hasServiceZipGate } from './exclusiveZip';
 
 // ── zipFromStripePayment ────────────────────────────────────────────────────
@@ -149,4 +149,82 @@ test('rejection copy never names another ranch or its territory', () => {
   assert.ok(!/\d{5}/.test(ZIP_OUT_OF_AREA_MESSAGE), 'must not leak a ZIP');
   assert.ok(!/exclusiv/i.test(ZIP_OUT_OF_AREA_MESSAGE), 'must not leak the contract');
   assert.ok(!/territor/i.test(ZIP_OUT_OF_AREA_MESSAGE), 'must not leak territory language');
+});
+
+// ── stateFromStripePayment (preference-fidelity audit 2026-08-12) ───────────
+
+test('stateFromStripePayment: null / undefined / junk → null', () => {
+  assert.equal(stateFromStripePayment(null), null);
+  assert.equal(stateFromStripePayment(undefined), null);
+  assert.equal(stateFromStripePayment('nope'), null);
+  assert.equal(stateFromStripePayment(42), null);
+  assert.equal(stateFromStripePayment({}), null);
+});
+
+test('stateFromStripePayment: shipping wins over billing/customer (same order as the ZIP harvest)', () => {
+  const session = {
+    shipping_details: { address: { state: 'TX' } },
+    customer_details: { address: { state: 'NY' } },
+  };
+  assert.equal(stateFromStripePayment(session), 'TX');
+});
+
+test('stateFromStripePayment: reads every candidate node the ZIP harvest reads', () => {
+  assert.equal(
+    stateFromStripePayment({ collected_information: { shipping_details: { address: { state: 'MT' } } } }),
+    'MT',
+  );
+  assert.equal(
+    stateFromStripePayment({ charges: { data: [{ shipping: { address: { state: 'CO' } } }] } }),
+    'CO',
+  );
+  assert.equal(stateFromStripePayment({ shipping: { address: { state: 'GA' } } }), 'GA');
+  assert.equal(
+    stateFromStripePayment({ charges: { data: [{ billing_details: { address: { state: 'FL' } } }] } }),
+    'FL',
+  );
+  assert.equal(stateFromStripePayment({ customer_details: { address: { state: 'OH' } } }), 'OH');
+});
+
+test('stateFromStripePayment: normalizes full names + lowercase to the 2-letter code', () => {
+  assert.equal(stateFromStripePayment({ shipping: { address: { state: 'Texas' } } }), 'TX');
+  assert.equal(stateFromStripePayment({ shipping: { address: { state: ' montana ' } } }), 'MT');
+});
+
+test('stateFromStripePayment: an unusable candidate is SKIPPED, not short-circuited', () => {
+  // Shipping carries a non-US region — billing still yields the state.
+  const pi = {
+    charges: {
+      data: [{ shipping: { address: { state: 'Ontario' } }, billing_details: { address: { state: 'CO' } } }],
+    },
+  };
+  assert.equal(stateFromStripePayment(pi), 'CO');
+});
+
+// ── buyerStatePatch ─────────────────────────────────────────────────────────
+
+test('buyerStatePatch: no / unrecognizable incoming state → {} (never persist junk)', () => {
+  assert.deepEqual(buyerStatePatch(null, ''), {});
+  assert.deepEqual(buyerStatePatch('', ''), {});
+  assert.deepEqual(buyerStatePatch('Ontario', ''), {});
+  assert.deepEqual(buyerStatePatch('ZZ', ''), {});
+});
+
+test('buyerStatePatch: NEVER stomps a stored non-blank State — even a non-normalizable one', () => {
+  assert.deepEqual(buyerStatePatch('TX', 'MT'), {});
+  assert.deepEqual(buyerStatePatch('TX', 'Montana'), {});
+  // A human-typed oddball is stronger evidence than a Stripe billing address.
+  assert.deepEqual(buyerStatePatch('TX', 'somewhere rural'), {});
+});
+
+test('buyerStatePatch: fills a blank/whitespace-only State with the normalized code', () => {
+  assert.deepEqual(buyerStatePatch('Texas', ''), { State: 'TX' });
+  assert.deepEqual(buyerStatePatch('TX', '   '), { State: 'TX' });
+  assert.deepEqual(buyerStatePatch('mt', null), { State: 'MT' });
+  assert.deepEqual(buyerStatePatch('MT', undefined), { State: 'MT' });
+});
+
+test('buyerStatePatch spreads as a no-op exactly like buyerZipPatch', () => {
+  const patch = { Notes: 'x', ...buyerStatePatch('Ontario', ''), ...buyerStatePatch('TX', 'MT') };
+  assert.deepEqual(patch, { Notes: 'x' });
 });

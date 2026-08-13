@@ -21,6 +21,11 @@ import {
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from './telegram';
 import { commissionPayCta } from './commissionOwed';
 import { cacheIncrWithTtl } from './sharedCache';
+// Past-date guard for the rancher "Next Processing Date" field (sweep fix
+// 2026-08-13) — the field decays every round; emails must never present an
+// already-passed date as a live promise. Shared with the rancher page and
+// deposit page so every display site suppresses/relabels the same way.
+import { isProcessingDatePast } from './processingDate';
 // TEXT-YOUR-RANCHER-NOW (close-the-loop 2026-07-15): pure phone helpers —
 // the buyer intro email's "text them now" CTA shares its sms: link + body
 // with the funnel reveal so the two surfaces can never drift.
@@ -1781,9 +1786,13 @@ export async function sendBuyerIntroNotification(data: {
       `<tr><td style="padding:8px 12px;border:1px solid #E5E2DC;font-weight:600;">Whole Cow</td><td style="padding:8px 12px;border:1px solid #E5E2DC;">$${data.wholePrice.toLocaleString()}</td><td style="padding:8px 12px;border:1px solid #E5E2DC;color:#6B4F3F;">${esc(data.wholeLbs || '')}${data.wholeLbs ? ' lbs' : ''}</td></tr>`
     );
   }
-  const processingLine = data.nextProcessingDate
-    ? `<p style="margin-top:12px;font-size:13px;color:#6B4F3F;"><strong>Next processing date:</strong> ${esc(new Date(data.nextProcessingDate).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' }))}</p>`
-    : '';
+  // Past-date guard: suppress a decayed date entirely rather than email the
+  // buyer a stale promise (the field is manually maintained and re-decays
+  // every processing round).
+  const processingLine =
+    data.nextProcessingDate && !isProcessingDatePast(data.nextProcessingDate)
+      ? `<p style="margin-top:12px;font-size:13px;color:#6B4F3F;"><strong>Next processing date:</strong> ${esc(new Date(data.nextProcessingDate).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' }))}</p>`
+      : '';
   // Operation-type label (P4): one quiet line under the pricing header — a
   // share is a LOCAL operation and the buyer should never guess which kind of
   // outfit they're matched with. '' when the state is unknown.
@@ -5830,6 +5839,132 @@ export async function sendRancherApplyAutoApproved(data: {
 }
 
 // =====================================================
+// APPLIED-COHORT CHASE — /api/cron/applied-chase touches
+// =====================================================
+//
+// Day-0 welcome / day-2 nudge / day-5 last-call for fresh Rancher
+// applications (Onboarding Status blank or 'Docs Sent', agreement unsigned).
+// Every touch leads with the ONE-CLICK agreement-signing link — the 9-of-10
+// blocker on the warm call queue is "sign the agreement, one click" — with
+// /pitch as the secondary "what is this" link. One CTA per email (voice
+// rules, docs/BHC.md). Transactional stream: the recipient applied minutes
+// or days ago and is actively waiting on this thread (see
+// lib/emailStreams.ts classification note).
+//
+// _replyContext 'rnc' so replies land tagged in Conversations against the
+// rancher record instead of untagged in the shared inbox.
+
+export async function sendAppliedChaseDay0(data: {
+  to: string;
+  ranchName: string;
+  operatorName: string;
+  signUrl: string;
+  pitchUrl: string;
+  rancherId: string;
+}): Promise<{ success: boolean; suppressed?: boolean; reason?: string }> {
+  const first = (data.operatorName || '').split(' ')[0] || 'there';
+  const subject = `${data.ranchName} — your agreement is ready to sign`;
+  return guardedSend({
+    templateName: 'sendAppliedChaseDay0',
+    recipientEmail: data.to,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.to,
+      subject,
+      headers: getUnsubscribeHeaders(data.to),
+      _replyContext: { type: 'rnc', recordId: data.rancherId },
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}p{margin:14px 0;color:#2A2A2A}.cta{display:inline-block;padding:14px 30px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px}</style>
+</head><body><div class="container">
+  <p>Hey ${esc(first)},</p>
+  <p>Got your application &mdash; ${esc(data.ranchName)} is in the BuyHalfCow network.</p>
+  <p>One thing stands between you and routed buyers: the partner agreement. It's one click &mdash; no printer, no PDF, about 2 minutes.</p>
+  <div style="text-align:center;margin:24px 0;">
+    <a href="${utm(data.signUrl, 'applied-chase', 'day0-sign')}" class="cta">Review &amp; sign &rarr;</a>
+  </div>
+  <p style="font-size:13px;color:#6B4F3F;">Want the full picture first? <a href="${utm(data.pitchUrl, 'applied-chase', 'day0-pitch')}" style="color:#0E0E0E;">Here's what BuyHalfCow does for ranchers</a> &mdash; one page, no fluff.</p>
+  <p style="font-size:13px;color:#6B4F3F;">Questions? Reply &mdash; this lands in my inbox.</p>
+  <p style="font-size:12px;color:#A7A29A;">&mdash; Ben</p>
+</div></body></html>`,
+    } as any),
+  });
+}
+
+export async function sendAppliedChaseDay2(data: {
+  to: string;
+  ranchName: string;
+  operatorName: string;
+  signUrl: string;
+  pitchUrl: string;
+  rancherId: string;
+}): Promise<{ success: boolean; suppressed?: boolean; reason?: string }> {
+  const first = (data.operatorName || '').split(' ')[0] || 'there';
+  const subject = `quick one — ${data.ranchName}'s agreement is still unsigned`;
+  return guardedSend({
+    templateName: 'sendAppliedChaseDay2',
+    recipientEmail: data.to,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.to,
+      subject,
+      headers: getUnsubscribeHeaders(data.to),
+      _replyContext: { type: 'rnc', recordId: data.rancherId },
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}p{margin:14px 0;color:#2A2A2A}.cta{display:inline-block;padding:14px 30px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px}</style>
+</head><body><div class="container">
+  <p>Hey ${esc(first)},</p>
+  <p>Quick nudge &mdash; the partner agreement for ${esc(data.ranchName)} is still sitting unsigned. It's the one gate between your ranch and buyers we can route to you.</p>
+  <div style="text-align:center;margin:24px 0;">
+    <a href="${utm(data.signUrl, 'applied-chase', 'day2-sign')}" class="cta">Sign it now (2 min) &rarr;</a>
+  </div>
+  <p style="font-size:13px;color:#6B4F3F;">Not sure this is for you yet? <a href="${utm(data.pitchUrl, 'applied-chase', 'day2-pitch')}" style="color:#0E0E0E;">Here's exactly what we do for ranchers</a> &mdash; including the money: you keep 100% of your price and the buyer pays our fee on top.</p>
+  <p style="font-size:13px;color:#6B4F3F;">And if the standard setup isn't your shape, there are two other doors: reply <strong>"represent"</strong> if you'd rather we sell your beef for you (the family's deposit is our whole fee, they pay you the balance direct at handoff &mdash; you never touch a login), or reply <strong>"store"</strong> if you already sell on Shopify or your own site and want to keep your stack. Either reply comes straight to me.</p>
+  <p style="font-size:12px;color:#A7A29A;">&mdash; Ben</p>
+</div></body></html>`,
+    } as any),
+  });
+}
+
+export async function sendAppliedChaseDay5(data: {
+  to: string;
+  ranchName: string;
+  operatorName: string;
+  signUrl: string;
+  pitchUrl: string;
+  rancherId: string;
+}): Promise<{ success: boolean; suppressed?: boolean; reason?: string }> {
+  const first = (data.operatorName || '').split(' ')[0] || 'there';
+  const subject = `closing the loop on ${data.ranchName}`;
+  return guardedSend({
+    templateName: 'sendAppliedChaseDay5',
+    recipientEmail: data.to,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.to,
+      subject,
+      headers: getUnsubscribeHeaders(data.to),
+      _replyContext: { type: 'rnc', recordId: data.rancherId },
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}p{margin:14px 0;color:#2A2A2A}.cta{display:inline-block;padding:14px 30px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px}</style>
+</head><body><div class="container">
+  <p>Hey ${esc(first)},</p>
+  <p>Last automated note from me &mdash; I don't email forever.</p>
+  <p>Your application for ${esc(data.ranchName)} is still open, and the agreement is still one click away. Sign it and your ranch moves into the routing lineup; families near you are already asking for a half or whole cow.</p>
+  <div style="text-align:center;margin:24px 0;">
+    <a href="${utm(data.signUrl, 'applied-chase', 'day5-sign')}" class="cta">Review &amp; sign &rarr;</a>
+  </div>
+  <p style="font-size:13px;color:#6B4F3F;">If the standard setup was the hesitation, two other ways in: reply <strong>"represent"</strong> and we sell your beef for you (the deposit is our whole fee, buyers pay you the balance direct) &mdash; or reply <strong>"store"</strong> to connect the Shopify or website you already run. If now just isn't the time, reply and tell me &mdash; I'll close it out cleanly. Otherwise I may just give you a call.</p>
+  <p style="font-size:13px;color:#6B4F3F;">Everything we do, the money included, in one page: <a href="${utm(data.pitchUrl, 'applied-chase', 'day5-pitch')}" style="color:#0E0E0E;">the pitch</a>.</p>
+  <p style="font-size:12px;color:#A7A29A;">&mdash; Ben</p>
+</div></body></html>`,
+    } as any),
+  });
+}
+
+// =====================================================
 // OPERATOR PRE-CALL BRIEF — fires when a buyer books Ben's sales Cal
 // =====================================================
 //
@@ -5884,12 +6019,21 @@ export async function sendOperatorPreCallBrief(data: {
     ? `<table style="border-collapse:collapse;font-size:14px;margin:6px 0;">${pricingRows.join('')}</table>`
     : '<p style="margin:6px 0;color:#6B4F3F;font-style:italic;">No pricing set on rancher record.</p>';
 
+  // Past-date guard (internal brief → relabel, not suppress): the operator
+  // should SEE that the recorded date is stale so they ask the rancher for
+  // the next round on the call, instead of quoting a passed date to a buyer.
+  const processingDateBrief = data.nextProcessingDate
+    ? isProcessingDatePast(data.nextProcessingDate)
+      ? `${data.nextProcessingDate} — already passed, ask rancher for the next round`
+      : data.nextProcessingDate
+    : '';
+
   // Auto-generated talking points based on quiz answers + referral state
   const talkingPoints: string[] = [];
   const cutAnswer = data.quizAnswers?.['Cut'] || data.quizAnswers?.['cut'] || data.quizAnswers?.['Order Type'] || '';
   const timingAnswer = data.quizAnswers?.['Timing'] || data.quizAnswers?.['timing'] || '';
   if (cutAnswer) talkingPoints.push(`Buyer pre-selected: <strong>${esc(cutAnswer)}</strong> &mdash; anchor pricing convo around that tier.`);
-  if (timingAnswer && /within 30|asap/i.test(timingAnswer)) talkingPoints.push(`Urgency: <strong>${esc(timingAnswer)}</strong> &mdash; surface Next Processing Date (${esc(data.nextProcessingDate || 'TBD')}) early.`);
+  if (timingAnswer && /within 30|asap/i.test(timingAnswer)) talkingPoints.push(`Urgency: <strong>${esc(timingAnswer)}</strong> &mdash; surface Next Processing Date (${esc(processingDateBrief || 'TBD')}) early.`);
   if (data.quizScore && data.quizScore >= 85) talkingPoints.push(`<strong>Quiz score ${data.quizScore}/100</strong> &mdash; high-intent. Move to deposit pitch fast.`);
   else if (data.quizScore && data.quizScore < 75) talkingPoints.push(`Quiz score ${data.quizScore} (below 75 threshold) &mdash; re-verify timing + storage on the call.`);
   if (!data.buyerPhone) talkingPoints.push(`No phone on file &mdash; pull it during the call so we can SMS the deposit link after.`);
@@ -5922,7 +6066,7 @@ export async function sendOperatorPreCallBrief(data: {
   <div class="box">
     <p style="margin:0;"><strong>${esc(data.rancherName)}</strong>${data.rancherTier ? ` &middot; ${esc(data.rancherTier)} tier` : ''}</p>
     ${data.rancherSlug ? `<p style="margin:4px 0;font-size:13px;"><a href="${SITE_URL}/ranchers/${esc(data.rancherSlug)}" style="color:#0E0E0E;">Public page &rarr;</a></p>` : ''}
-    ${data.nextProcessingDate ? `<p style="margin:4px 0;font-size:13px;"><strong>Next processing:</strong> ${esc(data.nextProcessingDate)}</p>` : ''}
+    ${processingDateBrief ? `<p style="margin:4px 0;font-size:13px;"><strong>Next processing:</strong> ${esc(processingDateBrief)}</p>` : ''}
   </div>
   <h2>Pricing</h2>
   ${pricingBlock}

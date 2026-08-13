@@ -5,6 +5,34 @@ import * as Sentry from "@sentry/nextjs";
 import type { Instrumentation } from "next";
 
 export async function register() {
+  // DEP0169 mute (log-hygiene audit 2026-08-10): a dependency's url.parse()
+  // fires this deprecation on effectively EVERY serverless invocation, and
+  // Vercel promotes any stderr output to error level — the production error
+  // channel was ~100% this one warning, burying real errors. Surgical drop
+  // of exactly DEP0169; every other warning and deprecation still emits.
+  // Runs before the Sentry gate on purpose — it must apply DSN or no DSN.
+  if (process.env.NEXT_RUNTIME === "nodejs") {
+    const originalEmitWarning = process.emitWarning.bind(process);
+    process.emitWarning = ((
+      warning: string | Error,
+      ...args: unknown[]
+    ): void => {
+      // Signatures: (warning, {code}) · (warning, type, code, ctor) ·
+      // (Error-with-.code). Cover all three.
+      const optionsCode =
+        args[0] && typeof args[0] === "object"
+          ? (args[0] as { code?: string }).code
+          : undefined;
+      const positionalCode = typeof args[1] === "string" ? args[1] : undefined;
+      const errorCode =
+        warning && typeof warning === "object"
+          ? (warning as { code?: string }).code
+          : undefined;
+      if ([optionsCode, positionalCode, errorCode].includes("DEP0169")) return;
+      (originalEmitWarning as (...a: unknown[]) => void)(warning, ...args);
+    }) as typeof process.emitWarning;
+  }
+
   // No DSN → no-op. The founder activates this by setting SENTRY_DSN.
   if (!process.env.SENTRY_DSN) return;
 

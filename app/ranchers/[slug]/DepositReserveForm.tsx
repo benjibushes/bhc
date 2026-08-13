@@ -139,8 +139,12 @@ export default function DepositReserveForm({
         // smsOptIn rides along using the funnel's exact payload convention
         // (→ Airtable `SMS Opt-In`). ref = affiliate attribution captured from
         // the URL above; server-validated before any stamp. No `state`: the
-        // server never required it and the same datum arrives from the Stripe
-        // billing address at settlement — asking here only stalled the reserve.
+        // server never required it, and settlement now genuinely harvests it
+        // (lib/stripeSettlement: stateFromStripePayment off the Stripe
+        // address, ZIP-centroid fallback, blank-only fill — preference-
+        // fidelity audit 2026-08-12; the old claim that "state arrives from
+        // the billing address" was false for a year: only postal_code was
+        // harvested). Asking here only stalled the reserve.
         body: JSON.stringify({
           slug, cut, email, phone, smsOptIn,
           ...(requireZip ? { zip: zip.trim() } : {}),

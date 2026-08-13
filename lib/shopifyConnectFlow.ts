@@ -108,6 +108,10 @@ export async function connectShopifyStore(input: ConnectStoreInput): Promise<{ o
     markupPercent,
     locationId: null,
     category,
+    // App Store review 128658 (rule 1.2.1): a public-app OAuth install means
+    // the rancher reached us through Shopify — platform-billing surfaces must
+    // hide for them. Persisted so the dashboard can tell the difference.
+    installSource: input.source ?? null,
   };
   if (!parseIntegration(JSON.stringify(cfg))) {
     return { ok: false, report: ['Invalid shop domain — need something like ranch-name.myshopify.com'] };
@@ -193,6 +197,46 @@ export async function connectShopifyStore(input: ConnectStoreInput): Promise<{ o
       });
     } catch {
       /* best-effort */
+    }
+  }
+
+  // Sales-channel connection (App Store review 128658, rule 4.5.1): a
+  // public-app OAuth install makes this shop a BuyHalfCow sales channel —
+  // bind it to the deployed 'buyhalfcow-us' channel specification so the
+  // shop gets its channel connection, product feeds, and order-attribution
+  // definition. Idempotent (an existing connection short-circuits inside
+  // ensureChannelConnection) and FAIL-SOFT: a channelCreate failure must
+  // never break the connect — report + ring Ben instead. Token-paste
+  // custom-app connects skip this entirely (the custom app is not the
+  // sales channel; only the public app is).
+  if (input.source === 'oauth') {
+    try {
+      const { ensureChannelConnection, CHANNEL_SPECIFICATION_HANDLE } = await import('./shopifyChannel');
+      const ch = await ensureChannelConnection(cfg, input.rancherId, rancherName || cfg.shop);
+      if (ch.ok) {
+        report.push(`channel connection: ${ch.existing ? 'already connected' : 'created'} (${ch.handle || CHANNEL_SPECIFICATION_HANDLE})`);
+      } else {
+        report.push(`channel connection: FAILED (${ch.error || 'unknown'})`);
+        try {
+          const { sendOperatorSignal } = await import('./operatorSignal');
+          await sendOperatorSignal({
+            urgency: 'normal',
+            kind: 'system-error',
+            summary: `channelCreate FAILED — ${cfg.shop}`,
+            detail:
+              `The store connected fine (webhooks + config saved) but the sales-channel connection ` +
+              `(channelCreate, spec ${CHANNEL_SPECIFICATION_HANDLE}) failed:\n${ch.error || 'unknown'}\n\n` +
+              `Order push and catalog sync are unaffected. If this is a scope error, the install's token ` +
+              `predates the read_product_listings scope — re-run the connect for this rancher once the ` +
+              `scope is granted.`,
+            dedupeKey: `shopify-channel-create-fail-${cfg.shop}`,
+            dedupeWindowMs: 60 * 60 * 1000,
+          });
+        } catch { /* best-effort */ }
+      }
+    } catch (e: any) {
+      // The channel rail must never take down the connect (money rails first).
+      report.push(`channel connection: FAILED (${String(e?.message || 'error').slice(0, 80)})`);
     }
   }
 

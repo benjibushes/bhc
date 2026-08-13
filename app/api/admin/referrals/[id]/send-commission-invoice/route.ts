@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { requireAdmin } from '@/lib/adminAuth';
 import { isCommissionOwedRow } from '@/lib/commissionOwed';
-import { createCommissionInvoice } from '@/lib/stripe-commission';
+import { createCommissionInvoice, findCommissionInvoiceByReferral } from '@/lib/stripe-commission';
 import { sendInstantCommissionInvoice } from '@/lib/email';
 
 export const maxDuration = 30;
@@ -74,6 +74,22 @@ export async function POST(
   let hostedUrl: string = referral['Stripe Invoice URL'] || '';
   let minted = false;
   if (mintNeeded) {
+    // Double-mint belt (audit C1): the Airtable stamp can be missing even
+    // when a live, emailed invoice exists (stamp write failed after Stripe
+    // finalize+send). Stripe is the truth — reuse any open/paid invoice
+    // already carrying this referralId before minting a second one.
+    const existing = await findCommissionInvoiceByReferral(id);
+    if (existing?.invoiceUrl) {
+      hostedUrl = existing.invoiceUrl;
+      await updateRecord(TABLES.REFERRALS, id, {
+        'Stripe Invoice ID': existing.invoiceId,
+        'Stripe Invoice URL': existing.invoiceUrl,
+      }).catch((e: any) =>
+        console.error('[send-commission-invoice] reuse stamp failed:', e?.message),
+      );
+    }
+  }
+  if (mintNeeded && !hostedUrl) {
     try {
       const result = await createCommissionInvoice({
         rancher: {
@@ -93,10 +109,15 @@ export async function POST(
       });
       hostedUrl = result.invoiceUrl;
       minted = true;
+      // Stamp failure must not 502 a SUCCESSFUL mint (the invoice exists and
+      // Stripe already emailed it) — send our branded email anyway; the
+      // search belt above makes any later retry find-and-reuse, not re-mint.
       await updateRecord(TABLES.REFERRALS, id, {
         'Stripe Invoice ID': result.invoiceId,
         'Stripe Invoice URL': result.invoiceUrl,
-      });
+      }).catch((e: any) =>
+        console.error('[send-commission-invoice] mint stamp failed (belt covers retry):', e?.message),
+      );
     } catch (e: any) {
       // Guards (sale floor/ceiling, ratio) and Stripe errors land here.
       // Refuse rather than silently downgrade to the dashboard CTA — the

@@ -110,3 +110,162 @@ even when they start free.
 - flip happens live → confirm Connect shows **active** on /admin/ranchers
 - didn't finish → send the link + a 24h follow-up text, book a slot
 - log the outcome in Ops Notes (Internal) — never Custom Notes
+
+---
+
+# the presentation kit (2026-08-10)
+
+One URL carries the whole pitch: **buyhalfcow.com/pitch** — and
+`/pitch?state=TX` shows a LIVE waiting-buyer count for their state at the
+top. Text it, email it, screen-share it. The PDF twin lives in the same
+repo flow for attachments.
+
+## live-call screen-share path (5 minutes, in this order)
+
+1. **/pitch?state=XX** — open on the live counter. "that number is real,
+   right now, families in your state." Scroll the six steps slowly.
+2. **/map** — zoom to their state. "green pins are ranches taking buyers.
+   see the gap where you are."
+3. **A real ranch page** (champion-valley-farm or renick-valley) — "this
+   is what yours looks like. built in five minutes, live the same day."
+4. **The deposit button on that page** — "when a family clicks this, the
+   money lands in the rancher's own Stripe account. not ours."
+5. Back to **/pitch** money table — "pick a lane. free means the buyer
+   pays our fee on top of your price. you never see a bill."
+6. Stop talking. Ask: "which of the three doors fits you?"
+
+Never open /admin on a screen-share. Never quote a stale count — the
+/pitch counter is live, trust it.
+
+## email 1 — "send me more information" (same day as the call)
+
+Subject: `how buyhalfcow works — the whole thing`
+
+> hey [first name],
+>
+> good talking to you. here is the whole system on one page, nothing
+> held back:
+>
+> buyhalfcow.com/pitch?state=[XX]
+>
+> the number at the top is live — that is how many families in
+> [state] are on our list right now looking for a ranch.
+>
+> short version: families come to us, a quiz screens out the window
+> shoppers, and qualified buyers get routed to your page where they put
+> a real deposit into your own Stripe account. you keep 100% of the
+> price you set. our fee is added on top and paid by the buyer.
+>
+> free to start. the application takes about 90 seconds:
+> buyhalfcow.com/apply
+>
+> or if you want us to run the whole sales side for you, that is the
+> operator plan — $500 a month, zero fees, we close and you ship.
+>
+> either way, no contract, no exclusivity, leave whenever.
+>
+> — Ben
+> BuyHalfCow
+
+## email 2 — follow-up (day 3, only if no reply)
+
+Subject: `[count] families in [state]`
+
+> hey [first name],
+>
+> one number and I will leave you alone: [count] families in [state]
+> are on our waitlist right now. every week you are not on the map,
+> they get routed to somebody else or nobody at all.
+>
+> the page with everything: buyhalfcow.com/pitch?state=[XX]
+>
+> 90 seconds to start: buyhalfcow.com/apply
+>
+> — Ben
+
+## email 3 — breakup (day 8, only if still no reply)
+
+Subject: `closing your file`
+
+> hey [first name],
+>
+> I will stop here — last thing from me. if beef sales are covered,
+> genuinely glad to hear it. if the timing is just wrong, the door
+> stays open: buyhalfcow.com/pitch
+>
+> either way, good luck with the season.
+>
+> — Ben
+
+## the post-call options email (they asked "what are my ways in")
+
+Subject: `your three ways in`
+
+> hey [first name],
+>
+> as promised — three doors, pick one:
+>
+> **1 · free.** 90-second application, your page is live the same day,
+> buyers in [state] start routing to you. you keep 100% of your price;
+> the buyer pays our fee on top. buyhalfcow.com/apply
+>
+> **2 · operator — $500/mo, zero fees.** we run the sales calls, the
+> follow-up, and the deposit chase. you confirm prices and hand over
+> beef. reply "operator" and I will set it up on a 15-minute call.
+>
+> **3 · bring your store.** already selling on Shopify or your own
+> site? connect it and keep your whole stack — our buyers, your
+> checkout. reply "store" and I will walk you through it.
+>
+> whichever it is, no contract and no exclusivity.
+>
+> — Ben
+
+---
+
+# money models — presenting each one (2026-08-10)
+
+Three geometries. Source of truth: docs/BUSINESS-MODEL.md. Pick ONE per
+rancher per deal type; the checkouts refuse cross-rail billing in code.
+
+## 1 · marketplace (Connect) — fee ADDED ON TOP, buyer pays it
+
+$2,999 half, $300 deposit, free plan: buyer pays $599.90 at deposit
+($300 + $299.90 fee), $2,699 balance later with zero fee. Rancher nets
+the full $2,999. Fee computed on the FULL sale, captured entirely at
+deposit. BHC absorbs card processing.
+
+> "you keep 100% of your price. my fee is added on top and the buyer
+> pays it, like a delivery fee. you will never see a bill from me."
+
+NEVER: "we take 10%" / "you keep 90%" / any deduction framing.
+
+## 2 · broker (representation) — fee CARVED OUT, prepaid as the deposit
+
+$1,800 half, $400 deposit: buyer pays $400 to BHC (the entire
+commission), $1,400 to the ranch direct at handoff. Buyer total
+unchanged vs buying direct. Rancher nets price minus deposit. No
+Connect, no listing, no login, no invoice, never routable.
+
+> "I sell your beef under my banner. the deposit the family puts down
+> is my whole fee — you collect the balance direct at handoff. you
+> never touch a login and I never send you a bill."
+
+They agree at /partner/represent BEFORE anything moves. Buyer receipt
+never mentions the split — their price is the ranch's price.
+
+## 3 · product rail — MARKUP, the spread is the fee
+
+Rancher base $100 (what they net) → display $111.99. Buyer pays display
++ shipping; margin = display − base, split atomically on their own
+Stripe; shipping 100% passthrough; null markup = zero margin.
+
+> "you tell me the number you need to net. we list above it, the
+> difference is ours, and your payout is exactly your number plus
+> shipping. we never hold your money."
+
+## picking on a call
+
+- wants the platform → Connect (walk /pitch)
+- wants nothing to do with software, you sell for them → broker
+- has products / Shopify, wants retail volume → markup rail

@@ -58,8 +58,12 @@ async function fetchWins(): Promise<{
   let refs: any[] = [];
   let ranchers: any[] = [];
   try {
+    // Hide From Wins (2026-08-10): a hand-close can supersede an earlier
+    // deposit-event/placeholder row for the SAME physical deal — both stay
+    // Closed Won for money history, but the public wall must show one card
+    // per real deal. Flagged rows drop out of cards AND aggregate stats.
     [refs, ranchers] = (await Promise.all([
-      getAllRecords(TABLES.REFERRALS, '{Status} = "Closed Won"'),
+      getAllRecords(TABLES.REFERRALS, 'AND({Status} = "Closed Won", NOT({Hide From Wins}))'),
       getAllRecords(TABLES.RANCHERS),
     ])) as [any[], any[]];
   } catch (e) {

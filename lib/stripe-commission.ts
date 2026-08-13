@@ -269,6 +269,42 @@ export async function createCommissionInvoice(
 }
 
 /**
+ * Double-mint belt (audit C1, 2026-08-10). Stripe is the source of truth for
+ * "does a live commission invoice already exist for this referral?" — the
+ * Airtable `Stripe Invoice URL` stamp can be missing even when a finalized,
+ * EMAILED invoice exists (the stamp write can fail after finalize+send).
+ * Before minting, callers ask Stripe by the metadata every mint stamps.
+ * Draft/void invoices don't count (a draft never emailed; void is dead).
+ * Search-API failure returns null → caller falls through to the idempotent
+ * create, which is the pre-belt behavior — the belt only ever prevents
+ * mints, never blocks them.
+ */
+export async function findCommissionInvoiceByReferral(
+  referralId: string
+): Promise<CommissionInvoiceResult | null> {
+  try {
+    const stripe = getStripe();
+    const res = await stripe.invoices.search({
+      query: `metadata['referralId']:'${referralId.replace(/'/g, '')}'`,
+      limit: 10,
+    });
+    const live = (res.data || []).find(
+      (inv) => inv.status === 'open' || inv.status === 'paid' || inv.status === 'uncollectible'
+    );
+    if (!live || !live.id) return null;
+    return {
+      invoiceId: live.id,
+      invoiceUrl: live.hosted_invoice_url || '',
+      customerId: typeof live.customer === 'string' ? live.customer : live.customer?.id || '',
+      status: live.status || 'open',
+    };
+  } catch (e: any) {
+    console.warn('[stripe-commission] invoice search failed (belt inert):', e?.message);
+    return null;
+  }
+}
+
+/**
  * Webhook payload helper — extract the referralId Stripe stamped on the
  * invoice metadata.
  */

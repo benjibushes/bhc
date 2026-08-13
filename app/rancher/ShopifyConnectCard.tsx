@@ -17,6 +17,11 @@ interface ConnectionStatus {
   shop?: string;
   mode?: 'sync' | 'manual';
   markupPercent?: number | null;
+  installSource?: 'oauth' | 'token-paste' | null;
+  /** Sales-channel checklist 5.7.8/5.7.15 — synced listings awaiting the
+   *  BuyHalfCow approval call ('Marketplace Approved'). null = count failed. */
+  pendingApproval?: number | null;
+  approvedProducts?: number | null;
 }
 
 export default function ShopifyConnectCard({ payoutsReady = true }: { payoutsReady?: boolean }) {
@@ -49,6 +54,35 @@ export default function ShopifyConnectCard({ payoutsReady = true }: { payoutsRea
   }
   const [report, setReport] = useState<string[] | null>(null);
   const [error, setError] = useState('');
+  const [disconnecting, setDisconnecting] = useState(false);
+
+  // Self-serve disconnect (sales-channel checklist 5.7.12) — no support
+  // ticket, no texting Ben. The endpoint unhooks webhooks + channel, pulls
+  // synced listings off the marketplace, and clears the connection.
+  async function disconnect() {
+    if (
+      !window.confirm(
+        'Disconnect your Shopify store? Your synced products come off the marketplace and paid orders stop flowing into your store. You can reconnect any time.',
+      )
+    )
+      return;
+    setDisconnecting(true);
+    setError('');
+    try {
+      const res = await fetch('/api/rancher/integrations/shopify', { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data?.ok) {
+        setReport(null);
+        setStatus((s) => ({ connected: false, publicApp: s?.publicApp }));
+      } else {
+        setError(String(data?.error || 'Could not disconnect — try again or text Ben.'));
+      }
+    } catch {
+      setError('Network error — try again.');
+    } finally {
+      setDisconnecting(false);
+    }
+  }
 
   useEffect(() => {
     fetch('/api/rancher/integrations/shopify')
@@ -138,8 +172,14 @@ export default function ShopifyConnectCard({ payoutsReady = true }: { payoutsRea
   if (status === null) return null;
 
   if (status.connected) {
+    const pending = typeof status.pendingApproval === 'number' ? status.pendingApproval : 0;
+    const approved = typeof status.approvedProducts === 'number' ? status.approvedProducts : 0;
     return (
       <div className="border border-sage/40 bg-bone-warm px-4 py-3 text-sm">
+        {/* 5.7.13: account section always visible, labelled with the channel name */}
+        <p className="text-[10px] uppercase tracking-[0.2em] text-muted mb-1">
+          BuyHalfCow sales channel · account connection
+        </p>
         <span className="text-sage font-medium">🔌 Shopify connected</span>
         <span className="text-saddle">
           {' '}— {status.shop} · {status.mode === 'sync' ? 'catalog sync' : 'manual SKUs'}
@@ -148,6 +188,26 @@ export default function ShopifyConnectCard({ payoutsReady = true }: { payoutsRea
             : ''}
           . Paid orders land in your store automatically; ship them like any other order.
         </span>
+        {/* 5.7.8 / 5.7.15: approval state — pending listings stay off the
+            marketplace until the BuyHalfCow review approves them. */}
+        {pending > 0 && (
+          <p className="mt-2 text-xs text-charcoal border border-dust bg-bone px-3 py-2">
+            ⏳ {pending} product{pending === 1 ? '' : 's'} pending BuyHalfCow approval — each listing
+            is reviewed before it appears on the marketplace. Nothing to do; we&rsquo;ll take it from
+            here.
+          </p>
+        )}
+        {pending === 0 && approved > 0 && (
+          <p className="mt-2 text-xs text-sage border border-sage/40 px-3 py-2">
+            ✓ {approved} product{approved === 1 ? '' : 's'} approved and live on the marketplace.
+          </p>
+        )}
+        {/* 5.7.6: commission, stated plainly. */}
+        <p className="mt-2 text-xs text-saddle">
+          <span className="text-charcoal font-medium">Our commission:</span> buyers pay our
+          marketplace fee on top of your price — you keep 100% of the price you set. On product
+          orders you net your base price + shipping.
+        </p>
         {!(typeof status.markupPercent === 'number' && status.markupPercent > 0) && (
           <p className="mt-2 text-xs text-weathered">
             No marketplace margin is set yet — synced products list at your own price until one is.
@@ -165,6 +225,35 @@ export default function ShopifyConnectCard({ payoutsReady = true }: { payoutsRea
             tab — that&rsquo;s the account your sales land in.
           </p>
         )}
+        {error && (
+          <p className="mt-2 text-xs text-weathered border border-weathered/40 px-3 py-2">{error}</p>
+        )}
+        {/* 5.7.5 marketplace link · 5.7.7 T&C in a new window · 5.7.12 self-serve disconnect */}
+        <p className="mt-3 text-xs text-saddle flex flex-wrap gap-x-4 gap-y-1 items-center">
+          <a
+            href="/shop"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline underline-offset-4 hover:text-charcoal transition-colors"
+          >
+            See your products on the marketplace
+          </a>
+          <a
+            href="/terms"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline underline-offset-4 hover:text-charcoal transition-colors"
+          >
+            Terms &amp; Conditions
+          </a>
+          <button
+            onClick={disconnect}
+            disabled={disconnecting}
+            className="underline underline-offset-4 text-weathered hover:text-charcoal transition-colors disabled:opacity-40"
+          >
+            {disconnecting ? 'Disconnecting…' : 'Disconnect store'}
+          </button>
+        </p>
       </div>
     );
   }

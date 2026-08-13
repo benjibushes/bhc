@@ -7,8 +7,12 @@
 //
 // HONESTY RULES (same as /wins):
 //   • LIVE-derived only — never a hardcoded count or GMV (they grow).
-//   • Same hygiene filter as /wins: Status = Closed Won, Sale Amount > 0,
-//     a real rancher link. No padding, no floors.
+//   • Same hygiene filter as /wins: Status = Closed Won, NOT Hide From Wins,
+//     Sale Amount > 0, a real rancher link. No padding, no floors.
+//     (Hide From Wins added here 2026-08-13 — /wins gained it 2026-08-10 to
+//     collapse superseded duplicate rows to one card per physical deal, and
+//     this module drifting behind it made /shop claim "26 deals · $41k+"
+//     one click away from /wins' 24 · $38,631.)
 //   • GMV rounds DOWN to "$30k+" style — we understate, never overstate.
 //   • On any Airtable failure callers get null → surfaces render NOTHING
 //     (no lie, no zeroes). A failed fetch must never read as "0 deals".
@@ -105,6 +109,12 @@ export function summarizeClosedWonRefs(
   let latestClosedAt = '';
 
   for (const ref of refs) {
+    // Hide From Wins (2026-08-10, /wins): a superseded duplicate row for the
+    // same physical deal stays Closed Won for money history but must never
+    // count publicly. The Airtable fetch already excludes flagged rows; this
+    // row-level guard keeps the pure summarizers honest for any caller that
+    // hands them raw rows (and is what the tests pin).
+    if (ref['Hide From Wins']) continue;
     const rancherIds: string[] = ref['Rancher'] || ref['Suggested Rancher'] || [];
     const saleAmount = Number(ref['Sale Amount']) || 0;
     if (!rancherIds.length || saleAmount <= 0) continue;
@@ -176,8 +186,11 @@ async function loadClosedWonCache(): Promise<{
     // (/shop + all 50 /half-a-cow/[state]); a stalled Airtable read here
     // must fail fast into the catch, never hang a Vercel build (the known
     // transient prerender-timeout killer).
+    // NOT({Hide From Wins}) — the EXACT filter /wins uses (app/wins/page.tsx),
+    // so the proof strip and the wins wall can never disagree on deal count
+    // or GMV (sweep fix 2026-08-13).
     const refs = (await withTimeout(
-      getAllRecords(TABLES.REFERRALS, '{Status} = "Closed Won"'),
+      getAllRecords(TABLES.REFERRALS, 'AND({Status} = "Closed Won", NOT({Hide From Wins}))'),
       resolveAirtableTimeoutMs(),
       'socialProof closed-won referrals',
     )) as Array<Record<string, any>>;

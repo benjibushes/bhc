@@ -565,6 +565,15 @@ export function renderRanchStandDigest(input: RenderDigestInput): { subject: str
       </div>`;
 
   // Block 2 — only when the recipient's state actually has share coverage.
+  // LINK IDENTITY + ATTRIBUTION (preference-fidelity audit 2026-08-12): this
+  // block only renders when the recipient's state IS known + served, yet the
+  // CTA used to drop it — a known-state buyer landed on a stateless /access.
+  // Now the link carries ?state= (app/access/page.tsx prefills it) plus the
+  // sibling-rail utm trio (guide/signup, waiting-activation, product-recovery
+  // all decorate inline; the digest was the lone bare outlier — its clicks
+  // were invisible in the utm columns). Note utm attribution is first-touch-
+  // wins client + server side, so the utm params only populate for fresh
+  // browsers/records; the ?state= prefill works unconditionally.
   const st = normalizeState(input.recipientState);
   const covered = st !== '' && input.servedStates.has(st);
   const stateBlock = covered
@@ -572,7 +581,7 @@ export function renderRanchStandDigest(input: RenderDigestInput): { subject: str
       <div style="margin:30px 0 0 0;padding-top:22px;border-top:1px solid #A7A29A;">
         <p style="margin:0 0 6px 0;font-size:12px;letter-spacing:1px;text-transform:uppercase;color:#6B4F3F;">in ${esc(stateName(st))}</p>
         ${operationTypeEmailLine(operationTypeFor({ type: 'share-ranch', state: st }))}
-        <p style="margin:6px 0 0 0;font-size:14px;color:#2A2A2A;">a ranch near you fills real shares — quarters, halves, wholes. <a href="${input.siteUrl}/access" style="color:#6B4F3F;text-decoration:underline;">see what's open in your state</a></p>
+        <p style="margin:6px 0 0 0;font-size:14px;color:#2A2A2A;">a ranch near you fills real shares — quarters, halves, wholes. <a href="${input.siteUrl}/access?state=${st}&utm_source=email&utm_medium=digest&utm_campaign=ranch-stand" style="color:#6B4F3F;text-decoration:underline;">see what's open in your state</a></p>
       </div>`
     : '';
 
@@ -583,7 +592,7 @@ export function renderRanchStandDigest(input: RenderDigestInput): { subject: str
       ${newBlock}
       ${shelfBlock}
       <p style="margin:26px 0 8px 0;">
-        <a href="${input.siteUrl}/shop" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#FAF8F4;text-decoration:none;font-size:15px;font-weight:600">see the ranch stand →</a>
+        <a href="${input.siteUrl}/shop?utm_source=email&utm_medium=digest&utm_campaign=ranch-stand" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#FAF8F4;text-decoration:none;font-size:15px;font-weight:600">see the ranch stand →</a>
       </p>
       ${proofLine}
       ${storyBlock}

@@ -117,10 +117,36 @@ export const EXPECTED_CRONS_24H = [
   // (demand-router pattern): a daily 'skipped' Cron Runs row is written
   // while dark, so a missing row always means a REAL missed run.
   'marketing-sunset',
+  // Campaign autopilot (ADAPTIVE-MARKETING-DESIGN PR 2) — daily 15:10 UTC,
+  // first-touch requalify waves via self-call to /api/campaign/requalify-send.
+  // Tri-state CAMPAIGN_AUTOPILOT_ENABLED (off/'dry-run'/'true'), fail-to-off,
+  // gate INSIDE realHandler: a daily Cron Runs row is written in every mode
+  // (disabled/dry-run/live/auto-paused), so a missing row means a REAL missed
+  // run.
+  'campaign-autopilot',
   // Nightly blind-inbound-row recovery (2026-08-10, recVUDVwrSvVrDZNz
   // post-mortem) — no env latch, withCronRun writes a daily Cron Runs row
   // even when zero rows are pending.
   'inbound-body-backfill',
+  // Applied-cohort chase (2026-08-12) — daily 14:40 UTC, day-0/2/5 touches +
+  // dial-list handoff for fresh unsigned applications. Tri-state
+  // APPLIED_CHASE_ENABLED (off/'dry-run'/'true'), fail-to-off, gate INSIDE
+  // realHandler (the campaign-autopilot pattern): a daily Cron Runs row is
+  // written in every mode, so a missing row means a REAL missed run.
+  'applied-chase',
+  // Pipeline-SLA (stage clocks + escalations) — daily 13:20 UTC. Tri-state
+  // PIPELINE_SLA_ENABLED (off/'dry-run'/'true'), fail-to-off, gate INSIDE
+  // realHandler (the applied-chase/campaign-autopilot pattern): a daily Cron
+  // Runs row is written in every mode, so a missing row means a REAL missed
+  // run.
+  'pipeline-sla',
+  // Gated weekly learning report (ADAPTIVE-MARKETING-DESIGN PR 3) — daily
+  // 14:10 UTC with a Monday guard INSIDE realHandler (design doc, verbatim:
+  // a true weekly slot is watchdog-blind because EXCLUDED crons never alarm).
+  // Six days a week the row reads 'skipped: not Monday'; Mondays it carries
+  // the report summary + the replication-ledger token. EXPECTED, not
+  // EXCLUDED: a missing row always means a REAL missed run.
+  'learning-report',
 ] as const;
 
 /**

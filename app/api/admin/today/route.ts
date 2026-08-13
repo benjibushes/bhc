@@ -14,6 +14,8 @@
 //   • Cron Runs is ONE 25h-filtered read (~3 paginated requests) under its
 //     own snapshot key; both the failure count and the dead-man's diff are
 //     derived from that single read.
+//   • Conversations (CRM-parity C3) is ONE filtered read (waiting Reply
+//     Status values only — a handful of rows) under its own snapshot key.
 //   • Platform probes hit Stripe/Resend/Redis (not Airtable) and are cached
 //     under the same 3-min snapshot so a 120s client poll can't turn into a
 //     probe storm.
@@ -55,6 +57,13 @@ import {
 } from '@/lib/stuckRancherAirtable';
 import { buildCockpitDialList, type CockpitDialRow } from '@/lib/cockpitDialList';
 import { normalizeState } from '@/lib/states';
+// ── CRM-parity (§3.5 C2/C3) ──
+import { selectDueFollowUps } from '@/lib/followUpQueue';
+import { rankCloseQueue, type CloseQueueRow } from '@/lib/closeQueue';
+import { computeNBA } from '@/lib/nextBestAction';
+import { computeLeadScore } from '@/lib/leadScore';
+import { isRancherOnConnect } from '@/lib/rancherEligibility';
+import { REPLY_WAITING_STATUSES, isReplySendable } from '@/lib/stagedReply';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -87,7 +96,7 @@ export async function GET(request: Request) {
     }
   };
 
-  const [consumers, ranchers, referrals, payments, rancherOrders, cronRuns, probes] =
+  const [consumers, ranchers, referrals, payments, rancherOrders, cronRuns, probes, waitingReplies] =
     await Promise.all([
       safe(() => adminSnapshotTable(TABLES.CONSUMERS) as Promise<any[]>, 'consumers'),
       safe(() => adminSnapshotTable(TABLES.RANCHERS) as Promise<any[]>, 'ranchers'),
@@ -106,6 +115,19 @@ export async function GET(request: Request) {
         'cronRuns',
       ),
       safe(() => adminSnapshot('platform-probes', () => runPlatformProbes()), 'probes'),
+      // CRM-parity C3 — Conversations rows waiting on a human. Filtered on the
+      // exact Reply Status values the resend-inbound webhook writes; a
+      // handful of rows, ONE request.
+      safe(
+        () =>
+          adminSnapshot('replies-waiting', () =>
+            getAllRecords(
+              TABLES.CONVERSATIONS,
+              `OR(${REPLY_WAITING_STATUSES.map((s) => `{Reply Status}='${s}'`).join(',')})`,
+            ),
+          ) as Promise<any[]>,
+        'waitingReplies',
+      ),
     ]);
 
   // ── Coverage — the 6-gate canon, shared by bands 3/4/5 ──────────────────
@@ -278,7 +300,11 @@ export async function GET(request: Request) {
   }
 
   // ════════════════════════════════════════════════════════════════════════
-  // BAND 3 — DIAL LIST: one merged, supply-gated ranking (max 10)
+  // BAND 3 — THE QUEUE: one merged, supply-gated ranking (max 10).
+  // CRM-parity (§3.5 C2): fuses the dial sources with the promised
+  // follow-ups (lib/followUpQueue), the open-deal call queue
+  // (lib/closeQueue), and the NBA engine's one-liners — all derived from the
+  // snapshots already in hand, ZERO extra Airtable reads.
   // ════════════════════════════════════════════════════════════════════════
   let dial: CockpitDialRow[] | null = null;
   try {
@@ -310,16 +336,148 @@ export async function GET(request: Request) {
         .map((r: any) => toStuckRancherRow(r, demand));
       const stuckQueue = rankStuckRancherQueue(stuckRows, { now, limit: 10 });
 
+      // C2 — promised follow-ups due (the desk's "⏰ Follow up today" lane).
+      const followUpsDue = selectDueFollowUps(consumers as any[], todayStr, 10);
+
+      // C2 — the open-deal call queue (lib/closeQueue), previously computed
+      // only client-side on /admin/desk. rancherCanCapture rides the single
+      // Connect canon (isRancherOnConnect) off the ranchers snapshot.
+      const rancherById = new Map<string, { name: string; canCapture: boolean }>();
+      for (const r of ranchers as any[]) {
+        rancherById.set(String(r.id), {
+          name: String(r['Operator Name'] || r['Ranch Name'] || ''),
+          canCapture: isRancherOnConnect(r),
+        });
+      }
+      const closeRows: CloseQueueRow[] = (referrals as any[]).map((r: any) => {
+        const rancherId = Array.isArray(r['Rancher']) ? String(r['Rancher'][0] || '') : '';
+        const info = rancherById.get(rancherId);
+        return {
+          id: String(r.id),
+          status: str(r['Status']),
+          buyerName: String(r['Buyer Name'] || ''),
+          buyerState: String(r['Buyer State'] || ''),
+          buyerEmail: String(r['Buyer Email'] || ''),
+          buyerPhone: String(r['Buyer Phone'] || ''),
+          rancherName: info?.name || String(r['Suggested Rancher Name'] || ''),
+          hasRancher: !!rancherId,
+          rancherCanCapture: !!info?.canCapture,
+          intentScore: num(r['Intent Score']),
+          saleAmount: num(r['Sale Amount']),
+          budgetRange: String(r['Budget Range'] || ''),
+          // Referrals has NO 'Created At' field — Airtable metadata is the
+          // only universal creation stamp (same rule as the desk's R3 fix).
+          createdAt: String(r._createdTime || ''),
+          introSentAt: String(r['Intro Sent At'] || ''),
+          lastChasedAt: String(r['Last Chased At'] || ''),
+        };
+      });
+      const closeQueue = rankCloseQueue(closeRows, { now, limit: 10 });
+
+      // C2 — the NBA engine, finally rendered. Inputs mirror the desk API's
+      // shaping, derived from the snapshots (wholesale/Inquiries is left off:
+      // it would cost the cockpit a sixth table read for a desk-owned lane).
+      const DAY = 24 * 60 * 60 * 1000;
+      const nbaCalls = (referrals as any[])
+        .filter((r: any) => {
+          const t = Date.parse(String(r['Sales Call Start At'] || ''));
+          return Number.isFinite(t) && Math.abs(t - now) <= DAY;
+        })
+        .map((r: any) => ({
+          id: String(r.id),
+          startTime: String(r['Sales Call Start At'] || ''),
+          buyerName: String(r['Buyer Name'] || '?'),
+          buyerEmail: String(r['Buyer Email'] || '?'),
+          state: String(r['Buyer State'] || ''),
+        }));
+      const nbaQuiz = quizComplete.map((c: any) => ({
+        id: String(c.id),
+        name: String(c['Full Name'] || '?'),
+        email: String(c['Email'] || ''),
+        state: String(c['State'] || ''),
+        qualifiedAt: String(c['Qualified At'] || ''),
+        leadScore: computeLeadScore(c).score,
+      }));
+      const nbaDeposits = depositPending.map((r: any) => ({
+        id: String(r.id),
+        buyerEmail: String(r['Buyer Email'] || '?'),
+        rancherName: Array.isArray(r['Rancher'])
+          ? rancherById.get(String(r['Rancher'][0] || ''))?.name || '(linked)'
+          : String(r['Rancher Name'] || r['Suggested Rancher Name'] || '?'),
+        state: String(r['Buyer State'] || ''),
+        depositPaidAt: String(r['Deposit Paid At'] || ''),
+      }));
+      const nbaSlots = (referrals as any[])
+        .filter((r: any) => str(r['Status']) === 'Slot Locked')
+        .map((r: any) => ({
+          id: String(r.id),
+          buyerEmail: String(r['Buyer Email'] || '?'),
+          rancherName: Array.isArray(r['Rancher'])
+            ? rancherById.get(String(r['Rancher'][0] || ''))?.name || '(linked)'
+            : String(r['Rancher Name'] || '?'),
+        }));
+      const nba = computeNBA(
+        {
+          calls: nbaCalls,
+          quizComplete: nbaQuiz,
+          depositPending: nbaDeposits,
+          slotsLocked: nbaSlots,
+        },
+        { coveredStates },
+      );
+
       dial = buildCockpitDialList({
         buyers,
         stuckRanchers: stuckQueue.rows,
         coveredStates,
+        followUpsDue,
+        closeQueue,
+        nba,
+        now,
+        today: todayStr,
         limit: 10,
       });
     }
   } catch (e: any) {
     console.warn('[admin/today] dial band failed:', e?.message);
     dial = null;
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // BAND 3b — REPLIES WAITING (CRM-parity C3): staged/escalated Conversations
+  // rows, previously visible only as Telegram cards that scroll away.
+  // ════════════════════════════════════════════════════════════════════════
+  let replies: any = null;
+  try {
+    if (waitingReplies) {
+      replies = (waitingReplies as any[])
+        .slice()
+        .sort(
+          (a, b) =>
+            (Date.parse(String(b['Timestamp'] || '')) || 0) -
+            (Date.parse(String(a['Timestamp'] || '')) || 0),
+        )
+        .slice(0, 8)
+        .map((c: any) => {
+          const ts = Date.parse(String(c['Timestamp'] || ''));
+          return {
+            id: String(c.id),
+            from: String(c['From'] || '').trim(),
+            senderType: str(c['Sender Type']),
+            subject: String(c['Subject'] || '').trim(),
+            aiSummary: String(c['AI Summary'] || '').trim(),
+            stagedPreview: String(c['Staged Reply'] || '').trim().slice(0, 240),
+            replyStatus: str(c['Reply Status']),
+            sendable: isReplySendable(c['Reply Status'], c['Staged Reply']),
+            ageHours: Number.isFinite(ts)
+              ? Math.max(0, Math.floor((now - ts) / 3_600_000))
+              : null,
+          };
+        });
+    }
+  } catch (e: any) {
+    console.warn('[admin/today] replies band failed:', e?.message);
+    replies = null;
   }
 
   // ════════════════════════════════════════════════════════════════════════
@@ -403,6 +561,7 @@ export async function GET(request: Request) {
     money,
     health,
     dial,
+    replies,
     oneMove,
     supply,
   });

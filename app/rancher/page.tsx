@@ -101,6 +101,10 @@ interface RancherInfo {
   tier?: string | null;
   subscriptionStatus?: string;
   connectStatus?: string;
+  // App Store review 128658 (rule 1.2.1): store connected via public-app
+  // OAuth → suppress every platform-billing surface (tier checkouts, upgrade
+  // banners, plan management). The app-reachable experience must be free.
+  appStoreInstall?: boolean;
   // P1-4 — Tier Specialty drives the no-pricing alarm card. If the
   // specialty includes 'Half' but Half Price is missing, /api/checkout/deposit
   // 409s the buyer; rancher never finds out unless we surface it here.
@@ -2848,7 +2852,7 @@ export default function RancherDashboardPage() {
               Two states:
                 - Discovery: legacy w/ no tier yet → CTA to /partner
                 - Ready: legacy + tier subscription paying + Connect active → one-click POST /api/rancher/legacy-upgrade flips Pricing Model */}
-          {rancherInfo.pricingModel === 'legacy' && (
+          {rancherInfo.pricingModel === 'legacy' && !rancherInfo.appStoreInstall && (
             <LegacyUpgradeBanner rancher={rancherInfo} />
           )}
 
@@ -4315,10 +4319,17 @@ export default function RancherDashboardPage() {
                 </p>
               </div>
 
-              <section id="billing" aria-label="Billing" className="scroll-mt-24 space-y-4">
-                <h3 className="font-serif text-xl">money</h3>
-                <BillingSection justOnboarded={false} />
-              </section>
+              {/* App Store review 128658 (1.2.1): plan/subscription management
+                  is a platform-billing surface — hidden for public-app-OAuth
+                  ranchers so the app-reachable experience is genuinely free.
+                  Payout/bank status still matters to them; BillingSection is
+                  the tier surface, so it goes as a unit. */}
+              {!rancherInfo?.appStoreInstall && (
+                <section id="billing" aria-label="Billing" className="scroll-mt-24 space-y-4">
+                  <h3 className="font-serif text-xl">money</h3>
+                  <BillingSection justOnboarded={false} />
+                </section>
+              )}
 
               <Divider />
 

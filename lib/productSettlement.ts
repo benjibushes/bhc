@@ -26,7 +26,8 @@ import { PermanentSettlementError } from '@/lib/stripeSettlement';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { sendEmail } from '@/lib/email';
 import { fireCapi, buildUserData, productPurchaseEnabled } from '@/lib/metaCapi';
-import { zipFromStripePayment, buyerZipPatch } from '@/lib/buyerZip';
+import { zipFromStripePayment, buyerZipPatch, stateFromStripePayment, buyerStatePatch } from '@/lib/buyerZip';
+import { stateFromZip } from '@/lib/zipCentroids';
 import { orderStatusUrlFor } from '@/lib/orderStatusLink';
 import { operationTypeFor, operationTypeEmailLine } from '@/lib/operationType';
 
@@ -534,6 +535,16 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
       // /api/checkout/product/buy. buyerZipPatch drops anything that isn't a
       // real US ZIP and never stomps a ZIP the buyer told us themselves.
       const stripeZip = zipFromStripePayment(pi);
+      // STATE CAPTURE (preference-fidelity audit 2026-08-12): the old comment
+      // trail claimed "state arrives from Stripe at settlement" — it never did
+      // (only postal_code was harvested), so a net-new /shop buyer was minted
+      // with a Zip but NO State: invisible to state-gated routing, campaign
+      // lanes, and the ranch-stand digest's "in your state" block
+      // (resolveBuyerCentroid nulls on empty State). Prefer Stripe's own
+      // address.state (same six nodes, shipping-first), fall back to deriving
+      // it from the harvested ZIP via the centroid table. buyerStatePatch is
+      // blank-only — a State the buyer told us themselves is never stomped.
+      const stripeState = stateFromStripePayment(pi) || stateFromZip(stripeZip);
       const existingConsumers = (await getAllRecords(
         TABLES.CONSUMERS,
         `LOWER({Email}) = "${escapeAirtableValue(buyerEmail)}"`,
@@ -546,6 +557,7 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
             ? { ...productFields, 'Buyer Stage': 'PRODUCT_BUYER' }
             : productFields), // already in the share funnel — keep their stage
           ...buyerZipPatch(stripeZip, c['Zip']),
+          ...buyerStatePatch(stripeState, c['State']),
         };
         await updateRecord(TABLES.CONSUMERS, c.id, fields);
       } else {
@@ -553,8 +565,15 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
           'Full Name': buyerName || '',
           'Email': buyerEmail,
           'Buyer Stage': 'PRODUCT_BUYER',
+          // Source + Created (preference-fidelity audit 2026-08-12): every
+          // other create door stamps both; without them a shop-minted buyer
+          // had no signup-date truth (Created feeds /api/stats/public) and no
+          // provenance for segmentation.
+          'Source': 'shop',
+          'Created': nowIso.slice(0, 10), // YYYY-MM-DD (Date field type)
           ...productFields,
           ...buyerZipPatch(stripeZip, null),
+          ...buyerStatePatch(stripeState, null),
         });
       }
     } catch { /* schema not ready or transient — non-fatal, never blocks the sale */ }

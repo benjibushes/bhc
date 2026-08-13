@@ -217,6 +217,10 @@
       "schedule": "0 14 * * 1"
     },
     {
+      "path": "/api/cron/learning-report",
+      "schedule": "10 14 * * *"
+    },
+    {
       "path": "/api/cron/referral-stale-expiry",
       "schedule": "10 13 * * *"
     },
@@ -269,8 +273,20 @@
       "schedule": "17 7 * * *"
     },
     {
+      "path": "/api/cron/campaign-autopilot",
+      "schedule": "10 15 * * *"
+    },
+    {
       "path": "/api/cron/inbound-body-backfill",
       "schedule": "40 6 * * *"
+    },
+    {
+      "path": "/api/cron/applied-chase",
+      "schedule": "40 14 * * *"
+    },
+    {
+      "path": "/api/cron/pipeline-sla",
+      "schedule": "20 13 * * *"
     }
   ]
 }

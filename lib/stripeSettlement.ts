@@ -117,7 +117,8 @@ import {
 } from '@/lib/metaCapi';
 import { metaEventId } from '@/lib/analytics';
 import { logAuditEntry } from '@/lib/auditLog';
-import { zipFromStripePayment, buyerZipPatch } from '@/lib/buyerZip';
+import { zipFromStripePayment, buyerZipPatch, stateFromStripePayment, buyerStatePatch } from '@/lib/buyerZip';
+import { stateFromZip } from '@/lib/zipCentroids';
 
 // ---------------------------------------------------------------------------
 // settleBuyerDeposit
@@ -305,12 +306,24 @@ export async function settleBuyerDeposit(pi: any): Promise<void> {
     // welcome email or the CAPI Purchase fire below.
     if (buyer?.id) {
       try {
-        const zipPatch = buyerZipPatch(zipFromStripePayment(pi), buyer['Zip']);
+        // STATE CAPTURE rides the same harvest (preference-fidelity audit
+        // 2026-08-12): the reserve form deliberately asks no state — the fill
+        // happens HERE, from Stripe's address.state (shipping-first, same six
+        // nodes as the ZIP) with a centroid-table fallback off the harvested
+        // ZIP. Both patches are never-stomp: blank fields only.
+        const settleZip = zipFromStripePayment(pi);
+        const zipPatch = {
+          ...buyerZipPatch(settleZip, buyer['Zip']),
+          ...buyerStatePatch(
+            stateFromStripePayment(pi) || stateFromZip(settleZip),
+            buyer['State'],
+          ),
+        };
         if (Object.keys(zipPatch).length > 0) {
           await updateRecord(TABLES.CONSUMERS, buyer.id, zipPatch);
         }
       } catch (zipErr: any) {
-        console.warn('[settleBuyerDeposit] buyer ZIP capture skipped (non-fatal):', zipErr?.message);
+        console.warn('[settleBuyerDeposit] buyer ZIP/State capture skipped (non-fatal):', zipErr?.message);
       }
 
       // ── STAGE FLIP + STATUS BACKFILL ON DEPOSIT (2026-07-28 / 07-29) ─────

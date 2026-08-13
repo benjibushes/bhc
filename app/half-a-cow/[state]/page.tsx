@@ -191,7 +191,11 @@ export default async function HalfACowStatePage({ params }: Props) {
     { k: 'quarter beef (~28% of a whole)', v: fmtRange(r.quarter) },
     { k: 'your price per pound, hanging weight', v: '~$8–11/lb' },
     { k: 'boxed-delivery services, comparable cuts', v: '$13–17/lb' },
-    { k: 'deposit to reserve', v: `${r.depositPercent}%, refundable` },
+    // No percent here (sweep fix 2026-08-13): under Model 1 the buyer's
+    // actual card charge at deposit is the deposit PLUS the platform fee on
+    // the full price (~2x the bare deposit percent), so a "25%" promise
+    // understates the real charge. The deposit page shows the exact total.
+    { k: 'deposit to reserve', v: 'refundable until the rancher accepts' },
   ];
 
   const breadcrumbJsonLd = {
@@ -286,9 +290,16 @@ export default async function HalfACowStatePage({ params }: Props) {
               <h2 className="font-serif text-3xl md:text-4xl lowercase">
                 what half a cow costs in {name}
               </h2>
+              {/* Copy truth (sweep fix 2026-08-13): the old "no hidden fees
+                  stacked on top at checkout" line was false for the primary
+                  money rail (Model 1 adds the platform fee to the buyer's
+                  deposit charge, and the deposit page deliberately shows one
+                  total, not a split). Say the true thing instead: the exact
+                  total is shown before payment. */}
               <p className="text-saddle text-[15.5px] leading-relaxed">
                 every ranch sets its own price — these are the typical all-in ranges
-                across the network. no hidden fees stacked on top at checkout.
+                across the network. the deposit page shows your exact total before
+                you pay — no surprise add-ons after that.
               </p>
             </div>
             <div className="border border-dust bg-bone-warm">

@@ -618,6 +618,11 @@ export default function BuyerFunnel({
           // Optional budget chip — '' when skipped; server whitelists against
           // the Budget singleSelect choice names and skips empty.
           budget,
+          // Rancher deep-link pin (preference-fidelity audit 2026-08-12): the
+          // slug rode ONLY the client-built campaign string before, so the
+          // server's `Preferred Rancher` link could never be written. '' when
+          // this is a generic /access entry — the server skips empty.
+          rancherSlug: rancherSlug || '',
           source: attribution.current.source,
           campaign: attribution.current.campaign,
           utmParams: attribution.current.utmParams,

@@ -24,6 +24,15 @@ export interface IntegrationConfig {
    * into the beef groups). Unset → rows land in the 'more' group.
    */
   category?: string | null;
+  /**
+   * How this store connected (Shopify App Store review 128658, rule 1.2.1):
+   * 'oauth' = public-app install — the rancher reached us THROUGH Shopify's
+   * surface, so every platform-billing upsell (tier checkouts, upgrade
+   * banners) must be suppressed for them; app-reachable surfaces must be
+   * genuinely free. 'token-paste' / absent = connected on our own site,
+   * outside Shopify's app jurisdiction — normal surfaces apply.
+   */
+  installSource?: 'oauth' | 'token-paste' | null;
 }
 
 export interface PushLineItem { sku: string; quantity: number; title: string }
@@ -68,6 +77,13 @@ export function parseIntegration(raw: unknown): IntegrationConfig | null {
     markupPercent: typeof obj.markupPercent === 'number' ? obj.markupPercent : null,
     locationId: obj.locationId ? String(obj.locationId) : null,
     category: obj.category ? String(obj.category).slice(0, 40) : null,
+    // Persisted by connectShopifyStore since #604; passed through so the
+    // sales-channel rails (ResourceFeedback, channelDelete) can tell a
+    // public-app OAuth install from a token-paste custom app. Unknown values
+    // parse to null — same fail-open-to-normal posture as the dashboard's
+    // appStoreInstall read.
+    installSource:
+      obj.installSource === 'oauth' || obj.installSource === 'token-paste' ? obj.installSource : null,
   };
 }
 

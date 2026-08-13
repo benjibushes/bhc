@@ -454,7 +454,7 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                   data?.otherRanchers?.find(r => r.id === activeRef.rancher_id);
                 if (!matchedRancher) return null;
                 return (
-                  <YourMatchHero rancher={matchedRancher} status={activeRef.status} />
+                  <YourMatchHero rancher={matchedRancher} status={activeRef.status} consumerId={member.id} />
                 );
               })()}
 
@@ -1136,7 +1136,7 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                   <h2 className="font-serif text-2xl">Ranchers in {data.memberState}</h2>
                   <div className="space-y-6">
                     {data.stateRanchers.map((rancher) => (
-                      <RancherCard key={rancher.id} rancher={rancher} />
+                      <RancherCard key={rancher.id} rancher={rancher} consumerId={member.id} />
                     ))}
                   </div>
                 </>
@@ -1156,7 +1156,7 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                   <h2 className="font-serif text-2xl">Other Certified Ranchers</h2>
                   <div className="space-y-6">
                     {data.otherRanchers.map((rancher) => (
-                      <RancherCard key={rancher.id} rancher={rancher} />
+                      <RancherCard key={rancher.id} rancher={rancher} consumerId={member.id} />
                     ))}
                   </div>
                 </>
@@ -1856,7 +1856,7 @@ function BuyTierButtons({ rancher }: { rancher: Rancher }) {
 // The conversion hero — lives at the top of the member dashboard when the
 // member has an active referral and a matched rancher. Shows name, logo,
 // processing-date urgency, and direct-buy buttons.
-function YourMatchHero({ rancher, status }: { rancher: Rancher; status: string }) {
+function YourMatchHero({ rancher, status, consumerId }: { rancher: Rancher; status: string; consumerId?: string }) {
   const processingDate = rancher['Next Processing Date'];
   const daysToProcessing = processingDate
     ? Math.ceil((new Date(processingDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
@@ -1918,6 +1918,7 @@ function YourMatchHero({ rancher, status }: { rancher: Rancher; status: string }
               </Link>
             )}
             <ContactRancherButton
+              consumerId={consumerId}
               rancher={{
                 id: rancher.id,
                 ranch_name: rancher['Ranch Name'] || '',
@@ -1936,6 +1937,7 @@ function YourMatchHero({ rancher, status }: { rancher: Rancher; status: string }
               : "We're finalizing your introduction. Your rancher will reach out within 24-48 hours."}
           </p>
           <ContactRancherButton
+            consumerId={consumerId}
             rancher={{
               id: rancher.id,
               ranch_name: rancher['Ranch Name'] || '',
@@ -1950,7 +1952,7 @@ function YourMatchHero({ rancher, status }: { rancher: Rancher; status: string }
   );
 }
 
-function RancherCard({ rancher }: { rancher: Rancher }) {
+function RancherCard({ rancher, consumerId }: { rancher: Rancher; consumerId?: string }) {
   const rancherForContact = {
     id: rancher.id,
     ranch_name: rancher['Ranch Name'] || '',
@@ -1999,7 +2001,7 @@ function RancherCard({ rancher }: { rancher: Rancher }) {
             View full ranch page →
           </Link>
         )}
-        <ContactRancherButton rancher={rancherForContact} />
+        <ContactRancherButton rancher={rancherForContact} consumerId={consumerId} />
       </div>
     </div>
   );

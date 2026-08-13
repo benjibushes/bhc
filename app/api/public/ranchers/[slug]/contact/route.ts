@@ -5,6 +5,10 @@ import { sendTelegramUpdate } from '@/lib/telegram';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 import { normalizeZip } from '@/lib/zipFormat';
 import { buyerZipPatch } from '@/lib/buyerZip';
+import { normalizeState } from '@/lib/states';
+// Server route — the 1 MB centroid-table import discipline applies to CLIENT
+// bundles (lib/buyerZip header); here it's lazy-parsed once per instance.
+import { stateFromZip } from '@/lib/zipCentroids';
 
 export const maxDuration = 60;
 
@@ -116,6 +120,19 @@ export async function POST(
       if (!hasReferral) {
         // Upsert the Consumer (by email) so future visits + member login +
         // review attribution work — same pattern as the order-request path.
+        //
+        // STATE DERIVATION (preference-fidelity audit 2026-08-12): this door
+        // used to mint State-less Consumers — invisible to state-based routing
+        // (resolveBuyerCentroid nulls on empty State; matching/suggest 400s
+        // without buyerState) and unaddressable by every state-gated campaign
+        // lane, with NO healer anywhere. The form asks no state, but we can
+        // derive one: the buyer's ZIP via the centroid table when they gave
+        // one, else the contacted rancher's own State (a buyer messaging a
+        // ranch page is overwhelmingly local to it — and a wrong-but-present
+        // State is correctable by every later door's normal flow, while a
+        // blank one is permanent).
+        const derivedState =
+          (zip ? stateFromZip(zip) : null) || normalizeState(rancher['State']) || '';
         let consumerId = '';
         try {
           const existingConsumers: any[] = await getAllRecords(
@@ -135,23 +152,42 @@ export async function POST(
             }
             // Fill a blank/garbage Zip; never stomp one they already gave us.
             Object.assign(patch, buyerZipPatch(zip, (existingConsumers[0] as any)['Zip']));
+            // Backfill a BLANK State the same never-stomp way reserve does
+            // (app/api/checkout/reserve route.ts:211): trim-aware blank check,
+            // never overwrite a stored value.
+            if (derivedState && !String((existingConsumers[0] as any)['State'] || '').trim()) {
+              patch['State'] = derivedState;
+            }
             if (Object.keys(patch).length > 0) {
               await updateRecord(TABLES.CONSUMERS, consumerId, patch);
             }
           } else {
+            const nowIsoContact = new Date().toISOString();
             const createdConsumer: any = await createRecord(TABLES.CONSUMERS, {
               'Full Name': name.trim(),
               'Email': email.trim().toLowerCase(),
               'Phone': phone?.trim() || '',
               ...(zip ? { 'Zip': zip } : {}),
+              ...(derivedState ? { 'State': derivedState } : {}),
               'Segment': 'Beef Buyer',
               'Source': `rancher-contact:${slug}`,
               'Interests': ['Beef'],
               'Intent Score': 80,
               'Intent Classification': 'High',
+              // Lifecycle parity with the funnel door (app/api/consumers
+              // funnel branch): Status='Approved' (no Pending purgatory —
+              // login works, crons see them), Created = signup-date truth,
+              // Buyer Stage=WAITING (+ stamp) so the lead is chaseable.
+              // `Qualified At` deliberately NOT set — quiz-required routing
+              // rule holds; the direct Referral below is what reaches the
+              // contacted rancher.
+              'Status': 'Approved',
+              'Created': nowIsoContact.slice(0, 10), // YYYY-MM-DD (Date field)
+              'Buyer Stage': 'WAITING',
+              'Buyer Stage Updated At': nowIsoContact,
               // TCPA consent captured at creation when the box was checked.
               ...(wantsSms
-                ? { 'SMS Opt-In': true, 'SMS Opt-In At': new Date().toISOString() }
+                ? { 'SMS Opt-In': true, 'SMS Opt-In At': nowIsoContact }
                 : {}),
             });
             consumerId = createdConsumer.id;

@@ -1,7 +1,8 @@
 // lib/zipCentroids.test.ts
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeZip, lookupZipCentroid, resolveBuyerCentroid } from './zipCentroids';
+import { normalizeZip, lookupZipCentroid, resolveBuyerCentroid, stateFromZip } from './zipCentroids';
+import { zipFromStripePayment, stateFromStripePayment, buyerStatePatch } from './buyerZip';
 import { haversineMiles } from './geoDistance';
 
 // ── normalizeZip ────────────────────────────────────────────────────────────
@@ -99,4 +100,48 @@ test('resolveBuyerCentroid: null when ZIP or state is missing', () => {
   assert.equal(resolveBuyerCentroid(null, 'TX'), null);
   assert.equal(resolveBuyerCentroid('78701', ''), null);
   assert.equal(resolveBuyerCentroid('78701', 'ZZ'), null);
+});
+
+// ── stateFromZip (preference-fidelity audit 2026-08-12) ─────────────────────
+
+test('stateFromZip: known ZIPs resolve to their USPS state code', () => {
+  assert.equal(stateFromZip('78701'), 'TX'); // Austin
+  assert.equal(stateFromZip('59901'), 'MT'); // Kalispell
+  assert.equal(stateFromZip('78701-1234'), 'TX'); // ZIP+4 normalizes first
+  assert.equal(stateFromZip(1001), 'MA'); // numeric with leading zero
+});
+
+test('stateFromZip: malformed / unknown ZIPs → null, never a guess', () => {
+  assert.equal(stateFromZip(''), null);
+  assert.equal(stateFromZip(null), null);
+  assert.equal(stateFromZip(undefined), null);
+  assert.equal(stateFromZip('787'), null);
+  assert.equal(stateFromZip('00000'), null); // not an assigned ZIP
+});
+
+// ── The settlement State-heal chain (product + deposit settle paths) ────────
+// lib/productSettlement + lib/stripeSettlement derive:
+//   stateFromStripePayment(pi) || stateFromZip(zipFromStripePayment(pi))
+// then write through buyerStatePatch. Pin the composed guarantee here: a
+// net-new fast-checkout buyer whose Stripe payload carries an address lands
+// with BOTH Zip and State, and a payload with only a postal_code still lands
+// a State via the centroid table.
+
+test('settlement heal: address.state present → Zip AND State both derivable', () => {
+  const pi = { shipping: { address: { postal_code: '78701', state: 'TX' } } };
+  assert.equal(zipFromStripePayment(pi), '78701');
+  assert.equal(stateFromStripePayment(pi) || stateFromZip(zipFromStripePayment(pi)), 'TX');
+  assert.deepEqual(buyerStatePatch(stateFromStripePayment(pi), null), { State: 'TX' });
+});
+
+test('settlement heal: postal_code ONLY (no address.state) → State still derived from the ZIP', () => {
+  const pi = { charges: { data: [{ billing_details: { address: { postal_code: '59901' } } }] } };
+  const zip = zipFromStripePayment(pi);
+  assert.equal(zip, '59901');
+  assert.equal(stateFromStripePayment(pi), null); // the old harvest's blind spot
+  const state = stateFromStripePayment(pi) || stateFromZip(zip);
+  assert.equal(state, 'MT');
+  assert.deepEqual(buyerStatePatch(state, ''), { State: 'MT' });
+  // Never-stomp: an existing buyer-declared State survives settlement.
+  assert.deepEqual(buyerStatePatch(state, 'TX'), {});
 });

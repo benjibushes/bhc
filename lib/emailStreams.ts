@@ -155,6 +155,13 @@ export const TRANSACTIONAL_TEMPLATES: readonly string[] = [
   // Signup / onboarding confirmations the recipient is waiting on
   'sendConsumerConfirmation',
   'sendConsumerApproval',
+  // Applied-cohort chase (applied-chase cron): the rancher applied days ago
+  // and is actively mid-signup — welcome/agreement-signing follow-through,
+  // not pressure mail. Deliberately transactional (money-path signature ask
+  // must never ride an unwarmed marketing subdomain).
+  'sendAppliedChaseDay0',
+  'sendAppliedChaseDay2',
+  'sendAppliedChaseDay5',
   'sendWelcomeAndReadyToBuy',
   'sendQuizInvite',
   'sendFoundingHerdWelcome',

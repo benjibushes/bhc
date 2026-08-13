@@ -14,6 +14,11 @@ import { getAllRecords, createRecord, updateRecord, getRecordById, TABLES, escap
 import { parseIntegration } from './fulfillmentConnector';
 import { decryptSecret } from './integrationCrypto';
 import { claimSyncLock, releaseClaim } from './rancherCapacity';
+import {
+  productFeedbackDecision,
+  type ProductFeedbackTask,
+  type VariantListOutcome,
+} from './shopifyChannel';
 
 export function computeDisplayPrice(base: number, markupPercent: number | null): number | null {
   if (markupPercent == null || !Number.isFinite(base) || base <= 0) return null;
@@ -82,7 +87,7 @@ const PRODUCTS_PAGE = `query($cursor: String) {
   products(first: 50, after: $cursor) {
     pageInfo { hasNextPage endCursor }
     nodes {
-      id title status description
+      id title status description updatedAt
       featuredMedia { preview { image { url } } }
       variants(first: 50) { nodes { id title sku price inventoryQuantity inventoryPolicy inventoryItem { tracked } } }
     }
@@ -280,6 +285,11 @@ export async function syncShopifyCatalog(rancherId: string, opts?: { dryRun?: bo
     // rows whose SKU is absent from this set after a COMPLETE pagination run
     // no longer exist in the store and get pulled off /shop.
     const seenSkus = new Set<string>();
+    // ResourceFeedback (sales-channel checklist 5.7.3): per-product publish
+    // verdicts collected during the pass, reported into the MERCHANT's admin
+    // after the loop. Public-app installs only (a token-paste custom app is
+    // not a sales channel — the mutation would just error); always best-effort.
+    const feedbackTasks: ProductFeedbackTask[] = [];
     let cursor: string | null = null;
     let pages = 0;
     do {
@@ -296,9 +306,13 @@ export async function syncShopifyCatalog(rancherId: string, opts?: { dryRun?: bo
         return { imported, updated, skippedNoSku, skippedGuard, guardDelisted, deactivated: 0, report: [`catalog fetch failed on page ${pages + 1} — partial: imported ${imported}, updated ${updated}`] };
       }
       for (const product of page.nodes || []) {
+        // 5.7.3: what happened to each of this product's variants this pass —
+        // feeds the per-product ResourceFeedback verdict below the loop.
+        const outcomes: VariantListOutcome[] = [];
         for (const variant of product.variants?.nodes || []) {
           if (!String(variant.sku || '').trim()) {
             skippedNoSku++;
+            outcomes.push('no-sku');
             continue;
           }
           const skuKey = String(variant.sku || '').trim();
@@ -308,6 +322,7 @@ export async function syncShopifyCatalog(rancherId: string, opts?: { dryRun?: bo
           const candidateName = `${product.title || ''} ${variant.title || ''}`;
           if (tripsShareGuard(candidateName, Number(variant.price || 0))) {
             skippedGuard++;
+            outcomes.push('guard-blocked');
             // H3: a row that WAS live + Sync Managed and now trips the guard
             // (rancher renamed it "Half Beef" or repriced below $5 after it
             // went live) must come OFF /shop — otherwise whole/half/quarter
@@ -326,6 +341,8 @@ export async function syncShopifyCatalog(rancherId: string, opts?: { dryRun?: bo
             }
             continue;
           }
+          // Past every listing guard — this variant lists (or stays listed).
+          outcomes.push('listed');
           const row = bySku.get(skuKey);
           // M4: for an existing row, drop the units Shopify still lists but
           // BHC already sold (unpushed/failed). A first import has no prior
@@ -370,12 +387,55 @@ export async function syncShopifyCatalog(rancherId: string, opts?: { dryRun?: bo
             imported++;
           }
         }
+        // 5.7.3: one verdict per product. ACCEPTED when anything listed
+        // (clears a stale requires-action banner in their admin);
+        // REQUIRES_ACTION with the dominant reason when everything blocked.
+        const decision = productFeedbackDecision(outcomes);
+        if (decision && product.id) {
+          feedbackTasks.push({
+            productGid: String(product.id),
+            productUpdatedAt: String(product.updatedAt || new Date().toISOString()),
+            decision,
+          });
+        }
       }
       cursor = page.pageInfo?.hasNextPage ? String(page.pageInfo.endCursor) : null;
       pages++;
     } while (cursor && pages < CATALOG_PAGE_CAP); // 40×50 products = plenty; hard stop vs pagination bugs
 
     const report: string[] = [];
+
+    // ResourceFeedback send pass (5.7.3) — public-app installs only, real
+    // writes only, hard-capped per run (REQUIRES_ACTION outranks ACCEPTED in
+    // the budget), and 100% best-effort: feedback can NEVER fail a sync.
+    if (!opts?.dryRun && cfg.installSource === 'oauth' && feedbackTasks.length > 0) {
+      let fbAction = 0;
+      let fbAccepted = 0;
+      let fbErrors = 0;
+      try {
+        const { pickFeedbackToSend, sendProductResourceFeedback } = await import('./shopifyChannel');
+        for (const task of pickFeedbackToSend(feedbackTasks)) {
+          const res = await sendProductResourceFeedback(cfg, task);
+          if (!res.ok) {
+            fbErrors++;
+            continue;
+          }
+          if (task.decision.state === 'REQUIRES_ACTION') fbAction++;
+          else fbAccepted++;
+        }
+      } catch (e: any) {
+        console.error('[shopifyCatalogSync] resource feedback pass failed:', e?.message);
+      }
+      if (fbAction || fbErrors) {
+        // Wording matters: catalogSyncReportIndicatesFailure (L7) greps report
+        // lines for /fail|partial/ — best-effort feedback errors must not trip
+        // the "catalog re-sync failed" alert, so say "errored", never "failed".
+        report.push(
+          `resource feedback: ${fbAction} requires-action, ${fbAccepted} accepted` +
+            (fbErrors ? `, ${fbErrors} errored` : ''),
+        );
+      }
+    }
 
     // L11: the loop can exit with a non-null cursor — it hit the page cap while
     // more pages remained, so products beyond the cap were NOT synced (new

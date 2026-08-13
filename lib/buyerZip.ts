@@ -18,6 +18,11 @@
 //      is weaker evidence than one they typed. A stored blank/garbage value IS
 //      healed, since it was never usable for routing anyway.
 //
+// Plus the State siblings (preference-fidelity audit 2026-08-12):
+// stateFromStripePayment / buyerStatePatch — same harvest, same never-stomp
+// contract, for Consumers.`State` (which every routing + campaign gate keys
+// on; a Zip without a State resolves to nothing).
+//
 // The ELIGIBILITY decision is NOT here — that stays in lib/exclusiveZip
 // (buyerZipServedBy / hasServiceZipGate), which is the single documented
 // fail-closed contract. This module only produces the ZIP that gate consumes.
@@ -27,6 +32,7 @@
 // centroid).
 
 import { normalizeZip } from './zipFormat';
+import { normalizeState } from './states';
 
 /**
  * Buyer-facing copy for a ZIP-gate rejection, shared by every self-serve buy
@@ -52,6 +58,36 @@ function postalOf(node: unknown): unknown {
   return at(at(node, 'address'), 'postal_code');
 }
 
+/** state off a Stripe `{ address: { state } }` shaped node. */
+function stateOf(node: unknown): unknown {
+  return at(at(node, 'address'), 'state');
+}
+
+/**
+ * The six Stripe nodes that can carry an address, in preference order:
+ * SHIPPING first (where the beef actually goes), then billing, then the
+ * customer record. Shared by zipFromStripePayment + stateFromStripePayment so
+ * the two harvests can never read different addresses for the same payment.
+ */
+function addressNodes(source: unknown): unknown[] {
+  const charge = (() => {
+    const data = at(at(source, 'charges'), 'data');
+    return Array.isArray(data) ? data[0] : undefined;
+  })();
+  return [
+    // Checkout Session — shipping address the buyer entered.
+    at(source, 'shipping_details'),
+    at(at(source, 'collected_information'), 'shipping_details'),
+    // PaymentIntent — shipping on the charge is the reliably-populated one for
+    // direct-charge Checkout (see lib/productSettlement formatShipping).
+    at(charge, 'shipping'),
+    at(source, 'shipping'),
+    // Billing address off the card.
+    at(charge, 'billing_details'),
+    at(source, 'customer_details'),
+  ];
+}
+
 /**
  * Best available US ZIP from a Stripe PaymentIntent or Checkout Session.
  *
@@ -66,29 +102,59 @@ function postalOf(node: unknown): unknown {
 export function zipFromStripePayment(source: unknown): string | null {
   if (source === null || typeof source !== 'object') return null;
 
-  const charge = (() => {
-    const data = at(at(source, 'charges'), 'data');
-    return Array.isArray(data) ? data[0] : undefined;
-  })();
-
-  const candidates: unknown[] = [
-    // Checkout Session — shipping address the buyer entered.
-    postalOf(at(source, 'shipping_details')),
-    postalOf(at(at(source, 'collected_information'), 'shipping_details')),
-    // PaymentIntent — shipping on the charge is the reliably-populated one for
-    // direct-charge Checkout (see lib/productSettlement formatShipping).
-    postalOf(at(charge, 'shipping')),
-    postalOf(at(source, 'shipping')),
-    // Billing address off the card.
-    postalOf(at(charge, 'billing_details')),
-    postalOf(at(source, 'customer_details')),
-  ];
-
-  for (const c of candidates) {
-    const zip = normalizeZip(c);
+  for (const node of addressNodes(source)) {
+    const zip = normalizeZip(postalOf(node));
     if (zip) return zip;
   }
   return null;
+}
+
+/**
+ * Best available 2-letter US state code from a Stripe PaymentIntent or
+ * Checkout Session — the State sibling of zipFromStripePayment (preference-
+ * fidelity audit 2026-08-12: settlement harvested ONLY postal_code, so
+ * fast-checkout buyers landed with a Zip but no State and were invisible to
+ * every state-gated rail). Same six candidate nodes, same preference order
+ * (shipping → billing → customer record), same skip-don't-short-circuit rule:
+ * each candidate's address.state runs through normalizeState and a
+ * non-normalizable value (blank, non-US region, junk) is skipped rather than
+ * hiding a usable one further down. Returns null when nothing usable is
+ * present — callers must treat that as "we still don't know", never a value
+ * to persist.
+ */
+export function stateFromStripePayment(source: unknown): string | null {
+  if (source === null || typeof source !== 'object') return null;
+
+  for (const node of addressNodes(source)) {
+    const state = normalizeState(stateOf(node));
+    if (state) return state;
+  }
+  return null;
+}
+
+/**
+ * Airtable field patch for Consumers.`State` — the State mirror of
+ * buyerZipPatch, with the same never-stomp contract:
+ *
+ *  - No / unrecognizable incoming state ⇒ `{}` (a bad value is never persisted).
+ *  - Existing row already holds ANY non-blank State ⇒ `{}`. Deliberately
+ *    blank-only (matching reserve's backfill at app/api/checkout/reserve
+ *    route.ts:211), NOT normalize-checked: a stored value a human typed —
+ *    even an odd one — is stronger evidence than a Stripe billing address,
+ *    so settlement never overwrites it.
+ *  - Otherwise ⇒ `{ State: <2-letter code> }`.
+ *
+ * Returns an empty object so callers can spread it unconditionally, exactly
+ * like buyerZipPatch.
+ */
+export function buyerStatePatch(
+  incomingState: unknown,
+  existingState: unknown,
+): Record<string, string> {
+  const state = normalizeState(incomingState);
+  if (!state) return {};
+  if (String(existingState ?? '').trim()) return {}; // never stomp a stored State
+  return { State: state };
 }
 
 /**

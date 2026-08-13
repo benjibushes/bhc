@@ -55,6 +55,23 @@ export function lookupZipCentroid(raw: unknown): ZipCentroid | null {
 }
 
 /**
+ * 2-letter USPS state code for a US ZIP, or null when the ZIP is malformed or
+ * unknown. The centroid table already carries the state per ZIP — this is the
+ * State-derivation half of the "harvest at settlement" pattern (preference-
+ * fidelity audit 2026-08-12): a buyer row with a Zip but no State is invisible
+ * to every state-gated rail (resolveBuyerCentroid nulls on empty State,
+ * matching/suggest 400s without buyerState), so server-side writers that hold
+ * only a ZIP derive the State here.
+ *
+ * SERVER-SIDE ONLY by import discipline: this module parses the 1 MB vendored
+ * table. Client bundles that merely need to normalize a ZIP import from
+ * './zipFormat' instead (see the header note above).
+ */
+export function stateFromZip(raw: unknown): string | null {
+  return lookupZipCentroid(raw)?.state || null;
+}
+
+/**
  * Centroid for a buyer's ZIP, CROSS-CHECKED against the state we route on.
  *
  * Routing eligibility is decided by the buyer's `State` field; the ZIP is only

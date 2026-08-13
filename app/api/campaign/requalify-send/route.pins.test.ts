@@ -20,7 +20,10 @@ const src = readFileSync(path.join(HERE, 'route.ts'), 'utf8');
 
 test('PIN: claim stamps Campaign Last Sent At + Campaign Rail on Consumers', () => {
   assert.match(src, /'Campaign Last Sent At': nowIso/);
-  assert.match(src, /'Campaign Rail': 'requalify'/);
+  // PR 2: the rail rides the VALIDATED body field (default 'requalify';
+  // the campaign-autopilot cron passes 'autopilot') — never a free string.
+  assert.match(src, /'Campaign Rail': rail/);
+  assert.match(src, /const \{ recipients, campaign, dryRun, rancher, rail \} = parsed/);
   assert.match(src, /updateRecord\(TABLES\.CONSUMERS, row\.id/);
 });
 

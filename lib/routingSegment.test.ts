@@ -240,3 +240,51 @@ test('getCoveredStates back-compat wrapper keeps capacity-IN semantics', () => {
   const open = operationalRancher();
   assert.equal(getCoveredStates([open]).has('MT'), true);
 });
+
+// ── TIMING LADDER promotion (preference-fidelity audit 2026-08-12) ──────────
+// A declared "Within 30 days" was write-time-frozen: baked into Intent Score
+// at signup, never read again, so a 30-day buyer without the R2B flag idled
+// at NUDGE cadence while the window lapsed. classifyBuyer now reads the
+// ladder at decision time.
+
+test('TIMING: covered state + W30 + quiz stamp → MATCH_NOW without Ready to Buy', () => {
+  const seg = classifyBuyer(
+    buyer({ Timing: 'Within 30 days', 'Qualified At': '2026-08-01T00:00:00.000Z' }),
+    [operationalRancher()],
+  );
+  assert.equal(seg, 'MATCH_NOW');
+});
+
+test('TIMING: covered state + W30 WITHOUT the quiz stamp → WARM_LEAD (never manufactures a row the 412 gate would bounce)', () => {
+  const seg = classifyBuyer(buyer({ Timing: 'Within 30 days' }), [operationalRancher()]);
+  assert.equal(seg, 'WARM_LEAD');
+});
+
+test('TIMING: singleSelect object shape is read like the string', () => {
+  const seg = classifyBuyer(
+    buyer({ Timing: { id: 'sel1', name: 'Within 30 days' }, 'Qualified At': '2026-08-01T00:00:00.000Z' }),
+    [operationalRancher()],
+  );
+  assert.equal(seg, 'MATCH_NOW');
+});
+
+test('TIMING: weaker windows change nothing — W60 stays NUDGE_TO_ENGAGE', () => {
+  const seg = classifyBuyer(buyer({ Timing: 'Within 60 days' }), [operationalRancher()]);
+  assert.equal(seg, 'NUDGE_TO_ENGAGE');
+});
+
+test('TIMING: uncovered state + W30 stays STATE_WAITLIST (no intro to route)', () => {
+  const seg = classifyBuyer(
+    buyer({ State: 'FL', Timing: 'Within 30 days', 'Qualified At': '2026-08-01T00:00:00.000Z' }),
+    [operationalRancher()],
+  );
+  assert.equal(seg, 'STATE_WAITLIST');
+});
+
+test('TIMING: terminal/suppression still outrank the promotion (MATCHED + W30 → TERMINAL)', () => {
+  const seg = classifyBuyer(
+    buyer({ 'Buyer Stage': 'MATCHED', Timing: 'Within 30 days', 'Qualified At': '2026-08-01T00:00:00.000Z' }),
+    [operationalRancher()],
+  );
+  assert.equal(seg, 'TERMINAL');
+});

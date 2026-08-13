@@ -74,6 +74,43 @@ recorded volume triggers.
   personalization). Volume trigger to revisit: >500 recipients with
   ≥10 lifetime clicks.
 
+**PR 2 — SHIPPED (branch adaptive-pr2).** Implementation record:
+- `lib/campaignWaves.ts` (pure, unit-tested) + cron
+  `campaign-autopilot` (daily 15:10 UTC, gate INSIDE realHandler,
+  EXPECTED_CRONS_24H). Live dispatch = self-call POST
+  /api/campaign/requalify-send with CRON_SECRET (the
+  triggerLaunchWarmup precedent) — zero new Resend-facing code; the
+  endpoint's claim stamps now record `Campaign Rail`='autopilot' via a
+  validated optional `rail` body field (default 'requalify').
+- **Rancher-for-state policy (the Ben-visible table):** computed each
+  run from live supply, logged in every Cron Runs row as
+  `states: TX→<slug> …`. Rule, in order: operational
+  (isRancherOperationalForBuyers) + has a Slug; NO exclusive-ZIP
+  rancher takes a whole state while a non-gated rancher serves it (a
+  Service ZIP Prefixes territory is sub-state — Thomas/Houston);
+  primary state beats routing-states coverage; fewer Current Active
+  Referrals; slug ascending. Pin a state manually by firing the
+  operator script — the autopilot only touches never-campaigned
+  buyers, so hand waves and machine waves cannot double-send.
+- First-touch pool = NO campaign claim of any kind (Campaign Last Sent
+  At / Campaign Rail / Campaign Stage all empty) + 7d cross-rail belt
+  over the demand-router's Consumer-side stamps (incl. SMS recovery) +
+  referral-truth mid-deal exclusion (activeDealBuyerKeys) + lane gate
+  on stored Routing Segment ONLY (reclassify-buyers stays the only
+  lane engine) + P5′ sunset-suppression marker respected.
+- Budget: ramp 30/day until 3 distinct live-send days (Email Sends
+  truth, `campaign_autopilot*` templates), then 120/day; the endpoint
+  re-enforces the domain ceiling server-side. Warmup hold: while
+  MARKETING_SEND_DOMAIN is set and MARKETING_DOMAIN_WARMED≠'true',
+  ceiling stays 30.
+- Auto-pause implemented as specified (complaints ≥3/7d via
+  complaintTelemetry · >5 hard bounces/24h via webhook Notes stamps ·
+  prior-run failure >10% at ≥10 attempts via a machine-readable
+  stats[] token in Cron Runs notes · any telemetry read failure =
+  alarm). NOT built: the cancel-scheduled sweep — this rail never uses
+  Resend `scheduledAt` (v1 sends at cron hour), so there is nothing to
+  cancel; revisit with the send-hour knob at its volume trigger.
+
 ### PR 3 — Gated weekly report (the founder-protection layer)
 Cron `learning-report`, DAILY + Monday-guard inside realHandler (a true
 weekly slot is watchdog-blind; EXCLUDED crons never alarm), EXPECTED
@@ -95,6 +132,44 @@ registry. Content rules — each one a hard gate, not a style note:
    list is ~20x larger" — that IS the decision information.
 Promotion path unchanged: report drafts → Ben approves → variant lands
 in the repo via PR → judged by PR 1's instrumentation.
+
+**PR 3 — SHIPPED (branch adaptive-pr3).** Implementation record:
+- `lib/learningReport.ts` (pure, 50 unit tests incl. hand-computable
+  Fisher's-exact known answers and every null path) + cron
+  `learning-report` (daily 14:10 UTC, Monday guard INSIDE realHandler,
+  EXPECTED_CRONS_24H — exactly as specified above). Delivery = Telegram
+  admin chat, the weekly-scorecard idiom; Mondays it lands 10 minutes
+  after the scoreboard.
+- The prespecified test (deferred from PR 2's record): ONE two-sided
+  Fisher's exact per `campaign_*` template, α=0.05, clicked/sent per
+  arm, cumulative. HARD gates as content rules 1-3: below 10 outcome
+  events the type system carries no p-value at all ("insufficient
+  data: n=X of 10 needed"); bare point-percentages render only at
+  n≥50 (Wilson 95% CI always); the null report is a first-class
+  render. Opens are reported per arm but labeled MPP-inflated and
+  never enter a test or verdict.
+- Replication ledger (rule 4): the top finding is frozen as a
+  machine-readable `ledger[…]` token in the report's own Cron Runs
+  note (the autopilot `stats[]` precedent — the report's ONLY write
+  surface); next Monday's run grades held/reversed/insufficient on
+  the WEEK-DELTA counts (cumulative minus token), never on
+  overlapping data.
+- Volume triggers (§1) restated every week with live distances:
+  sends/day 7d avg + autopilot eligible pool (parsed from its Cron
+  Runs note) vs the bandit's 1,000/day · 10k-pool; recipients with
+  ≥10 lifetime clicks vs the send-hour 500; top-state clicks vs the
+  state-cut 25 (+ the not-built exploration share); opens NEVER.
+  Rule 6 ships as the pooled required-n line (~n/arm for +20% at the
+  observed click rate, power 0.8, with the ×-more-data multiplier).
+- Read-only over Airtable (Email Sends, Consumers, Cron Runs) except
+  its own Cron Runs row; a failed CORE read sends no report (partial +
+  named reason) — a report over unknown data would fabricate
+  conclusions; auxiliary read failures degrade named-and-visible.
+- DEVIATION from rule 5: verbatim conversation quotes are BANNED from
+  the report body (public-repo/PII rule — the report aggregates counts
+  only). No objection/sentiment source exists yet anyway; when one
+  lands, under-10-row categories must POINT to the raw conversations
+  (Airtable/admin) instead of quoting them into the report.
 
 ## 1 · Killed knobs and their return triggers (recorded so we don't re-litigate)
 - Subject bandit (ε-greedy/commit): return at ≥1,000 sends/day.

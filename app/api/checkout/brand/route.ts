@@ -111,8 +111,16 @@ export async function GET(request: Request) {
         // Allow promo codes — discount levers stay in the Stripe dashboard
         // without code changes.
         allow_promotion_codes: true,
+        // NOTE (Ben): automatic_tax requires a tax origin address configured in
+        // the Stripe dashboard (Settings → Tax). If sessions still fail after
+        // deploy, check that before touching code.
         automatic_tax: { enabled: true },
-        customer_update: { address: 'auto' },
+        // customer_update:{address:'auto'} was REMOVED here (2026-08-13).
+        // Stripe rejects customer_update unless a `customer` param is also
+        // provided ("can only be provided when customer is provided"), so its
+        // presence made sessions.create throw on EVERY call — all three tiers
+        // 302'd to ?error=checkout-failed since 2026-05-27. We never pass a
+        // customer id (Checkout creates one), so the param must stay out.
         tax_id_collection: { enabled: true },
       },
       {
