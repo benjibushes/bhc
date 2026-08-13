@@ -100,7 +100,14 @@ async function computeStats(): Promise<Record<string, any>> {
 
     const foundersBacked = consumers.filter((c: any) => !!c['Founder Tier']).length;
 
-    const closedWon = referrals.filter((r: any) => r['Status'] === 'Closed Won');
+    // Hide From Wins (sweep fix 2026-08-13): superseded duplicate rows for
+    // the same physical deal stay Closed Won for money history but are
+    // excluded from every public count — the same hygiene filter /wins and
+    // lib/socialProof.ts apply, so /founders, /wholesale, and the proof
+    // strip all report the /wins-canonical numbers.
+    const closedWon = referrals.filter(
+      (r: any) => r['Status'] === 'Closed Won' && !r['Hide From Wins'],
+    );
     const totalClosedWon = closedWon.length;
 
     const firstOfMonth = new Date();

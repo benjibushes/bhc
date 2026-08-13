@@ -42,10 +42,11 @@ export const metadata: Metadata = {
 };
 
 // CTAs route through /api/checkout/brand server-side redirect, which
-// reads existing STRIPE_BRAND_LINK_* env vars (no NEXT_PUBLIC_ prefix
-// needed). Founding $1,500 tier goes to co-marketed Stripe link
-// (intentional friction = high-ticket qualification still required
-// via post-purchase intake form).
+// reads STRIPE_BRAND_PRICE_* env vars (no NEXT_PUBLIC_ prefix needed;
+// the legacy STRIPE_BRAND_LINK_* Payment Link fallback was removed —
+// see the route header). Founding $1,500 tier goes to co-marketed
+// Stripe link (intentional friction = high-ticket qualification still
+// required via post-purchase intake form).
 const spotlightLink = '/api/checkout/brand?tier=spotlight';
 const featuredLink = '/api/checkout/brand?tier=featured';
 const foundingCalendly =
@@ -117,7 +118,29 @@ const brandPartnersJsonLd = {
   ],
 };
 
-export default async function BrandPartnersPage() {
+// /api/checkout/brand redirects back here with ?error= on failure. Until
+// 2026-08-13 the page never read searchParams, so a buyer who clicked a paid
+// tier and bounced off Stripe saw... the same page, silently. Render the
+// error loudly so buyers (and ops) can see checkout is failing.
+const CHECKOUT_ERROR_COPY: Record<string, string> = {
+  'checkout-failed':
+    "Checkout couldn't start — the payment page failed to load. Nothing was charged. Try again in a minute, or email ben@buyhalfcow.com and we'll set you up directly.",
+  'tier-not-configured':
+    "This tier isn't accepting payments right now. Nothing was charged. Email ben@buyhalfcow.com and we'll get you in manually.",
+  'session-failed':
+    "Checkout couldn't start — the payment page failed to load. Nothing was charged. Try again in a minute, or email ben@buyhalfcow.com and we'll set you up directly.",
+};
+
+export default async function BrandPartnersPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string; cancelled?: string }>;
+}) {
+  const sp = await searchParams;
+  const errorCode = String(sp?.error || '');
+  const errorCopy = errorCode
+    ? CHECKOUT_ERROR_COPY[errorCode] || CHECKOUT_ERROR_COPY['checkout-failed']
+    : null;
   const foundingSpotsRemaining = await getFoundingSpotsRemaining();
   return (
     <main className="min-h-screen bg-bone text-charcoal">
@@ -127,6 +150,23 @@ export default async function BrandPartnersPage() {
       />
       {/* Page-view tracking — client component, no render output */}
       <BrandPartnersViewTracker />
+
+      {/* CHECKOUT ERROR BANNER — only renders after a failed /api/checkout/brand redirect */}
+      {errorCopy && (
+        <section className="pt-6">
+          <Container>
+            <div
+              role="alert"
+              className="max-w-3xl mx-auto border border-weathered/50 bg-bone-warm px-5 py-4 text-sm text-charcoal leading-relaxed"
+            >
+              <p className="font-semibold text-weathered mb-1">
+                Something went wrong starting checkout.
+              </p>
+              <p>{errorCopy}</p>
+            </div>
+          </Container>
+        </section>
+      )}
 
       {/* HERO */}
       <section className="pt-10 pb-14 md:py-28">

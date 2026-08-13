@@ -78,6 +78,31 @@ test('summarize: counts, sums GMV, credits the primary linked rancher', () => {
   assert.equal(s.dealsByRancher['recRANCHERBBBBBBB2'], 1);
 });
 
+test('summarize: Hide From Wins rows never count — matches the /wins wall exactly', () => {
+  // 2026-08-13 sweep: /shop claimed "26 deals · $41k+" vs /wins' 24 · $38,631
+  // because 2 superseded duplicate rows (flagged Hide From Wins on 2026-08-10)
+  // were excluded from the wall but still counted here. Flagged rows must
+  // drop from counts, GMV, per-rancher credit, AND the latest-win label.
+  const s = summarizeClosedWonRefs([
+    // Mid-month timestamp: buildLatestWinLabel formats in the runner's local
+    // timezone, so a midnight-UTC 1st-of-month would render as the prior
+    // month on US machines (same convention as the latest-win test below).
+    ref({ 'Sale Amount': 2000, 'Closed At': '2026-07-10T12:00:00.000Z' }),
+    ref({ 'Sale Amount': 2000, 'Hide From Wins': true }),
+    ref({
+      'Sale Amount': 500,
+      'Hide From Wins': true,
+      'Closed At': '2026-08-10T12:00:00.000Z', // newest — must NOT become latest win
+      'Order Type': 'Whole',
+      'Buyer State': 'MT',
+    }),
+  ]);
+  assert.equal(s.deals, 1);
+  assert.equal(s.gmv, 2000);
+  assert.equal(s.dealsByRancher['recRANCHERAAAAAAA1'], 1);
+  assert.equal(s.latestWinLabel, 'half cow — TX, jul 2026');
+});
+
 test('summarize: /wins hygiene filter — no rancher link or non-positive sale never counts', () => {
   const s = summarizeClosedWonRefs([
     ref({ Rancher: undefined, 'Suggested Rancher': undefined }),

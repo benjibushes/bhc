@@ -46,11 +46,11 @@ import {
 export const metadata: Metadata = {
   title: 'The Founding Herd',
   description:
-    'Five tiers, real backing. The Founding Herd is the people who paid in before BuyHalfCow was easy to bet on. 100 numbered spots, from $100.',
+    'Five tiers, real backing. The Founding Herd is the people who paid in before BuyHalfCow was easy to bet on. 100 numbered spots, tiers from $9/month.',
   openGraph: {
     title: 'The Founding Herd · back BuyHalfCow',
     description:
-      '100 spots. From $100. $15k locks lifetime founder #1-10 status. The people who paid in before this was easy to bet on.',
+      '100 spots. Tiers from $9/month. $15k locks lifetime founder #1-10 status. The people who paid in before this was easy to bet on.',
     type: 'website',
     url: 'https://www.buyhalfcow.com/founders',
     images: [{ url: '/og-image.png', width: 1200, height: 630, alt: 'The Founding Herd — back BuyHalfCow' }],
@@ -59,7 +59,7 @@ export const metadata: Metadata = {
     card: 'summary_large_image',
     title: 'The Founding Herd · back BuyHalfCow',
     description:
-      '100 spots. From $100. $15k locks lifetime founder #1-10 status.',
+      '100 spots. Tiers from $9/month. $15k locks lifetime founder #1-10 status.',
     images: ['/og-image.png'],
   },
 };
@@ -73,6 +73,11 @@ interface PublicStats {
   foundersCap: number;
   totalClosedWon: number;
   thisMonthClosedWon: number;
+  // Distinct states with an operational rancher — same field the homepage
+  // LiveCounter reads. Used in the problem-section copy so a capital-raise
+  // page never overstates coverage (it hardcoded "16 states" while live
+  // coverage was 9 — sweep fix 2026-08-13).
+  states: number;
 }
 
 async function fetchPublicStats(): Promise<PublicStats> {
@@ -80,7 +85,14 @@ async function fetchPublicStats(): Promise<PublicStats> {
     const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
     const res = await fetch(`${SITE_URL}/api/stats/public`, { next: { revalidate: 300 } });
     if (!res.ok) throw new Error(`stats fetch returned ${res.status}`);
-    return await res.json();
+    const json = await res.json();
+    // Coerce the two fields this page renders as prose so a partial payload
+    // can never print "undefined buyers" on a capital-raise page.
+    return {
+      ...json,
+      familiesMatched: Number(json?.familiesMatched) > 0 ? Number(json.familiesMatched) : 1533,
+      states: Number(json?.states) > 0 ? Number(json.states) : 5,
+    };
   } catch {
     return {
       ranchersActive: 17,
@@ -89,6 +101,7 @@ async function fetchPublicStats(): Promise<PublicStats> {
       foundersCap: 100,
       totalClosedWon: 11,
       thisMonthClosedWon: 0,
+      states: 5, // matches /api/stats/public's own catch-path fallback
     };
   }
 }
@@ -340,8 +353,13 @@ export default async function FoundersPage({
             <p className="text-xs uppercase tracking-[0.2em] text-saddle">
               The Founding Herd
             </p>
+            {/* " early bird" suffix is gated on earlyBirdActive — the tier
+                card below already flips to "(early bird ended)", and the hero
+                contradicting it on the same screen was a live defect
+                (sweep fix 2026-08-13). */}
             <h1 className="font-serif text-4xl md:text-6xl leading-tight lowercase">
-              100 spots. {founding100PriceLabel} early bird.
+              100 spots. {founding100PriceLabel}
+              {earlyBirdActive ? ' early bird' : ''}.
             </h1>
             <Divider />
             <p className="text-base md:text-lg italic text-charcoal/80 leading-relaxed">
@@ -423,7 +441,9 @@ export default async function FoundersPage({
                 family.
               </p>
               <p>
-                I've been doing this with about 1,200 buyers and 16 states of
+                I've been doing this with{' '}
+                {publicStats.familiesMatched.toLocaleString('en-US')} buyers and{' '}
+                {publicStats.states} state{publicStats.states === 1 ? '' : 's'} of
                 rancher coverage already. The pipeline works. What it needs is
                 fuel — capital to keep onboarding ranchers, capital to ship
                 merch and patches and the small physical things that make a
