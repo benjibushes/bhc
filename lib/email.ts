@@ -5910,7 +5910,8 @@ export async function sendAppliedChaseDay2(data: {
   <div style="text-align:center;margin:24px 0;">
     <a href="${utm(data.signUrl, 'applied-chase', 'day2-sign')}" class="cta">Sign it now (2 min) &rarr;</a>
   </div>
-  <p style="font-size:13px;color:#6B4F3F;">Not sure this is for you yet? <a href="${utm(data.pitchUrl, 'applied-chase', 'day2-pitch')}" style="color:#0E0E0E;">Here's exactly what we do for ranchers</a>. Or reply with what's unclear &mdash; I answer every one.</p>
+  <p style="font-size:13px;color:#6B4F3F;">Not sure this is for you yet? <a href="${utm(data.pitchUrl, 'applied-chase', 'day2-pitch')}" style="color:#0E0E0E;">Here's exactly what we do for ranchers</a> &mdash; including the money: you keep 100% of your price and the buyer pays our fee on top.</p>
+  <p style="font-size:13px;color:#6B4F3F;">And if the standard setup isn't your shape, there are two other doors: reply <strong>"represent"</strong> if you'd rather we sell your beef for you (the family's deposit is our whole fee, they pay you the balance direct at handoff &mdash; you never touch a login), or reply <strong>"store"</strong> if you already sell on Shopify or your own site and want to keep your stack. Either reply comes straight to me.</p>
   <p style="font-size:12px;color:#A7A29A;">&mdash; Ben</p>
 </div></body></html>`,
     } as any),
@@ -5946,8 +5947,8 @@ export async function sendAppliedChaseDay5(data: {
   <div style="text-align:center;margin:24px 0;">
     <a href="${utm(data.signUrl, 'applied-chase', 'day5-sign')}" class="cta">Review &amp; sign &rarr;</a>
   </div>
-  <p style="font-size:13px;color:#6B4F3F;">If now isn't the time, reply and tell me &mdash; I'll close it out cleanly. Otherwise I may just give you a call.</p>
-  <p style="font-size:13px;color:#6B4F3F;">What BuyHalfCow actually does for ranchers, in one page: <a href="${utm(data.pitchUrl, 'applied-chase', 'day5-pitch')}" style="color:#0E0E0E;">the pitch</a>.</p>
+  <p style="font-size:13px;color:#6B4F3F;">If the standard setup was the hesitation, two other ways in: reply <strong>"represent"</strong> and we sell your beef for you (the deposit is our whole fee, buyers pay you the balance direct) &mdash; or reply <strong>"store"</strong> to connect the Shopify or website you already run. If now just isn't the time, reply and tell me &mdash; I'll close it out cleanly. Otherwise I may just give you a call.</p>
+  <p style="font-size:13px;color:#6B4F3F;">Everything we do, the money included, in one page: <a href="${utm(data.pitchUrl, 'applied-chase', 'day5-pitch')}" style="color:#0E0E0E;">the pitch</a>.</p>
   <p style="font-size:12px;color:#A7A29A;">&mdash; Ben</p>
 </div></body></html>`,
     } as any),
