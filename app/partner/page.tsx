@@ -387,7 +387,12 @@ function PartnerPageContent() {
             </p>
             <ul className="text-left max-w-md mx-auto space-y-2 text-sm md:text-base text-charcoal/85">
               <li>· Buyer deposits land in your Stripe Connect bank — same day.</li>
-              <li>· Flat commission, no invoicing, no chasing.</li>
+              {/* Money-model copy lock (docs/BUSINESS-MODEL.md ⭐, #465):
+                  rancher keeps 100% of their price; our fee is added on the
+                  buyer's side. The old "Flat commission" bullet predated the
+                  lock and was doubly false on the Connect rail (fee is
+                  percent-based AND buyer-paid) — sweep fix 2026-08-13. */}
+              <li>· You keep 100% of your price — our fee is added on the buyer&rsquo;s side.</li>
               <li>· Sales calls, qualification, intros — handled. You raise the cattle.</li>
             </ul>
           </div>

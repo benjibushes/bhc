@@ -17,6 +17,7 @@ import { tierFor, depositCommissionRate } from '@/lib/tiers';
 import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
 import { normalizeImageUrl } from '@/lib/imageUrl';
 import { safeExternalUrl, heroPillText, formatCustomProductPrice } from '@/lib/rancherPageGuards';
+import { isProcessingDatePast } from '@/lib/processingDate';
 import RancherOrderForm from './RancherOrderForm';
 import DepositReserveForm from './DepositReserveForm';
 import RancherPageAnalytics, { RancherPricingCTA } from './RancherPageAnalytics';
@@ -540,7 +541,16 @@ export default async function RancherPage(
         }
       : null;
 
-  const processingDateDisplay = formatProcessingDate(nextProcessingDate);
+  // Past-date guard (sweep fix 2026-08-13): "Next Processing Date" is a
+  // one-time manual edit that re-decays every round. A past date renders as
+  // a neutral "ask about timing" label instead of a stale promise (this page
+  // showed "Next processing August 1, 2026" live on Aug 13). sharesLeft is
+  // capacity-based (max − current active referrals), NOT tied to the batch
+  // date, so it stays visible either way.
+  const processingDatePast = isProcessingDatePast(nextProcessingDate);
+  const processingDateDisplay = processingDatePast
+    ? null
+    : formatProcessingDate(nextProcessingDate);
 
   // P2 #8 — is the Processing Facility a real, distinct plant (vs. just the
   // ranch name echoed back)? Normalize both sides (case/whitespace) before
@@ -790,16 +800,24 @@ export default async function RancherPage(
           for processing date + USDA facility + states served. Replaces the
           old "social proof" section that was floating awkwardly mid-page.
          ───────────────────────────────────────────────────────────────────── */}
-      {(processingDateDisplay || hasRealProcessingFacility || statesServed) && (
+      {(processingDateDisplay || processingDatePast || hasRealProcessingFacility || statesServed) && (
         <section className="bg-bone-warm border-b border-dust">
           <Container>
             <div className="py-5 md:py-6 flex flex-wrap items-center justify-center gap-x-8 gap-y-2 text-sm text-charcoal/85">
-              {processingDateDisplay && (
+              {processingDateDisplay ? (
                 <span>
                   <span className="text-saddle">Next processing</span>{' '}
                   <strong>{processingDateDisplay}</strong>
                 </span>
-              )}
+              ) : processingDatePast ? (
+                // Stale-date guard: the recorded date already passed and the
+                // rancher hasn't set the next round yet. Neutral label beats
+                // a decayed promise on an ad-ready conversion surface.
+                <span>
+                  <span className="text-saddle">Next batch</span>{' '}
+                  <strong>ask about timing</strong>
+                </span>
+              ) : null}
               {/* P2 #8 — only claim "USDA inspected: <facility>" when the
                   facility is a real, distinct processing plant. When the
                   Processing Facility field just echoes the ranch name (no
@@ -1375,6 +1393,12 @@ export default async function RancherPage(
                 <p className="text-bone/85">
                   Next processing date{' '}
                   <strong className="text-bone">{processingDateDisplay}</strong>
+                </p>
+              )}
+              {!processingDateDisplay && processingDatePast && (
+                // Stale-date guard — the last recorded round already passed.
+                <p className="text-bone/85">
+                  Next batch is being scheduled — ask the rancher about timing.
                 </p>
               )}
               {/* Scarcity (P1 #6) in the reserve CTA — concrete urgency. */}

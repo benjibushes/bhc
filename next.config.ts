@@ -16,6 +16,15 @@ const nextConfig: NextConfig = {
     staticGenerationRetryCount: 3,
     staticGenerationMaxConcurrency: 1,
   },
+  async redirects() {
+    return [
+      // Trust-search traffic ("buyhalfcow reviews") was 404ing one hop from
+      // the deposit page — review capture + 5-star quotes live on /wins
+      // (sweep GAP fix 2026-08-13). Exact path only: /reviews/submit is a
+      // real page and keeps working.
+      { source: '/reviews', destination: '/wins', permanent: true },
+    ];
+  },
   images: {
     // Rancher logos + gallery photos are pasted from wherever the ranch
     // already hosts them (Squarespace, Wix, Shopify, their own domain...).

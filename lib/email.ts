@@ -21,6 +21,11 @@ import {
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from './telegram';
 import { commissionPayCta } from './commissionOwed';
 import { cacheIncrWithTtl } from './sharedCache';
+// Past-date guard for the rancher "Next Processing Date" field (sweep fix
+// 2026-08-13) — the field decays every round; emails must never present an
+// already-passed date as a live promise. Shared with the rancher page and
+// deposit page so every display site suppresses/relabels the same way.
+import { isProcessingDatePast } from './processingDate';
 // TEXT-YOUR-RANCHER-NOW (close-the-loop 2026-07-15): pure phone helpers —
 // the buyer intro email's "text them now" CTA shares its sms: link + body
 // with the funnel reveal so the two surfaces can never drift.
@@ -1781,9 +1786,13 @@ export async function sendBuyerIntroNotification(data: {
       `<tr><td style="padding:8px 12px;border:1px solid #E5E2DC;font-weight:600;">Whole Cow</td><td style="padding:8px 12px;border:1px solid #E5E2DC;">$${data.wholePrice.toLocaleString()}</td><td style="padding:8px 12px;border:1px solid #E5E2DC;color:#6B4F3F;">${esc(data.wholeLbs || '')}${data.wholeLbs ? ' lbs' : ''}</td></tr>`
     );
   }
-  const processingLine = data.nextProcessingDate
-    ? `<p style="margin-top:12px;font-size:13px;color:#6B4F3F;"><strong>Next processing date:</strong> ${esc(new Date(data.nextProcessingDate).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' }))}</p>`
-    : '';
+  // Past-date guard: suppress a decayed date entirely rather than email the
+  // buyer a stale promise (the field is manually maintained and re-decays
+  // every processing round).
+  const processingLine =
+    data.nextProcessingDate && !isProcessingDatePast(data.nextProcessingDate)
+      ? `<p style="margin-top:12px;font-size:13px;color:#6B4F3F;"><strong>Next processing date:</strong> ${esc(new Date(data.nextProcessingDate).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' }))}</p>`
+      : '';
   // Operation-type label (P4): one quiet line under the pricing header — a
   // share is a LOCAL operation and the buyer should never guess which kind of
   // outfit they're matched with. '' when the state is unknown.
@@ -6010,12 +6019,21 @@ export async function sendOperatorPreCallBrief(data: {
     ? `<table style="border-collapse:collapse;font-size:14px;margin:6px 0;">${pricingRows.join('')}</table>`
     : '<p style="margin:6px 0;color:#6B4F3F;font-style:italic;">No pricing set on rancher record.</p>';
 
+  // Past-date guard (internal brief → relabel, not suppress): the operator
+  // should SEE that the recorded date is stale so they ask the rancher for
+  // the next round on the call, instead of quoting a passed date to a buyer.
+  const processingDateBrief = data.nextProcessingDate
+    ? isProcessingDatePast(data.nextProcessingDate)
+      ? `${data.nextProcessingDate} — already passed, ask rancher for the next round`
+      : data.nextProcessingDate
+    : '';
+
   // Auto-generated talking points based on quiz answers + referral state
   const talkingPoints: string[] = [];
   const cutAnswer = data.quizAnswers?.['Cut'] || data.quizAnswers?.['cut'] || data.quizAnswers?.['Order Type'] || '';
   const timingAnswer = data.quizAnswers?.['Timing'] || data.quizAnswers?.['timing'] || '';
   if (cutAnswer) talkingPoints.push(`Buyer pre-selected: <strong>${esc(cutAnswer)}</strong> &mdash; anchor pricing convo around that tier.`);
-  if (timingAnswer && /within 30|asap/i.test(timingAnswer)) talkingPoints.push(`Urgency: <strong>${esc(timingAnswer)}</strong> &mdash; surface Next Processing Date (${esc(data.nextProcessingDate || 'TBD')}) early.`);
+  if (timingAnswer && /within 30|asap/i.test(timingAnswer)) talkingPoints.push(`Urgency: <strong>${esc(timingAnswer)}</strong> &mdash; surface Next Processing Date (${esc(processingDateBrief || 'TBD')}) early.`);
   if (data.quizScore && data.quizScore >= 85) talkingPoints.push(`<strong>Quiz score ${data.quizScore}/100</strong> &mdash; high-intent. Move to deposit pitch fast.`);
   else if (data.quizScore && data.quizScore < 75) talkingPoints.push(`Quiz score ${data.quizScore} (below 75 threshold) &mdash; re-verify timing + storage on the call.`);
   if (!data.buyerPhone) talkingPoints.push(`No phone on file &mdash; pull it during the call so we can SMS the deposit link after.`);
@@ -6048,7 +6066,7 @@ export async function sendOperatorPreCallBrief(data: {
   <div class="box">
     <p style="margin:0;"><strong>${esc(data.rancherName)}</strong>${data.rancherTier ? ` &middot; ${esc(data.rancherTier)} tier` : ''}</p>
     ${data.rancherSlug ? `<p style="margin:4px 0;font-size:13px;"><a href="${SITE_URL}/ranchers/${esc(data.rancherSlug)}" style="color:#0E0E0E;">Public page &rarr;</a></p>` : ''}
-    ${data.nextProcessingDate ? `<p style="margin:4px 0;font-size:13px;"><strong>Next processing:</strong> ${esc(data.nextProcessingDate)}</p>` : ''}
+    ${processingDateBrief ? `<p style="margin:4px 0;font-size:13px;"><strong>Next processing:</strong> ${esc(processingDateBrief)}</p>` : ''}
   </div>
   <h2>Pricing</h2>
   ${pricingBlock}

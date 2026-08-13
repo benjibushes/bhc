@@ -15,6 +15,7 @@ import CallbackRequest from '@/app/components/CallbackRequest';
 import { BEN_SALES_CAL_URL } from '@/lib/salesContact';
 import { REFUND_POLICY_SHORT } from '@/lib/refundPolicy';
 import { closedReferralUiState } from '@/lib/referralClosedState';
+import { isProcessingDatePast } from '@/lib/processingDate';
 
 // Map deposit cut slug → CutBreakdown tier. Slug is lowercase from
 // Stripe Price metadata; tier is the capitalized human-readable label.
@@ -477,7 +478,11 @@ function DepositPageContent() {
                   {info.fulfillment.types.includes('Cold-Chain Shipping') && info.fulfillment.shippingLeadTimeDays && (
                     <> · Ships in ~<strong>{info.fulfillment.shippingLeadTimeDays} days</strong> after processing</>
                   )}
-                  {info.fulfillment.nextProcessingDate && (
+                  {/* Past-date guard (sweep fix 2026-08-13): a decayed
+                      "Next Processing Date" must not render at the money
+                      moment — suppress rather than show a stale promise. */}
+                  {info.fulfillment.nextProcessingDate &&
+                    !isProcessingDatePast(info.fulfillment.nextProcessingDate) && (
                     <> · Next processing: <strong>{info.fulfillment.nextProcessingDate}</strong></>
                   )}
                 </p>
@@ -616,8 +621,12 @@ function DepositPageContent() {
               page's own warm copy — never a raw Stripe/dev string. */}
           {error && <p role="alert" className="text-weathered mb-2 text-sm text-center">{error}</p>}
 
-          {/* honest scarcity — real processing date only, never a fake count */}
-          {info.fulfillment.nextProcessingDate && (
+          {/* honest scarcity — real processing date only, never a fake count.
+              Past-date guard (sweep fix 2026-08-13): "reserve before it fills"
+              beside an already-passed date is the opposite of honest scarcity,
+              so a decayed date suppresses the line entirely. */}
+          {info.fulfillment.nextProcessingDate &&
+            !isProcessingDatePast(info.fulfillment.nextProcessingDate) && (
             <p className="text-center text-sm text-charcoal mb-2">
               next processing date: <strong>{info.fulfillment.nextProcessingDate}</strong> — reserve before it fills
             </p>
