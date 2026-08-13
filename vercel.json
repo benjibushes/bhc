@@ -279,6 +279,10 @@
     {
       "path": "/api/cron/inbound-body-backfill",
       "schedule": "40 6 * * *"
+    },
+    {
+      "path": "/api/cron/applied-chase",
+      "schedule": "40 14 * * *"
     }
   ]
 }
