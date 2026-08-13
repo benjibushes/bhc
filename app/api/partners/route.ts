@@ -68,7 +68,7 @@ export async function POST(request: Request) {
     }
     rescueBody = body;
     const { partnerType, ref } = body;
-    // Pull whichever email + phone the body carries (rancher/brand/land each
+    // Pull whichever email + phone the body carries (rancher/brand each
     // carry `email`/`phone` as the primary contact). validateAffiliateRefForSignup
     // uses them to block self-referral; safe to pass undefined. Phone match
     // closes the `me+sock@x.com` loophole — an affiliate trying to refer
@@ -418,87 +418,6 @@ export async function POST(request: Request) {
       }
     }
 
-    // Handle Land Seller application
-    else if (partnerType === 'land') {
-      const { sellerName, email, phone, propertyType, acreage, state, propertyLocation, askingPrice, description, zoning, utilities } = body;
-
-      if (!sellerName || !email || !propertyType || !state) {
-        return NextResponse.json({ error: 'Missing required fields for land seller' }, { status: 400 });
-      }
-
-      if (!isValidEmail(email)) {
-        return NextResponse.json({ error: 'Please enter a valid email address' }, { status: 400 });
-      }
-
-      // Dedupe by email. Same rationale as brand branch (#48).
-      try {
-        const existing = await getAllRecords(
-          TABLES.LAND_DEALS,
-          `LOWER({Email}) = "${escapeAirtableValue(email.trim().toLowerCase())}"`
-        );
-        if (existing.length > 0) {
-          return NextResponse.json({
-            error: 'A land application with this email already exists. We\'ll follow up — check your inbox or email ben@buyhalfcow.com.',
-          }, { status: 409 });
-        }
-      } catch (e) {
-        console.error('Land dedupe check failed:', e);
-      }
-
-      tableName = TABLES.LAND_DEALS;
-      const landFields: Record<string, unknown> = {
-        'Seller Name': sellerName,
-        'Email': email,
-        'Phone': phone || '',
-        'Property Type': propertyType,
-        'Acreage': parseInt(acreage) || 0,
-        'State': normalizeState(state) || state,
-        'Property Location': propertyLocation || '',
-        // Final-sweep fix (2026-06-10): schema field is `Price` — `Asking
-        // Price` was stripped, so every land deal lost its price.
-        'Price': askingPrice || '',
-        'Description': description || '',
-        'Zoning': zoning || '',
-        'Utilities': utilities || '',
-        'Status': 'Pending',
-      };
-      if (referredBy) landFields['Referred By'] = referredBy;
-      record = await createRecord(tableName, landFields);
-
-      // Send confirmation email
-      await sendPartnerConfirmation({
-        type: 'land',
-        name: sellerName,
-        email,
-      });
-
-      // Send admin alert
-      await sendAdminAlert({
-        type: 'land',
-        name: sellerName,
-        email,
-        details: {
-          'Property Type': propertyType,
-          Acreage: acreage,
-          Location: `${state}${propertyLocation ? `, ${propertyLocation}` : ''}`,
-          Price: askingPrice || 'Not specified',
-        },
-      });
-
-      try {
-        await sendTelegramPartnerAlert({
-          type: 'land',
-          recordId: record.id,
-          name: sellerName,
-          email,
-          state,
-          details: `🏞️ <b>Type:</b> ${propertyType}\n📐 <b>Acreage:</b> ${acreage || 'N/A'}\n📍 ${state}${propertyLocation ? `, ${propertyLocation}` : ''}\n💰 ${askingPrice || 'Price TBD'}`,
-        });
-      } catch (e) {
-        console.error('Telegram land alert error:', e);
-      }
-    }
-
     else {
       return NextResponse.json({ error: 'Invalid partner type' }, { status: 400 });
     }
@@ -527,7 +446,7 @@ export async function POST(request: Request) {
     // Client Pixel loses 30-50% of events to iOS 14.5+ ATT + adblockers.
     // event_id=record.id pairs the server CAPI fire with the client
     // partner_submit_success fire on /partner so Meta dedupes. Restores
-    // attribution for rancher/brand/land paid ad optimization.
+    // attribution for rancher/brand paid ad optimization.
     const capiIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
     const capiUserAgent = request.headers.get('user-agent') || undefined;
     const { fbp: capiFbp, fbc: capiFbc } = getMetaCookiesFromRequest(request);
@@ -536,15 +455,13 @@ export async function POST(request: Request) {
     const partnerPhone =
       typeof body?.phone === 'string' ? body.phone : undefined;
     // Best-effort first/last name split — rancher uses operatorName,
-    // brand uses contactName, land uses sellerName.
+    // brand uses contactName.
     const rawName =
       (partnerType === 'rancher' && typeof body?.operatorName === 'string'
         ? body.operatorName
         : partnerType === 'brand' && typeof body?.contactName === 'string'
           ? body.contactName
-          : partnerType === 'land' && typeof body?.sellerName === 'string'
-            ? body.sellerName
-            : '') || '';
+          : '') || '';
     const nameParts = rawName.trim().split(/\s+/).filter(Boolean);
     fireCapi([
       {

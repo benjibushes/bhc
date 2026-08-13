@@ -45,7 +45,6 @@ done
 # Public APIs
 /usr/bin/curl -s https://www.buyhalfcow.com/api/stats/public | python3 -m json.tool | head -20
 /usr/bin/curl -s -o /dev/null -w "%{http_code}\n" https://www.buyhalfcow.com/api/public/ranchers
-/usr/bin/curl -s -o /dev/null -w "%{http_code}\n" https://www.buyhalfcow.com/api/testimonials
 
 # Stripe brand redirects — all 3 tiers + bogus
 for tier in spotlight featured founding bogus; do

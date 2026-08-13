@@ -135,7 +135,7 @@ export default function DealCockpitPage({ params }: { params: Promise<{ referral
       <AdminAuthGuard>
         <main className="min-h-screen bg-bone text-charcoal">
           <div className="max-w-2xl mx-auto px-4 py-6">
-            <Link href="/admin/desk" className="text-sm text-saddle hover:text-charcoal">← Sales desk</Link>
+            <Link href="/admin/today" className="text-sm text-saddle hover:text-charcoal">← Today cockpit</Link>
             {loading && <p className="text-center text-saddle py-16">Loading deal…</p>}
             {err && !loading && <p className="text-center text-rust py-16">{err}</p>}
           </div>
@@ -182,7 +182,7 @@ export default function DealCockpitPage({ params }: { params: Promise<{ referral
     <AdminAuthGuard>
       <main className="min-h-screen bg-bone text-charcoal pb-24">
         <div className="max-w-2xl mx-auto px-4 py-6">
-          <Link href="/admin/desk" className="text-sm text-saddle hover:text-charcoal">← Sales desk</Link>
+          <Link href="/admin/today" className="text-sm text-saddle hover:text-charcoal">← Today cockpit</Link>
 
           {/* Header */}
           <div className="mt-3 p-5 border-2 border-charcoal bg-white">

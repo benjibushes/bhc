@@ -35,7 +35,6 @@ All routes are Next.js App Router pages. "Revenue tier" reflects the page's dire
 | `/affiliate` | Affiliate dashboard — clicks, signups, commissions | Affiliate partners | n/a | medium | live |
 | `/affiliate/login` | Affiliate magic-link login | Affiliates | `/affiliate/verify` → `/affiliate` | zero | live |
 | `/affiliate/verify` | Verifies affiliate magic-link token | Affiliates | `/affiliate` | zero | live |
-| `/land` | Land deals browse page — raw land listings for sale | Buyers, farmers, ranchers | `/land/[id]/inquire` (API) | low | live |
 | `/wins` | Public case-study wall — closed-won referrals, aggregate stats | SEO, social proof | `/access` | medium | live |
 | `/news` | News/blog index — published posts from Airtable | SEO traffic | `/news/[slug]` | low | live |
 | `/news/[slug]` | Individual news/blog post | SEO traffic | Social share, `/access` | low | live |
@@ -56,7 +55,7 @@ All routes are Next.js App Router pages. "Revenue tier" reflects the page's dire
 | `/admin/referrals` | Referral pipeline overview | Admin | Approve, reassign, revive | zero | live |
 | `/admin/broadcast` | Manual broadcast email tool | Admin | Send broadcast | zero | live |
 | `/admin/affiliates` | Affiliate management | Admin | Invite, activate, deactivate | zero | live |
-| `/admin/inquiries` | Land deal inquiry tracking | Admin | Follow up | zero | live |
+| `/admin/inquiries` | Inquiry tracking (wholesale) | Admin | Follow up | zero | live |
 | `/admin/commissions` | Commission tracking | Admin | Invoice, adjust | zero | live |
 | `/admin/compliance` | Compliance reminder tracker | Admin | Trigger reminders | zero | live |
 | `/admin/heatmap` | Geographic buyer density heatmap | Admin | Decide rancher recruitment | zero | live |
@@ -168,8 +167,6 @@ Methods shown as exported handler names. Auth types: `JWT-cookie` = session cook
 | `POST /api/admin/affiliates/[id]/reactivate` | Reactivates an affiliate | admin-cookie | live |
 | `GET/PATCH /api/admin/brands/[id]` | Brand detail + edit | admin-cookie | live |
 | `GET/POST /api/admin/brands` | Brand list + create | admin-cookie | live |
-| `GET/POST /api/admin/landDeals` | Land deal list + create | admin-cookie | live |
-| `GET/PATCH/DELETE /api/admin/landDeals/[id]` | Land deal detail + edit + delete | admin-cookie | live |
 | `POST /api/admin/send-merch` | Sends merch fulfillment email to a buyer | admin-cookie | live |
 | `GET /api/admin/search` | Global search across consumers + ranchers | admin-cookie | live |
 | `POST /api/admin/founders/comp` | Creates complimentary Founding Herd membership | admin-cookie | live |
@@ -184,8 +181,6 @@ Methods shown as exported handler names. Auth types: `JWT-cookie` = session cook
 | `GET /api/health` | Dependency health check — Airtable, Resend, Stripe, Telegram | Bearer CRON_SECRET | live |
 | `GET/POST /api/stats/public` | Public stats — rancher count, buyer count, closes (homepage counter) | none | live |
 | `GET /api/stats/buyers-by-state` | Buyer density by state — used in rancher onboarding wizard widget | none | live |
-| `GET /api/public/land` | Public land deals list | none | live |
-| `POST /api/land/[id]/inquire` | Public land inquiry form submission | none | live |
 | `GET/POST /api/inquiries` | Inquiry list / create (admin) | admin-cookie | live |
 | `GET/PATCH /api/inquiries/[id]` | Inquiry detail + status update | admin-cookie | live |
 | `POST /api/partners` | Rancher partnership inquiry form submission | none | live |
@@ -273,8 +268,6 @@ Source: `lib/email.ts`. ~50 named `sendX()` helpers. "Bypasses cap?" = listed in
 | `sendAffiliateInvite` | admin send-invite | Affiliate | Once | medium | no |
 | `sendAffiliateWelcome` | admin onboard affiliate | Affiliate | Once | medium | no |
 | `sendAdminAlert` | signup, hot-lead, error events | Ben (admin) | Triggered | zero | no |
-| `sendInquiryToRancher` | `/api/land/[id]/inquire` — land inquiry | Rancher | Per inquiry | medium | yes |
-| `sendInquiryAlertToAdmin` | `/api/land/[id]/inquire` | Ben (admin) | Per inquiry | zero | no |
 | `sendBroadcastEmail` | broadcast cron / admin tool | Any segment | Per campaign | high | no |
 | `sendMerchEmail` | admin `send-merch` | Buyer | Once | low | no |
 | `sendWaitlistEmail` | batch-approve (state not covered) | Buyer | Once | low | no |
@@ -316,9 +309,9 @@ Source: `TABLES` const in `lib/airtable.ts`. Single Airtable base (`AIRTABLE_BAS
 | `Ranchers` | All rancher records — onboarding state, capacity, served states, page content | Email, Onboarding Status, Page Live, Served States, Max Active Referrals, Current Active Referrals, Trust Mode, Agreement Signed | matching/suggest, rancher dashboard, admin dashboard | rancher/setup, rancher/landing-page, admin/ranchers, batch-approve, Telegram | Permanent |
 | `Referrals` | Buyer-rancher intro records — the core revenue unit | Consumer (linked), Rancher (linked), Status, Sale Amount, Commission, Commission Paid | rancher dashboard, close-detector, referral-chasup, admin/referrals | matching/suggest, rancher/referrals/[id], admin/referrals, Telegram | Permanent |
 | `Brands` | Brand partner listings | Brand Name, Tier, Payment Status, Logo URL, Active | admin/brands, public brand pages | /api/webhooks/stripe, admin/brands/[id] | Permanent |
-| `Land Deals` | Land-for-sale listings | Seller Name, Acres, Price, State, Status, Approved | /api/public/land, /land page | admin/landDeals, | Permanent |
+| `Land Deals` | RETIRED 2026-08-13 — land vertical removed from code; table left in Airtable (0 rows) | — | — | — | Ben may delete |
 | `News` | Blog / news posts | Title, Slug, Content (HTML), Status, Published At | /news page, /api/news | admin (news POST) | Permanent |
-| `Inquiries` | Land deal inquiries | Consumer linked, Rancher linked, Message, Interest Type, Status | admin/inquiries | /api/land/[id]/inquire, /api/inquiries | Permanent |
+| `Inquiries` | Inquiries (shared w/ wholesale) | Consumer linked, Rancher linked, Message, Interest Type, Status | admin/inquiries | /api/land/[id]/inquire, /api/inquiries | Permanent |
 | `Campaigns` | Scheduled and sent broadcast email campaigns | Audience Type, Subject, Body, Send At, Status, Sent Count | send-scheduled cron, admin/broadcast | admin/broadcast, Telegram /blast | Permanent |
 | `Referrals` / `Affiliates` | Affiliate program records — codes, clicks, conversions | Email, Referral Code, Clicks, Signups, Commission Rate, Active | affiliate/dashboard, admin/affiliates | admin/affiliates, /api/affiliates/track-click | Permanent |
 | `Conversations` | Inbound email reply log — AI-classified, sentiment-tagged | Thread ID, Referral linked, Body, Classification, Sentiment, Proposed Action | resend-inbound webhook, admin (future) | /api/webhooks/resend-inbound | Permanent |

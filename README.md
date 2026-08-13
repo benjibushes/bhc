@@ -80,7 +80,7 @@ Consumers are scored at signup based on interests, order type, budget, and conta
 |---|---|
 | `/` | Landing page — 4-path user selection |
 | `/access` | Consumer signup with intent scoring |
-| `/partner` | Rancher/brand/land application |
+| `/partner` | Rancher/brand application |
 | `/member` | Member dashboard (auth required) |
 | `/member/login` | Magic link login |
 | `/rancher` | Rancher dashboard (auth required) |
@@ -102,7 +102,7 @@ Consumers are scored at signup based on interests, order type, budget, and conta
 
 **Public:**
 - `POST /api/consumers` — Consumer signup (intent scoring, auto-approval)
-- `POST /api/partners` — Rancher/brand/land application
+- `POST /api/partners` — Rancher/brand application
 - `POST /api/inquiries` — Consumer inquiry submission
 - `GET /api/stats/public` — Public platform stats
 - `GET /api/news` — News articles
@@ -128,7 +128,6 @@ Consumers are scored at signup based on interests, order type, budget, and conta
 - `GET/PATCH /api/admin/consumers`, `/api/admin/consumers/[id]` — Consumer management
 - `GET/PATCH /api/admin/ranchers`, `/api/admin/ranchers/[id]` — Rancher management
 - `GET/PATCH /api/admin/brands`, `/api/admin/brands/[id]` — Brand management
-- `GET/PATCH /api/admin/landDeals`, `/api/admin/landDeals/[id]` — Land deal management
 - `POST /api/admin/broadcast` — Send/schedule broadcast emails
 - `GET /api/admin/broadcast/stats` — Audience counts by segment
 - `GET /api/admin/analytics` — Analytics data
@@ -156,7 +155,6 @@ Consumers are scored at signup based on interests, order type, budget, and conta
 - **Consumers** — Applications, status, segment, intent score, matching data
 - **Ranchers** — Ranch details, certification, capacity, agreement status
 - **Brands** — Brand partner applications
-- **Land Deals** — Property listings
 - **Inquiries** — Consumer→rancher requests, sale tracking, commissions
 - **Referrals** — Matching engine referrals with status tracking
 - **Campaigns** — Broadcast email campaigns and scheduling

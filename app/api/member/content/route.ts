@@ -60,11 +60,11 @@ export async function GET(request: Request) {
       )) as any[];
     };
 
-    // All six reads are independent — one parallel round instead of three
-    // serial rounds (consumer row → ranchers/deals/brands → referrals). Each
+    // All five reads are independent — one parallel round instead of three
+    // serial rounds (consumer row → ranchers/brands → referrals). Each
     // promise preserves its old failure semantics: consumer row is non-fatal
     // (segment stays empty), everything else degrades to [].
-    const [memberConsumer, ranchers, landDeals, brands, referrals, rancherOrderRows] = await Promise.all([
+    const [memberConsumer, ranchers, brands, referrals, rancherOrderRows] = await Promise.all([
       // Rehydrates memberState if the JWT didn't carry it — older session
       // tokens minted by /api/warmup/engage didn't include state, which made
       // the dashboard show "0 ranchers" even after a successful match.
@@ -74,7 +74,6 @@ export async function GET(request: Request) {
         ? (getRecordById(TABLES.CONSUMERS, memberId) as Promise<any>).catch(() => null)
         : Promise.resolve<any>(null),
       getAllRecords(TABLES.RANCHERS, "{Certified} = TRUE()").catch(() => []),
-      getAllRecords(TABLES.LAND_DEALS, "{Status} = 'Approved'").catch(() => []),
       // NOTE: Brands schema has no "Payment Status" field — the old filter
       // was always returning [] silently. Featured/Status are multilineText,
       // so use truthy-string checks. Brands are curated before being added.
@@ -285,7 +284,6 @@ export async function GET(request: Request) {
       hasOrderDetails: !!memberOrderType,
       stateRanchers,
       otherRanchers,
-      landDeals,
       brands,
       memberReferrals,
       shopOrders,
