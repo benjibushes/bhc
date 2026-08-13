@@ -89,6 +89,15 @@ export async function POST(request: Request) {
             'Notes': newNotes,
             // Backfill a blank/garbage Zip; never stomp one they already gave us.
             ...buyerZipPatch(zip, rec['Zip']),
+            // Backfill a BLANK State the same way (preference-fidelity audit
+            // 2026-08-12): the uncovered-state map capture POSTs `state`, but
+            // this branch silently dropped it for returning emails — so a
+            // State-less buyer re-submitting could never be selected by
+            // state-coverage-notify ("your state is now covered"). Trim-aware
+            // blank-only check (State is multilineText — whitespace-only
+            // values exist), mirroring reserve's backfill (reserve route:211).
+            // Never overwrite a non-blank State.
+            ...(state && !String(rec['State'] || '').trim() ? { 'State': state } : {}),
           });
         } catch (e) {
           // Non-fatal — the original record is safe either way.

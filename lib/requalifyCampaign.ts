@@ -34,6 +34,7 @@ import { isActiveDealReferral } from '@/lib/capacityCount';
 import { normalizeState } from '@/lib/states';
 import { hasServiceZipGate, buyerZipServedBy } from '@/lib/exclusiveZip';
 import { requalifySubject, type CampaignVariant } from '@/lib/campaignVariants';
+import { nationwideAllowed } from '@/lib/nationwidePreference';
 
 export type { Cut };
 
@@ -193,6 +194,8 @@ export type RequalifyQuizReason =
   | 'cut-unpriced'
   /** Buyer's state is outside this rancher's served set (the /r/d routing belt). */
   | 'state-not-served'
+  /** Nationwide (no-state-gate) offer, but the buyer explicitly opted 'local-only'. */
+  | 'local-only-preference'
   /** Rancher has an exclusive ZIP territory this buyer's ZIP is outside of (or unknown). */
   | 'zip-not-served'
   /** Buyer already has a live deal — a second deposit link would double-deal them. */
@@ -237,6 +240,9 @@ export interface RequalifyCtaInput {
  *   4. the buyer's state is one the rancher serves (the /r/d routing belt)
  *   5. the buyer has no active/held referral that would collide
  *   6. the money math yields a quotable all-in number
+ *   7. a nationwide (servedStates=null) offer additionally requires the buyer
+ *      NOT to have opted 'local-only' (Nationwide Preference — same gate
+ *      matching/suggest applies to the nationwide routing fallback)
  *
  * Otherwise: quiz fallback with a reason, exactly today's behavior.
  *
@@ -274,6 +280,21 @@ export function decideRequalifyCta(input: RequalifyCtaInput): RequalifyCtaDecisi
   if (Array.isArray(input.servedStates)) {
     const buyerState = normalizeState(consumer['State']);
     if (!buyerState || !input.servedStates.includes(buyerState)) return quiz('state-not-served');
+  }
+
+  // Gate 7 — NATIONWIDE PREFERENCE (preference-fidelity audit 2026-08-12).
+  // servedStates === null means the curated nationwide pair: the offer is a
+  // cross-state ship with no state belt at all. Routing already honors the
+  // buyer's explicit 'local-only' opt-out (matching/suggest skips the
+  // nationwide fallback via the same nationwideAllowed helper); this campaign
+  // rail must not one-tap the same buyer into the same cross-state offer.
+  // Exact parity with the suggest gate: ONLY the explicit 'local-only' value
+  // blocks — nationwide-ok / unset / garbage all pass (fail-open, a corrupted
+  // field never strands a buyer). A rancher with a real served-states set
+  // that covers the buyer's state is the LOCAL match these buyers opted to
+  // wait for, so the array branch above is deliberately not preference-gated.
+  if (input.servedStates === null && !nationwideAllowed(consumer['Nationwide Preference'])) {
+    return quiz('local-only-preference');
   }
 
   // Exclusive-ZIP belt. /api/checkout/deposit runs this as its LAST gate before

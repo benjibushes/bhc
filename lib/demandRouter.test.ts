@@ -835,3 +835,31 @@ test('opts.ranchers omitted → default pair used + skippedNoRancher is all-zero
   assert.equal(plan.sends[0].rancher.id, FOODSTEAD.id);
   assert.deepEqual(plan.skippedNoRancher, { west: 0, eastCentral: 0 });
 });
+
+// ── TIMING LADDER as a hot signal (preference-fidelity audit 2026-08-12) ────
+
+test('hot: a declared Timing of "Within 30 days" alone classifies hot (the ladder read at decision time)', () => {
+  assert.equal(classifyTier({ Timing: 'Within 30 days' }), 'hot');
+  // singleSelect object shape too.
+  assert.equal(classifyTier({ Timing: { id: 'sel1', name: 'Within 30 days' } }), 'hot');
+});
+
+test('timing ladder: W30 + Qualified At still ranks stranded-qualified (top tier unchanged)', () => {
+  assert.equal(
+    classifyTier({ Timing: 'Within 30 days', 'Qualified At': daysAgo(10) }),
+    'stranded-qualified',
+  );
+});
+
+test('timing ladder: weaker windows are NOT hot — W60 with intent stays warm, without intent stays unselected', () => {
+  assert.equal(classifyTier({ Timing: 'Within 60 days', 'Intent Score': 60 }), 'warm');
+  assert.equal(classifyTier({ Timing: 'Within 60 days' }), null);
+  assert.equal(classifyTier({ Timing: 'Just exploring' }), null);
+});
+
+test('timing ladder: mid-deal stays hands-off even with a 30-day window (finding 1 preserved)', () => {
+  assert.equal(
+    classifyTier({ Timing: 'Within 30 days', 'Referral Status': 'Negotiation' }),
+    null,
+  );
+});

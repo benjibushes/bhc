@@ -5,13 +5,16 @@
 //
 // Hierarchy of consent:
 //   - Ready to Buy (clicked "buying in 1-2 months")  -> ROUTE TO RANCHER
+//   - Declared Timing "Within 30 days" + quiz stamp  -> ROUTE TO RANCHER
 //   - Warmup Engaged (clicked YES on warmup email)   -> KEEP NURTURING
 //   - Qualified profile + state covered              -> SEND WARMUP
 //   - High-intent + state uncovered                  -> FOUNDER PITCH
 //   - Anything weaker                                -> PASSIVE NURTURE
 //
 // Rancher time is the scarce resource. Only buyers who EXPLICITLY signaled
-// purchase intent (R2B=true) get an intro. This protects the close rate
+// purchase intent get an intro: R2B=true, or a quiz-stamped declared
+// "Within 30 days" window (the same declaration, typed instead of clicked —
+// preference-fidelity audit 2026-08-12). This protects the close rate
 // + prevents the Ashcraft-pattern low-quality leads that burned ranchers
 // in the 2026-05-20 incident.
 
@@ -237,13 +240,27 @@ export function classifyBuyer(
 
   const readyToBuy = buyer['Ready to Buy'] === true;
   const engaged = !!buyer['Warmup Engaged At'];
+  // TIMING LADDER read at decision time (preference-fidelity audit
+  // 2026-08-12): a declared "Within 30 days" was write-time-frozen — baked
+  // into Intent Score at signup, then never consulted again, so a 30-day
+  // buyer without the R2B flag idled at nudge cadence while their window
+  // lapsed. W30 is the same explicit purchase-intent declaration the R2B
+  // click represents ("buying in 1-2 months" — W30 is strictly tighter).
+  const timingSoon = readEnumOrString(buyer['Timing']).trim() === 'Within 30 days';
+  // MATCH_NOW routes an intro via matching/suggest, whose Qualified At gate
+  // 412s unquizzed buyers — so the full promotion requires the quiz stamp
+  // (the routing gate itself is unchanged; this just never manufactures a
+  // MATCH_NOW row the gate would bounce). W30 without the stamp promotes to
+  // WARM_LEAD below: urgent cadence, no intro attempt.
+  const timingMatchNow = timingSoon && !!buyer['Qualified At'];
 
   // Covered state + explicit purchase intent → intro to rancher.
-  if (inCoveredState && readyToBuy) return 'MATCH_NOW';
+  if (inCoveredState && (readyToBuy || timingMatchNow)) return 'MATCH_NOW';
 
-  // Covered state + soft engagement (clicked warmup YES) → bi-weekly
-  // "ready yet?" nudge until they hit the R2B button.
-  if (inCoveredState && engaged) return 'WARM_LEAD';
+  // Covered state + soft engagement (clicked warmup YES) or a declared
+  // 30-day window without the quiz stamp → bi-weekly "ready yet?" nudge
+  // until they hit the R2B button (or finish the quiz).
+  if (inCoveredState && (engaged || timingSoon)) return 'WARM_LEAD';
 
   // Covered state, qualified profile, no engagement signal → first
   // re-warmup. They got an initial warmup, never clicked.

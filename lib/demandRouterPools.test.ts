@@ -13,6 +13,7 @@ import assert from 'node:assert/strict';
 import {
   buildCampaignPlan,
   buildCampaignPools,
+  buyerAllowsNationwidePool,
   campaignRancherForBuyer,
   stampedCampaignRancherId,
   startOfUtcDayMs,
@@ -382,4 +383,95 @@ test('a fresh nudge stamp cannot be masked by a STALE Last Contacted At (max win
 test('lastActivityMs counts the waiting-nudge stamp (nudged buyers are not 18-month-dead)', () => {
   const f = { 'Waiting Nudge Last Sent At': daysAgo(10) };
   assert.equal(lastActivityMs(f), Date.parse(daysAgo(10)));
+});
+
+// ── NATIONWIDE PREFERENCE pool gate (preference-fidelity audit 2026-08-12) ──
+// Routing honored Consumers.'Nationwide Preference'; the campaign planner did
+// not — a 'local-only' opt-out was still selectable for the curated nationwide
+// pair's cross-state waves. The pools carry a `nationwide` flag
+// (servedStates === null) and every touch is gated per buyer.
+
+test('pools: nationwide flag reflects servedStates=null vs a real served set', () => {
+  const pools = buildCampaignPools([
+    slot(FOODSTEAD, 2, null),
+    slot(CHAMPION, 2, new Set(['NE', 'KS'])),
+  ]);
+  assert.equal(pools[0].nationwide, true);
+  assert.equal(pools[1].nationwide, false);
+});
+
+test('buyerAllowsNationwidePool: only the explicit local-only opt-out blocks, and only on nationwide pools', () => {
+  const nw = { nationwide: true };
+  const regional = { nationwide: false };
+  assert.equal(buyerAllowsNationwidePool({}, nw), true, 'unset → allowed (never-asked loses nothing)');
+  assert.equal(buyerAllowsNationwidePool({ 'Nationwide Preference': 'nationwide-ok' }, nw), true);
+  assert.equal(buyerAllowsNationwidePool({ 'Nationwide Preference': 'garbage' }, nw), true, 'fail-open');
+  assert.equal(buyerAllowsNationwidePool({ 'Nationwide Preference': 'local-only' }, nw), false);
+  assert.equal(
+    buyerAllowsNationwidePool({ 'Nationwide Preference': { id: 's', name: 'local-only' } }, nw),
+    false,
+    'singleSelect object shape',
+  );
+  assert.equal(buyerAllowsNationwidePool({ 'Nationwide Preference': 'local-only' }, regional), true);
+});
+
+test('plan: a local-only buyer is NEVER Msg1-invited into a nationwide pool (skipped, not waitlisted)', () => {
+  const pools = buildCampaignPools([slot(FOODSTEAD, 5, null), slot(SILVERLINE, 5, null)]);
+  const plan = buildCampaignPlan(
+    [
+      hotBuyer('recLocalOnly1', 'CA', { 'Nationwide Preference': 'local-only' }),
+      hotBuyer('recOk1', 'CA', { 'Nationwide Preference': 'nationwide-ok' }),
+      hotBuyer('recUnset1', 'WA'),
+    ],
+    { now: NOW, dailyCap: 25, conversionBuffer: 3, pools },
+  );
+  const ids = plan.sends.map((s) => s.buyerId).sort();
+  assert.deepEqual(ids, ['recOk1', 'recUnset1'], 'opted-in + never-asked still planned');
+  assert.equal(plan.skippedNoRancher.west, 1, 'local-only buyer skipped (waiting for local supply)');
+  assert.equal(plan.waitlist.length, 0, 'not a capacity waitlist case');
+});
+
+test('plan: a local-only buyer still routes to a REGIONAL pool serving their state (fall-through skips the nationwide pools)', () => {
+  const pools = buildCampaignPools([
+    slot(FOODSTEAD, 5, null),
+    slot(SILVERLINE, 5, null),
+    slot(CHAMPION, 5, new Set(['NE', 'KS'])),
+  ]);
+  const plan = buildCampaignPlan(
+    [hotBuyer('recLocalNE1', 'NE', { 'Nationwide Preference': 'local-only' })],
+    { now: NOW, dailyCap: 25, conversionBuffer: 3, pools },
+  );
+  assert.equal(plan.sends.length, 1);
+  assert.equal(plan.sends[0].rancher.id, CHAMPION.id, 'the regional pool IS the local match they opted to wait for');
+});
+
+test('continuations + SMS-recovery: campaignRancherForBuyer refuses a nationwide pool for a local-only buyer (stamped or not)', () => {
+  const pools = buildCampaignPools([slot(FOODSTEAD, 5, null), slot(SILVERLINE, 5, null)]);
+  const stamped = {
+    State: 'CA',
+    'Nationwide Preference': 'local-only',
+    'Campaign Rancher': [FOODSTEAD.id],
+  };
+  assert.equal(campaignRancherForBuyer(stamped, pools), null, 'stamped nationwide pool refused');
+  const unstamped = { State: 'CA', 'Nationwide Preference': 'local-only' };
+  assert.equal(campaignRancherForBuyer(unstamped, pools), null, 'unstamped fallback refused too');
+  const okBuyer = { State: 'CA', 'Nationwide Preference': 'nationwide-ok', 'Campaign Rancher': [FOODSTEAD.id] };
+  assert.equal(campaignRancherForBuyer(okBuyer, pools)?.id, FOODSTEAD.id, 'opted-in buyer unaffected');
+});
+
+test('plan: mid-arc continuation for a local-only buyer in a nationwide pool is held back (skippedNoRancher), never sent', () => {
+  const pools = buildCampaignPools([slot(FOODSTEAD, 5, null), slot(SILVERLINE, 5, null)]);
+  const plan = buildCampaignPlan(
+    [
+      hotBuyer('recContLocal1', 'CA', {
+        'Nationwide Preference': 'local-only',
+        'Campaign Stage': 'Msg1 Sent',
+        'Campaign Last Sent At': daysAgo(4),
+        'Campaign Rancher': [FOODSTEAD.id],
+      }),
+    ],
+    { now: NOW, dailyCap: 25, conversionBuffer: 3, pools },
+  );
+  assert.equal(plan.sends.length, 0);
+  assert.equal(plan.skippedNoRancher.west, 1);
 });

@@ -41,6 +41,7 @@
 import { normalizeState } from './states';
 import { BEN_SALES_CAL_URL } from './salesContact';
 import { isActiveDealReferral } from './capacityCount';
+import { nationwideAllowed, NATIONWIDE_PREFERENCE_FIELD } from './nationwidePreference';
 
 // ─────────────────────────────────────────────────────────────────────
 // COAST → RANCHER ROUTING
@@ -288,7 +289,8 @@ export function activeDealBuyerKeys(
  * stranded-qualified: completed the funnel (Qualified At stamped — NO score
  *   floor, #359 parity) AND has no active referral — the highest-value
  *   "we dropped the ball" cohort.
- * hot: explicit purchase intent — Ready to Buy OR Warmup Engaged At.
+ * hot: explicit purchase intent — Ready to Buy, Warmup Engaged At, OR a
+ *   declared Timing of 'Within 30 days' (the ladder read at decision time).
  * warm: any other still-contactable lead with a usable intent score.
  *
  * PRE-FLIP GUARD (finding 1, 2026-07-01): NO tier selects a mid-deal buyer.
@@ -315,7 +317,15 @@ export function classifyTier(
 
   const readyToBuy = asBool(buyer['Ready to Buy']);
   const engaged = !!buyer['Warmup Engaged At'];
-  if (readyToBuy || engaged) return 'hot';
+  // TIMING LADDER (preference-fidelity audit 2026-08-12): a declared
+  // "Within 30 days" is explicit purchase intent — the same signal R2B/warmup
+  // clicks carry — but the Timing FIELD was write-time-frozen: no prioritizer
+  // read it, so a 30-day window lapsed invisibly at warm-tier cadence. Read
+  // the ladder at decision time: W30 classifies hot. (Most W30 buyers also
+  // carry Qualified At and rank stranded-qualified above — this catches the
+  // rest.)
+  const timingSoon = readEnumOrString(buyer['Timing']).trim() === 'Within 30 days';
+  if (readyToBuy || engaged || timingSoon) return 'hot';
 
   // WARM — a still-contactable lead. Require SOME intent signal so we don't
   // pull in pure tire-kickers (deliverability). Intent Score OR a high Intent
@@ -1156,6 +1166,33 @@ export interface CampaignPool {
   openSlots: number;
   /** True iff this pool may be routed a buyer in the (normalized) state. */
   serves: (stateCode: string) => boolean;
+  /**
+   * True iff this pool was configured with servedStates=null — the curated
+   * nationwide pair, whose offer is a CROSS-STATE ship. Preference-fidelity
+   * audit 2026-08-12: routing honored Consumers.'Nationwide Preference'
+   * (matching/suggest skips the nationwide fallback for 'local-only' buyers)
+   * but the campaign rails ignored it — a buyer who explicitly opted to wait
+   * for local was still selectable for a nationwide 1-tap deposit wave. The
+   * planner now gates every touch from a nationwide pool on
+   * nationwideAllowed(buyer) via buyerAllowsNationwidePool below. A rancher
+   * with a REAL served-states set that covers the buyer's state IS the local
+   * match these buyers opted to wait for — never gated.
+   */
+  nationwide: boolean;
+}
+
+/**
+ * Per-buyer, per-pool preference gate (pure). Blocks ONLY the explicit
+ * 'local-only' opt-out against a nationwide (servedStates=null) pool —
+ * nationwide-ok, unset, and garbage values all pass (same fail-open contract
+ * as lib/nationwidePreference.nationwideAllowed, exact parity with the
+ * matching/suggest fallback gate).
+ */
+export function buyerAllowsNationwidePool(
+  fields: Record<string, unknown>,
+  pool: Pick<CampaignPool, 'nationwide'>,
+): boolean {
+  return !pool.nationwide || nationwideAllowed(fields[NATIONWIDE_PREFERENCE_FIELD]);
 }
 
 /**
@@ -1186,6 +1223,7 @@ export function buildCampaignPools(
       rancher: { ...s.target },
       openSlots: Math.max(0, Math.floor(s.openSlots)),
       serves,
+      nationwide: servedStates === null,
     });
   });
   return pools;
@@ -1219,6 +1257,10 @@ function attributedPool(
  * serves the buyer's state (Routing-States gate applies to every touch, so a
  * swapped-in regional rancher never keeps mailing out-of-coverage buyers).
  * Unstamped buyers get the first pool serving their state. Pure.
+ *
+ * The Nationwide-Preference gate applies to every touch the same way
+ * (buyerAllowsNationwidePool): a 'local-only' buyer is never continued or
+ * SMS-recovered into a nationwide pool's offer, stamped or not.
  */
 export function campaignRancherForBuyer(
   fields: Record<string, unknown>,
@@ -1229,9 +1271,9 @@ export function campaignRancherForBuyer(
   const stamped = stampedCampaignRancherId(fields);
   if (stamped) {
     const p = pools.find((pl) => pl.rancher.id === stamped);
-    return p && p.serves(code) ? { ...p.rancher } : null;
+    return p && p.serves(code) && buyerAllowsNationwidePool(fields, p) ? { ...p.rancher } : null;
   }
-  const p = pools.find((pl) => pl.serves(code));
+  const p = pools.find((pl) => pl.serves(code) && buyerAllowsNationwidePool(fields, pl));
   return p ? { ...p.rancher } : null;
 }
 
@@ -1324,6 +1366,8 @@ function buildPlanWithPools(
 
   interface Cand extends PlannedSend {
     sortIntent: number;
+    /** Preference gate input for pool assignment — see buyerAllowsNationwidePool. */
+    nationwideOk: boolean;
   }
   const makeCand = (
     b: CampaignBuyer,
@@ -1348,6 +1392,7 @@ function buildPlanWithPools(
       phone,
       cut: cutForBuyer(f),
       sortIntent: num(f['Intent Score']) + num(f['Qualification Score']),
+      nationwideOk: nationwideAllowed(f[NATIONWIDE_PREFERENCE_FIELD]),
     };
   };
 
@@ -1394,8 +1439,14 @@ function buildPlanWithPools(
       contCands.push(makeCand(b, f, rancher, coast, tier, wave));
       continue;
     }
-    // NEW invite — must have at least one pool serving the state.
-    const firstServing = pools.find((p) => p.serves(stateCode));
+    // NEW invite — must have at least one pool serving the state that the
+    // buyer's Nationwide Preference allows (a 'local-only' buyer is never
+    // invited into a nationwide pool's cross-state offer; a regional pool
+    // covering their state still counts — that IS the local match they
+    // opted to wait for).
+    const firstServing = pools.find(
+      (p) => p.serves(stateCode) && buyerAllowsNationwidePool(f, p),
+    );
     if (!firstServing) {
       skippedNoRancher[coastKey]++;
       continue;
@@ -1413,7 +1464,7 @@ function buildPlanWithPools(
   newCands.sort(byPriority);
 
   const stripSort = (c: Cand): PlannedSend => {
-    const { sortIntent: _omit, ...rest } = c;
+    const { sortIntent: _omit, nationwideOk: _omit2, ...rest } = c;
     return rest;
   };
 
@@ -1430,10 +1481,16 @@ function buildPlanWithPools(
 
   // New invites: highest-priority first; each takes the FIRST eligible pool
   // with remaining budget (capacity fall-through to the next eligible pool).
+  // Eligibility = serves the state AND the buyer's Nationwide Preference
+  // allows the pool (fall-through must never land a 'local-only' buyer in a
+  // nationwide pool that the first-pass selection would have skipped).
   const remaining = new Map(budgetByPool);
   for (const c of newCands) {
     const target = pools.find(
-      (p) => p.serves(c.state) && (remaining.get(p.rancher.id) || 0) > 0,
+      (p) =>
+        p.serves(c.state) &&
+        (!p.nationwide || c.nationwideOk) &&
+        (remaining.get(p.rancher.id) || 0) > 0,
     );
     if (target) {
       remaining.set(target.rancher.id, (remaining.get(target.rancher.id) || 0) - 1);

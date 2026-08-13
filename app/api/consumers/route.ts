@@ -15,6 +15,7 @@ import { transitionBuyerStage } from '@/lib/contracts';
 import { funnelRecord } from '@/lib/funnelMetrics';
 import { computeFunnelIntentScore, classifyFunnelIntent } from '@/lib/funnelIntentScore';
 import { guardFunnelUpsertFields } from '@/lib/funnelUpsert';
+import { normalizeLegacyTiming } from '@/lib/qualifyUpdates';
 import { normalizePhoneE164 } from '@/lib/phoneHygiene';
 import { BUDGET_OPTIONS } from '@/lib/funnelConfig';
 import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
@@ -221,6 +222,25 @@ export async function POST(request: Request) {
       });
       const funnelClassificationQ = classifyFunnelIntent(funnelScoreQ);
 
+      // ── Rancher deep-link pin (preference-fidelity audit 2026-08-12) ──────
+      // BuyerFunnel now POSTs its rancherSlug prop (the ?rancher= entry).
+      // Resolving it here makes the `Preferred Rancher` link REAL for funnel
+      // signups — the G15 write below in the legacy branch could never fire
+      // because no live client sent rancherSlug, so the field sat at 0 rows
+      // while the pin rode only the transient campaign string. Best-effort:
+      // a failed lookup never blocks the signup (the campaign string still
+      // carries the pin for matching/suggest's stored-Campaign fallback).
+      const rancherSlugQ = typeof body.rancherSlug === 'string' ? body.rancherSlug.trim() : '';
+      let pinnedRancherQ: any = null;
+      if (rancherSlugQ) {
+        try {
+          pinnedRancherQ = await getRancherBySlug(rancherSlugQ);
+          if (!pinnedRancherQ) console.warn(`[funnel] rancher slug "${rancherSlugQ}" not found or not live`);
+        } catch (e) {
+          console.error(`[funnel] rancher slug lookup failed "${rancherSlugQ}":`, e);
+        }
+      }
+
       // Source/UTMs exactly as the legacy flow records them.
       const funnelFields: Record<string, unknown> = {
         'Full Name': fullNameQ,
@@ -253,6 +273,20 @@ export async function POST(request: Request) {
       // Budget only when the buyer answered the (optional) chip — a skip never
       // clobbers a value already on the record from an earlier entry.
       if (budgetQ) funnelFields['Budget'] = budgetQ;
+      // Preferred Rancher pin — written only when the buyer entered through a
+      // rancher's own deep link and the slug resolved. A re-entry through a
+      // DIFFERENT rancher's page updates it (matches the campaign string's
+      // precedence rule in BuyerFunnel); a generic /access re-entry omits the
+      // key entirely, leaving any stored pin untouched.
+      if (pinnedRancherQ) funnelFields['Preferred Rancher'] = [pinnedRancherQ.id];
+      // W30 → Ready to Buy promotion (preference-fidelity audit 2026-08-12):
+      // parity with the legacy branch's rule below (~:700) — a declared
+      // "Within 30 days" is the same immediate-intent signal there as here,
+      // but the funnel branch never wrote the flag, leaving the LIVE signup
+      // path strictly weaker than the deprecated one on identical answers
+      // (9/82 W30 rows carried R2B). True-only: never write false, so a
+      // re-entry with weaker timing can't revoke an earlier promotion.
+      if (timingQ === 'Within 30 days') funnelFields['Ready to Buy'] = true;
 
       // ── Ad attribution write-through (per-field UTM + click-ids) ─────────────
       // Reads the `attribution` object posted by BuyerFunnel from bhc_source_v2.
@@ -681,6 +715,20 @@ export async function POST(request: Request) {
         timing ? `[Timing: ${timing}]` : '',
         notes || '',
       ].filter(Boolean).join('\n'),
+      // Timing FIELD write (preference-fidelity audit 2026-08-12): this branch
+      // buried timing ONLY in the Notes marker — the singleSelect stayed blank,
+      // so Airtable-side segmentation and every Timing reader missed these
+      // buyers (589 legacy May-June rows carry the marker with a blank field;
+      // /api/qualify papers over it via timingFromNotes at resume). Mirror the
+      // quiz path: map legacy vocab through normalizeLegacyTiming ('1-3
+      // months'→'Within 60 days', '3-6 months'→'Within 90 days'), whitelist to
+      // the select's choices so an unknown value can't reject the whole write,
+      // and keep the Notes marker above for timingFromNotes continuity.
+      ...(() => {
+        const t = normalizeLegacyTiming(String(timing || ''));
+        const TIMING_CHOICES = ['ASAP', 'Within 30 days', 'Within 60 days', 'Within 90 days', 'Just exploring'];
+        return TIMING_CHOICES.includes(t) ? { 'Timing': t } : {};
+      })(),
       'Source': isRancherDeepLink ? `rancher-${rancherSlug}` : (source || 'organic'),
       'Intent Score': serverIntentScore,
       'Intent Classification': serverIntentClassification,

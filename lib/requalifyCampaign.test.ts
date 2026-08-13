@@ -368,3 +368,68 @@ test('validate: junk rail is rejected, never silently defaulted', () => {
     assert.ok('error' in parsed, `rail=${JSON.stringify(rail)} must be rejected`);
   }
 });
+
+// ── decideRequalifyCta gate 7 — Nationwide Preference (2026-08-12) ──────────
+// The curated nationwide pair ships with servedStates=null (no state belt).
+// Routing already honors the buyer's explicit 'local-only' opt-out
+// (matching/suggest skips the nationwide fallback); the campaign rail must
+// mirror it or a buyer who opted to wait for local gets a cross-state 1-tap
+// deposit wave anyway.
+
+// Passes every earlier gate: Connect-active tier_v2, operational, priced Half.
+const ELIGIBLE_RANCHER = {
+  'Pricing Model': 'tier_v2',
+  'Stripe Connect Status': 'active',
+  'Active Status': 'Active',
+  'Agreement Signed': true,
+  Tier: 'Pasture',
+  'Half Price': 2000,
+  'Half Deposit': 500,
+};
+
+const oneTapConsumer = (extra: Record<string, unknown> = {}) => ({
+  id: 'recBUYER000000001',
+  'Order Type': 'Half',
+  State: 'TX',
+  ...extra,
+});
+
+const ctaInput = (consumerExtra: Record<string, unknown>, servedStates: string[] | null) => ({
+  consumers: [oneTapConsumer(consumerExtra)],
+  rancher: ELIGIBLE_RANCHER,
+  buyerReferrals: [],
+  servedStates,
+  commissionRate: 0.1,
+});
+
+test('gate 7: nationwide offer + no preference set → one-tap (fail-open, pre-feature buyers lose nothing)', () => {
+  const d = decideRequalifyCta(ctaInput({}, null));
+  assert.equal(d.mode, 'one-tap');
+});
+
+test('gate 7: nationwide offer + explicit local-only → quiz with local-only-preference reason', () => {
+  const d = decideRequalifyCta(ctaInput({ 'Nationwide Preference': 'local-only' }, null));
+  assert.deepEqual(d, { mode: 'quiz', reason: 'local-only-preference' });
+});
+
+test('gate 7: handles the Airtable singleSelect OBJECT shape too', () => {
+  const d = decideRequalifyCta(
+    ctaInput({ 'Nationwide Preference': { id: 'sel1', name: 'local-only' } }, null),
+  );
+  assert.deepEqual(d, { mode: 'quiz', reason: 'local-only-preference' });
+});
+
+test('gate 7: nationwide-ok opt-in and garbage values both pass (only the explicit opt-out blocks)', () => {
+  assert.equal(decideRequalifyCta(ctaInput({ 'Nationwide Preference': 'nationwide-ok' }, null)).mode, 'one-tap');
+  assert.equal(decideRequalifyCta(ctaInput({ 'Nationwide Preference': '???' }, null)).mode, 'one-tap');
+});
+
+test('gate 7: a REGIONAL rancher serving the buyer state is NOT preference-gated — that IS the local match', () => {
+  const d = decideRequalifyCta(ctaInput({ 'Nationwide Preference': 'local-only' }, ['TX']));
+  assert.equal(d.mode, 'one-tap');
+});
+
+test('gate 7 ordering: the state belt still wins for regional ranchers (local-only buyer out of zone → state-not-served)', () => {
+  const d = decideRequalifyCta(ctaInput({ 'Nationwide Preference': 'local-only' }, ['MT']));
+  assert.deepEqual(d, { mode: 'quiz', reason: 'state-not-served' });
+});
