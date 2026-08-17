@@ -32,6 +32,27 @@
 // settlement rails. claimOnce degrades open only when Redis is entirely
 // absent (local dev); a claim is taken BEFORE the send so retries/crashes
 // cannot double-mail.
+//
+// CONNECT RAIL ONLY, for the re-ping half (broker-rail truthfulness,
+// 2026-08-17). The Airtable formula below keys on {Rancher Accepted At} = '',
+// which is a CONNECT stamp — a represented (broker-rail) ranch has no
+// dashboard, no login and no Accept Slot button, so that field is empty for
+// every broker sale forever. Silently, every broker sale was therefore taking
+// the full Connect treatment: up to 3 emails telling an off-platform rancher to
+// "tap Accept Slot in your dashboard", plus the 24h BUYER note whose premise
+// ("they haven't confirmed your slot yet… we've already gone back to them") is
+// machinery that does not exist on that rail. selectSlaEligible now refuses
+// broker rows outright (lib/depositSla::isBrokerRailReferral), which drops BOTH
+// the rancher re-ping and the buyer note, since the buyer send lives inside the
+// same loop — correct, because on this rail there is no silence to report: with
+// no Accept event, "the ranch hasn't confirmed" is not an observation, and
+// telling every broker buyer at 24h that their ranch is slow would be a
+// manufactured alarm.
+//
+// What the broker rail KEEPS is the 72h operator escalation (see the escalation
+// pass below). That one is Ben-facing, fires once per referral ever, and asks
+// the only question this rail can be behind on — did the ranch actually make
+// contact? Removing it would have left broker sales with no backstop at all.
 
 import { NextResponse } from 'next/server';
 import { getAllRecords, getRecordById, updateRecord, TABLES } from '@/lib/airtable';
@@ -47,6 +68,7 @@ import { sendBuyerDepositDelayNotice } from '@/lib/emailMinimal';
 import {
   selectSlaEligible,
   selectEscalationDue,
+  isBrokerRailReferral,
   hoursSinceDeposit,
   DEFAULT_SLA_HOURS,
   ESCALATION_AFTER_HOURS,
@@ -108,14 +130,35 @@ async function realHandler(
     };
   }
 
-  // Enrich each candidate with its linked Payments row BEFORE the eligibility
-  // filter. A deposit refunded/disputed while still Awaiting Payment is NOT
+  // Enrich each candidate with its linked Payments row + Ranchers row BEFORE
+  // the eligibility filter.
+  //
+  // PAYMENTS: a deposit refunded/disputed while still Awaiting Payment is NOT
   // reflected on the Referral (restoreReferralAfterRefund only flips Closed
   // Won; markDepositDisputed writes only the Payments row) — the Payments row
   // is the authoritative signal. Without this the cron re-pings refunded /
   // disputed deposits forever. Best-effort per row: a lookup failure leaves
   // __payment null and the row is still gated by the Referral-side checks.
+  //
+  // RANCHER: the `Broker Rail` checkbox is the authoritative rail signal, and
+  // the selector needs it BEFORE it decides (a broker row must never reach the
+  // Connect re-ping). Reading it here rather than inside the ping loop also
+  // means no row is fetched twice — the loop below reuses `__rancher`, so the
+  // only added Airtable reads are for candidates that turn out to be ineligible.
+  // Best-effort: a lookup failure leaves __rancher null, the two marker signals
+  // in isBrokerRailReferral still stand, and the ping loop skips the row anyway
+  // because it cannot notify a rancher it could not read.
   for (const ref of candidates) {
+    try {
+      // Same link resolution the ping loop uses. An empty link array yields no
+      // id and leaves __rancher null rather than querying for `undefined`.
+      const linked: unknown = ref['Rancher'] || ref['Suggested Rancher'];
+      const linkedId = Array.isArray(linked) ? linked[0] : null;
+      ref.__rancher = linkedId ? await getRecordById(TABLES.RANCHERS, String(linkedId)) : null;
+    } catch (e: any) {
+      ref.__rancher = null;
+      console.warn(`[deposit-accept-sla] rancher lookup failed for ${ref.id} (non-fatal):`, e?.message);
+    }
     try {
       // Payments-by-referral (G1/E6): exact match on {Referral Id Text} first,
       // legacy ARRAYJOIN scan only as back-compat fallback (see
@@ -153,15 +196,11 @@ async function realHandler(
       continue;
     }
 
-    let rancher: any = null;
-    try {
-      rancher = await getRecordById(TABLES.RANCHERS, rancherId);
-    } catch (e: any) {
-      errors.push(`${refId}: rancher fetch failed (${e?.message})`);
-      continue;
-    }
+    // Already read during enrichment (which is where the rail decision needed
+    // it) — never re-fetched here.
+    const rancher: any = ref.__rancher;
     if (!rancher) {
-      errors.push(`${refId}: rancher record missing`);
+      errors.push(`${refId}: rancher record missing or unreadable`);
       continue;
     }
 
@@ -250,25 +289,32 @@ async function realHandler(
       const won = await claimOnce(`deposit-sla-escalation:${refId}`, ESCALATION_CLAIM_TTL_SEC);
       if (!won) continue;
       const hrs = hoursSinceDeposit(ref, now);
-      // Best-effort rancher name for the card — a lookup failure never blocks
-      // the escalation itself.
-      let rancherLabel = 'the rancher';
-      try {
-        const rIds: string[] = ref['Rancher'] || ref['Suggested Rancher'] || [];
-        const rId = Array.isArray(rIds) ? rIds[0] : null;
-        if (rId) {
-          const rancher: any = await getRecordById(TABLES.RANCHERS, rId);
-          rancherLabel = rancher?.['Operator Name'] || rancher?.['Ranch Name'] || rancherLabel;
-        }
-      } catch {}
+      // Rancher name for the card, from the enrichment read above. Null (an
+      // unreadable record) never blocks the escalation itself.
+      const escRancher: any = ref.__rancher;
+      const rancherLabel =
+        escRancher?.['Operator Name'] || escRancher?.['Ranch Name'] || 'the rancher';
+      const buyerLabel = String(ref['Buyer Name'] || 'A buyer');
+      // BROKER RAIL — the same 72h trigger, a different question. This rail has
+      // no Accept Slot, no thread and no payout event, so "unaccepted" is not a
+      // finding here and the machine never emailed this rancher at all. What
+      // Ben actually needs to know is whether the ranch picked up the order and
+      // called the buyer — the one thing nothing in the system can observe.
+      const broker = isBrokerRailReferral(ref);
       await sendOperatorSignal({
         urgency: 'loud',
         kind: 'stuck-rancher',
-        summary: `paid deposit unaccepted ${hrs}h — manual intervention needed`,
-        detail:
-          `${String(ref['Buyer Name'] || 'A buyer')} paid a deposit ${hrs}h ago and ${rancherLabel} ` +
-          `still hasn't tapped Accept Slot. The rancher has had 3 email pings — automated chasing is DONE ` +
-          `for this deal. Call ${rancherLabel}, re-route the buyer, or refund. This alert fires once.`,
+        summary: broker
+          ? `broker sale ${hrs}h old — confirm the ranch made contact`
+          : `paid deposit unaccepted ${hrs}h — manual intervention needed`,
+        detail: broker
+          ? `${buyerLabel} paid a deposit ${hrs}h ago on the represented-seller rail with ${rancherLabel}. ` +
+            `Nothing in the system can tell us whether that ranch has the order or has called the buyer — ` +
+            `this rail has no dashboard and no accept step. Check the ranch has the fulfillment sheet, ` +
+            `then call them. This alert fires once.`
+          : `${buyerLabel} paid a deposit ${hrs}h ago and ${rancherLabel} ` +
+            `still hasn't tapped Accept Slot. The rancher has had 3 email pings — automated chasing is DONE ` +
+            `for this deal. Call ${rancherLabel}, re-route the buyer, or refund. This alert fires once.`,
         refs: [{ type: 'referral', id: String(refId) }],
         dedupeKey: `deposit-sla-escalation:${refId}`,
         dedupeWindowMs: 7 * 24 * 60 * 60 * 1000,

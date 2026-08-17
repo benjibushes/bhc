@@ -7,6 +7,23 @@
 // the platform: the buyer paid, is waiting for a call, and nothing happens. The
 // cron re-pings the rancher + escalates to Ben. This module is the dependency-
 // free decision logic so it unit-tests without Airtable.
+//
+// CONNECT RAIL ONLY — the re-ping half (2026-08-17). "Rancher Accepted At" is
+// Connect machinery: the rancher taps Accept Slot in a dashboard. A BROKER-rail
+// sale is a represented ranch with no dashboard, no login and no Accept button,
+// so that field is empty forever — every broker sale matched the cron's Airtable
+// formula and got up to 3 emails telling an off-platform rancher to tap
+// something that does not exist, plus a buyer note whose premise ("they haven't
+// confirmed your slot") is machinery this rail doesn't have. isSlaEligible now
+// refuses broker rows outright. The 72h operator escalation deliberately still
+// fires for them — see isEscalationDue.
+//
+// The two brokerRail imports are the only ones here; both modules are hermetic
+// (brokerRail imports lib/pricing and nothing else, commission imports
+// brokerRail and nothing else), so this stays Airtable-free and unit-testable.
+
+import { isBrokerRancher, BROKER_PAYMENT_TYPE } from './brokerRail';
+import { isBrokerReferralRow } from './commission';
 
 export const DEFAULT_SLA_HOURS = 4;
 // Re-ping at most once per ~day. 20h (not 24h) so a daily-ish cron cadence
@@ -56,6 +73,10 @@ export interface SlaPaymentLike {
   'Refunded At'?: unknown;
   Status?: unknown;            // 'refunded' on a full refund
   'Dispute Status'?: unknown;  // any non-empty value = active/closed dispute
+  // Ledger-side rail marker — 'broker_deposit' on the broker rail
+  // (lib/contracts/payments recordBrokerDeposit). Present on every settled
+  // broker row, so the rail is readable without a second Airtable lookup.
+  Type?: unknown;
 }
 
 export interface SlaReferralLike {
@@ -75,6 +96,34 @@ export interface SlaReferralLike {
   // itself is NOT flipped in those cases, so without this the cron would re-ping
   // a refunded/disputed deposit forever.
   __payment?: SlaPaymentLike | null;
+  // Referral-side broker marker, stamped at referral creation
+  // (lib/brokerReferral) — present before, during and after payment.
+  'Match Type'?: unknown;
+  // Linked Ranchers row, attached by the cron. The AUTHORITATIVE rail signal
+  // (`Broker Rail` checkbox); the two markers above are belts for the case
+  // where the record could not be read.
+  __rancher?: unknown;
+}
+
+/**
+ * Is this SLA candidate a BROKER-rail sale?
+ *
+ * Three independent signals, any one of which is conclusive — a Connect
+ * referral carries none of them:
+ *   1. the linked rancher's `Broker Rail` checkbox (authoritative — the same
+ *      strict parse every other broker surface uses);
+ *   2. the linked Payments row's `Type` = 'broker_deposit' (written at settle);
+ *   3. the referral's `Match Type` = 'Broker — Deposit' (written at mint).
+ *
+ * OR rather than AND on purpose: signals 2 and 3 keep the exclusion working
+ * when the rancher record is unreadable, and a false "this is broker" would
+ * merely skip an email while a false "this is Connect" emails a represented
+ * ranch instructions for a dashboard they do not have.
+ */
+export function isBrokerRailReferral(ref: SlaReferralLike): boolean {
+  if (isBrokerRancher(ref.__rancher)) return true;
+  if (String(ref.__payment?.Type || '').trim() === BROKER_PAYMENT_TYPE) return true;
+  return isBrokerReferralRow(ref);
 }
 
 /**
@@ -126,6 +175,9 @@ function toMs(v: unknown): number {
  *   6. Not re-pinged within the last `repingCooldownHours` (dedupe).
  *   7. Still inside the re-ping window (max ~3 pings total — after that the
  *      rancher goes quiet and the operator escalation takes over).
+ *   8. The referral is on the CONNECT rail. A broker sale can never satisfy
+ *      condition 2 (nothing writes Rancher Accepted At there), so without this
+ *      it would qualify forever — see the module header.
  */
 export function isSlaEligible(ref: SlaReferralLike, opts: SlaOptions = {}): boolean {
   const slaHours = opts.slaHours ?? DEFAULT_SLA_HOURS;
@@ -139,6 +191,11 @@ export function isSlaEligible(ref: SlaReferralLike, opts: SlaOptions = {}): bool
 
   // Rancher already accepted — slot locked, nothing to chase.
   if (ref['Rancher Accepted At']) return false;
+
+  // BROKER RAIL — this whole rail (re-ping copy, "tap Accept Slot", the buyer
+  // delay note) describes Connect machinery a represented ranch does not have.
+  // Chased by the operator escalation instead.
+  if (isBrokerRailReferral(ref)) return false;
 
   const status = String(ref.Status || '');
   if (SLA_EXCLUDED_STATUSES.has(status)) return false;
@@ -180,6 +237,16 @@ export interface EscalationOptions {
  * status, refunded/disputed, accepted) — the cron dedupes the actual send per
  * referral (claimOnce + sendOperatorSignal dedupeKey), so this returning true
  * on every run after 72h is safe by design.
+ *
+ * BROKER ROWS ARE DELIBERATELY NOT EXCLUDED (2026-08-17). They are excluded
+ * from the re-ping (isSlaEligible) because that rail's copy is Connect-only,
+ * but the escalation is the opposite case: on the broker rail NOTHING in the
+ * system can tell us whether the ranch ever called the buyer — there is no
+ * Accept, no thread, no payout event — so a one-shot "did the ranch make
+ * contact?" prompt to a human is the only backstop that exists, and dropping it
+ * would leave broker sales with no safety net at all. It is operator-facing,
+ * fires once per referral ever, and the cron renders broker-correct copy for it
+ * (the buyer and the ranch are never emailed by this path).
  */
 export function isEscalationDue(ref: SlaReferralLike, opts: EscalationOptions = {}): boolean {
   const afterHours = opts.escalationAfterHours ?? ESCALATION_AFTER_HOURS;

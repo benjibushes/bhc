@@ -27,6 +27,7 @@ import { isDepositAlreadyPaid } from '@/lib/depositPaidState';
 import { hasServiceZipGate, buyerZipServedBy } from '@/lib/exclusiveZip';
 import { ZIP_OUT_OF_AREA_MESSAGE } from '@/lib/buyerZip';
 import { referralRailForRancher } from '@/lib/brokerRail';
+import { depositRailForReferral, brokerSheetDelivery } from '@/lib/depositSuccessCopy';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -671,6 +672,28 @@ export async function GET(req: Request) {
     // buyer still recognizes; never blocks the paid state. In the SAME parallel
     // batch as the rancher/consumer reads, so it adds no latency.
     let depositValue = 0;
+    // RAIL (broker-rail truthfulness, 2026-08-17). Every success-page load
+    // lands on this branch, and this is the ONLY place the page can learn which
+    // rail it is rendering for: the deposit success page is the success_url of
+    // BOTH the Connect and the broker checkout, and its "what happens next"
+    // story (message thread, rancher accepts the slot, Stripe payout) is
+    // Connect machinery a represented ranch does not have. The rancher record
+    // is already being read here, so the rail costs no extra Airtable call.
+    // A FAILED rancher read does not downgrade a broker sale to the Connect
+    // story: depositRailForReferral falls back to the referral's own Match
+    // Type, which is stamped at mint and needs no extra read.
+    let paidRail: 'connect' | 'broker' = depositRailForReferral(referral, null);
+    // Broker only: did the represented ranch actually receive the fulfillment
+    // sheet? Derived from the settlement stamp on the referral's Notes; the
+    // page claims "we told them" only when that says so. `Notes` itself is
+    // operator-internal and never leaves the server — only this verdict does.
+    let rancherNotified: 'delivered' | 'not-delivered' | 'unknown' | undefined;
+    // Rancher/ranch name for the post-deposit copy. Previously only the slug
+    // came back, so the page addressed every paid buyer's ranch as "your
+    // rancher"; the broker copy in particular has to name the ranch the buyer
+    // will actually be dealing with.
+    let paidRancherName = '';
+    let paidRanchName = '';
     try {
       const paidRancherId = (referral['Rancher'] || referral['Suggested Rancher'] || [])[0];
       const { findPaymentsByReferral } = await import('@/lib/contracts/payments');
@@ -682,6 +705,9 @@ export async function GET(req: Request) {
         findPaymentsByReferral(referralId, { statusClause: `{Status} = "succeeded"` }).catch(() => []),
       ]);
       paidSlug = String(paidRancher?.['Slug'] || '');
+      paidRancherName = String(paidRancher?.['Operator Name'] || paidRancher?.['Ranch Name'] || '');
+      paidRanchName = String(paidRancher?.['Ranch Name'] || '');
+      paidRail = depositRailForReferral(referral, paidRancher);
       paidAffiliateCode = String(paidConsumer?.['Affiliate Code'] || '').trim();
       const settledRow = Array.isArray(paidPayments) ? paidPayments[0] : null;
       const totalChargedCents = Number(settledRow?.['Total Charged Cents'] || 0);
@@ -689,12 +715,21 @@ export async function GET(req: Request) {
         ? totalChargedCents / 100
         : Number(referral['Deposit Amount'] || 0);
     } catch {}
+    // Outside the try: the verdict must be computed even if the reads above
+    // threw, because 'broker' can be known from the referral alone.
+    rancherNotified = paidRail === 'broker' ? brokerSheetDelivery(referral) : undefined;
     return NextResponse.json(
       {
         error: 'referral_closed',
         status: refStatus,
-        // Surfaced so the success page can deep-link the share to the rancher.
-        rancher: { slug: paidSlug },
+        // Surfaced so the success page can deep-link the share to the rancher
+        // and name the ranch in its post-deposit copy.
+        rancher: { slug: paidSlug, name: paidRancherName, ranchName: paidRanchName },
+        // Which deposit rail this was, and (broker only) whether the ranch was
+        // actually sent the order. The success page renders rail-correct next
+        // steps off these two.
+        rail: paidRail,
+        rancherNotified,
         affiliateCode: paidAffiliateCode,
         // Buyer's share size (raw Order Type). The success page's affiliate
         // GearBlock maps this via cutForBuyer to pick cut-appropriate gear
@@ -755,6 +790,17 @@ export async function GET(req: Request) {
         error: 'not_connect_rail',
         redirectUrl: `/checkout/${referralId}/broker`,
         message: 'This ranch checks out through our represented-seller flow.',
+        // The success page reaches this branch in the webhook-lag window right
+        // after a broker deposit is paid (the referral has not been stamped
+        // Deposit Paid At yet, so the already-paid 409 above hasn't taken
+        // over). Naming the rail + the ranch here means the page renders
+        // broker-correct copy for those seconds instead of the Connect story.
+        rail: 'broker',
+        rancher: {
+          name: String(rancher['Operator Name'] || rancher['Ranch Name'] || ''),
+          ranchName: String(rancher['Ranch Name'] || ''),
+          slug: String(rancher['Slug'] || ''),
+        },
       },
       { status: 409 },
     );

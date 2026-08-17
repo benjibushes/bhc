@@ -7,6 +7,7 @@ import {
   isRefundedOrDisputed,
   isEscalationDue,
   selectEscalationDue,
+  isBrokerRailReferral,
   repingWindowHours,
   DEFAULT_SLA_HOURS,
   DEFAULT_REPING_COOLDOWN_HOURS,
@@ -366,4 +367,84 @@ test('selectEscalationDue filters a mixed list; ping-eligibility and escalation 
   assert.deepEqual(selectEscalationDue(refs, { now: NOW }).map((r) => r.id), ['gone-dark']);
   // The escalation-due row must NOT also be ping-eligible (rancher goes quiet).
   assert.deepEqual(selectSlaEligible(refs, { now: NOW }).map((r) => r.id), ['fresh']);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BROKER RAIL EXCLUSION (2026-08-17)
+//
+// Nothing on the broker rail ever writes 'Rancher Accepted At' — a represented
+// ranch has no dashboard and no Accept Slot button. Every broker sale therefore
+// matched this cron's Airtable formula forever and got up to 3 re-pings telling
+// an off-platform rancher to tap a button that does not exist, plus a buyer
+// delay note whose whole premise ("they haven't confirmed your slot") is
+// Connect machinery. The re-ping rail must skip the broker rail entirely.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const brokerBase = { 'Deposit Paid At': hoursAgo(5), Status: 'Awaiting Payment' };
+
+test('broker (rancher record): NOT eligible for the Connect re-ping', () => {
+  assert.equal(
+    isSlaEligible({ ...brokerBase, __rancher: { 'Broker Rail': true } }, { now: NOW }),
+    false,
+  );
+});
+
+test('broker (Payments row Type): NOT eligible even without the rancher record', () => {
+  assert.equal(
+    isSlaEligible({ ...brokerBase, __payment: { Type: 'broker_deposit' } }, { now: NOW }),
+    false,
+  );
+});
+
+test('broker (Match Type marker): NOT eligible even without rancher or payment', () => {
+  assert.equal(
+    isSlaEligible({ ...brokerBase, 'Match Type': 'Broker — Deposit' }, { now: NOW }),
+    false,
+  );
+});
+
+test('a Connect referral with a linked rancher record is STILL eligible', () => {
+  assert.equal(
+    isSlaEligible(
+      {
+        ...brokerBase,
+        __rancher: { 'Broker Rail': false, 'Stripe Connect Account Id': 'acct_x' },
+        __payment: { Type: 'deposit' },
+        'Match Type': 'Direct (Rancher Page) — Deposit',
+      },
+      { now: NOW },
+    ),
+    true,
+  );
+});
+
+test('selectSlaEligible drops broker rows and keeps Connect ones', () => {
+  const rows = [
+    { id: 'recCONNECT1', ...brokerBase },
+    { id: 'recBROKER1', ...brokerBase, __rancher: { 'Broker Rail': true } },
+    { id: 'recBROKER2', ...brokerBase, __payment: { Type: 'broker_deposit' } },
+  ];
+  assert.deepEqual(
+    selectSlaEligible(rows, { now: NOW }).map((r) => r.id),
+    ['recCONNECT1'],
+  );
+});
+
+test('isBrokerRailReferral: strict — a string "false" checkbox is not broker', () => {
+  assert.equal(isBrokerRailReferral({ __rancher: { 'Broker Rail': 'false' } }), false);
+  assert.equal(isBrokerRailReferral({ __rancher: { 'Broker Rail': 'true' } }), true);
+  assert.equal(isBrokerRailReferral({}), false);
+});
+
+test('broker referrals STILL escalate at 72h — the operator backstop is kept', () => {
+  // Deliberate: the re-ping is wrong on this rail, but "did the ranch ever call
+  // the buyer?" has no other signal, so the one-shot human escalation stays.
+  // The cron renders broker-correct copy for it.
+  assert.equal(
+    isEscalationDue(
+      { 'Deposit Paid At': hoursAgo(80), Status: 'Awaiting Payment', __rancher: { 'Broker Rail': true } },
+      { now: NOW },
+    ),
+    true,
+  );
 });
