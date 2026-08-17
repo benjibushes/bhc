@@ -2393,6 +2393,55 @@ export async function sendDemandRouterCampaign(data: {
 }
 
 // =====================================================
+// OPERATOR SEND — the sell console's "send it" rail (2026-08-17).
+//
+// Ben just closed someone on the phone. The console mints the link (CONNECT
+// /r/d, BROKER /r/b, or the durable PRODUCT page) and this puts it in the
+// buyer's inbox from the server, so the close does not depend on him
+// remembering to paste it into Messages afterwards.
+//
+// The subject/html/text arrive ALREADY RENDERED from lib/operatorSend
+// (buildSendCopy) — same split as sendDemandRouterCampaign above: the copy is
+// pure and unit-pinned (notably: broker buyer copy may never mention the
+// commission), this function only owns the guardedSend wrapper.
+//
+// Frequency cap: 'operator_sell_link' is whitelisted in emailFrequencyGuard.
+// It is 1:1, human-initiated, and idempotency-claimed per (buyer, link,
+// channel) — so it cannot create volume — while the cohort it serves (a buyer
+// mid-conversation who already got welcome + quiz + intro this week) is
+// exactly the cohort sitting at the 3/week cap. A cap-eaten link here is the
+// silent failure this whole rail exists to end.
+// =====================================================
+
+export async function sendOperatorSellLink(data: {
+  email: string;
+  subject: string;
+  html: string;
+  text: string;
+  /** Consumers record id — Email Sends attribution + tagged Reply-To. */
+  recipientConsumerId?: string;
+}): Promise<{ success: boolean; suppressed?: boolean; reason?: string }> {
+  return guardedSend({
+    templateName: 'operator_sell_link',
+    recipientEmail: data.email,
+    recipientConsumerId: data.recipientConsumerId,
+    subject: data.subject,
+    send: () =>
+      resend.emails.send({
+        from: getFromEmail(),
+        to: data.email,
+        subject: data.subject,
+        headers: getUnsubscribeHeaders(data.email),
+        html: data.html,
+        text: data.text,
+        ...(data.recipientConsumerId
+          ? { _replyContext: { type: 'usr', recordId: data.recipientConsumerId } }
+          : {}),
+      }),
+  });
+}
+
+// =====================================================
 // RANCHER GO LIVE EMAIL
 // =====================================================
 

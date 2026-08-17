@@ -135,6 +135,19 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   // few sends in the week (which he always has — every booking + alert routes
   // to the same inbox).
   'sendOperatorPreCallBrief',
+  // OPERATOR SEND (2026-08-17): the link Ben just promised a buyer on the
+  // phone, mailed by the server instead of by hand. Whitelisted on the same
+  // bar as the entries above — the throttle is NOT a counter but a
+  // claim-before-send: lib/operatorSend takes a Redis claimOnce keyed on
+  // (buyer, link, channel) BEFORE the send, so a double-tap delivers once and
+  // a failed claim write degrades to at most the one send a human's finger
+  // asked for. It cannot create volume: every send costs one deliberate tap in
+  // an admin-gated console. Capping it is the exact silent failure this rail
+  // exists to end — a buyer mid-conversation has trivially had welcome + quiz
+  // invite + intro this week, i.e. is already at the 3/week cap, so the ONE
+  // email carrying the link they were just told to expect is the one the cap
+  // would eat.
+  'operator_sell_link',
   // Auth-critical: magic-link login. Capping this locks members out.
   'sendMagicLink',
   // Auth-critical: self-serve setup-link re-mint (wave B). For a pre-signed

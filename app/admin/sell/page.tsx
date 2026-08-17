@@ -12,7 +12,17 @@
 //   3. RIGHT column — SMALLER TICKET: every sellable marketplace product
 //      (all ship nationwide). tap → mints a Stripe checkout link via the
 //      existing admin rail (POST /api/checkout/product).
-//   4. result bar: the link + copy + a prefilled text in Ben's voice.
+//   4. result bar: the link, a server-side SEND (the platform mails it — see
+//      SendItButton + lib/operatorSend), and the manual fallbacks that were
+//      always here: copy, and a prefilled text in Ben's voice.
+//
+// SEND, NOT JUST MINT (2026-08-17). Until now this console minted a link and
+// handed delivery back to Ben, so every close ended in a manual, forgettable
+// step and a minted-but-never-sent link became a Pending referral holding a
+// slot for a buyer nobody contacted. The send button closes that gap on all
+// three rails. It reports per-channel TRUTH — a suppressed recipient and a
+// dead transport are NOT sends — and it never removes the manual path, because
+// the one thing worse than not sending is believing you did.
 //
 // THREE MONEY MODELS, NEVER BLURRED (docs/BUSINESS-MODEL.md)
 // ----------------------------------------------------------
@@ -35,6 +45,7 @@
 
 import { useEffect, useState } from 'react';
 import { US_STATES } from '@/lib/states';
+import SendItButton from '../components/SendItButton';
 
 interface Tier { cut: string; label: string; price: number; deposit: number }
 interface SellRancher { slug: string; name: string; state: string; inState: boolean; nationwide: boolean; tiers: Tier[] }
@@ -63,9 +74,16 @@ interface BrokerRancher { id: string; name: string; state: string; inState: bool
 
 interface SellResult {
   kind: 'deposit' | 'broker' | 'product';
+  /** What Ben copies / reads out. On the PRODUCT rail this is the Stripe
+   *  session URL — fastest for a live call, and it expires in ~24h. */
   url: string;
+  /** What the PLATFORM sends. Always durable: /r/d, /r/b, or the product page.
+   *  Never a Stripe URL (repo hard rule — they expire in an inbox). */
+  sendUrl: string;
   headline: string; // "half share — Foodstead · $600 deposit"
   sms: string;
+  /** Display-only numbers the server uses to compose the buyer's copy. */
+  send: { itemLabel: string; sellerName: string; amount: number; total: number; totalMax: number };
 }
 
 // Phase 10 — buyer omniscience: the whole relationship across all three
@@ -95,6 +113,15 @@ export default function AdminSellPage() {
   const [genErr, setGenErr] = useState('');
   const [copied, setCopied] = useState(false);
   const [ctx, setCtx] = useState<BuyerContext | null>(null);
+
+  /** Every fresh mint clears the previous state. The send verdict clears too —
+   *  SendItButton drops it whenever `sendUrl` changes, so a stale "sent ✓" can
+   *  never sit next to a newly minted link. */
+  function beginMint(key: string) {
+    setMinting(key);
+    setGenErr('');
+    setCopied(false);
+  }
 
   const ready = buyerEmail.includes('@');
   const first = buyerName.trim().split(' ')[0] || '';
@@ -150,9 +177,7 @@ export default function AdminSellPage() {
   async function sendDeposit(r: SellRancher, t: Tier) {
     if (!ready) { setGenErr('enter the buyer email first.'); return; }
     const key = `${r.slug}-${t.cut}`;
-    setMinting(key);
-    setGenErr('');
-    setCopied(false);
+    beginMint(key);
     try {
       const res = await fetch('/api/admin/sell-links', {
         method: 'POST',
@@ -170,6 +195,16 @@ export default function AdminSellPage() {
       setResult({
         kind: 'deposit',
         url: data.url,
+        // Share rails: the minted link IS durable (/r/d, ~30d re-issuable), so
+        // what Ben copies and what the server sends are the same URL.
+        sendUrl: data.url,
+        send: {
+          itemLabel: String(data.cutLabel || ''),
+          sellerName: String(data.rancher || ''),
+          amount: Number(data.deposit || 0),
+          total: Number(data.tierPrice || 0),
+          totalMax: 0,
+        },
         headline: `${data.cutLabel} — ${data.rancher} · ${money(data.deposit)} deposit holds it`,
         sms: `Hey${first ? ' ' + first : ''} — Ben from BuyHalfCow. Here's your link to lock in the ${data.cutLabel} from ${data.rancher}: ${data.url} — the ${money(data.deposit)} deposit holds your spot, fully refundable until they accept.`,
       });
@@ -186,9 +221,7 @@ export default function AdminSellPage() {
   async function sendBrokerDeposit(r: BrokerRancher, c: BrokerCut) {
     if (!ready) { setGenErr('enter the buyer email first.'); return; }
     const key = `broker-${r.id}-${c.cut}`;
-    setMinting(key);
-    setGenErr('');
-    setCopied(false);
+    beginMint(key);
     try {
       const res = await fetch('/api/admin/sell-links', {
         method: 'POST',
@@ -212,6 +245,18 @@ export default function AdminSellPage() {
       setResult({
         kind: 'broker',
         url: data.url,
+        sendUrl: data.url,
+        // What the SERVER puts in the buyer's copy. Note what is NOT here:
+        // bhcTake / rancherNets. Those are OPERATOR numbers for the headline
+        // below — the buyer is never told how their total splits (see the
+        // broker copy rules in lib/operatorSend.buildSendCopy).
+        send: {
+          itemLabel: String(data.cutLabel || ''),
+          sellerName: String(data.rancher || ''),
+          amount: Number(data.deposit || 0),
+          total: Number(data.tierPrice || 0),
+          totalMax: Number(data.tierPriceMax || 0),
+        },
         // Operator money truth, straight off the response — the deposit IS the
         // commission on this rail, so `bhcTake` and `rancherNets` are stated
         // rather than re-derived here.
@@ -236,9 +281,7 @@ export default function AdminSellPage() {
 
   async function sendProduct(p: SellProduct) {
     if (!ready) { setGenErr('enter the buyer email first.'); return; }
-    setMinting(p.id);
-    setGenErr('');
-    setCopied(false);
+    beginMint(p.id);
     try {
       const res = await fetch('/api/checkout/product', {
         method: 'POST',
@@ -250,6 +293,18 @@ export default function AdminSellPage() {
       setResult({
         kind: 'product',
         url: data.url,
+        // TWO DIFFERENT LINKS, on purpose. `url` is the Stripe session Ben
+        // reads out on the call — fastest path to paid, and it dies in ~24h.
+        // `sendUrl` is the durable product page, which is the only one allowed
+        // into an inbox (repo hard rule: never email a raw Stripe URL).
+        sendUrl: `${window.location.origin}/shop/${p.id}`,
+        send: {
+          itemLabel: p.name,
+          sellerName: p.rancher,
+          amount: Number(p.price || 0),
+          total: 0,
+          totalMax: 0,
+        },
         headline: p.depositStyle
           ? `${p.name} — ${p.priceRange || money(p.price)} · ${money(p.price)} deposit`
           : `${p.name} — ${money(p.price)}, shipping included`,
@@ -328,9 +383,10 @@ export default function AdminSellPage() {
     <div className="max-w-[1100px] mx-auto px-5 py-8 text-charcoal">
       <h1 className="font-serif text-3xl mb-1">Sell Console</h1>
       <p className="text-saddle text-sm mb-6 max-w-2xl">
-        On the phone? Enter their state + email, tap what they want, text them the link. Deposit
-        links go straight to the share checkout; product links go straight to Stripe. Everything is
-        fulfillable — in-state ranchers first, nationwide shippers labeled.
+        On the phone? Enter their state + email, tap what they want, hit <strong>send it</strong> and
+        the platform emails them the link before you hang up. Deposit links go straight to the share
+        checkout; product links go straight to Stripe. Everything is fulfillable — in-state ranchers
+        first, nationwide shippers labeled.
       </p>
 
       {/* ── Buyer bar ── */}
@@ -405,6 +461,19 @@ export default function AdminSellPage() {
         <div className="border-2 border-sage bg-bone-warm p-4 mb-6 flex flex-col gap-3">
           <div className="text-sm"><strong>{result.headline}</strong></div>
           <div className="break-all text-xs font-mono bg-bone border border-dust p-2.5">{result.url}</div>
+
+          {/* ── SEND IT — the platform delivers, so the close no longer depends
+                 on Ben remembering to paste this into Messages after the call.
+                 The manual fallbacks below are deliberately UNCHANGED: a server
+                 send that fails must still leave a link he can send himself. */}
+          <SendItButton
+            sendUrl={result.sendUrl}
+            buyerEmail={buyerEmail}
+            buyerName={buyerName}
+            resetKey={result.headline}
+            {...result.send}
+          />
+
           <div className="flex gap-2 flex-wrap">
             <button onClick={copyLink} className="px-4 py-2.5 border border-charcoal bg-transparent text-[13px] cursor-pointer transition-base hover:bg-charcoal hover:text-bone">
               {copied ? 'copied ✓' : 'copy link'}
@@ -414,6 +483,12 @@ export default function AdminSellPage() {
             </a>
           </div>
           <p className="text-xs text-saddle m-0">{result.sms}</p>
+          {result.kind === 'product' && (
+            <p className="text-xs text-saddle m-0">
+              heads up: the link above is a Stripe checkout and expires in about a day, so it is for
+              this call. <strong>send it</strong> mails the durable product page instead.
+            </p>
+          )}
         </div>
       )}
 
