@@ -147,6 +147,90 @@ export function readStoredAttribution(storage?: AttributionStorage | null): AdAt
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// The /access funnel's read — the LEGACY string keys plus the v2 snapshot
+// ---------------------------------------------------------------------------
+//
+// UtmCapture writes TWO things on first touch: three plain-string legacy keys
+// (read by the funnel since before `bhc_source_v2` existed) and the rich JSON
+// snapshot above. BuyerFunnel needs both, so the composition lives here rather
+// than inline in the component — one module owns every localStorage key this
+// system touches, and the composition becomes testable without a DOM.
+//
+// CALL THIS AT SUBMIT, NEVER AT MOUNT. UtmCapture is mounted from app/layout.tsx
+// ABOVE {children}, and React flushes CHILD effects BEFORE parent effects — so a
+// mount-time read inside the funnel runs BEFORE the capture that fills these
+// keys. That it works today rests entirely on the relative order of two JSX
+// lines in the layout, which nobody edits with this in mind. Reading in the
+// submit/track handler removes the dependency: by then the capture has certainly
+// run. Same reasoning and same fix as the two direct reserve forms
+// (DepositReserveForm, BrokerReserve).
+
+/** Legacy plain-string keys UtmCapture writes alongside the v2 snapshot. */
+export const LEGACY_SOURCE_KEY = 'bhc_source';
+export const LEGACY_CAMPAIGN_KEY = 'bhc_campaign';
+export const LEGACY_UTM_PARAMS_KEY = 'bhc_utm_params';
+
+/** `source` when nothing was ever captured — the funnel's own name. */
+export const FUNNEL_DEFAULT_SOURCE = 'funnel';
+
+/** The eight ad keys plus the three legacy strings the funnel POSTs. */
+export type FunnelAttribution = AdAttribution & {
+  source: string;
+  campaign: string;
+  utmParams: string;
+};
+
+/**
+ * The funnel's whole first-touch read, in one total call.
+ *
+ * `rancherSlug` is a PROP, not storage: a rancher-pinned entry (/access?rancher=
+ * slug) yields campaign `rancher-<slug>`, which WINS over any stored campaign so
+ * matching pins the rancher the buyer actually clicked. It is computed outside
+ * the storage read, so the pin survives blocked/private-mode storage — the
+ * inline version it replaces dropped it in that case, which silently cost the
+ * server its `Preferred Rancher` link for those buyers.
+ *
+ * Total by contract, like readStoredAttribution: absent, blocked, throwing or
+ * corrupt storage all degrade to the defaults. Attribution is measurement and
+ * must never gate or delay a signup.
+ */
+export function readFunnelAttribution(opts?: {
+  storage?: AttributionStorage | null;
+  rancherSlug?: string;
+}): FunnelAttribution {
+  const campaignFromRancher = opts?.rancherSlug ? `rancher-${opts.rancherSlug}` : '';
+  const base: FunnelAttribution = {
+    ...emptyAdAttribution(),
+    source: FUNNEL_DEFAULT_SOURCE,
+    campaign: campaignFromRancher,
+    utmParams: '',
+  };
+
+  let store: AttributionStorage | null | undefined = opts?.storage;
+  if (store === undefined) {
+    try {
+      store = typeof window !== 'undefined' ? window.localStorage : null;
+    } catch {
+      store = null; // storage access itself can throw in locked-down browsers
+    }
+  }
+  if (!store) return base;
+
+  try {
+    return {
+      ...base,
+      source: store.getItem(LEGACY_SOURCE_KEY) || FUNNEL_DEFAULT_SOURCE,
+      campaign: campaignFromRancher || store.getItem(LEGACY_CAMPAIGN_KEY) || '',
+      utmParams: store.getItem(LEGACY_UTM_PARAMS_KEY) || '',
+      // Only ever supplies the eight ad keys — it cannot clobber the three above.
+      ...readStoredAttribution(store),
+    };
+  } catch {
+    return base; // a throwing getItem must not break the funnel
+  }
+}
+
 /** True when at least one attribution value is present (worth POSTing at all). */
 export function hasAdAttribution(attr: Partial<AdAttribution> | null | undefined): boolean {
   if (!attr) return false;

@@ -72,6 +72,42 @@ nothing fires and **a close is never blocked**.
 
 ---
 
+## Rails this flag does NOT cover
+
+**Broker rail (represented ranches) — the close Purchase never fires, at any flag setting.**
+
+On the broker rail the buyer's card is charged the **deposit and nothing else**; the
+balance is paid to the ranch directly, off-platform, and the deposit **is** BHC's entire
+commission (money model 3, `docs/BUSINESS-MODEL.md`). `Total Sale Amount` on those
+referrals is the full share price — roughly **4-5x** the money that actually moved
+through BHC — so reporting it as a Purchase would inflate conversion value against real
+spend and push value-based bidding toward a fictitious ROAS.
+
+So a broker Closed Won emits **no** Purchase, in all four combinations of
+`META_CLOSE_PURCHASE_ENABLED` × `META_DEPOSIT_PURCHASE_ENABLED`. The guard is code, not
+env: `shouldFireClosePurchase({ brokerRail })` (`lib/metaCapi.ts`) returns false before it
+looks at either flag, fed by `isBrokerRailClose()` in `lib/contracts/rancher.ts`
+(`Match Type = 'Broker — Deposit'` on the referral **or** `Broker Rail` on the linked
+rancher — either signal alone suppresses). `settleFinalInvoice` carries the same belt.
+
+**The broker rail already has its conversion moment: the deposit.** `settleBrokerDeposit`
+→ `lib/brokerCapi.ts` fires `InitiateCheckout` always, plus a `Purchase` valued at the real
+charge under `META_DEPOSIT_PURCHASE_ENABLED`. That is where broker revenue is reported.
+
+> If broker revenue is missing from Meta, flip **`META_DEPOSIT_PURCHASE_ENABLED`** — never
+> `META_CLOSE_PURCHASE_ENABLED`. The latter can only ever report the wrong number for this
+> rail.
+
+Why suppress instead of firing the close with the *deposit* value: the deposit Purchase and
+the close Purchase carry deliberately **different** `event_id`s (`deposit_<referralId>` vs
+`<referralId>`, see `depositEventId`), so Meta's dedup window would not collapse them — a
+corrected-value close would still double-count whenever the deposit Purchase also fired,
+putting correctness back at the mercy of which env flag is on. Firing nothing is the only
+answer that holds in every combination. Pinned by
+`lib/metaCapi.depositPurchase.test.ts`.
+
+---
+
 ## Notes / limits
 
 - **Historical closes can't be back-attributed.** The 16 existing Closed-Won deals have no

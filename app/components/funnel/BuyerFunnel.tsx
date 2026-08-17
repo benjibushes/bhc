@@ -66,7 +66,7 @@ import {
 import { BEN_SALES_CAL_URL } from '@/lib/salesContact';
 import { isDepositCapableMatch } from '@/lib/depositOptionality';
 import { REFUND_POLICY_SHORT } from '@/lib/refundPolicy';
-import { readStoredAttribution } from '@/lib/adAttribution';
+import { readFunnelAttribution } from '@/lib/adAttribution';
 import { smsHref, formatPhonePretty, buyerIntroSmsBody } from '@/lib/phoneHygiene';
 import LowTicketRail from './LowTicketRail';
 import type { MarketplaceProduct } from '@/lib/marketplaceProducts';
@@ -246,37 +246,21 @@ export default function BuyerFunnel({
   // Selected-card "flash" before auto-advancing (the satisfying ~300ms beat).
   const [flashing, setFlashing] = useState<string | null>(null);
 
-  // Attribution — read once on mount from the same localStorage keys the legacy
-  // /access form wrote (UtmCapture populates these site-wide). Best-effort.
-  const attribution = useRef<{
-    source: string;
-    campaign: string;
-    utmParams: string;
-    // Rich first-touch snapshot from bhc_source_v2 (individual UTM + click-ids
-    // for ad-level ROAS and offline-conversion upload).
-    utm_source: string;
-    utm_medium: string;
-    utm_campaign: string;
-    utm_content: string;
-    utm_term: string;
-    fbclid: string;
-    // Click-time ms timestamp (Date.now() at fbclid first-touch). Required to
-    // rebuild Meta's _fbc (fb.1.<ts>.<fbclid>) for the days-later close Purchase.
-    fbclid_ts: string;
-    gclid: string;
-  }>({
-    source: 'funnel',
-    campaign: '',
-    utmParams: '',
-    utm_source: '',
-    utm_medium: '',
-    utm_campaign: '',
-    utm_content: '',
-    utm_term: '',
-    fbclid: '',
-    fbclid_ts: '',
-    gclid: '',
-  });
+  // Attribution — the legacy string keys plus the rich `bhc_source_v2` snapshot
+  // UtmCapture writes site-wide, parsed by the ONE shared reader in
+  // lib/adAttribution (the same module the two direct reserve forms use, so a
+  // key can never drift between capture surfaces).
+  //
+  // READ AT SEND TIME, NOT AT MOUNT. UtmCapture is mounted from app/layout.tsx
+  // ABOVE {children}; React flushes CHILD effects BEFORE parent effects, so a
+  // mount-time read here would depend on the relative order of two JSX lines in
+  // the layout — invisible to anyone editing it. By the time the buyer taps an
+  // answer or submits, the capture has certainly run. Cheap (three getItem calls
+  // and one JSON.parse) and total by contract: blocked or corrupt storage yields
+  // the defaults, so this can never gate or delay the funnel.
+  function readAttribution() {
+    return readFunnelAttribution({ rancherSlug });
+  }
 
   // Guard the auto-advance timer so a fast double-tap can't skip a step.
   const advanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -408,32 +392,6 @@ export default function BuyerFunnel({
     trackEvent('access_view');
   }, []);
 
-  // ── Attribution capture (mount) ────────────────────────────────────────────
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      const ls = window.localStorage;
-      const campaignFromRancher = rancherSlug ? `rancher-${rancherSlug}` : '';
-      attribution.current = {
-        source: ls.getItem('bhc_source') || 'funnel',
-        // A rancher-pinned entry (?rancher=slug) takes precedence so matching
-        // can pin the originally-clicked rancher; else fall back to stored UTM
-        // campaign.
-        campaign: campaignFromRancher || ls.getItem('bhc_campaign') || '',
-        utmParams: ls.getItem('bhc_utm_params') || '',
-        // Individual UTM + click-ids from the rich first-touch snapshot
-        // (bhc_source_v2), parsed by the ONE shared reader in lib/adAttribution
-        // — the same one the two direct reserve forms use, so a key can never
-        // drift between capture surfaces. Empty string when not present (never
-        // undefined — keeps the POST body shape stable); corrupt/blocked
-        // storage degrades to all-empty so signup always completes.
-        ...readStoredAttribution(ls),
-      };
-    } catch {
-      /* localStorage blocked (private mode) — defaults are fine. */
-    }
-  }, [rancherSlug]);
-
   // ── Best-effort geo state prefill (never blocks) ────────────────────────────
   // The state <select> is the floor. If a cheap geo hint is available we
   // pre-select it, but we never wait on it and never block submit on it.
@@ -525,16 +483,17 @@ export default function BuyerFunnel({
         if (window.sessionStorage.getItem(QUIZ_START_SESSION_KEY)) return;
         window.sessionStorage.setItem(QUIZ_START_SESSION_KEY, '1');
       } catch { /* storage blocked — ref guard only */ }
+      const attribution = readAttribution();
       const payload = JSON.stringify(
         buildQuizStartPayload({
           state,
-          source: attribution.current.source,
-          campaign: attribution.current.campaign,
-          utm_source: attribution.current.utm_source,
-          utm_medium: attribution.current.utm_medium,
-          utm_campaign: attribution.current.utm_campaign,
-          utm_content: attribution.current.utm_content,
-          utm_term: attribution.current.utm_term,
+          source: attribution.source,
+          campaign: attribution.campaign,
+          utm_source: attribution.utm_source,
+          utm_medium: attribution.utm_medium,
+          utm_campaign: attribution.utm_campaign,
+          utm_content: attribution.utm_content,
+          utm_term: attribution.utm_term,
         }),
       );
       if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
@@ -582,6 +541,7 @@ export default function BuyerFunnel({
     }
 
     setSubmitting(true);
+    const attribution = readAttribution();
     try {
       const res = await fetch('/api/consumers', {
         method: 'POST',
@@ -610,22 +570,22 @@ export default function BuyerFunnel({
           // server's `Preferred Rancher` link could never be written. '' when
           // this is a generic /access entry — the server skips empty.
           rancherSlug: rancherSlug || '',
-          source: attribution.current.source,
-          campaign: attribution.current.campaign,
-          utmParams: attribution.current.utmParams,
+          source: attribution.source,
+          campaign: attribution.campaign,
+          utmParams: attribution.utmParams,
           // Rich per-field attribution for ad-level ROAS + offline conversions.
           // Server writes non-empty values into dedicated Airtable columns.
           // All fields are always present (empty string when not captured) so
           // the server can safely destructure without optional-chaining.
           attribution: {
-            utm_source: attribution.current.utm_source,
-            utm_medium: attribution.current.utm_medium,
-            utm_campaign: attribution.current.utm_campaign,
-            utm_content: attribution.current.utm_content,
-            utm_term: attribution.current.utm_term,
-            fbclid: attribution.current.fbclid,
-            fbclid_ts: attribution.current.fbclid_ts,
-            gclid: attribution.current.gclid,
+            utm_source: attribution.utm_source,
+            utm_medium: attribution.utm_medium,
+            utm_campaign: attribution.utm_campaign,
+            utm_content: attribution.utm_content,
+            utm_term: attribution.utm_term,
+            fbclid: attribution.fbclid,
+            fbclid_ts: attribution.fbclid_ts,
+            gclid: attribution.gclid,
           },
         }),
       });
@@ -679,6 +639,7 @@ export default function BuyerFunnel({
     }
     setSubmitting(true);
     setError('');
+    const attribution = readAttribution();
     try {
       // eventId: client-minted dedup id shared by client Pixel + server CAPI.
       const eventId =
@@ -696,8 +657,8 @@ export default function BuyerFunnel({
           answers: { tier, timing, storage, raised, ack: true },
           ackConfirmedAt: new Date().toISOString(),
           eventId,
-          ...(attribution.current.campaign.startsWith('rancher-')
-            ? { campaign: attribution.current.campaign }
+          ...(attribution.campaign.startsWith('rancher-')
+            ? { campaign: attribution.campaign }
             : {}),
         }),
       });
