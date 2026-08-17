@@ -418,3 +418,81 @@ test('grant-mint failure WITH a session → redirect (member session authorizes)
   assert.equal(j.redirect, '/checkout/recREFERRAL0001/broker?cut=half');
   assert.equal(res.cookies.get(DEPOSIT_GRANT_COOKIE), undefined);
 });
+
+// ── AD ATTRIBUTION (2026-08-17) ────────────────────────────────────────────
+// This rail mints its OWN Consumer (unlike the Connect reserve rail, which
+// hands new buyers to the quiz), and it is the rail Ben is about to point Meta
+// spend at. Without the click-ids on that row, reconstructFbc returns undefined
+// at settlement and the deposit Purchase fires with no fbc match key.
+// The rule: CREATE stamps first touch, ADOPT never re-stamps it.
+
+const AD_SNAPSHOT = {
+  utm_source: 'facebook',
+  utm_medium: 'paid',
+  utm_campaign: 'az-half-cow',
+  utm_content: 'video-a',
+  utm_term: 'half cow phoenix',
+  fbclid: 'IwAR0testclickid',
+  fbclid_ts: '1755300000000',
+  gclid: 'Cj0KCQtest',
+  // UtmCapture also stores these — they are not Consumers columns and must be
+  // dropped, not forwarded into an Airtable write (unknown field → 422).
+  captured_at: '2026-08-17T00:00:00.000Z',
+  landing_path: '/ranchers/granite-hollow-beef',
+};
+
+test('attribution: a CREATED consumer carries the first-touch click-ids', async () => {
+  const { deps, calls } = fakeDeps();
+  const res = await handleBrokerReserve(goodBody({ attribution: AD_SNAPSHOT }), deps);
+  assert.equal(res.status, 200);
+  assert.equal(calls.createConsumer, 1);
+  const fields = calls.consumerFields[0];
+  assert.equal(fields['utm_source'], 'facebook');
+  assert.equal(fields['utm_campaign'], 'az-half-cow');
+  // The pair reconstructFbc needs (fbc = fb.1.<clickTimeMs>.<fbclid>).
+  assert.equal(fields['fbclid'], 'IwAR0testclickid');
+  assert.equal(fields['fbclid_ts'], '1755300000000');
+  assert.equal(fields['gclid'], 'Cj0KCQtest');
+  // Non-column snapshot keys never reach Airtable.
+  assert.equal('captured_at' in fields, false);
+  assert.equal('landing_path' in fields, false);
+  // The pre-existing field set is untouched.
+  assert.equal(fields['Email'], 'buyer@example.com');
+  assert.equal(fields['Lead Source'], 'broker-self-serve');
+});
+
+test('attribution: an ADOPTED consumer is never re-stamped (first touch wins)', async () => {
+  const { deps, calls } = fakeDeps({
+    getConsumerByEmail: async () => ({ id: 'recVICTIM0001', Email: 'buyer@example.com' }),
+  });
+  const res = await handleBrokerReserve(goodBody({ attribution: AD_SNAPSHOT }), deps);
+  assert.equal(res.status, 200);
+  // No create, and (per the account-takeover rule) no write of ANY kind to the
+  // adopted row — so a later ad click can never overwrite its original source.
+  assert.equal(calls.createConsumer, 0);
+  assert.deepEqual(calls.consumerFields, []);
+});
+
+test('attribution: an authenticated session reuses the consumer, writes nothing', async () => {
+  const { deps, calls } = fakeDeps({
+    getExistingSession: async () => ({ consumerId: 'recSESSION0001' }),
+  });
+  const res = await handleBrokerReserve(goodBody({ attribution: AD_SNAPSHOT }), deps);
+  assert.equal(res.status, 200);
+  assert.equal(calls.getConsumer, 0);
+  assert.equal(calls.createConsumer, 0);
+});
+
+test('attribution: missing / corrupt payloads never break a reserve', async () => {
+  // localStorage wiped, blocked, or holding garbage — the buyer still reserves.
+  for (const attribution of [undefined, null, '', 'fbclid=abc', [], 7, { fbclid: 42 }]) {
+    const { deps, calls } = fakeDeps();
+    const res = await handleBrokerReserve(goodBody({ attribution }), deps);
+    assert.equal(res.status, 200, `attribution=${JSON.stringify(attribution)} must still reserve`);
+    const fields = calls.consumerFields[0];
+    assert.equal(fields['Email'], 'buyer@example.com');
+    for (const k of ['utm_source', 'fbclid', 'fbclid_ts', 'gclid']) {
+      assert.equal(k in fields, false, `${k} must be absent for attribution=${JSON.stringify(attribution)}`);
+    }
+  }
+});

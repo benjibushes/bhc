@@ -66,6 +66,7 @@ import {
 import { BEN_SALES_CAL_URL } from '@/lib/salesContact';
 import { isDepositCapableMatch } from '@/lib/depositOptionality';
 import { REFUND_POLICY_SHORT } from '@/lib/refundPolicy';
+import { readStoredAttribution } from '@/lib/adAttribution';
 import { smsHref, formatPhonePretty, buyerIntroSmsBody } from '@/lib/phoneHygiene';
 import LowTicketRail from './LowTicketRail';
 import type { MarketplaceProduct } from '@/lib/marketplaceProducts';
@@ -413,16 +414,6 @@ export default function BuyerFunnel({
     try {
       const ls = window.localStorage;
       const campaignFromRancher = rancherSlug ? `rancher-${rancherSlug}` : '';
-      // Parse the rich first-touch snapshot written by UtmCapture (bhc_source_v2).
-      // Best-effort — corrupt JSON or localStorage-blocked environments fall back
-      // to empty strings so signup always completes.
-      let v2: Record<string, string> = {};
-      try {
-        const raw = ls.getItem('bhc_source_v2');
-        if (raw) v2 = JSON.parse(raw) as Record<string, string>;
-      } catch {
-        // corrupt JSON — treat as empty
-      }
       attribution.current = {
         source: ls.getItem('bhc_source') || 'funnel',
         // A rancher-pinned entry (?rancher=slug) takes precedence so matching
@@ -430,17 +421,13 @@ export default function BuyerFunnel({
         // campaign.
         campaign: campaignFromRancher || ls.getItem('bhc_campaign') || '',
         utmParams: ls.getItem('bhc_utm_params') || '',
-        // Individual UTM + click-ids from rich snapshot (first-touch, never
-        // overwritten). Empty string when not present (never undefined — keeps
-        // the POST body shape stable).
-        utm_source: v2.utm_source || '',
-        utm_medium: v2.utm_medium || '',
-        utm_campaign: v2.utm_campaign || '',
-        utm_content: v2.utm_content || '',
-        utm_term: v2.utm_term || '',
-        fbclid: v2.fbclid || '',
-        fbclid_ts: v2.fbclid_ts || '',
-        gclid: v2.gclid || '',
+        // Individual UTM + click-ids from the rich first-touch snapshot
+        // (bhc_source_v2), parsed by the ONE shared reader in lib/adAttribution
+        // — the same one the two direct reserve forms use, so a key can never
+        // drift between capture surfaces. Empty string when not present (never
+        // undefined — keeps the POST body shape stable); corrupt/blocked
+        // storage degrades to all-empty so signup always completes.
+        ...readStoredAttribution(ls),
       };
     } catch {
       /* localStorage blocked (private mode) — defaults are fine. */

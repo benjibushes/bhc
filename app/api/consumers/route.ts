@@ -19,6 +19,7 @@ import { normalizeLegacyTiming } from '@/lib/qualifyUpdates';
 import { normalizePhoneE164 } from '@/lib/phoneHygiene';
 import { BUDGET_OPTIONS } from '@/lib/funnelConfig';
 import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
+import { attributionConsumerFields } from '@/lib/adAttribution';
 import { metaEventId } from '@/lib/analytics';
 import { leadValueUsd } from '@/lib/leadValue';
 import jwt from 'jsonwebtoken';
@@ -293,16 +294,10 @@ export async function POST(request: Request) {
       // Only writes non-empty values so missing/empty attribution never clobbers
       // an existing value (e.g. a manychat row that already has fbclid). Signup
       // always completes even when attribution is absent or malformed.
-      const attrRaw = body.attribution && typeof body.attribution === 'object' ? body.attribution as Record<string, unknown> : {};
-      const attrStr = (k: string): string => (typeof attrRaw[k] === 'string' && (attrRaw[k] as string).trim() ? (attrRaw[k] as string).trim() : '');
-      if (attrStr('utm_source'))   funnelFields['utm_source']   = attrStr('utm_source');
-      if (attrStr('utm_medium'))   funnelFields['utm_medium']   = attrStr('utm_medium');
-      if (attrStr('utm_campaign')) funnelFields['utm_campaign'] = attrStr('utm_campaign');
-      if (attrStr('utm_content'))  funnelFields['utm_content']  = attrStr('utm_content');
-      if (attrStr('utm_term'))     funnelFields['utm_term']     = attrStr('utm_term');
-      if (attrStr('fbclid'))       funnelFields['fbclid']       = attrStr('fbclid');
-      if (attrStr('fbclid_ts'))    funnelFields['fbclid_ts']    = attrStr('fbclid_ts');
-      if (attrStr('gclid'))        funnelFields['gclid']        = attrStr('gclid');
+      // attributionConsumerFields (lib/adAttribution) is the ONE map from the
+      // bhc_source_v2 snapshot to these columns — shared with the two direct
+      // reserve rails so a key can never drift between them.
+      Object.assign(funnelFields, attributionConsumerFields(body.attribution));
 
       // ── SMS opt-in write (TCPA) ──────────────────────────────────────────────
       // Write semantics chosen so the funnel can never silently REVOKE a prior
@@ -755,16 +750,7 @@ export async function POST(request: Request) {
     // payload so organic/rancher/manychat signups don't lose attribution.
     // Only writes non-empty values so a missing/empty payload never clobbers
     // an existing value. Signup always completes even when attribution is absent.
-    const legacyAttrRaw = body.attribution && typeof body.attribution === 'object' ? body.attribution as Record<string, unknown> : {};
-    const legacyAttrStr = (k: string): string => (typeof legacyAttrRaw[k] === 'string' && (legacyAttrRaw[k] as string).trim() ? (legacyAttrRaw[k] as string).trim() : '');
-    if (legacyAttrStr('utm_source'))   consumerFields['utm_source']   = legacyAttrStr('utm_source');
-    if (legacyAttrStr('utm_medium'))   consumerFields['utm_medium']   = legacyAttrStr('utm_medium');
-    if (legacyAttrStr('utm_campaign')) consumerFields['utm_campaign'] = legacyAttrStr('utm_campaign');
-    if (legacyAttrStr('utm_content'))  consumerFields['utm_content']  = legacyAttrStr('utm_content');
-    if (legacyAttrStr('utm_term'))     consumerFields['utm_term']     = legacyAttrStr('utm_term');
-    if (legacyAttrStr('fbclid'))       consumerFields['fbclid']       = legacyAttrStr('fbclid');
-    if (legacyAttrStr('fbclid_ts'))    consumerFields['fbclid_ts']    = legacyAttrStr('fbclid_ts');
-    if (legacyAttrStr('gclid'))        consumerFields['gclid']        = legacyAttrStr('gclid');
+    Object.assign(consumerFields, attributionConsumerFields(body.attribution));
 
     // G15 — rancher deep-link leads get linked to the rancher who shared the link
     // (Preferred Rancher field is a linked record).

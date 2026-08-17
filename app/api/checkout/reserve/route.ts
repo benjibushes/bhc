@@ -264,6 +264,10 @@ export async function POST(req: Request) {
             buyerZip: zipInput || undefined,
             smsOptIn: smsOptInReserve,
             referredBy,
+            // Ad attribution (create-only — see buildReserveConsumerFields).
+            // Best-effort: a missing/corrupt payload maps to no fields and can
+            // never fail the reserve.
+            attribution: body.attribution,
           }),
         );
         consumerId = created.id;

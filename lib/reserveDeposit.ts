@@ -4,6 +4,7 @@
 
 import { isRancherOnConnect, isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
 import { MIN_TIER_PRICE } from '@/lib/pricing';
+import { attributionConsumerFields } from '@/lib/adAttribution';
 
 export type Cut = 'quarter' | 'half' | 'whole';
 
@@ -135,11 +136,43 @@ export function buildReserveConsumerFields(args: {
    * its attribution.
    */
   referredBy?: string;
+  /**
+   * AD ATTRIBUTION (2026-08-17). The raw `attribution` object posted by
+   * DepositReserveForm, read from the `bhc_source_v2` first-touch snapshot by
+   * lib/adAttribution readStoredAttribution. Mapped through
+   * attributionConsumerFields, so only non-empty in-range values land, the
+   * fbclid/fbclid_ts pair is all-or-nothing, and a missing/corrupt payload
+   * contributes nothing.
+   *
+   * ⚠ NOT REACHED TODAY — WIRED AHEAD OF A GATE, NOT FIXING A LIVE BUG.
+   * This builder's only non-test caller sits BELOW an unconditional return:
+   * app/api/checkout/reserve/route.ts:246 bounces every brand-new email with
+   * the quiz-gate 409 ("take the 90-second quiz first"), and the createRecord
+   * at :255 is marked `// (unreachable)` in that file for exactly this reason.
+   * So on the Connect direct-reserve rail a Consumer is NEVER created here:
+   *   • brand-new email  → 409 → /access?rancher=<slug> → /api/consumers,
+   *                        which has written these columns all along, so those
+   *                        buyers already carry fbclid/fbclid_ts;
+   *   • existing email   → adopted, and the adopt branch deliberately writes
+   *                        NO attribution (first touch wins).
+   * Do not read this parameter as evidence that Connect direct-reserve
+   * deposits now carry fbc — nothing changed for them. It exists so the field
+   * set is already correct the day the quiz gate is lifted or relaxed.
+   *
+   * The rail that genuinely lost its match key, and that this work fixes, is
+   * broker self-serve (app/api/checkout/broker-reserve/route.ts) — it mints
+   * its own Consumer, so its rows really were created with an empty `fbclid`.
+   *
+   * CREATE-ONLY BY CONSTRUCTION either way: this builder is only ever used to
+   * mint a BRAND-NEW Consumer, never to patch an adopted one.
+   */
+  attribution?: unknown;
   nowIso?: string;
 }): Record<string, any> {
   const nowIso = args.nowIso || new Date().toISOString();
   return {
     ...(args.referredBy ? { 'Referred By': args.referredBy } : {}),
+    ...attributionConsumerFields(args.attribution),
     'Full Name': args.buyerName || '',
     'Email': args.buyerEmail,
     'Phone': args.buyerPhone,

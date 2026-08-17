@@ -120,6 +120,22 @@ function DepositSuccessContent() {
   //      deposit (unlike the InitiateCheckout above, an intent signal safe on
   //      landing). No fire on an unconfirmed/direct/back-button hit.
   // Idempotency ref prevents a re-fire on poll re-render / remount.
+  //
+  // BOTH DEPOSIT RAILS LAND HERE (verified 2026-08-17). The broker checkout's
+  // success_url is this same page (app/api/checkout/broker/route.ts:211), and
+  // every link in the chain already holds for a broker referral:
+  //   • auth — resolveDepositAuth accepts the referral-scoped deposit grant the
+  //     broker rail issues, not just a member session;
+  //   • paidConfirmed — settleBrokerDeposit stamps 'Deposit Paid At', so the
+  //     poll's GET hits the same referral_closed 409 (the terminal-status gate
+  //     is upstream of the Connect-only rail gate, so a broker row never trips it);
+  //   • depositValue — read from the settled Payments row's 'Total Charged
+  //     Cents', which markDepositSucceeded writes as the deposit on the broker
+  //     rail. That is exactly what the buyer's card was charged there (the
+  //     balance is paid to the ranch off-platform), and it matches the value the
+  //     server fires from lib/brokerCapi;
+  //   • event_id — deposit_<refId> on both rails, so browser + server dedup.
+  // Nothing rail-specific belongs in this effect; keep it that way.
   const depositPurchaseFired = useRef(false);
   useEffect(() => {
     if (depositPurchaseFired.current || !refId || !paidConfirmed) return;

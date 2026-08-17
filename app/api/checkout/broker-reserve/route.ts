@@ -49,6 +49,7 @@ import { findOrCreateBrokerReferral, type BrokerReferralResult } from '@/lib/bro
 import { assertBrokerSelfServeReservable } from '@/lib/brokerSelfServe';
 import { CUT_LABELS, type Cut } from '@/lib/brokerRail';
 import { normalizeReservePhone } from '@/lib/reserveDeposit';
+import { attributionConsumerFields } from '@/lib/adAttribution';
 import { mintDepositGrantToken, brokerDepositPathFor } from '@/lib/campaignReserve';
 import { setDepositGrantCookie, resolveBuyerSession } from '@/lib/buyerAuth';
 import { generateMemberLoginToken } from '@/lib/secrets';
@@ -222,6 +223,16 @@ export async function handleBrokerReserve(
   }
   const { slug, cut, email, name, phone } = validated.input;
 
+  // ── AD ATTRIBUTION (2026-08-17) ───────────────────────────────────────────
+  // BrokerReserve.tsx posts the `bhc_source_v2` first-touch snapshot; this maps
+  // it to the Consumers columns via the ONE shared mapper (lib/adAttribution).
+  // Best-effort by contract: a missing, empty, or malformed payload yields {}
+  // and can never fail a reserve. Applied ONLY to a freshly-CREATED consumer
+  // below — an ADOPTED consumer is never written to here at all (the
+  // account-takeover rule), which also means their first-touch attribution
+  // can't be re-stamped by a later ad click.
+  const attributionFields = attributionConsumerFields(body?.attribution);
+
   // Existing member session — a logged-in buyer is AUTHENTICATED and may be
   // credentialed directly; an anonymous caller may NOT adopt a pre-existing
   // consumer by unverified email (the account-takeover guard below).
@@ -271,6 +282,9 @@ export async function handleBrokerReserve(
           State: String(rancher['State'] || '').trim(),
           Segment: 'Beef Buyer',
           'Lead Source': 'broker-self-serve',
+          // CREATE-ONLY (see attributionFields above) — the click that brought
+          // this brand-new buyer here. Feeds reconstructFbc at settlement.
+          ...attributionFields,
         };
         if (phone) fields['Phone'] = phone;
         const created: any = await deps.createConsumer(fields);

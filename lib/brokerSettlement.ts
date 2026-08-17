@@ -33,6 +33,8 @@ import {
 import { buildBrokerOrderFacts, buildBrokerOperatorCard } from '@/lib/brokerNotify';
 import { sendBrokerRancherOrder, sendBrokerBuyerReceipt } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { fireCapi, depositPurchaseEnabled } from '@/lib/metaCapi';
+import { buildBrokerDepositCapiEvents } from '@/lib/brokerCapi';
 
 // The pure money reader lives in lib/brokerRail (hermetic — unit-testable
 // without prod env, since importing THIS module pulls lib/email → lib/secrets).
@@ -145,6 +147,37 @@ export async function settleBrokerDeposit(pi: any): Promise<void> {
     getRecordById(TABLES.REFERRALS, referralId).catch(() => null),
     buyerId ? getRecordById(TABLES.CONSUMERS, buyerId).catch(() => null) : Promise.resolve(null),
   ]);
+
+  // ── META CONVERSIONS API — the broker rail's conversion signal ────────────
+  // Mirrors lib/stripeSettlement (~416/~445): an ALWAYS-fired InitiateCheckout
+  // (intent) plus a Purchase gated on depositPurchaseEnabled() — the same
+  // env-authoritative, dark-by-default flag, read here so both rails turn on
+  // together. Event construction + the value decision live in lib/brokerCapi
+  // (pure, tested); read its VALUE SEMANTICS note before touching the amount.
+  //
+  // Placed BEFORE the unreadable-rancher bail below: the money has settled and
+  // the buyer identity is already in hand, so the conversion must be reported
+  // even on the rare path where we can't compose the emails. Fully fail-open —
+  // fire-and-forget, wrapped, and never able to surface into a settled payment.
+  try {
+    fireCapi(
+      buildBrokerDepositCapiEvents({
+        referralId,
+        // What the buyer's card was actually charged (readBrokerMoney clamps
+        // this to pi.amount). The balance is paid to the ranch off-platform and
+        // is NOT part of this transaction — never report the share price here.
+        depositCents,
+        consumer,
+        referral,
+        cutLabel: CUT_LABELS[cut] || String(referral?.['Order Type'] || ''),
+        purchaseEnabled: depositPurchaseEnabled(),
+      }),
+    ).catch((e) => console.error('[broker settle] meta capi fire failed:', e?.message || e));
+  } catch (e: any) {
+    // Belt for a synchronous throw before the promise forms — settlement has
+    // already succeeded; a pixel problem must never surface here.
+    console.error('[broker settle] meta capi setup failed:', e?.message || e);
+  }
 
   if (!rancher) {
     // The money is safe and stamped; we just can't compose the emails. Alert so
