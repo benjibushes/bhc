@@ -217,3 +217,107 @@ test('buildReserveConsumerFields stamps Referred By only when a validated code i
   const emptyRef = buildReserveConsumerFields({ ...base, referredBy: '' });
   assert.equal('Referred By' in emptyRef, false);
 });
+
+// ── Ad attribution on the Connect reserve rail (2026-08-17) ─────────────────
+// SCOPE, HONESTLY: this builder is NOT reached in production today. Its only
+// non-test caller sits below the unconditional quiz-gate 409 at
+// app/api/checkout/reserve/route.ts:246 (the create is marked `// (unreachable)`
+// there), so Connect direct-reserve never mints a Consumer — new emails go to
+// /access, which has persisted these columns all along. The rail that actually
+// lost its match key is broker self-serve, pinned in
+// app/api/checkout/broker-reserve/route.test.ts.
+// These tests exist so the field set is already correct the day that gate is
+// lifted, and so the shared mapper's guarantees hold at every call site.
+
+const ATTRIBUTION_BASE = {
+  slug: 'renick-valley',
+  cut: 'half' as const,
+  buyerName: 'Jo Buyer',
+  buyerEmail: 'jo@example.com',
+  buyerPhone: '+12705550182',
+  smsOptIn: false,
+};
+
+test('reserve CREATE carries the ad attribution through to Consumers columns', () => {
+  const fields = buildReserveConsumerFields({
+    ...ATTRIBUTION_BASE,
+    attribution: {
+      utm_source: 'facebook',
+      utm_medium: 'paid',
+      utm_campaign: 'az-half-cow',
+      fbclid: 'IwAR0testclickid',
+      fbclid_ts: '1755300000000',
+    },
+  });
+  assert.equal(fields['utm_source'], 'facebook');
+  assert.equal(fields['utm_medium'], 'paid');
+  assert.equal(fields['utm_campaign'], 'az-half-cow');
+  // The PAIR that reconstructFbc needs — losing either one costs the match.
+  assert.equal(fields['fbclid'], 'IwAR0testclickid');
+  assert.equal(fields['fbclid_ts'], '1755300000000');
+  // Keys with no value are never written (can't blank an existing column).
+  assert.equal('gclid' in fields, false);
+  assert.equal('utm_term' in fields, false);
+});
+
+test('an OVERSIZED attribution value is dropped, not written to Airtable', () => {
+  // createRecord (lib/airtable) only self-heals unknown-field and bad-select
+  // 422s — any other 422 rethrows and fails the whole consumer create. A buyer
+  // with a garbage localStorage value must still be able to reserve.
+  const huge = 'x'.repeat(1000);
+  const fields = buildReserveConsumerFields({
+    ...ATTRIBUTION_BASE,
+    attribution: { utm_source: huge, utm_medium: 'paid', fbclid: huge, fbclid_ts: '1755300000000' },
+  });
+  assert.equal('utm_source' in fields, false);
+  assert.equal('fbclid' in fields, false);
+  assert.equal('fbclid_ts' in fields, false, 'the pair goes together');
+  assert.equal(fields['utm_medium'], 'paid', 'a sane sibling still lands');
+  assert.equal(fields['Email'], 'jo@example.com', 'the reserve is unaffected');
+});
+
+test('NON-STRING attribution values never reach the record', () => {
+  const fields = buildReserveConsumerFields({
+    ...ATTRIBUTION_BASE,
+    attribution: {
+      utm_source: 12345,
+      utm_medium: null,
+      utm_campaign: { nested: true },
+      utm_content: ['a'],
+      utm_term: true,
+      fbclid: 'IwAR0abc',
+      fbclid_ts: 1755300000000, // number, not the stored string
+    },
+  });
+  for (const k of ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term']) {
+    assert.equal(k in fields, false, `${k} must not be written`);
+  }
+  // A numeric fbclid_ts is not the stored shape — the pair drops rather than
+  // persisting an fbclid whose timestamp we can't vouch for.
+  assert.equal('fbclid' in fields, false);
+  assert.equal('fbclid_ts' in fields, false);
+});
+
+test('a lone fbclid never reaches the record through the reserve builder', () => {
+  const fields = buildReserveConsumerFields({
+    ...ATTRIBUTION_BASE,
+    attribution: { fbclid: 'IwAR0abc', utm_source: 'facebook' },
+  });
+  assert.equal('fbclid' in fields, false);
+  assert.equal('fbclid_ts' in fields, false);
+  assert.equal(fields['utm_source'], 'facebook');
+});
+
+test('no / malformed attribution never adds keys and never throws', () => {
+  // localStorage blocked, wiped, or corrupt must not change the field set —
+  // attribution is measurement, never a gate on the money path.
+  for (const attribution of [undefined, null, '', 'fbclid=abc', [], 0, { fbclid: 42 }]) {
+    const fields = buildReserveConsumerFields({ ...ATTRIBUTION_BASE, attribution });
+    for (const k of ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'fbclid', 'fbclid_ts', 'gclid']) {
+      assert.equal(k in fields, false, `${k} must be absent for attribution=${JSON.stringify(attribution)}`);
+    }
+    // …and the rest of the record is untouched.
+    assert.equal(fields['Email'], 'jo@example.com');
+    assert.equal(fields['Status'], 'Approved');
+  }
+});

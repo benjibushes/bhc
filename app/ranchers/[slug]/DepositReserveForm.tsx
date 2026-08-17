@@ -11,6 +11,7 @@ import { track } from '@/lib/track';
 import { deriveDeposit } from '@/lib/pricing';
 import { REFUND_POLICY_SHORT } from '@/lib/refundPolicy';
 import { accessFallbackUrl } from '@/lib/accessFallbackUrl';
+import { readStoredAttribution, hasAdAttribution } from '@/lib/adAttribution';
 import SmsConsentCheckbox, { TermsNotice } from '@/app/components/SmsConsentCheckbox';
 
 type Cut = 'quarter' | 'half' | 'whole';
@@ -131,6 +132,24 @@ export default function DepositReserveForm({
   async function submitReserve() {
     setLoading(true);
     setError('');
+    // AD ATTRIBUTION (2026-08-17) — the first-touch snapshot UtmCapture writes
+    // (bhc_source_v2), via the SAME shared parser the /access funnel uses.
+    //
+    // READ AT SUBMIT, NOT AT MOUNT. UtmCapture lives in app/layout.tsx and this
+    // form is inside {children}; React flushes child effects BEFORE parent
+    // effects, so "did the snapshot exist yet?" at our mount depends on the
+    // order of two JSX lines in a file nobody edits with this in mind. Reading
+    // here removes the dependency entirely — by submit time the capture effect
+    // has long since run. Total by contract: blocked/corrupt storage yields the
+    // all-empty snapshot, so this can never gate or delay a reserve.
+    //
+    // NOTE ON WHAT THIS ACTUALLY BUYS ON *THIS* RAIL: the server applies
+    // attribution only when it CREATES a Consumer, and this endpoint's quiz
+    // gate (app/api/checkout/reserve/route.ts:246) means it never does today —
+    // new emails go to /access (which already persists these columns) and
+    // existing ones are adopted without re-stamping. Sending it keeps the
+    // payload correct for the day that gate moves; it changes nothing now.
+    const attribution = readStoredAttribution();
     try {
       const res = await fetch('/api/checkout/reserve', {
         method: 'POST',
@@ -149,6 +168,11 @@ export default function DepositReserveForm({
           slug, cut, email, phone, smsOptIn,
           ...(requireZip ? { zip: zip.trim() } : {}),
           ...(refCode ? { ref: refCode } : {}),
+          // Omit the key entirely when there's nothing to send — the server
+          // treats absent and empty identically, and a bare {} on every organic
+          // reserve is noise. Server-side this is CREATE-only (first touch on
+          // an existing buyer always wins).
+          ...(hasAdAttribution(attribution) ? { attribution } : {}),
         }),
       });
       const j = await res.json().catch(() => ({}));

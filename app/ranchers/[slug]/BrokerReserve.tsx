@@ -23,6 +23,7 @@
 
 import { useState } from 'react';
 import { track } from '@/lib/track';
+import { readStoredAttribution, hasAdAttribution } from '@/lib/adAttribution';
 import { BROKER_REFUND_POLICY_SHORT } from '@/lib/refundPolicy';
 import { TermsNotice } from '@/app/components/SmsConsentCheckbox';
 import type { BrokerCutCard } from '@/lib/brokerSelfServe';
@@ -79,12 +80,30 @@ export default function BrokerReserve({
     if (!selected || loading) return;
     setLoading(true);
     setError('');
+    // AD ATTRIBUTION (2026-08-17) — the first-touch snapshot UtmCapture writes
+    // (bhc_source_v2), via the SAME shared parser the funnel uses. THIS is the
+    // rail that needed it: it mints its own Consumer, so before this those rows
+    // were created with no `fbclid` at all, reconstructFbc returned undefined,
+    // and every broker deposit Purchase fired with no match key.
+    //
+    // READ AT SUBMIT, NOT AT MOUNT. UtmCapture lives in app/layout.tsx and this
+    // form is inside {children}; React flushes child effects BEFORE parent
+    // effects, so a mount-time read's correctness would hinge on the order of
+    // two JSX lines in the layout. By submit time the capture has certainly
+    // run. Total by contract — blocked/corrupt storage yields the all-empty
+    // snapshot, so this can never gate or delay a reserve.
+    const attribution = readStoredAttribution();
     try {
       const res = await fetch('/api/checkout/broker-reserve', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ slug, cut: selected.cut, email, name, phone }),
+        body: JSON.stringify({
+          slug, cut: selected.cut, email, name, phone,
+          // Omitted entirely when there is nothing to send. Server-side this is
+          // CREATE-only — an adopted buyer keeps their original first touch.
+          ...(hasAdAttribution(attribution) ? { attribution } : {}),
+        }),
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) {
