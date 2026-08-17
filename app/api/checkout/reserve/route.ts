@@ -404,7 +404,10 @@ export async function POST(req: Request) {
   // SECURITY: existing consumer + not logged in → DO NOT mint a session from an
   // unverified email (account takeover). Email a one-tap magic link that proves
   // ownership and lands on the deposit page authed.
-  if (adoptedExisting && !existingSession) {
+  // `!existingSession?.consumerId` (not just `!existingSession`): only a session
+  // that actually names a consumer is credential-worthy — an empty-consumerId
+  // session must not slip past into the direct-credential path. Defense in depth.
+  if (adoptedExisting && !existingSession?.consumerId) {
     let emailSent = false;
     try {
       const token = generateMemberLoginToken(consumerId, buyerEmail);
