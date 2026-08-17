@@ -15,6 +15,7 @@ import {
   MIN_PRODUCT_PRICE_CENTS,
   resolveShippingChoice,
   SHIPPING_CHOICE_PROMPT,
+  missingRequiredAnswers,
 } from './rancherProductInput';
 
 // ── deriveProductPricing ──────────────────────────────────────────────────────
@@ -379,4 +380,153 @@ test('create + edit routes derive pricing WITH the rancher locked rate', async (
   for (const call of calls) {
     assert.match(call, /lockedRate:\s*lockedCommissionRateFor\(/, 'every derivation carries the locked rate');
   }
+});
+
+// ── THE LEGACY-LISTING EDIT WALL (live bug, ranchers 2026-08-17) ─────────────
+//
+// #524 (2026-08-01) started REQUIRING two answers on every shippable listing:
+// a ships-in-days window and an explicit shipping choice. It was written to be
+// non-breaking — existing rows keep selling and get asked "the next time
+// they're edited". They did get asked. Badly.
+//
+// validateProductInput is the SHARED create+edit validator and it fails FAST,
+// so an edit of a pre-#524 row returned one question-shaped 400 at a time:
+// save → "how many days until this ships?" → save → "how does shipping work on
+// this one?" → save. 10 of 11 live rows were in exactly that state, and the
+// edit form gave no signal until the rancher pressed save. Ranchers reported it
+// as "I can't edit my products."
+//
+// The requirement itself is correct and stays (it exists so nobody silently
+// eats $40-90 a box of cold-chain cost). What changes: the missing answers are
+// now enumerable UP FRONT, so the form can ask for all of them at once instead
+// of the rancher discovering them one rejection at a time.
+
+test('missingRequiredAnswers names BOTH gaps at once on a pre-#524 listing', () => {
+  // Exactly how ProductsTab pre-fills the edit form from a legacy row.
+  assert.deepEqual(
+    missingRequiredAnswers({
+      name: 'Original Beef Jerky',
+      displayPrice: 25,
+      category: 'Jerky',
+      shipsNationwide: true,
+      shipsInDays: '',
+      shippingCost: '',
+      shippingChoice: '',
+    }),
+    ['shipsInDays', 'shippingChoice'],
+  );
+});
+
+test('missingRequiredAnswers empties out as the rancher answers', () => {
+  const legacy = {
+    name: 'Original Beef Jerky',
+    displayPrice: 25,
+    category: 'Jerky',
+    shipsNationwide: true,
+    shipsInDays: '' as const,
+    shippingCost: '' as const,
+    shippingChoice: '',
+  };
+  assert.deepEqual(missingRequiredAnswers({ ...legacy, shipsInDays: 3 }), ['shippingChoice']);
+  assert.deepEqual(missingRequiredAnswers({ ...legacy, shippingChoice: 'included' }), ['shipsInDays']);
+  assert.deepEqual(missingRequiredAnswers({ ...legacy, shipsInDays: 3, shippingChoice: 'included' }), []);
+  // An amount IS the shipping answer — no separate choice needed.
+  assert.deepEqual(missingRequiredAnswers({ ...legacy, shipsInDays: 3, shippingCost: 65 }), []);
+  // An explicit 0 ("my price covers it") is an answer too.
+  assert.deepEqual(missingRequiredAnswers({ ...legacy, shipsInDays: 3, shippingCost: 0 }), []);
+});
+
+test('"charged" with no amount still counts as an unanswered shipping question', () => {
+  assert.deepEqual(
+    missingRequiredAnswers({
+      name: 'Jerky', displayPrice: 25, category: 'Jerky',
+      shipsInDays: 3, shippingCost: '', shippingChoice: 'charged',
+    }),
+    ['shippingChoice'],
+  );
+});
+
+test('a BAD answer is not a MISSING answer (out-of-range shipping)', () => {
+  // $300 is a typo the validator rejects — but the rancher HAS answered, so the
+  // form must not tell them the question is still outstanding.
+  assert.deepEqual(
+    missingRequiredAnswers({
+      name: 'Jerky', displayPrice: 25, category: 'Jerky',
+      shipsInDays: 3, shippingCost: 300,
+    }),
+    [],
+  );
+  assert.equal(validateProductInput({
+    name: 'Jerky', displayPrice: 25, category: 'Jerky',
+    shipsInDays: 3, shippingCost: 300,
+  }).ok, false);
+});
+
+test('local pickup is asked NEITHER question', () => {
+  assert.deepEqual(
+    missingRequiredAnswers({
+      name: 'Ground Box', displayPrice: 180, category: 'Ground Box',
+      shipsNationwide: false, shipsInDays: '', shippingCost: '', shippingChoice: '',
+    }),
+    [],
+  );
+});
+
+test('a rejected save reports EVERY outstanding answer, not just the first', () => {
+  // The whole point: one round trip tells the rancher the complete ask.
+  const legacy = validateProductInput({
+    name: 'Original Beef Jerky',
+    displayPrice: 25,
+    category: 'Jerky',
+    shipsNationwide: true,
+    shipsInDays: '',
+    shippingCost: '',
+    shippingChoice: '',
+  });
+  assert.equal(legacy.ok, false);
+  if (!legacy.ok) {
+    assert.deepEqual(legacy.missing, ['shipsInDays', 'shippingChoice']);
+    // The first-fail message is unchanged — existing callers keep working.
+    assert.match(legacy.error, /days/i);
+  }
+});
+
+test('an ordinary validation failure carries no phantom missing answers', () => {
+  const noName = validateProductInput({ name: '', displayPrice: 25, category: 'Jerky', ...ANSWERED });
+  assert.equal(noName.ok, false);
+  if (!noName.ok) assert.equal(noName.missing, undefined);
+});
+
+// ── Source-shape pins for the edit-wall fix ─────────────────────────────────
+// The value of `missing` is that it reaches the rancher. Pin both ends: the
+// route must forward it on every 400, and the tab must derive the up-front ask
+// from THIS module (a hand-rolled copy in the component would drift away from
+// the validator and start lying about what is outstanding).
+
+test('both product-route 400s forward the full missing-answer set', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { fileURLToPath } = await import('node:url');
+  const routeSrc = readFileSync(
+    fileURLToPath(new URL('../app/api/rancher/products/route.ts', import.meta.url)),
+    'utf8',
+  );
+  const rejections = routeSrc.match(/if \(!v\.ok\) return NextResponse\.json\([^\n]*\)/g) || [];
+  assert.equal(rejections.length, 2, 'POST create + PATCH edit each reject exactly once');
+  for (const r of rejections) {
+    assert.match(r, /missing:\s*v\.missing/, 'the rejection carries every outstanding answer');
+  }
+});
+
+test('the products tab asks up front from the shared validator helper', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { fileURLToPath } = await import('node:url');
+  const tabSrc = readFileSync(
+    fileURLToPath(new URL('../app/rancher/ProductsTab.tsx', import.meta.url)),
+    'utf8',
+  );
+  assert.match(tabSrc, /missingRequiredAnswers,?\n?\s*\} from '@\/lib\/rancherProductInput'/, 'imports the helper');
+  assert.match(tabSrc, /const openAsks = missingRequiredAnswers\(\{/, 'derives the open asks from it');
+  // Scoped to edits — a blank add-form owes these too but says so with its
+  // required markers; a red banner over an empty form is noise.
+  assert.match(tabSrc, /const asking = editingId \? openAsks : \[\]/, 'banner is edit-scoped');
 });
