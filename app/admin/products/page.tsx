@@ -186,6 +186,8 @@ export default function AdminProductsPage() {
                   itemLabel={selected.name}
                   sellerName={selected.rancher}
                   amount={selected.displayPrice}
+                  depositStyle={selected.depositStyle === true}
+                  priceRange={selected.priceRange || ''}
                   resetKey={result.url}
                 />
               )}

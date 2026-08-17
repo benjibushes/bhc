@@ -335,6 +335,31 @@ export async function claimOnce(key: string, ttlSec = 60): Promise<boolean> {
 }
 
 /**
+ * Does a claim key currently exist? A pure READ — it never creates the key,
+ * which is what separates it from `claimOnce` (SET NX, always writes).
+ *
+ * Exists for the operator-send rail (lib/operatorSend), which needs to tell
+ * two different lost-claim situations apart: "a previous attempt DELIVERED and
+ * left its marker" versus "another attempt is still in flight, or already
+ * failed". Reporting those the same way is how a console shows a green
+ * "already sent" for mail that never left.
+ *
+ * Degrades to FALSE on a missing/erroring Redis — the caller must then treat
+ * the buyer as un-reached. Guessing "yes it was delivered" is the one answer
+ * that can lie about money mail.
+ */
+export async function claimExists(key: string): Promise<boolean> {
+  const redis = getRedis();
+  if (!redis) return false;
+  try {
+    return (await redis.exists(key)) === 1;
+  } catch (e: any) {
+    console.error('[claimExists] Redis EXISTS failed (treating as absent):', e?.message);
+    return false;
+  }
+}
+
+/**
  * Sync-lock variant of claimOnce. Same atomic SET NX EX, but it degrades
  * CLOSED (returns false) when Redis is configured yet ERRORS — because this
  * guards against DUPLICATE (rancher, SKU) row creation, where a *skipped* sync

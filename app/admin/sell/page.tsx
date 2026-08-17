@@ -82,8 +82,16 @@ interface SellResult {
   sendUrl: string;
   headline: string; // "half share — Foodstead · $600 deposit"
   sms: string;
-  /** Display-only numbers the server uses to compose the buyer's copy. */
-  send: { itemLabel: string; sellerName: string; amount: number; total: number; totalMax: number };
+  /** Display-only fields the server uses to compose the buyer's copy. */
+  send: {
+    itemLabel: string;
+    sellerName: string;
+    amount: number;
+    total: number;
+    totalMax: number;
+    depositStyle?: boolean;
+    priceRange?: string;
+  };
 }
 
 // Phase 10 — buyer omniscience: the whole relationship across all three
@@ -198,11 +206,18 @@ export default function AdminSellPage() {
         // Share rails: the minted link IS durable (/r/d, ~30d re-issuable), so
         // what Ben copies and what the server sends are the same URL.
         sendUrl: data.url,
+        // NO MONEY GOES INTO THE BUYER'S COPY ON THIS RAIL. `data.deposit` and
+        // `data.tierPrice` are the RANCHER's pre-fee numbers; the Connect buyer
+        // is charged the deposit PLUS the service fee on top, so emailing these
+        // would quote one figure and charge a larger one (and publish the fee
+        // by subtraction). The deposit page states the true all-in number
+        // before anyone pays — see lib/operatorSend.buildSendCopy. The
+        // headline below still shows Ben the operator numbers.
         send: {
           itemLabel: String(data.cutLabel || ''),
           sellerName: String(data.rancher || ''),
-          amount: Number(data.deposit || 0),
-          total: Number(data.tierPrice || 0),
+          amount: 0,
+          total: 0,
           totalMax: 0,
         },
         headline: `${data.cutLabel} — ${data.rancher} · ${money(data.deposit)} deposit holds it`,
@@ -301,9 +316,15 @@ export default function AdminSellPage() {
         send: {
           itemLabel: p.name,
           sellerName: p.rancher,
+          // The listed price IS the charge on this rail (BHC's margin is
+          // skimmed out of it, never added on top), so it is safe to state —
+          // EXCEPT on a deposit-style box, where it only reserves the item and
+          // the copy has to say so.
           amount: Number(p.price || 0),
           total: 0,
           totalMax: 0,
+          depositStyle: p.depositStyle === true,
+          priceRange: p.priceRange || '',
         },
         headline: p.depositStyle
           ? `${p.name} — ${p.priceRange || money(p.price)} · ${money(p.price)} deposit`
@@ -470,7 +491,7 @@ export default function AdminSellPage() {
             sendUrl={result.sendUrl}
             buyerEmail={buyerEmail}
             buyerName={buyerName}
-            resetKey={result.headline}
+            resetKey={`${result.headline}|${buyerEmail}`}
             {...result.send}
           />
 

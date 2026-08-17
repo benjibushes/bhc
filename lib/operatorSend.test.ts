@@ -16,6 +16,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   resolveSendTarget,
+  checkRecipientBinding,
+  isSingleEmailAddress,
+  sendDeliveredKey,
   buildSendCopy,
   classifyEmailResult,
   isRetryableFailure,
@@ -62,6 +65,9 @@ test('a durable /shop/<recordId> product link is accepted', () => {
   if (!out.ok) return;
   assert.equal(out.target.rail, 'product');
   assert.equal(out.target.consumerId, ''); // no token, resolved by the route
+  // Returned, not re-split off the URL by the caller — a re-split keeps any
+  // query string and turns the liveness lookup (and its refusal) into a lie.
+  assert.equal(out.target.productId, PRODUCT_ID);
 });
 
 test('a raw Stripe checkout URL is REFUSED — it expires in ~24h', () => {
@@ -262,10 +268,18 @@ test('an opted-in buyer with no number reports no-destination, not a send', () =
   if (!g.ok) assert.equal(g.outcome.state, 'no-destination');
 });
 
-test('an operator-supplied number overrides the record', () => {
-  const g = resolveSmsGate({ enabled: true, consumer: OPTED_IN, phone: '+15555559999' });
+test('the destination is the CONSENTED record\u2019s number — no caller override', () => {
+  // An operator-supplied phone used to win here while lib/twilio checked
+  // consent against the RECORD, so a hand-crafted request could text an
+  // arbitrary number under someone else's TCPA opt-in.
+  const g = resolveSmsGate({
+    enabled: true,
+    consumer: OPTED_IN,
+    // A stray field must not be honored even if a caller invents one.
+    ...({ phone: '+15555559999' } as Record<string, unknown>),
+  });
   assert.equal(g.ok, true);
-  if (g.ok) assert.equal(g.to, '+15555559999');
+  if (g.ok) assert.equal(g.to, '+15555550123');
 });
 
 // ---------------------------------------------------------------------------
@@ -293,6 +307,7 @@ const TARGET: SendTarget = {
   consumerId: BUYER_ID,
   cut: 'half',
   url: `${SITE}/r/d/tok`,
+  productId: '',
 };
 
 const COPY = buildSendCopy({ rail: 'connect', url: TARGET.url, itemLabel: 'Half Cow', amount: 600 });
@@ -336,6 +351,10 @@ function spy(opts: {
       s.claimed.add(key);
       return true;
     },
+    release: async (key) => {
+      s.claimed.delete(key);
+    },
+    wasDelivered: async (key) => s.claimed.has(key),
     stamp: async (args) => {
       if (opts.stampThrows) throw new Error('airtable 429');
       s.stamps.push(args);
@@ -541,4 +560,223 @@ test('the claim key separates channels, recipients and links', () => {
   assert.notEqual(a, c);
   // Recipient casing is not a new send.
   assert.equal(a, sendClaimKey({ url: `${SITE}/r/d/tok`, channel: 'email', recipient: 'buyer@example.test' }));
+});
+
+// ===========================================================================
+// ADVERSARIAL-REVIEW FIXES (2026-08-17). Four of these pin bugs that were
+// found in the first cut of this rail; two of them were the exact failures the
+// rail exists to prevent.
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// BLOCKING 1 — a verified link may only be mailed to the buyer it names
+// ---------------------------------------------------------------------------
+
+test('recipient binding: the address must match the record the token names', () => {
+  assert.equal(
+    checkRecipientBinding({ recordEmail: 'alice@example.test', buyerEmail: 'alice@example.test' }).ok,
+    true,
+  );
+  // Casing and padding are not a mismatch.
+  assert.equal(
+    checkRecipientBinding({ recordEmail: '  Alice@Example.TEST ', buyerEmail: 'alice@example.test' }).ok,
+    true,
+  );
+});
+
+test('recipient binding REFUSES a different address — a share token is a credential', () => {
+  const out = checkRecipientBinding({ recordEmail: 'alice@example.test', buyerEmail: 'bob@example.test' });
+  assert.equal(out.ok, false);
+  if (out.ok) return;
+  assert.match(out.error, /minted for a different buyer/i);
+  assert.match(out.error, /mint a fresh link/i);
+  // The other buyer's address must never be echoed back to the operator.
+  assert.doesNotMatch(out.error, /alice@example\.test/);
+});
+
+test('recipient binding FAILS CLOSED when the record has no email to check', () => {
+  for (const recordEmail of ['', '   ', null, undefined]) {
+    const out = checkRecipientBinding({ recordEmail, buyerEmail: 'bob@example.test' });
+    assert.equal(out.ok, false, String(recordEmail));
+  }
+});
+
+// ---------------------------------------------------------------------------
+// BLOCKING 2 — a failed send must never masquerade as a delivery
+// ---------------------------------------------------------------------------
+
+test('a FAILED send releases its claim, so the next tap actually retries', async () => {
+  let n = 0;
+  const s = spy({
+    email: async () => {
+      n += 1;
+      // Terminal (never auto-retried), so each call is exactly one attempt.
+      return n === 1 ? { success: false, reason: 'validation_error: bad key' } : { success: true };
+    },
+  });
+
+  const first = await deliverOperatorSend(baseInput(), s.deps);
+  assert.equal(first.email.state, 'failed');
+  assert.equal(first.reached, false);
+
+  // THE BUG THIS PINS: before the fix the claim survived the failure, so this
+  // second tap reported 'already-sent' — green, reached, stamped — for mail
+  // that never left.
+  const second = await deliverOperatorSend(baseInput(), s.deps);
+  assert.equal(second.email.state, 'delivered');
+  assert.equal(second.reached, true);
+  assert.equal(s.emails.length, 2, 'the retry must be a real send');
+});
+
+test('a SUPPRESSED send also releases its claim (no phantom "already sent")', async () => {
+  const s = spy({ email: async () => ({ success: false, suppressed: true, reason: 'unsubscribed' }) });
+  await deliverOperatorSend(baseInput(), s.deps);
+  const second = await deliverOperatorSend(baseInput(), s.deps);
+  assert.equal(second.email.state, 'suppressed');
+  assert.notEqual(second.email.state as string, 'already-sent');
+  assert.equal(second.reached, false);
+});
+
+test('"already-sent" is only reported when a delivery marker proves it', async () => {
+  const s = spy();
+  await deliverOperatorSend(baseInput(), s.deps);
+  const key = sendClaimKey({ url: TARGET.url, channel: 'email', recipient: 'buyer@example.test' });
+  assert.ok(s.claimed.has(sendDeliveredKey(key)), 'a delivery writes its marker');
+
+  const second = await deliverOperatorSend(baseInput(), s.deps);
+  assert.equal(second.email.state, 'already-sent');
+  assert.equal(second.reached, true);
+  assert.equal(s.emails.length, 1);
+});
+
+test('a claim held with NO delivery marker reports failure, never reached', async () => {
+  // Simulates a concurrent request still in flight: the claim exists, the
+  // marker does not. This request cannot prove the buyer got anything.
+  const s = spy();
+  const key = sendClaimKey({ url: TARGET.url, channel: 'email', recipient: 'buyer@example.test' });
+  s.claimed.add(key); // someone else holds it, mid-send
+
+  const out = await deliverOperatorSend(baseInput(), s.deps);
+  assert.equal(out.email.state, 'failed');
+  assert.match(out.email.reason, /in flight/i);
+  assert.equal(out.reached, false);
+  assert.equal(out.loud, true);
+  assert.equal(s.emails.length, 0, 'still exactly one send in the window');
+  assert.equal(out.stamped, false);
+});
+
+// ---------------------------------------------------------------------------
+// BLOCKING 3 — a deposit-style box is never sold as a shipped purchase
+// ---------------------------------------------------------------------------
+
+test('a deposit-style product never quotes a single full price as the total', () => {
+  const copy = buildSendCopy({
+    rail: 'product',
+    url: `${SITE}/shop/${PRODUCT_ID}`,
+    itemLabel: 'Sampler Box',
+    sellerName: 'Cedar Draw Beef',
+    amount: 170,
+    depositStyle: true,
+    priceRange: '$400-$600',
+  });
+  for (const surface of [copy.text, copy.sms]) {
+    assert.match(surface, /reserves it/i, surface);
+    assert.match(surface, /\$400-\$600/, surface);
+    assert.match(surface, /balance/i, surface);
+    // The mis-sell: "$170, shipping included" on something that is a deposit.
+    assert.doesNotMatch(surface, /shipping included/i, surface);
+  }
+});
+
+test('a normal product still reads as the shipped purchase it is', () => {
+  const copy = buildSendCopy({
+    rail: 'product',
+    url: `${SITE}/shop/${PRODUCT_ID}`,
+    itemLabel: 'Jerky',
+    amount: 25,
+  });
+  assert.match(copy.text, /shipping included/i);
+  assert.doesNotMatch(copy.text, /reserves it/i);
+  assert.doesNotMatch(copy.text, /balance/i);
+});
+
+// ---------------------------------------------------------------------------
+// BLOCKING 4 — the Connect rail states NO number, because it cannot state a
+// true one (the service fee rides on top and its rate is resolved at checkout)
+// ---------------------------------------------------------------------------
+
+test('CONNECT buyer copy contains no money figure at all', () => {
+  const copy = buildSendCopy({
+    rail: 'connect',
+    url: `${SITE}/r/d/tok`,
+    firstName: 'Dana',
+    itemLabel: 'Half Cow',
+    sellerName: 'Cedar Draw Beef',
+    // Pre-fee rancher numbers: the buyer is charged MORE than these.
+    amount: 600,
+    total: 2400,
+  });
+  // The rendered <style> block legitimately contains numbers (font-weight:600,
+  // max-width), so the html is checked on its visible body only.
+  const htmlBody = copy.html.replace(/<style>[\s\S]*?<\/style>/i, '');
+  for (const surface of [copy.subject, copy.text, copy.sms, htmlBody]) {
+    assert.doesNotMatch(surface, /\$/, `a Connect number leaked: ${surface}`);
+    assert.doesNotMatch(surface, /\b600\b|\b2,?400\b/, `a Connect number leaked: ${surface}`);
+  }
+  // It still promises the two things that make the buyer tap.
+  assert.match(copy.text, /shows your deposit before you pay/i);
+  assert.match(copy.text, /refundable/i);
+});
+
+test('the BROKER rail keeps its exact numbers (the deposit IS the whole charge)', () => {
+  const copy = buildSendCopy({
+    rail: 'broker',
+    url: `${SITE}/r/b/tok`,
+    itemLabel: 'Half Cow',
+    amount: 400,
+    total: 1800,
+  });
+  assert.match(copy.text, /\$400/);
+  assert.match(copy.text, /\$1,800/);
+});
+
+// ---------------------------------------------------------------------------
+// Address validation — one recipient, or none
+// ---------------------------------------------------------------------------
+
+test('a comma-joined pair is REFUSED (it would walk past the suppression list)', () => {
+  // lib/email.ts checks suppression with an exact-string lookup on the whole
+  // `to`, so "ok@x, unsubscribed@y" matches nothing and mails both.
+  assert.equal(isSingleEmailAddress('ok@example.test, victim@example.test'), false);
+  assert.equal(isSingleEmailAddress('ok@example.test;victim@example.test'), false);
+  assert.equal(isSingleEmailAddress('Ben <ben@example.test>'), false);
+  assert.equal(isSingleEmailAddress('ok@example.test victim@example.test'), false);
+});
+
+test('a single ordinary address passes; malformed ones do not', () => {
+  assert.equal(isSingleEmailAddress('buyer@example.test'), true);
+  assert.equal(isSingleEmailAddress('  buyer.name+tag@mail.example.test '), true);
+  for (const bad of ['', 'buyer', 'buyer@', '@example.test', 'buyer@example', 'a@b@c.com', `${'x'.repeat(250)}@e.test`]) {
+    assert.equal(isSingleEmailAddress(bad), false, bad);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Path matching — empty segments produce a dead link, so they are refused
+// ---------------------------------------------------------------------------
+
+test('doubled slashes are REFUSED rather than emailed as a dead link', () => {
+  const token = mintCampaignReserveToken({ consumerId: BUYER_ID, rancherSlug: 'cedar-draw', cut: 'half' });
+  for (const path of [`//r//d//${token}`, `/r//d/${token}`, `/r/d/${token}/`, `//shop//${PRODUCT_ID}`]) {
+    assert.equal(resolveSendTarget(`${SITE}${path}`, SITE).ok, false, path);
+  }
+});
+
+test('a product link with a query string is refused rather than half-parsed', () => {
+  // The old caller re-split the URL on '/shop/', so '?utm=x' rode along into
+  // the record lookup and produced a refusal naming the wrong cause.
+  const out = resolveSendTarget(`${SITE}/shop/${PRODUCT_ID}?utm_source=x`, SITE);
+  assert.equal(out.ok, true);
+  if (!out.ok) return;
+  assert.equal(out.target.productId, PRODUCT_ID, 'the record id is clean of the query string');
 });

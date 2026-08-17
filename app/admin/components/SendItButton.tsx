@@ -80,6 +80,12 @@ export interface SendItButtonProps {
   total?: number;
   /** Weight-priced ceiling — presence turns the buyer's total into a range. */
   totalMax?: number;
+  /** PRODUCT rail: the amount RESERVES the box; the ranch confirms size and
+   *  balance before shipping. Never let one of these read as a full-price
+   *  shipped purchase. */
+  depositStyle?: boolean;
+  /** PRODUCT deposit-style: human range for the eventual total. */
+  priceRange?: string;
   /** Changes whenever a NEW link is minted, clearing the previous verdict. */
   resetKey?: string;
 }
@@ -111,10 +117,18 @@ export default function SendItButton(props: SendItButtonProps) {
 
   // A fresh mint clears the previous verdict — a stale "sent ✓" sitting next to
   // a new link is the exact lie this control exists to remove.
+  //
+  // buyerEmail is in the dependency list ON PURPOSE, and it is load-bearing.
+  // The consoles' result bar survives edits to the buyer-email field, so after
+  // one call the operator can type the NEXT buyer's address while the previous
+  // buyer's minted link is still on screen — the button would relabel itself
+  // "send it to <new address>" over the old token. The server refuses that
+  // outright (recipient binding), but the verdict must clear here too so the
+  // UI stops implying the pair is still current.
   useEffect(() => {
     setOut(null);
     setErr('');
-  }, [props.resetKey, props.sendUrl]);
+  }, [props.resetKey, props.sendUrl, props.buyerEmail]);
 
   const ready = props.buyerEmail.includes('@') && !!props.sendUrl;
 
@@ -137,6 +151,8 @@ export default function SendItButton(props: SendItButtonProps) {
           amount: props.amount || 0,
           total: props.total || 0,
           totalMax: props.totalMax || 0,
+          depositStyle: props.depositStyle === true,
+          priceRange: props.priceRange || '',
         }),
       });
       const data = await res.json().catch(() => ({}));

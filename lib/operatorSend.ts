@@ -106,6 +106,11 @@ export interface SendTarget {
   cut: Cut | '';
   /** Normalized absolute URL, safe to put in an email. */
   url: string;
+  /** Rancher Products record id — product rail only, '' elsewhere. Returned
+   *  here rather than re-split off the URL by the caller: a re-split keeps any
+   *  query string attached and turns a liveness lookup into a miss (and its
+   *  refusal message into a lie about which product is dark). */
+  productId: string;
 }
 
 export type SendTargetResult =
@@ -158,7 +163,18 @@ export function resolveSendTarget(
     };
   }
 
-  const parts = parsed.pathname.split('/').filter(Boolean);
+  // EXACT segments off the RAW pathname. `split('/').filter(Boolean)` was
+  // wrong: it collapsed empty segments, so '//r//d//<token>' parsed as a valid
+  // three-segment path — while the URL that actually got emailed kept its
+  // double slashes and resolved to nothing. Reject ANY empty segment (that
+  // also rejects a trailing slash) and match the shapes exactly.
+  const segs = parsed.pathname.split('/');
+  const parts = segs.slice(1);
+  const notFound = {
+    ok: false as const,
+    error: 'that link is not a durable BuyHalfCow deposit or product link',
+  };
+  if (segs[0] !== '' || parts.length === 0 || parts.some((seg) => seg === '')) return notFound;
 
   // ── CONNECT share deposit ───────────────────────────────────────────────
   if (parts.length === 3 && parts[0] === 'r' && parts[1] === 'd') {
@@ -166,7 +182,13 @@ export function resolveSendTarget(
     if (!v.ok) return { ok: false, error: `that deposit link is ${v.reason} — mint a fresh one` };
     return {
       ok: true,
-      target: { rail: 'connect', consumerId: v.payload.consumerId, cut: v.payload.cut, url: parsed.toString() },
+      target: {
+        rail: 'connect',
+        consumerId: v.payload.consumerId,
+        cut: v.payload.cut,
+        url: parsed.toString(),
+        productId: '',
+      },
     };
   }
 
@@ -176,7 +198,13 @@ export function resolveSendTarget(
     if (!v.ok) return { ok: false, error: `that broker link is ${v.reason} — mint a fresh one` };
     return {
       ok: true,
-      target: { rail: 'broker', consumerId: v.payload.consumerId, cut: v.payload.cut, url: parsed.toString() },
+      target: {
+        rail: 'broker',
+        consumerId: v.payload.consumerId,
+        cut: v.payload.cut,
+        url: parsed.toString(),
+        productId: '',
+      },
     };
   }
 
@@ -185,13 +213,79 @@ export function resolveSendTarget(
   // Ben's own copy-paste. There is no per-buyer product token, so the
   // consumerId is resolved by the route (best-effort, stamp-only).
   if (parts.length === 2 && parts[0] === 'shop' && REC_ID.test(parts[1])) {
-    return { ok: true, target: { rail: 'product', consumerId: '', cut: '', url: parsed.toString() } };
+    return {
+      ok: true,
+      target: { rail: 'product', consumerId: '', cut: '', url: parsed.toString(), productId: parts[1] },
+    };
   }
 
-  return {
-    ok: false,
-    error: 'that link is not a durable BuyHalfCow deposit or product link',
-  };
+  return notFound;
+}
+
+// ---------------------------------------------------------------------------
+// Recipient binding — the link belongs to ONE buyer.
+// ---------------------------------------------------------------------------
+
+/**
+ * Exactly one deliverable address. `includes('@')` is not enough: Resend takes
+ * a comma-separated `to`, and lib/email.ts's suppression check does an EXACT
+ * string lookup on the whole field — so "ok@x.com, unsubscribed@y.com" walks
+ * straight past the suppression list and mails someone who opted out. One
+ * address, no commas, no semicolons, no whitespace, no display name.
+ */
+export function isSingleEmailAddress(raw: string): boolean {
+  const v = String(raw || '').trim();
+  if (!v || v.length > 254) return false;
+  if (/[,;<>\s"]/.test(v)) return false;
+  return /^[^@]+@[^@.]+(\.[^@.]+)+$/.test(v);
+}
+
+/**
+ * Does this link actually belong to the person we are about to mail?
+ *
+ * WHY THIS EXISTS — the share rails' link is not a brochure, it is a CREDENTIAL.
+ * /r/d and /r/b exchange the token for a deposit grant scoped to that buyer's
+ * referral: whoever opens it can read the buyer↔rancher message history, set
+ * cut preferences, and pay that buyer's deposit. Mailing it to a different
+ * address is therefore an account-access handoff, not a typo.
+ *
+ * The console makes that a ONE-TAP slip: the result bar survives edits to the
+ * buyer-email field, so a freshly typed address can sit above a link minted
+ * for the previous caller. The button relabels itself; the token does not.
+ *
+ * REFUSE — no confirm-and-proceed escape hatch. There is no legitimate reason
+ * to mail buyer A's deposit grant to address B; the legitimate operation
+ * ("send this cut to the person I am talking to now") is one re-mint away and
+ * takes a single tap. A checkbox would only ever be ticked in exactly the
+ * distracted moment this guard exists to catch.
+ *
+ * FAILS CLOSED. A buyer record with no email on file cannot be verified, so it
+ * is refused rather than assumed to match.
+ */
+export function checkRecipientBinding(input: {
+  /** `Email` on the Consumers row the token names. */
+  recordEmail: unknown;
+  /** The address the operator is about to send to. */
+  buyerEmail: string;
+}): { ok: true } | { ok: false; error: string } {
+  const onFile = String(input.recordEmail ?? '').trim().toLowerCase();
+  const asked = String(input.buyerEmail || '').trim().toLowerCase();
+  if (!onFile) {
+    return {
+      ok: false,
+      error: 'that link\u2019s buyer record has no email on file — mint a fresh link for this buyer',
+    };
+  }
+  if (onFile !== asked) {
+    return {
+      ok: false,
+      // Never echo the address on file: it belongs to a different buyer, and
+      // the operator does not need it to fix this.
+      error:
+        'that link was minted for a different buyer — it is a deposit grant for their referral, so it cannot be sent to this address. mint a fresh link for this buyer.',
+    };
+  }
+  return { ok: true };
 }
 
 // ---------------------------------------------------------------------------
@@ -207,12 +301,31 @@ export interface SendCopyInput {
   itemLabel: string;
   /** Ranch / seller name. */
   sellerName?: string;
-  /** Deposit or product price in dollars. 0 = don't state a number. */
+  /**
+   * The buyer's DUE-NOW figure in dollars, and only ever that.
+   *
+   * BROKER rail: the deposit, which IS the whole charge on that rail.
+   * PRODUCT rail: the price the buyer is actually charged (all-in — the BHC
+   *   margin is skimmed out of it, never added on top).
+   * CONNECT rail: IGNORED. See the fee note in buildSendCopy — the Connect
+   *   buyer is charged deposit + service fee, and that fee is not knowable
+   *   here, so this rail states no number at all.
+   */
   amount?: number;
-  /** Share total in dollars (share rails). 0/absent = don't state one. */
+  /** Share total in dollars (BROKER only). 0/absent = don't state one. */
   total?: number;
   /** Weight-priced ceiling — presence turns every total into a RANGE. */
   totalMax?: number;
+  /**
+   * PRODUCT rail: this is a deposit-style listing — `amount` RESERVES the box
+   * and the rancher confirms size + balance before shipping. Presenting one of
+   * these as a full-price shipped purchase is the exact mis-sell
+   * app/api/admin/products/route.ts warns about, so the copy branches on it
+   * the same way both consoles' manual copy already does.
+   */
+  depositStyle?: boolean;
+  /** PRODUCT deposit-style: human range for the eventual total, e.g. "$400-$600". */
+  priceRange?: string;
 }
 
 export interface SendCopy {
@@ -246,18 +359,35 @@ function money(n: number): string {
  * ago, not a campaign — so it opens by referencing the call and it never
  * explains the company.
  *
- * MONEY LANGUAGE, PER RAIL — the one thing here that is not cosmetic:
- *   connect — the buyer's total includes BHC's fee, added on top at checkout.
- *             The rancher keeps 100% of the price. Nothing here states a
- *             split, because the buyer's number is their number.
- *   broker  — the deposit IS BHC's whole commission and the ranch collects
- *             price − deposit direct. THE BUYER IS NEVER TOLD THAT. Their
- *             total is identical either way, so how it splits is not their
- *             business and saying it would read as a middleman fee on a call
- *             Ben just closed. Copy says: a deposit toward your share, balance
- *             to the ranch. Pinned by test — no "commission", no "fee", no
- *             "our cut" may appear in broker buyer copy, ever.
- *   product — a checkout, not a deposit. Says what it costs and that it ships.
+ * ── THE MONEY RULES, PER RAIL. Not cosmetic; each one is a specific way this
+ *    email could lie to someone about to spend four figures. ──
+ *
+ * CONNECT — STATES NO NUMBER, DELIBERATELY.
+ *   The console's mint response carries the RANCHER's pre-fee numbers
+ *   (deriveDeposit(tierPrice)). What the buyer is actually charged is
+ *   `deposit + round(fullSale × feeRate)` (lib/stripeConnect) — the BHC
+ *   service fee rides ON TOP on this rail. Quoting the pre-fee deposit would
+ *   email one number and charge a bigger one (the same bait-and-switch class
+ *   an earlier audit caught on a rancher page: $500 quoted, $695 charged), and
+ *   because the delta IS the fee, it would also publish BHC's rate by
+ *   subtraction. The correct figure is not computable here either: the rate is
+ *   a per-rancher LOCKED value resolved at checkout time, and these tokens
+ *   live ~30 days, so any number baked in now can drift out of true before the
+ *   buyer taps. So the Connect email names the ranch and the cut, and points
+ *   at the page — which shows the exact, current, all-in figure before anyone
+ *   pays. Pinned by test: Connect copy contains no '$'.
+ *
+ * BROKER — EXACT NUMBERS, because there is no fee on top: the deposit IS the
+ *   whole charge and BHC's entire commission. But the buyer is NEVER told that
+ *   split. Their total is identical either way, so how it divides is not their
+ *   business, and saying it reads as a middleman fee on a call Ben just
+ *   closed. Copy says: a deposit toward your share, balance to the ranch.
+ *   Pinned by test — no "commission", no "fee", no "our cut", ever.
+ *
+ * PRODUCT — the listed price IS the charge (BHC's margin is skimmed out of it,
+ *   never added), so the number is safe to state. Deposit-style listings are
+ *   the exception and must say so: the amount RESERVES the box and the ranch
+ *   confirms size and balance before it ships.
  */
 export function buildSendCopy(input: SendCopyInput): SendCopy {
   const first = String(input.firstName || '').trim().split(/\s+/)[0] || '';
@@ -268,6 +398,7 @@ export function buildSendCopy(input: SendCopyInput): SendCopy {
   const total = Number(input.total || 0);
   const totalMax = Number(input.totalMax || 0);
   const ranged = totalMax > total && total > 0;
+  const from = seller ? ` from ${seller}` : '';
 
   const totalPhrase = ranged
     ? `estimated ${money(total)}–${money(totalMax)} total, final price set by hanging weight`
@@ -282,58 +413,59 @@ export function buildSendCopy(input: SendCopyInput): SendCopy {
 
   if (input.rail === 'product') {
     subject = 'your link';
-    lines = [
-      `${hi} — good talking to you.`,
-      seller
-        ? `here is the ${item} from ${seller}${amount > 0 ? ` — ${money(amount)}, shipped` : ''}.`
-        : `here is the ${item}${amount > 0 ? ` — ${money(amount)}, shipped` : ''}.`,
-      'tap the link, pay, and it goes out from the ranch.',
-    ];
-    sms =
-      `${hi} — Ben from BuyHalfCow. here is the ${item}` +
-      (seller ? ` from ${seller}` : '') +
-      `: ${input.url}` +
-      (amount > 0 ? ` — ${money(amount)}, shipping included.` : '.');
+    const range = String(input.priceRange || '').trim();
+    if (input.depositStyle) {
+      // DEPOSIT-STYLE BOX. `amount` reserves it; it is NOT the price, and the
+      // buyer must not read "$X, shipped" and expect nothing further to pay.
+      lines = [
+        `${hi} — good talking to you.`,
+        `here is the ${item}${from}.`,
+        amount > 0
+          ? `${money(amount)} reserves it${range ? ` (${range} depending on size)` : ''} — the ranch confirms your size and the balance with you before it ships.`
+          : `the deposit reserves it${range ? ` (${range} depending on size)` : ''} — the ranch confirms your size and the balance with you before it ships.`,
+      ];
+      sms =
+        `${hi} — Ben from BuyHalfCow. here is the ${item}${from}: ${input.url}` +
+        (amount > 0
+          ? ` — ${money(amount)} reserves it${range ? ` (${range} depending on size)` : ''}, they confirm your size + the balance before it ships.`
+          : ` — the deposit reserves it, they confirm your size + the balance before it ships.`);
+    } else {
+      lines = [
+        `${hi} — good talking to you.`,
+        `here is the ${item}${from}${amount > 0 ? ` — ${money(amount)}, shipping included` : ''}.`,
+        'tap the link, pay, and it goes out from the ranch.',
+      ];
+      sms =
+        `${hi} — Ben from BuyHalfCow. here is the ${item}${from}: ${input.url}` +
+        (amount > 0 ? ` — ${money(amount)}, shipping included.` : '.');
+    }
   } else if (input.rail === 'broker') {
-    // BUYER-FACING BROKER COPY. Deposit = "toward your share". Balance =
-    // "with the ranch". Never a word about who keeps what.
     subject = 'your share link';
     lines = [
       `${hi} — good talking to you.`,
-      seller
-        ? `here is your link for the ${item} from ${seller}.`
-        : `here is your link for the ${item}.`,
+      `here is your link for the ${item}${from}.`,
       amount > 0
         ? `${money(amount)} today is a deposit toward your share${totalPhrase ? ` (${totalPhrase})` : ''}, and you settle the balance directly with the ranch.`
         : 'the deposit holds your share, and you settle the balance directly with the ranch.',
       'they will reach out with pickup and cut details.',
     ];
     sms =
-      `${hi} — Ben from BuyHalfCow. here is your link for the ${item}` +
-      (seller ? ` from ${seller}` : '') +
-      `: ${input.url}` +
+      `${hi} — Ben from BuyHalfCow. here is your link for the ${item}${from}: ${input.url}` +
       (amount > 0
         ? ` — ${money(amount)} today holds your share${totalPhrase ? ` (${totalPhrase})` : ''}, balance direct to the ranch.`
         : ' — the deposit holds your share, balance direct to the ranch.');
   } else {
+    // CONNECT — numberless by design. See the fee note above.
     subject = 'your share link';
     lines = [
       `${hi} — good talking to you.`,
-      seller
-        ? `here is your link to lock in the ${item} from ${seller}.`
-        : `here is your link to lock in the ${item}.`,
-      amount > 0
-        ? `${money(amount)} holds your spot${totalPhrase ? ` (${totalPhrase})` : ''}. it is refundable right up until the ranch accepts.`
-        : 'the deposit holds your spot, refundable right up until the ranch accepts.',
+      `here is your link to lock in the ${item}${from}.`,
+      'the page shows your deposit before you pay anything, and it is refundable right up until the ranch accepts.',
       'they call you after that to set pickup and cuts.',
     ];
     sms =
-      `${hi} — Ben from BuyHalfCow. here is your link to lock in the ${item}` +
-      (seller ? ` from ${seller}` : '') +
-      `: ${input.url}` +
-      (amount > 0
-        ? ` — ${money(amount)} holds your spot, refundable until they accept.`
-        : ' — the deposit holds your spot, refundable until they accept.');
+      `${hi} — Ben from BuyHalfCow. here is your link to lock in the ${item}${from}: ${input.url}` +
+      ' — the deposit is shown before you pay, and it is refundable until they accept.';
   }
 
   const text = [...lines, '', input.url, '', '— Ben'].join('\n');
@@ -408,8 +540,6 @@ export interface SmsGateInput {
   enabled: boolean;
   /** The Consumers record, or null when the buyer has no row yet. */
   consumer: Record<string, any> | null | undefined;
-  /** Operator-supplied override, e.g. the number read off the call. */
-  phone?: string;
 }
 
 export type SmsGateResult =
@@ -448,7 +578,14 @@ export function resolveSmsGate(input: SmsGateInput): SmsGateResult {
       outcome: { state: 'no-consent', reason: 'no sms opt-in on file (TCPA) — email or text from your phone' },
     };
   }
-  const to = String(input.phone || c['Phone'] || '').trim();
+  // THE NUMBER COMES OFF THE CONSENTED RECORD, FULL STOP. An operator-supplied
+  // override used to be accepted here, and lib/twilio checks consent against
+  // the RECORD — so a hand-crafted request could have texted an arbitrary
+  // number under someone else's TCPA opt-in. Latent (the UI never sent one,
+  // and ENABLE_SMS is off) but it had to close before that flag is ever
+  // flipped. Same binding rule as the email side: the link, the consent and
+  // the destination all name one buyer.
+  const to = String(c['Phone'] || '').trim();
   if (!to) {
     return { ok: false, outcome: { state: 'no-destination', reason: 'no phone number on file' } };
   }
@@ -486,6 +623,25 @@ export function sendClaimKey(input: {
   return `operator-send:${input.channel}:${recipient}:${linkPart}`;
 }
 
+/**
+ * The companion "this one actually went out" marker.
+ *
+ * TWO KEYS, NOT ONE — and this is the fix for the worst failure this rail can
+ * have. With a single claim taken before the send and never released, a FAILED
+ * send left its claim behind; the operator's retry then lost the claim and got
+ * reported as "already sent", green, reached, and stamped, for mail that never
+ * left. That is precisely the sibling broker-rail bug (#624).
+ *
+ * So the claim is now released on every non-delivery (a retry genuinely
+ * retries), and 'already-sent' is only ever reported when THIS marker proves a
+ * previous attempt delivered under that claim. A lost claim with no marker
+ * means another attempt is still in flight or already failed — reported as a
+ * failure, because as far as this request can prove, the buyer has nothing.
+ */
+export function sendDeliveredKey(claimKey: string): string {
+  return `${claimKey}:done`;
+}
+
 /** Window in which a repeat tap counts as the SAME send. */
 export const SEND_CLAIM_TTL_SEC = 180;
 
@@ -511,6 +667,10 @@ export interface DeliverDeps {
   sendSms: (args: { to: string; body: string; consumer: Record<string, any> | null | undefined }) => Promise<boolean>;
   /** claimOnce — true when THIS caller won the claim. Degrades OPEN. */
   claim: (key: string, ttlSec: number) => Promise<boolean>;
+  /** releaseClaim — free a claim whose send did NOT reach the buyer. */
+  release: (key: string) => Promise<void>;
+  /** claimExists — pure read: did a previous attempt mark a real delivery? */
+  wasDelivered: (key: string) => Promise<boolean>;
   /** Persist the send on the buyer's record. Never throws; never blocks. */
   stamp: (args: { consumerId: string; at: string }) => Promise<void>;
   now?: () => Date;
@@ -560,12 +720,11 @@ export async function deliverOperatorSend(
     if (!to.includes('@')) {
       email = { state: 'no-destination', reason: 'no email address' };
     } else {
-      const key = sendClaimKey({ url: input.target.url, channel: 'email', recipient: to });
-      const won = await deps.claim(key, SEND_CLAIM_TTL_SEC).catch(() => true);
-      if (!won) {
-        email = { state: 'already-sent', reason: 'already sent to this address moments ago' };
-      } else {
-        email = await attempt(() =>
+      email = await guardedChannel(
+        deps,
+        sendClaimKey({ url: input.target.url, channel: 'email', recipient: to }),
+        'already sent to this address moments ago',
+        () =>
           deps
             .sendEmail({ to, copy: input.copy, consumerId: input.target.consumerId })
             .then(classifyEmailResult)
@@ -573,8 +732,7 @@ export async function deliverOperatorSend(
               state: 'failed' as const,
               reason: String(e?.message || e || 'the mailer threw').slice(0, 200),
             })),
-        );
-      }
+      );
     }
   }
 
@@ -585,12 +743,11 @@ export async function deliverOperatorSend(
     if (!gate.ok) {
       sms = gate.outcome;
     } else {
-      const key = sendClaimKey({ url: input.target.url, channel: 'sms', recipient: gate.to });
-      const won = await deps.claim(key, SEND_CLAIM_TTL_SEC).catch(() => true);
-      if (!won) {
-        sms = { state: 'already-sent', reason: 'already texted to this number moments ago' };
-      } else {
-        sms = await attempt(() =>
+      sms = await guardedChannel(
+        deps,
+        sendClaimKey({ url: input.target.url, channel: 'sms', recipient: gate.to }),
+        'already texted to this number moments ago',
+        () =>
           deps
             .sendSms({ to: gate.to, body: input.copy.sms, consumer: input.sms.consumer })
             .then((ok): ChannelOutcome =>
@@ -602,8 +759,7 @@ export async function deliverOperatorSend(
               state: 'failed' as const,
               reason: String(e?.message || e || 'the sms provider threw').slice(0, 200),
             })),
-        );
-      }
+      );
     }
   }
 
@@ -624,6 +780,47 @@ export async function deliverOperatorSend(
   }
 
   return { email, sms, reached, loud, stamped };
+}
+
+/**
+ * Run ONE channel under the two-key idempotency scheme.
+ *
+ *   claim won  → send (with at most one retry). Delivered: leave the claim AND
+ *                write the delivered marker. Anything else: RELEASE the claim,
+ *                so the operator's next tap is a real retry rather than a
+ *                fabricated "already sent".
+ *   claim lost → someone else holds it. Only the marker can say whether that
+ *                someone succeeded. Marker present → 'already-sent' (true).
+ *                Marker absent → in flight or already failed, which this
+ *                request cannot report as reached without guessing.
+ */
+async function guardedChannel(
+  deps: DeliverDeps,
+  key: string,
+  alreadyReason: string,
+  run: () => Promise<ChannelOutcome>,
+): Promise<ChannelOutcome> {
+  const doneKey = sendDeliveredKey(key);
+  // claimOnce degrades OPEN, and so does a thrown claim: never block a send
+  // Ben asked for because Redis is having a day.
+  const won = await deps.claim(key, SEND_CLAIM_TTL_SEC).catch(() => true);
+  if (!won) {
+    const delivered = await deps.wasDelivered(doneKey).catch(() => false);
+    return delivered
+      ? { state: 'already-sent', reason: alreadyReason }
+      : {
+          state: 'failed',
+          reason: 'another send for this link is already in flight — give it a moment, then send again',
+        };
+  }
+
+  const outcome = await attempt(run);
+  if (outcome.state === 'delivered') {
+    await deps.claim(doneKey, SEND_CLAIM_TTL_SEC).catch(() => false);
+  } else {
+    await deps.release(key).catch(() => {});
+  }
+  return outcome;
 }
 
 /** One send, plus at most one retry for wire-shaped failures. */

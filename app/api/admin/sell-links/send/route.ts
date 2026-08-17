@@ -39,20 +39,40 @@
 // /shop/<recordId>. A raw Stripe checkout URL cannot pass — repo hard rule #3,
 // they expire in ~24h — which is why the product rail mails the durable
 // product page and not the session URL the console shows Ben for copy-paste.
+//
+// RECIPIENT BINDING is the third half of that gate, and the sharpest one. A
+// share-rail token is a CREDENTIAL, not a brochure: /r/d and /r/b exchange it
+// for a referral-scoped grant over that buyer's deal. So the address being
+// mailed must equal the `Email` on the Consumers row the token names, or the
+// request is refused (409) — a verified link and a mismatched address is an
+// account-access handoff, not a typo. There is deliberately no confirm-and-
+// proceed flag; the safe operation is a re-mint, which is one tap.
+//
+// Plus a coarse per-IP ceiling (100/hour, fail-closed): this template bypasses
+// the per-recipient frequency cap and the idempotency claim is per-recipient,
+// so without it a leaked admin password is an uncapped mail cannon on the
+// verified sending domain.
 
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/adminAuth';
 import { getRecordById, getAllRecords, updateRecord, escapeAirtableValue, TABLES } from '@/lib/airtable';
-import { claimOnce } from '@/lib/rancherCapacity';
+import { claimOnce, releaseClaim, claimExists } from '@/lib/rancherCapacity';
+import { rateLimitStrict, getTrustedClientIp } from '@/lib/rateLimit';
+// The Consumers contact stamp, imported rather than re-declared — one literal,
+// one place. dateTime 'Last Contacted', NOT the 'Last Contacted At' date field
+// beside it (see the landmine note in lib/dialOutcome.ts).
+import { F_LAST_CONTACTED } from '@/lib/dialOutcome';
 import { sendOperatorSellLink } from '@/lib/email';
 import { sendSMSToConsumer } from '@/lib/twilio';
 import { smsEnabled } from '@/lib/smsFlag';
 import { pickCanonicalConsumer } from '@/lib/requalifyCampaign';
-import { isSellableRow } from '@/lib/marketplaceProducts';
+import { isSellableRow, hasStock } from '@/lib/marketplaceProducts';
 import {
   resolveSendTarget,
   buildSendCopy,
   deliverOperatorSend,
+  checkRecipientBinding,
+  isSingleEmailAddress,
   type SendRail,
 } from '@/lib/operatorSend';
 
@@ -60,11 +80,6 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
-
-/** Consumers stamp. dateTime — NOT the `Last Contacted At` date field beside
- *  it (see the landmine note in app/api/admin/follow-ups/[id]/route.ts and
- *  docs/WRITE-MAP.md). Verified verbatim, never invented. */
-const F_LAST_CONTACTED = 'Last Contacted';
 
 export async function GET(request: Request) {
   const unauthorized = await requireAdmin(request);
@@ -75,6 +90,23 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const unauthorized = await requireAdmin(request);
   if (unauthorized) return unauthorized;
+
+  // COARSE SEND CEILING. 'operator_sell_link' is on the transactional
+  // whitelist (the 3/week per-recipient cap does not apply) and the
+  // idempotency claim is keyed per RECIPIENT, so varying the address defeats
+  // it — without a ceiling here, a leaked ADMIN_PASSWORD is an uncapped mail
+  // cannon firing from the verified sending domain. Ben's real ceiling is his
+  // own hands (a few dozen calls a day), so 100/hour is invisible to him and
+  // ends an abuse run fast. rateLimitStrict, NOT rateLimit: the base helper
+  // fails OPEN on a Redis outage, which would reinstate the exact hole.
+  const ip = getTrustedClientIp(request);
+  const rl = await rateLimitStrict(`operator-send:${ip}`, { requests: 100 });
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: 'too many sends in the last hour — this ceiling exists to stop a runaway; try again shortly' },
+      { status: 429 },
+    );
+  }
 
   let body: any;
   try {
@@ -92,7 +124,6 @@ export async function POST(request: Request) {
 
   const buyerEmail = String(body?.buyerEmail || '').trim().toLowerCase();
   const buyerName = String(body?.buyerName || '').trim();
-  const buyerPhone = String(body?.buyerPhone || '').trim();
   const wantEmail = body?.email !== false; // default on — it is the reliable channel
   const wantSms = body?.sms === true;
 
@@ -102,8 +133,15 @@ export async function POST(request: Request) {
   if (!wantEmail && !wantSms) {
     return NextResponse.json({ error: 'pick at least one channel' }, { status: 400 });
   }
-  if (wantEmail && !buyerEmail.includes('@')) {
-    return NextResponse.json({ error: 'a valid buyerEmail is required to send email' }, { status: 400 });
+  // ONE address. `includes('@')` let "ok@x.com, unsubscribed@y.com" through,
+  // and lib/email.ts's suppression check is an exact-string lookup on the whole
+  // `to` field — so a comma-joined pair mailed straight past the suppression
+  // list. See lib/operatorSend.isSingleEmailAddress.
+  if (wantEmail && !isSingleEmailAddress(buyerEmail)) {
+    return NextResponse.json(
+      { error: 'buyerEmail must be exactly one valid email address' },
+      { status: 400 },
+    );
   }
 
   // PRODUCT RAIL LIVENESS. /shop/<id> renders only for a row that passes
@@ -113,11 +151,24 @@ export async function POST(request: Request) {
   // re-runs at tap, and a token that verifies is by construction one this
   // platform issued.
   if (target.rail === 'product') {
-    const productId = target.url.split('/shop/')[1] || '';
-    const product: any = await getRecordById(TABLES.RANCHER_PRODUCTS, productId).catch(() => null);
-    if (!product || !isSellableRow(product)) {
+    const product: any = await getRecordById(TABLES.RANCHER_PRODUCTS, target.productId).catch(() => null);
+    if (!product) {
+      return NextResponse.json({ error: 'that product no longer exists' }, { status: 409 });
+    }
+    // SOLD OUT is its own answer, not a 404. app/shop/[id] deliberately RENDERS
+    // a sold-out page (photo, story, "sold out"), so the old copy was simply
+    // wrong about what would happen. Still refused: Ben has just told someone
+    // on the phone he is sending them a box, and a link they cannot buy wastes
+    // the close — he needs to hear it now, while he can offer something else.
+    if (!hasStock(product)) {
       return NextResponse.json(
-        { error: 'that product is not live on the shop right now — the link would 404' },
+        { error: 'that product is sold out — the page will show it as unavailable. offer another one.' },
+        { status: 409 },
+      );
+    }
+    if (!isSellableRow(product)) {
+      return NextResponse.json(
+        { error: 'that product is not live on the shop right now — the page would 404' },
         { status: 409 },
       );
     }
@@ -145,6 +196,31 @@ export async function POST(request: Request) {
     consumer = picked.consumer;
     consumerId = picked.consumer?.id || '';
   }
+  // ── RECIPIENT BINDING — the link belongs to ONE buyer ───────────────────
+  // On the share rails the token IS a deposit grant: /r/d and /r/b hand
+  // whoever opens it a referral-scoped session over that buyer's deal (message
+  // history, cut preferences, the deposit itself). So the address we are about
+  // to mail must be the address on the record the token names. Refused, not
+  // confirmed-around — see checkRecipientBinding for why there is no override.
+  // The product rail has no token and grants nothing, so nothing to bind.
+  if (target.consumerId && wantEmail) {
+    // Distinguish "cannot verify right now" from "verified, and it is someone
+    // else" — they need different moves from the operator.
+    if (!consumer) {
+      return NextResponse.json(
+        { error: 'could not check who that link belongs to just now — try the send again in a moment' },
+        { status: 503 },
+      );
+    }
+    const bound = checkRecipientBinding({
+      recordEmail: consumer['Email'],
+      buyerEmail,
+    });
+    if (!bound.ok) {
+      return NextResponse.json({ error: bound.error }, { status: 409 });
+    }
+  }
+
   // Carry the resolved identity onto the target so the Email Sends row links
   // the right buyer and the stamp lands, on every rail.
   const sendTarget = { ...target, consumerId };
@@ -170,6 +246,11 @@ export async function POST(request: Request) {
     amount: num(body?.amount),
     total: num(body?.total),
     totalMax: num(body?.totalMax),
+    // DEPOSIT-STYLE products must never read as a full-price shipped purchase
+    // (app/api/admin/products states the rule). Both consoles already branch
+    // on these for their manual copy; now the server does too.
+    depositStyle: body?.depositStyle === true,
+    priceRange: String(body?.priceRange || '').trim(),
   });
 
   // ── Deliver ─────────────────────────────────────────────────────────────
@@ -180,7 +261,9 @@ export async function POST(request: Request) {
       email: buyerEmail,
       wantEmail,
       wantSms,
-      sms: { enabled: smsEnabled(), consumer, phone: buyerPhone },
+      // Destination comes off the consented record only — no operator override
+      // (lib/operatorSend.resolveSmsGate explains why that had to go).
+      sms: { enabled: smsEnabled(), consumer },
     },
     {
       sendEmail: ({ to, copy: c, consumerId: cid }) =>
@@ -197,6 +280,10 @@ export async function POST(request: Request) {
       sendSms: ({ to, body: smsBody, consumer: c }) =>
         sendSMSToConsumer({ consumer: c, body: smsBody, phone: to, reason: 'operator-sell-link' }),
       claim: (key, ttl) => claimOnce(key, ttl),
+      // Released on every non-delivery, so a failed send never leaves behind a
+      // claim that the next tap reads as "already sent".
+      release: (key) => releaseClaim(key),
+      wasDelivered: (key) => claimExists(key),
       stamp: async ({ consumerId: cid, at }) => {
         await updateRecord(TABLES.CONSUMERS, cid, { [F_LAST_CONTACTED]: at });
       },

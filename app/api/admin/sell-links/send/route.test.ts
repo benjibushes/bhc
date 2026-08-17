@@ -87,3 +87,35 @@ test('an authenticated send with no channel picked is refused before any work', 
   );
   assert.equal(res.status, 400);
 });
+
+test('a comma-joined recipient list is refused before anything is mailed', async () => {
+  // lib/email.ts's suppression check is an exact-string lookup on the whole
+  // `to` field, so "ok@x, unsubscribed@y" would sail past it and mail both.
+  const res = await POST(
+    new Request(URL_BASE, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-admin-password': process.env.ADMIN_PASSWORD || '' },
+      body: JSON.stringify({
+        url: 'https://www.buyhalfcow.com/shop/recPROD0000000001',
+        buyerEmail: 'buyer@example.test, someone-else@example.test',
+      }),
+    }),
+  );
+  assert.equal(res.status, 400);
+  const body = await res.json();
+  assert.match(String(body.error), /exactly one valid email/i);
+});
+
+test('a doubled-slash link is refused rather than emailed as a dead URL', async () => {
+  const res = await POST(
+    new Request(URL_BASE, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-admin-password': process.env.ADMIN_PASSWORD || '' },
+      body: JSON.stringify({
+        url: 'https://www.buyhalfcow.com//shop//recPROD0000000001',
+        buyerEmail: 'buyer@example.test',
+      }),
+    }),
+  );
+  assert.equal(res.status, 400);
+});
