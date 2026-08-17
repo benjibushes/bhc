@@ -233,11 +233,13 @@ export default function BrokerReserve({
           onChange={(e) => setEmail(e.target.value)}
           className="w-full px-4 py-3 border border-dust bg-white text-sm"
         />
+        {/* Phone is OPTIONAL on this rail (the API treats it as optional; the
+            ranch coordinates pickup by phone OR email) — no `required` here so
+            the form contract matches the endpoint. */}
         <input
           type="tel"
-          required
-          placeholder="Phone"
-          aria-label="Phone"
+          placeholder="Phone (optional)"
+          aria-label="Phone (optional)"
           autoComplete="tel"
           value={phone}
           onChange={(e) => setPhone(e.target.value)}

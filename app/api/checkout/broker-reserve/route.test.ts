@@ -1,18 +1,22 @@
 // POST /api/checkout/broker-reserve — the tokenless self-serve sibling of
 // /r/b/<token>.
 //
-// The Airtable + brokerReferral layers are injected (BrokerReserveDeps) — the
-// repo's node:test setup has no module mocking, so the route exports its core
-// as handleBrokerReserve(body, deps) and the POST wrapper wires the real
-// modules. Pinned here:
+// The auth + Airtable + brokerReferral + email layers are injected
+// (BrokerReserveDeps) — the repo's node:test setup has no module mocking, so
+// the route exports its core as handleBrokerReserve(body, deps) and the POST
+// wrapper wires the real modules. Pinned here:
 //   1. input validation refuses before ANY dep is touched (bad email → 400);
 //   2. every rail gate fails closed with its 4xx (non-broker, flag off,
 //      unsellable cut, unknown slug);
-//   3. the happy path calls findOrCreateBrokerReferral exactly ONCE, sets the
-//      referral-scoped deposit-grant cookie, and returns the SAME path the
-//      /r/b redemption 302s to — never a raw Stripe URL;
-//   4. a re-tap with an existing consumer creates NO second consumer and
-//      relies on findOrCreateBrokerReferral's reuse (no duplicate creation).
+//   3. ACCOUNT-TAKEOVER GUARD (the security fix): WHO gets the deposit grant —
+//        • freshly-created consumer → grant + redirect;
+//        • authenticated member session → grant + redirect (no email lookup);
+//        • adopted pre-existing consumer with NO session → NO grant, NO write
+//          to that consumer, a magic link is emailed, and the response is
+//          { requiresEmailVerification } (never a referral-credentialing of
+//          the anonymous caller);
+//   4. the happy path returns the SAME path /r/b 302s to — never a Stripe URL;
+//   5. a re-tap never duplicates the consumer (find-or-create reuse).
 //
 // Synthetic ranch names + example.com buyers throughout — the repo is PUBLIC.
 
@@ -50,45 +54,50 @@ function goodBody(over: Record<string, any> = {}) {
 }
 
 interface Calls {
+  session: number;
   fetch: number;
   getConsumer: number;
   createConsumer: number;
-  patchConsumer: number;
   referral: number;
+  verifyLink: number;
   referralArgs: any[];
   consumerFields: any[];
+  verifyArgs: any[];
 }
 
 function fakeDeps(
   over: Partial<BrokerReserveDeps> & { rancher?: any } = {},
 ): { deps: BrokerReserveDeps; calls: Calls } {
   const calls: Calls = {
+    session: 0,
     fetch: 0,
     getConsumer: 0,
     createConsumer: 0,
-    patchConsumer: 0,
     referral: 0,
+    verifyLink: 0,
     referralArgs: [],
     consumerFields: [],
+    verifyArgs: [],
   };
   const rancher = 'rancher' in over ? over.rancher : selfServeRancher();
   const { rancher: _drop, ...depOverrides } = over;
   const deps: BrokerReserveDeps = {
+    getExistingSession: async () => {
+      calls.session += 1;
+      return null; // anonymous by default
+    },
     fetchRancherBySlug: async () => {
       calls.fetch += 1;
       return rancher;
     },
     getConsumerByEmail: async () => {
       calls.getConsumer += 1;
-      return null;
+      return null; // new email by default
     },
     createConsumer: async (fields) => {
       calls.createConsumer += 1;
       calls.consumerFields.push(fields);
       return { id: 'recCONSUMER0001' };
-    },
-    patchConsumer: async () => {
-      calls.patchConsumer += 1;
     },
     findOrCreateBrokerReferral: async (args) => {
       calls.referral += 1;
@@ -96,6 +105,11 @@ function fakeDeps(
       return { ok: true, referralId: 'recREFERRAL0001', created: true, rancher };
     },
     mintDepositGrantToken: () => 'grant-token-test',
+    sendVerificationLink: async (args) => {
+      calls.verifyLink += 1;
+      calls.verifyArgs.push(args);
+      return true; // email sent by default
+    },
     ...depOverrides,
   };
   return { deps, calls };
@@ -180,9 +194,9 @@ test('unsellable cut (no deposit set) → 409, nothing created', async () => {
   assert.equal(calls.referral, 0);
 });
 
-// ── happy path ───────────────────────────────────────────────────────────
+// ── happy path: freshly-created consumer (anonymous, new email) ────────────
 
-test('happy path: one referral resolve, grant cookie, /r/b-shaped redirect', async () => {
+test('new email + no session → create consumer, one referral, grant cookie, /r/b-shaped redirect', async () => {
   const { deps, calls } = fakeDeps();
   const res = await handleBrokerReserve(goodBody(), deps);
   assert.equal(res.status, 200);
@@ -193,8 +207,10 @@ test('happy path: one referral resolve, grant cookie, /r/b-shaped redirect', asy
   assert.deepEqual(j, { redirect: '/checkout/recREFERRAL0001/broker?cut=half' });
   assert.ok(!JSON.stringify(j).includes('stripe'), 'no Stripe URL may ride this response');
 
-  // Referral-scoped deposit grant rides the response, exactly as /r/b sets it.
+  // A freshly-created consumer is safe to credential — deposit grant rides
+  // the response, exactly as /r/b sets it. No magic link.
   assert.equal(res.cookies.get(DEPOSIT_GRANT_COOKIE)?.value, 'grant-token-test');
+  assert.equal(calls.verifyLink, 0);
 
   // findOrCreateBrokerReferral ran exactly once, addressed by record id.
   assert.equal(calls.referral, 1);
@@ -213,10 +229,71 @@ test('happy path: one referral resolve, grant cookie, /r/b-shaped redirect', asy
   assert.equal(calls.consumerFields[0]['Phone'], '+15551234567');
 });
 
-test('re-tap with an existing consumer: NO second consumer, referral reused', async () => {
-  const existing = { id: 'recCONSUMER0001', Email: 'buyer@example.com', Phone: '+15551234567' };
+// ── ACCOUNT-TAKEOVER GUARD ─────────────────────────────────────────────────
+
+test('adopted existing email + NO session → magic link, NO grant, NO consumer write', async () => {
+  const existing = { id: 'recVICTIM0001', Email: 'buyer@example.com' };
   const { deps, calls } = fakeDeps({
-    getConsumerByEmail: async () => existing,
+    getConsumerByEmail: async () => {
+      calls.getConsumer += 1;
+      return existing;
+    },
+  });
+  const res = await handleBrokerReserve(goodBody(), deps);
+  assert.equal(res.status, 200);
+
+  const j: any = await res.json();
+  // The anonymous caller is NOT credentialed: no grant cookie, no redirect
+  // that would unlock the victim's referral — only a verification prompt.
+  assert.equal(res.cookies.get(DEPOSIT_GRANT_COOKIE), undefined);
+  assert.equal(j.requiresEmailVerification, true);
+  assert.ok(typeof j.message === 'string' && j.message.length > 0);
+  assert.ok(!('redirect' in j), 'must NOT hand back a checkout redirect for an unverified adopt');
+
+  // A magic link was emailed to the OWNER, pointing at the broker deposit path.
+  assert.equal(calls.verifyLink, 1);
+  assert.equal(calls.verifyArgs[0].consumerId, 'recVICTIM0001');
+  assert.equal(calls.verifyArgs[0].email, 'buyer@example.com');
+  assert.equal(calls.verifyArgs[0].depositPath, '/checkout/recREFERRAL0001/broker?cut=half');
+
+  // The victim's consumer is never written to (no phone overwrite, no create).
+  assert.equal(calls.createConsumer, 0);
+});
+
+test('adopted existing email, magic-link send FAILS → 502, no grant, honest retry', async () => {
+  const { deps } = fakeDeps({
+    getConsumerByEmail: async () => ({ id: 'recVICTIM0001', Email: 'buyer@example.com' }),
+    sendVerificationLink: async () => false,
+  });
+  const res = await handleBrokerReserve(goodBody(), deps);
+  assert.equal(res.status, 502);
+  const j: any = await res.json();
+  assert.equal(res.cookies.get(DEPOSIT_GRANT_COOKIE), undefined);
+  assert.ok(!('requiresEmailVerification' in j), 'never claim a link was sent when it was not');
+});
+
+test('authenticated session → grant minted directly, no email lookup, no magic link', async () => {
+  const { deps, calls } = fakeDeps({
+    getExistingSession: async () => ({ consumerId: 'recSESSION0001' }),
+  });
+  const res = await handleBrokerReserve(goodBody(), deps);
+  assert.equal(res.status, 200);
+
+  const j: any = await res.json();
+  assert.equal(j.redirect, '/checkout/recREFERRAL0001/broker?cut=half');
+  // A logged-in buyer is authenticated → credentialed with the grant.
+  assert.equal(res.cookies.get(DEPOSIT_GRANT_COOKIE)?.value, 'grant-token-test');
+  // Session identity is used directly — no email lookup, no create, no email.
+  assert.equal(calls.getConsumer, 0);
+  assert.equal(calls.createConsumer, 0);
+  assert.equal(calls.verifyLink, 0);
+  assert.equal(calls.referralArgs[0].consumerId, 'recSESSION0001');
+});
+
+// ── reuse + failure semantics ──────────────────────────────────────────────
+
+test('re-tap: find-or-create runs once per POST (reuse handled inside it)', async () => {
+  const { deps, calls } = fakeDeps({
     findOrCreateBrokerReferral: async (args) => {
       calls.referral += 1;
       calls.referralArgs.push(args);
@@ -229,23 +306,7 @@ test('re-tap with an existing consumer: NO second consumer, referral reused', as
   assert.equal(res.status, 200);
   const j: any = await res.json();
   assert.equal(j.redirect, '/checkout/recREFERRAL0001/broker?cut=half');
-  assert.equal(calls.createConsumer, 0, 'must not create a duplicate consumer');
   assert.equal(calls.referral, 1, 'find-or-create runs once per POST');
-  // Phone already on record → no backfill write either.
-  assert.equal(calls.patchConsumer, 0);
-});
-
-test('existing consumer with a BLANK phone gets a blank-only backfill', async () => {
-  const patches: any[] = [];
-  const { deps } = fakeDeps({
-    getConsumerByEmail: async () => ({ id: 'recCONSUMER0001', Email: 'buyer@example.com' }),
-    patchConsumer: async (_id, patch) => {
-      patches.push(patch);
-    },
-  });
-  const res = await handleBrokerReserve(goodBody(), deps);
-  assert.equal(res.status, 200);
-  assert.deepEqual(patches, [{ Phone: '+15551234567' }]);
 });
 
 test('referral io-error → 502 buyer-safe retry, no half-created state exposed', async () => {
@@ -266,8 +327,25 @@ test('rail flipped between render and POST (referral says not-broker-rail) → 4
   assert.equal(res.status, 409);
 });
 
-test('grant-mint failure still returns the redirect (mirrors /r/b), sans cookie', async () => {
+test('grant-mint failure (new-consumer path, no session) → 500 inline, no false sent-link', async () => {
   const { deps } = fakeDeps({
+    mintDepositGrantToken: () => {
+      throw new Error('secret unavailable');
+    },
+  });
+  const res = await handleBrokerReserve(goodBody(), deps);
+  // No session + no grant → redirecting would show the shared checkout page's
+  // "the link we sent you" copy, which is false here. Honest inline retry.
+  assert.equal(res.status, 500);
+  const j: any = await res.json();
+  assert.equal(res.cookies.get(DEPOSIT_GRANT_COOKIE), undefined);
+  assert.ok(!('redirect' in j), 'must not dead-end on the false sent-link checkout copy');
+  assert.ok(typeof j.error === 'string' && !/link/i.test(j.error), 'copy must not claim a sent link');
+});
+
+test('grant-mint failure WITH a session → redirect (member session authorizes)', async () => {
+  const { deps } = fakeDeps({
+    getExistingSession: async () => ({ consumerId: 'recSESSION0001' }),
     mintDepositGrantToken: () => {
       throw new Error('secret unavailable');
     },
