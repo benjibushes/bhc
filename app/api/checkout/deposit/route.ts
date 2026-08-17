@@ -19,6 +19,7 @@ import { tierFor, depositCommissionRate } from '@/lib/tiers';
 import { resolveDepositAuth } from '@/lib/buyerAuth';
 import { claimOnce } from '@/lib/rancherCapacity';
 import { checkOriginGuard } from '@/lib/csrfGuard';
+import { rateLimitStrict, getTrustedClientIp } from '@/lib/rateLimit';
 import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
 import { metaEventId } from '@/lib/analytics';
 import { absorbStripeFee } from '@/lib/feeMath';
@@ -42,7 +43,42 @@ const CUT_LABELS: Record<string, string> = {
 // POST — create Stripe Checkout Session
 // ---------------------------------------------------------------------------
 
+// Per-IP ceiling for the deposit Checkout Session mint (ad-readiness
+// 2026-08-17). This route mints the card-charge PaymentIntent and had NO
+// throughput ceiling at all, while its sibling money-mint
+// (app/api/checkout/product/intent) has run rateLimitStrict since the checkout
+// audit. Same helper, same posture: rateLimitStrict NEVER fails open — with
+// Upstash missing or erroring it degrades to a per-instance in-memory window
+// rather than unbounded (see lib/rateLimit.ts). A ceiling that evaporates
+// exactly when Redis does is not a ceiling.
+//
+// WHY 20/min RATHER THAN THE SIBLING'S 12: this route is auth-gated (member
+// session or referral-scoped deposit grant), so it is not the open anonymous
+// card-testing farm the 12 was sized against — the limit here is a
+// retry-storm/spike ceiling, not an abuse gate. Against that, paid Meta
+// traffic is overwhelmingly mobile, and mobile carriers CGNAT many subscribers
+// behind ONE egress IP: a per-IP bucket can legitimately carry several
+// distinct buyers at once. 20 keeps real headroom for that while still capping
+// a runaway retry loop at 20 Stripe session creates per minute per IP.
+//
+// It cannot block a real buyer: a declined card does NOT re-hit this route
+// (the Payment Element retries client-side against the existing clientSecret),
+// so one buyer's whole session is a handful of POSTs — continue-click, an
+// optional hosted-fallback re-POST, a cut change, a cancel-and-retry. The
+// per-referral claimOnce below already serializes those to one create per 30s.
+const DEPOSIT_MINTS_PER_MINUTE_PER_IP = 20;
+
 export async function POST(req: Request) {
+  const rl = await rateLimitStrict(`deposit-session:${getTrustedClientIp(req)}`, {
+    requests: DEPOSIT_MINTS_PER_MINUTE_PER_IP,
+  });
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: 'rate_limited', message: 'Too many attempts — wait a minute and try again. Your card was not charged.' },
+      { status: 429 },
+    );
+  }
+
   if (process.env.STRIPE_CONNECT_ENABLED !== 'true') {
     return NextResponse.json({ error: 'Stripe Connect not enabled' }, { status: 503 });
   }
