@@ -23,9 +23,11 @@
 // proved they own it — never to an anonymous caller by unverified email.
 //
 // findOrCreateBrokerReferral owns every money-path record write (repo rule:
-// money truth is persisted by it, nothing here writes referral records) and
-// its find-or-create semantics make a double-tap reuse the open referral
-// instead of duplicating.
+// money truth is persisted by it) and its find-or-create semantics make a
+// double-tap reuse the open referral instead of duplicating. The one write
+// this handler makes to a referral is the CLEANUP void (→ Lost) when a
+// verification email fails to send — mirroring app/api/checkout/reserve:447-460
+// so a failed send never strands a phantom Pending hold.
 //
 // Body: { slug, cut: 'quarter'|'half'|'whole', email, name?, phone? }
 // 200 → { redirect: '/checkout/<refId>/broker?cut=<cut>' } (client navigates;
@@ -38,6 +40,7 @@ import { NextResponse } from 'next/server';
 import {
   TABLES,
   createRecord,
+  updateRecord,
   getAllRecords,
   getRancherOrProspectBySlug,
   escapeAirtableValue,
@@ -165,6 +168,13 @@ export interface BrokerReserveDeps {
     ranchName: string;
     depositPath: string;
   }): Promise<boolean>;
+  /**
+   * Void an orphaned broker hold (referral → Lost) when the verification email
+   * fails to send — the one referral write this handler owns (see the header
+   * note; mirrors app/api/checkout/reserve:447-460). Best-effort by contract:
+   * the caller swallows failures so a void blip never masks the real 502.
+   */
+  voidReferral(referralId: string, note: string): Promise<void>;
 }
 
 const defaultDeps: BrokerReserveDeps = {
@@ -194,6 +204,9 @@ const defaultDeps: BrokerReserveDeps = {
       html: brokerReserveMagicLinkHtml({ ranchName, magicLink }),
     });
     return result?.success === true;
+  },
+  voidReferral: async (referralId, note) => {
+    await updateRecord(TABLES.REFERRALS, referralId, { Status: 'Lost', Notes: note });
   },
 };
 
@@ -312,7 +325,13 @@ export async function handleBrokerReserve(
   // is NOT credentialed. Email a magic link that proves ownership (the member
   // session it mints authorizes the broker checkout); the grant is issued only
   // after they click it, never from this POST.
-  if (adoptedExisting && !existingSession) {
+  // `!existingSession?.consumerId` (not just `!existingSession`): an authed
+  // session is only credential-worthy when it actually names a consumer. A
+  // member-session that decoded to an EMPTY consumerId (resolveBuyerSession
+  // still returns the object) would otherwise slip past this guard and let an
+  // adopted-by-unverified-email consumer be credentialed directly. Defense in
+  // depth — no legit issuer emits an empty-consumerId session.
+  if (adoptedExisting && !existingSession?.consumerId) {
     let emailSent = false;
     try {
       emailSent = await deps.sendVerificationLink({
@@ -328,6 +347,19 @@ export async function handleBrokerReserve(
     // Never tell the buyer "check your inbox" when the email did NOT send.
     // No grant is issued either way — a failed send just asks them to retry.
     if (!emailSent) {
+      // Void the phantom hold findOrCreateBrokerReferral just created/reused
+      // (referral → Lost), mirroring app/api/checkout/reserve:447-460. Leaving
+      // it Pending would strand a lead the rancher sees + a buyer waiting on an
+      // email that never comes. Best-effort — a failed void just logs and must
+      // not mask the buyer-facing 502.
+      try {
+        await deps.voidReferral(
+          resolved.referralId,
+          'Voided automatically — the broker sign-in email failed to send; buyer was asked to retry.',
+        );
+      } catch (voidErr: any) {
+        console.warn('[checkout/broker-reserve] orphan referral void skipped:', voidErr?.message);
+      }
       return NextResponse.json(
         {
           error:

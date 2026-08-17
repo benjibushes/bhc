@@ -16,7 +16,11 @@
 //          { requiresEmailVerification } (never a referral-credentialing of
 //          the anonymous caller);
 //   4. the happy path returns the SAME path /r/b 302s to — never a Stripe URL;
-//   5. a re-tap never duplicates the consumer (find-or-create reuse).
+//   5. a re-tap never duplicates the consumer (find-or-create reuse);
+//   6. a magic-link SEND FAILURE voids the phantom Pending hold (→ Lost),
+//      mirroring the reserve route, and a void blip never masks the 502;
+//   7. an empty-consumerId session is NOT treated as authenticated (the
+//      `!existingSession?.consumerId` guard tightening — defense in depth).
 //
 // Synthetic ranch names + example.com buyers throughout — the repo is PUBLIC.
 
@@ -60,9 +64,11 @@ interface Calls {
   createConsumer: number;
   referral: number;
   verifyLink: number;
+  voidReferral: number;
   referralArgs: any[];
   consumerFields: any[];
   verifyArgs: any[];
+  voidArgs: any[];
 }
 
 function fakeDeps(
@@ -75,9 +81,11 @@ function fakeDeps(
     createConsumer: 0,
     referral: 0,
     verifyLink: 0,
+    voidReferral: 0,
     referralArgs: [],
     consumerFields: [],
     verifyArgs: [],
+    voidArgs: [],
   };
   const rancher = 'rancher' in over ? over.rancher : selfServeRancher();
   const { rancher: _drop, ...depOverrides } = over;
@@ -109,6 +117,10 @@ function fakeDeps(
       calls.verifyLink += 1;
       calls.verifyArgs.push(args);
       return true; // email sent by default
+    },
+    voidReferral: async (referralId, note) => {
+      calls.voidReferral += 1;
+      calls.voidArgs.push({ referralId, note });
     },
     ...depOverrides,
   };
@@ -260,8 +272,8 @@ test('adopted existing email + NO session → magic link, NO grant, NO consumer 
   assert.equal(calls.createConsumer, 0);
 });
 
-test('adopted existing email, magic-link send FAILS → 502, no grant, honest retry', async () => {
-  const { deps } = fakeDeps({
+test('adopted existing email, magic-link send FAILS → 502, no grant, honest retry, phantom hold voided', async () => {
+  const { deps, calls } = fakeDeps({
     getConsumerByEmail: async () => ({ id: 'recVICTIM0001', Email: 'buyer@example.com' }),
     sendVerificationLink: async () => false,
   });
@@ -270,6 +282,56 @@ test('adopted existing email, magic-link send FAILS → 502, no grant, honest re
   const j: any = await res.json();
   assert.equal(res.cookies.get(DEPOSIT_GRANT_COOKIE), undefined);
   assert.ok(!('requiresEmailVerification' in j), 'never claim a link was sent when it was not');
+
+  // The phantom Pending broker referral is voided (→ Lost), mirroring the
+  // reserve route — a failed send never strands a hold the rancher sees.
+  assert.equal(calls.voidReferral, 1);
+  assert.equal(calls.voidArgs[0].referralId, 'recREFERRAL0001');
+  assert.ok(/lost|void/i.test(calls.voidArgs[0].note), 'void note explains the auto-void');
+});
+
+test('adopted-existing send-fail: a void blip must NOT mask the buyer-facing 502', async () => {
+  const { deps, calls } = fakeDeps({
+    getConsumerByEmail: async () => ({ id: 'recVICTIM0001', Email: 'buyer@example.com' }),
+    sendVerificationLink: async () => false,
+    voidReferral: async () => {
+      throw new Error('airtable blip');
+    },
+  });
+  const res = await handleBrokerReserve(goodBody(), deps);
+  // Void failure is swallowed — the buyer still gets the honest 502 retry.
+  assert.equal(res.status, 502);
+  assert.equal(calls.voidReferral, 0, 'the throwing fake never increments (it threw)');
+  const j: any = await res.json();
+  assert.ok(!('requiresEmailVerification' in j));
+});
+
+test('happy path (new consumer) never voids the referral', async () => {
+  const { deps, calls } = fakeDeps();
+  const res = await handleBrokerReserve(goodBody(), deps);
+  assert.equal(res.status, 200);
+  assert.equal(calls.voidReferral, 0, 'a successful reserve must not void its own hold');
+});
+
+// ── ACCOUNT-TAKEOVER GUARD: empty-consumerId session edge (defense in depth) ──
+
+test('session decoded to an EMPTY consumerId + adopted email → magic link, NO grant (guard tightening)', async () => {
+  // A member-session JWT that carried an empty consumerId still resolves to a
+  // NON-null session object. The old `!existingSession` guard would treat that
+  // as "authenticated" and credential the adopted (unverified) consumer.
+  // `!existingSession?.consumerId` keeps it on the verification path.
+  const { deps, calls } = fakeDeps({
+    getExistingSession: async () => ({ consumerId: '' }),
+    getConsumerByEmail: async () => ({ id: 'recVICTIM0001', Email: 'buyer@example.com' }),
+  });
+  const res = await handleBrokerReserve(goodBody(), deps);
+  assert.equal(res.status, 200);
+  const j: any = await res.json();
+  assert.equal(res.cookies.get(DEPOSIT_GRANT_COOKIE), undefined, 'no grant on an empty-consumerId session');
+  assert.equal(j.requiresEmailVerification, true);
+  assert.ok(!('redirect' in j), 'must not hand back a checkout redirect');
+  assert.equal(calls.verifyLink, 1, 'ownership must be proven via the magic link');
+  assert.equal(calls.verifyArgs[0].consumerId, 'recVICTIM0001');
 });
 
 test('authenticated session → grant minted directly, no email lookup, no magic link', async () => {
