@@ -28,6 +28,7 @@ import {
 } from '@/lib/routingPriority';
 import { nationwideAllowed, nationwideRoutingEnabled, NATIONWIDE_PREFERENCE_FIELD } from '@/lib/nationwidePreference';
 import { parseBudgetCeiling, nationwideFitVerdict } from '@/lib/nationwideFit';
+import { isRequestOnlyRancher } from '@/lib/requestOnlyRanchers';
 import { isExcludingLossReason } from '@/lib/lossReasons';
 import { leadFactsHtml, closeCtaHtml, readyBannerHtml } from '@/lib/rancherLeadEmail';
 
@@ -621,6 +622,15 @@ export async function POST(request: Request) {
       return [r['Quarter Price'], r['Half Price'], r['Whole Price']].some(hasFloorPrice);
     };
     const isEligibleBase = (r: any) => {
+      // ── REQUEST-ONLY BACKSTOP ────────────────────────────────────────────
+      // Both generic candidate sets (local pool + nationwide fallback) reject
+      // request-only ranchers explicitly, ahead of this function, so they can
+      // LOG the skip for operators. This line is the belt to those suspenders:
+      // isEligibleBase is the shared base gate every generic candidate set in
+      // this route runs through, so any FUTURE pool inherits the rule for free
+      // instead of re-opening the hole. The direct-pin path never calls this
+      // function — a pinned request-only rancher still routes, by design.
+      if (isRequestOnlyRancher(r)) return false;
       if (excludeIds.has(r.id)) return false;
       // Capacity-unknown (Closed Won scan failed) → fail closed per-rancher.
       if (!closedWonScanOk) return false;
@@ -878,7 +888,20 @@ export async function POST(request: Request) {
       // have it set today, so the fallback never fires until an operator opts a
       // Connect-active rancher in.) Otherwise the buyer is waitlisted and
       // re-engaged when a rancher in their state goes live.
+      const requestOnlyLocalSkips: string[] = [];
       const localEligibleAll = allRanchers.filter((r: any) => {
+        // ── REQUEST-ONLY HARD EXCLUSION (Ben, explicit and repeated) ──────
+        // Same rule as the nationwide fallback below, applied to the LOCAL
+        // pool: a request-only rancher's home + Routing States would
+        // otherwise hand them every nearby buyer who never asked for their
+        // specialty. "Only by explicit request" means the generic path —
+        // near or far — never picks them. The direct-pin block above is
+        // deliberately untouched, so their deep-link still routes.
+        // Source of truth: lib/requestOnlyRanchers.
+        if (isRequestOnlyRancher(r)) {
+          requestOnlyLocalSkips.push(String(r['Slug'] || r.id || 'unknown'));
+          return false;
+        }
         if (!isEligibleBase(r)) return false;
         // Normalize rancher's primary state + every "Routing States" entry to
         // 2-letter codes BEFORE comparing. Old behavior just uppercased, so
@@ -935,6 +958,13 @@ export async function POST(request: Request) {
         return true;
       });
       const localEligible = localEligibleAll.filter(isPriceFit);
+
+      // No silent gates: say out loud when request-only supply was withheld.
+      if (requestOnlyLocalSkips.length > 0) {
+        console.log(
+          `[match] Buyer ${buyerName || buyerId} — request-only rancher(s) excluded from local matching: ${[...new Set(requestOnlyLocalSkips)].join(', ')} (specialty supply, reachable only by explicit buyer request — lib/requestOnlyRanchers).`,
+        );
+      }
 
       // No silent caps: say out loud when the radius gate removed supply.
       if (radiusStrict && buyerPoint) {
@@ -1099,7 +1129,25 @@ export async function POST(request: Request) {
           'Interest Beef': buyerRecForGate?.['Interest Beef'] || '',
         };
         const fitSkipReasons: string[] = [];
+        const requestOnlySkips: string[] = [];
         const nationwideEligible = allRanchers.filter((r: any) => {
+          // ── REQUEST-ONLY HARD EXCLUSION (Ben, explicit and repeated) ────
+          // FIRST predicate in this filter, deliberately: a request-only
+          // rancher is specialty supply reachable ONLY by explicit buyer
+          // request, so it must never even reach the fit gate below. Rep
+          // Provisions carries BOTH `Admin Approved Multi-State` and
+          // `Ships Nationwide`, which put them in this candidate pool for
+          // every uncovered state — and nationwideFitVerdict's budget rule
+          // passes any buyer whose ceiling clears the cheapest cut, with
+          // zero grass-finished interest required. That is exactly the
+          // forbidden nationwide fallback. Single source of truth:
+          // lib/requestOnlyRanchers (the campaign-wave engine reads the
+          // same set). The direct-pin path above does NOT consult this —
+          // a buyer who asked for this rancher still gets them.
+          if (isRequestOnlyRancher(r)) {
+            requestOnlySkips.push(String(r['Slug'] || r.id || 'unknown'));
+            return false;
+          }
           if (!isEligibleBase(r)) return false;
           if (!(r['Admin Approved Multi-State'] && r['Ships Nationwide'])) return false;
           // Home-state ranchers were already considered in the local tier.
@@ -1113,6 +1161,11 @@ export async function POST(request: Request) {
           }
           return true;
         });
+        if (requestOnlySkips.length > 0) {
+          console.log(
+            `[match] Buyer ${buyerName || buyerId} — request-only rancher(s) excluded from the nationwide fallback: ${[...new Set(requestOnlySkips)].join(', ')} (specialty supply, reachable only by explicit buyer request — lib/requestOnlyRanchers).`,
+          );
+        }
         if (fitSkipReasons.length > 0) {
           const reasons = [...new Set(fitSkipReasons)].join('; ');
           console.log(
