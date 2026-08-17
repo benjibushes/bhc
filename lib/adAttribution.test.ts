@@ -24,6 +24,11 @@ import {
   hasAdAttribution,
   isUsableClickTimestamp,
   readStoredAttribution,
+  readFunnelAttribution,
+  FUNNEL_DEFAULT_SOURCE,
+  LEGACY_CAMPAIGN_KEY,
+  LEGACY_SOURCE_KEY,
+  LEGACY_UTM_PARAMS_KEY,
 } from './adAttribution';
 
 /** Minimal localStorage stand-in. */
@@ -240,6 +245,128 @@ test('reader → mapper round-trips the whole snapshot', () => {
     readStoredAttribution(storageWith(JSON.stringify(FULL_SNAPSHOT))),
   );
   assert.deepEqual(fields, {
+    utm_source: 'facebook',
+    utm_medium: 'paid',
+    utm_campaign: 'az-half-cow',
+    utm_content: 'video-a',
+    utm_term: 'half cow phoenix',
+    fbclid: 'IwAR0testclickid',
+    fbclid_ts: '1755300000000',
+    gclid: 'Cj0KCQtest',
+  });
+});
+
+// ── readFunnelAttribution — the /access funnel's whole first-touch read ─────
+//
+// WHY IT EXISTS: BuyerFunnel used to build this inline in a MOUNT effect, which
+// only worked because UtmCapture (app/layout.tsx, above {children}) happens to
+// flush its effect first — child effects run before parent effects, so the
+// correctness of the highest-traffic signup path hung on the relative order of
+// two JSX lines nobody edits with this in mind. The funnel now calls this at
+// SEND time, exactly like DepositReserveForm + BrokerReserve. These tests pin
+// the payload so the move is provably behavior-preserving.
+
+/** localStorage stand-in over a plain key→value map. */
+function mapStorage(entries: Record<string, string>) {
+  return { getItem: (k: string) => (k in entries ? entries[k] : null) };
+}
+
+const LEGACY_KEYS = {
+  [LEGACY_SOURCE_KEY]: 'facebook',
+  [LEGACY_CAMPAIGN_KEY]: 'az-half-cow',
+  [LEGACY_UTM_PARAMS_KEY]: 'utm_source=facebook&utm_medium=paid',
+};
+
+test('the funnel read merges the legacy string keys with the v2 snapshot', () => {
+  const attr = readFunnelAttribution({
+    storage: mapStorage({
+      ...LEGACY_KEYS,
+      [AD_ATTRIBUTION_STORAGE_KEY]: JSON.stringify(FULL_SNAPSHOT),
+    }),
+  });
+  assert.deepEqual(attr, {
+    source: 'facebook',
+    campaign: 'az-half-cow',
+    utmParams: 'utm_source=facebook&utm_medium=paid',
+    utm_source: 'facebook',
+    utm_medium: 'paid',
+    utm_campaign: 'az-half-cow',
+    utm_content: 'video-a',
+    utm_term: 'half cow phoenix',
+    fbclid: 'IwAR0testclickid',
+    fbclid_ts: '1755300000000',
+    gclid: 'Cj0KCQtest',
+  });
+});
+
+test('the eight ad keys are ALWAYS present as strings — the POST body shape is stable', () => {
+  const attr = readFunnelAttribution({ storage: mapStorage({}) });
+  for (const k of AD_ATTRIBUTION_KEYS) {
+    assert.equal(attr[k], '', `${k} must be '' when uncaptured, never undefined`);
+  }
+  assert.equal(attr.source, FUNNEL_DEFAULT_SOURCE, 'unattributed traffic is "funnel", not ""');
+  assert.equal(attr.campaign, '');
+  assert.equal(attr.utmParams, '');
+});
+
+test('a rancher-pinned entry WINS over the stored campaign (matching pins the clicked ranch)', () => {
+  const attr = readFunnelAttribution({
+    storage: mapStorage(LEGACY_KEYS),
+    rancherSlug: 'granite-hollow-beef',
+  });
+  assert.equal(attr.campaign, 'rancher-granite-hollow-beef');
+  assert.equal(attr.source, 'facebook', 'the pin does not disturb source');
+});
+
+test('no rancherSlug → the stored campaign stands', () => {
+  assert.equal(readFunnelAttribution({ storage: mapStorage(LEGACY_KEYS) }).campaign, 'az-half-cow');
+});
+
+test('missing / null storage degrades to the defaults — signup is never gated', () => {
+  const attr = readFunnelAttribution({ storage: null });
+  assert.equal(attr.source, FUNNEL_DEFAULT_SOURCE);
+  assert.equal(attr.campaign, '');
+  assert.equal(attr.utmParams, '');
+  assert.equal(hasAdAttribution(attr), false);
+});
+
+test('a THROWING getItem (locked-down browser) never propagates out of the funnel read', () => {
+  const hostile = { getItem: () => { throw new Error('SecurityError'); } };
+  const attr = readFunnelAttribution({ storage: hostile });
+  assert.equal(attr.source, FUNNEL_DEFAULT_SOURCE);
+  assert.equal(attr.fbclid, '');
+});
+
+test('the rancher pin SURVIVES blocked storage (it is a prop, not a stored value)', () => {
+  // The inline mount-effect version computed the pin INSIDE the try block, so a
+  // storage throw dropped it and the server lost its `Preferred Rancher` link.
+  const hostile = { getItem: () => { throw new Error('SecurityError'); } };
+  assert.equal(
+    readFunnelAttribution({ storage: hostile, rancherSlug: 'granite-hollow-beef' }).campaign,
+    'rancher-granite-hollow-beef',
+  );
+  assert.equal(
+    readFunnelAttribution({ storage: null, rancherSlug: 'granite-hollow-beef' }).campaign,
+    'rancher-granite-hollow-beef',
+  );
+});
+
+test('corrupt v2 JSON still yields the legacy keys (one bad value cannot blank the rest)', () => {
+  const attr = readFunnelAttribution({
+    storage: mapStorage({ ...LEGACY_KEYS, [AD_ATTRIBUTION_STORAGE_KEY]: '{not json' }),
+  });
+  assert.equal(attr.source, 'facebook');
+  assert.equal(attr.campaign, 'az-half-cow');
+  assert.equal(attr.fbclid, '');
+});
+
+test('the funnel read feeds the SAME write map the reserve rails use', () => {
+  const attr = readFunnelAttribution({
+    storage: mapStorage({ ...LEGACY_KEYS, [AD_ATTRIBUTION_STORAGE_KEY]: JSON.stringify(FULL_SNAPSHOT) }),
+  });
+  // source/campaign/utmParams ride their own POST fields; only the eight ad keys
+  // map onto Consumers columns.
+  assert.deepEqual(attributionConsumerFields(attr), {
     utm_source: 'facebook',
     utm_medium: 'paid',
     utm_campaign: 'az-half-cow',

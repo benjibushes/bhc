@@ -116,6 +116,7 @@ import {
   shouldFireClosePurchase,
 } from '@/lib/metaCapi';
 import { metaEventId } from '@/lib/analytics';
+import { isBrokerReferralRow } from '@/lib/commission';
 import { logAuditEntry } from '@/lib/auditLog';
 import { zipFromStripePayment, buyerZipPatch, stateFromStripePayment, buyerStatePatch } from '@/lib/buyerZip';
 import { stateFromZip } from '@/lib/zipCentroids';
@@ -614,12 +615,20 @@ export async function settleFinalInvoice(pi: any): Promise<void> {
   // deal counts ONCE. shouldFireClosePurchase mirrors the recordClose guard so
   // BOTH close-Purchase paths (attributed + legacy) dedup identically. referralRow
   // was read above; a null 'Deposit Paid At' (legacy no-deposit close) still fires.
+  //
+  // RAIL GUARD (broker), same as the recordClose path: closeSaleAmount is the
+  // FULL share price and a represented ranch's revenue is only the deposit, so a
+  // broker row emits no Purchase here either. A broker referral should never
+  // reach a platform final invoice at all (isPostCloseInvoiceRail already keeps
+  // it out of commission invoicing) — this is the cheap belt, reading the
+  // already-fetched row rather than adding a call.
   // Fire-and-forget — never block the webhook response.
   if (
     !closePurchaseEnabled() &&
     shouldFireClosePurchase({
       depositPurchaseEnabled: depositPurchaseEnabled(),
       depositPaidAt: referralRow?.['Deposit Paid At'],
+      brokerRail: isBrokerReferralRow(referralRow),
     })
   ) (async () => {
     try {

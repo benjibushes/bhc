@@ -129,11 +129,44 @@ export function depositEventId(referralId: string): string {
  * When the deposit flag is OFF, this is a no-op guard (returns true) — nothing
  * fired at deposit, so the close remains the sole Purchase. Byte-identical to
  * pre-deposit behavior when the flag is unset.
+ *
+ * ── `brokerRail`: UNCONDITIONAL SUPPRESSION (2026-08-17) ────────────────────
+ * The Closed-Won Purchase reports the FULL share price (`Total Sale Amount`).
+ * On the broker rail that number is a ~4-5x overstatement of revenue and must
+ * never reach Meta:
+ *
+ *   • The buyer's card is charged the DEPOSIT and nothing else. The balance is
+ *     paid to the ranch directly, off-platform — BHC never sees it, Stripe never
+ *     sees it (money model 3, docs/BUSINESS-MODEL.md). The deposit IS BHC's
+ *     entire commission, so the deposit is the revenue, full stop.
+ *   • Closed Won on this rail is a FULFILLMENT status change, not a second money
+ *     moment. The rail's one conversion already fired at deposit-paid
+ *     (lib/brokerCapi buildBrokerDepositCapiEvents → Purchase, event_id
+ *     `deposit_<referralId>`, value = the real charge, deduped against the
+ *     success-page client Pixel).
+ *   • The close Purchase's event_id is metaEventId(referralId) — DELIBERATELY
+ *     distinct from depositEventId(referralId) (see above), so Meta's dedup
+ *     window would NOT collapse the two. Correcting the close's *value* instead
+ *     of suppressing it would therefore double-count whenever the deposit
+ *     Purchase also fired, putting us right back to depending on the ORDER of
+ *     two env flags. Firing nothing is the only answer that holds in all four
+ *     flag combinations.
+ *
+ * So this returns false for a broker referral no matter what the flags say. If
+ * broker revenue is missing from Meta, the fix is META_DEPOSIT_PURCHASE_ENABLED
+ * (the rail's documented conversion moment) — never META_CLOSE_PURCHASE_ENABLED.
+ * Reporting nothing is honest; reporting the share price is not.
+ *
+ * Default false → every existing caller and every Connect/legacy close is
+ * byte-identical to before this parameter existed.
  */
 export function shouldFireClosePurchase(input: {
   depositPurchaseEnabled: boolean;
   depositPaidAt?: string | null;
+  brokerRail?: boolean;
 }): boolean {
+  // FIRST and unconditional: no env combination may reach the share-price fire.
+  if (input.brokerRail) return false;
   if (!input.depositPurchaseEnabled) return true;
   const hasDeposit = !!(input.depositPaidAt && String(input.depositPaidAt).trim());
   return !hasDeposit;

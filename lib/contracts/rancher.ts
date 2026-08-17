@@ -20,6 +20,8 @@ import {
   shouldFireClosePurchase,
 } from '@/lib/metaCapi';
 import { metaEventId } from '@/lib/analytics';
+import { isBrokerRancher } from '@/lib/brokerRail';
+import { isBrokerReferralRow } from '@/lib/commission';
 
 const AFFILIATE_SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
@@ -279,6 +281,37 @@ export async function recordClose(input: RecordCloseInput): Promise<{ ok: boolea
 }
 
 /**
+ * Is this close on the BROKER rail? — the measurement gate for the Closed-Won
+ * Purchase. See the `brokerRail` note on shouldFireClosePurchase (lib/metaCapi)
+ * for WHY a broker close must never emit a share-price Purchase.
+ *
+ * TWO INDEPENDENT SIGNALS; either one alone is enough to suppress.
+ *   1. `Match Type = 'Broker — Deposit'` on the referral (isBrokerReferralRow).
+ *      Stamped at creation (lib/brokerReferral) and re-stamped at settlement
+ *      (lib/brokerSettlement), so it is present before, during and after
+ *      payment — including the hand-closed deal that never paid the link. It is
+ *      a typecast-written reporting label though, so it is a belt, not truth.
+ *   2. `Broker Rail` on the LINKED RANCHER (isBrokerRancher) — the rail's
+ *      authoritative source of truth everywhere else in the codebase.
+ *
+ * The rancher read only happens when signal 1 is absent, so a labelled broker
+ * close costs no extra Airtable call. If that read fails, signal 1 remains the
+ * answer; with BOTH unreadable we report false (fire) — the same fail-open the
+ * deposit guard takes, because a transient Airtable blip must not silently
+ * swallow a real Connect/legacy close conversion, and leaking a broker one
+ * would take two independent signals failing at once.
+ */
+async function isBrokerRailClose(referral: any): Promise<boolean> {
+  if (!referral) return false;
+  if (isBrokerReferralRow(referral)) return true;
+  const links: string[] = referral['Rancher'] || referral['Suggested Rancher'] || [];
+  const rancherId = String(links[0] || '').trim();
+  if (!rancherId) return false;
+  const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId).catch(() => null);
+  return isBrokerRancher(rancher);
+}
+
+/**
  * Fire the attributed Closed-Won Purchase to Meta CAPI. Server-side and
  * off-session (rancher/admin close — no buyer browser), so we rebuild the
  * buyer's _fbc from their stored fbclid + click-time ms. event_time is the real
@@ -300,9 +333,17 @@ async function fireClosedWonPurchase(args: {
   // no-deposit closes (no stamp) still fire — the close is their only Purchase.
   // A read failure fails OPEN to the pre-deposit behavior (fire) so a transient
   // Airtable blip never silently drops a real close conversion.
+  //
+  // RAIL GUARD (broker). args.saleAmount is the FULL share price, which on the
+  // broker rail is ~4-5x the money that actually moved through BHC (the deposit
+  // is the whole revenue; the balance is paid to the ranch off-platform). A
+  // broker close therefore emits NO Purchase under any flag combination — its
+  // one conversion already fired at deposit-paid via lib/brokerCapi. See
+  // isBrokerRailClose above and shouldFireClosePurchase in lib/metaCapi.
   const refForGuard: any = await getRecordById(TABLES.REFERRALS, args.referralId).catch(() => null);
   const depositPaidAt = refForGuard?.['Deposit Paid At'];
-  if (!shouldFireClosePurchase({ depositPurchaseEnabled: depositPurchaseEnabled(), depositPaidAt })) {
+  const brokerRail = await isBrokerRailClose(refForGuard);
+  if (!shouldFireClosePurchase({ depositPurchaseEnabled: depositPurchaseEnabled(), depositPaidAt, brokerRail })) {
     return;
   }
 
