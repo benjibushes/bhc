@@ -21,7 +21,9 @@ import {
   type GuardTelemetry,
   type SelectWavesInput,
   isWaveSellable,
+  CAMPAIGN_WAVE_EXCLUDED_SLUGS,
 } from './campaignWaves';
+import { REQUEST_ONLY_RANCHER_SLUGS } from './requestOnlyRanchers';
 import { MAX_BATCH } from './requalifyCampaign';
 import { SUNSET_SUPPRESSED_MARKER } from './marketingSunset';
 import type { ActiveDealKeys } from './demandRouter';
@@ -429,19 +431,36 @@ test('countDistinctSendDays: distinct UTC days, garbage ignored', () => {
   assert.equal(countDistinctSendDays([]), 0);
 });
 
-test('rancherForStateTable: campaign-excluded slugs never appear, even as nationwide fallback', () => {
+test('rancherForStateTable: request-only slugs never appear, even as nationwide fallback', () => {
+  // Both fixtures are fully OPERATIONAL and SELLABLE (Agreement Signed + a
+  // priced cut) on purpose: without those the whole table comes back empty and
+  // this assertion passes for the wrong reason. The ONLY thing keeping the
+  // request-only ranch out must be the shared exclusion list.
   const rep = {
     id: 'recRep', Slug: 'rep-provisions', 'Ranch Name': 'Rep Provisions',
-    State: 'MO', 'Active Status': { name: 'Active' }, 'Current Active Referrals': 0,
+    State: 'MO', 'Active Status': { name: 'Active' }, 'Agreement Signed': true,
+    'Half Price': 3700, 'Current Active Referrals': 0,
   };
   const local = {
     id: 'recLocal', Slug: 'foodstead', 'Ranch Name': 'Foodstead',
-    State: 'MT', 'Active Status': { name: 'Active' }, 'Current Active Referrals': 5,
+    State: 'MT', 'Active Status': { name: 'Active' }, 'Agreement Signed': true,
+    'Half Price': 2100, 'Current Active Referrals': 5,
   };
   const table = rancherForStateTable([rep, local] as any[]);
+  // The non-excluded ranch DOES land in the table — proof the fixtures clear
+  // every other gate, so the rep-provisions absence below is the rule at work.
+  assert.equal(table.get('MT')?.slug, 'foodstead');
+  assert.equal(table.has('MO'), false, 'a request-only ranch leaves its own state uncovered');
   for (const [, v] of table) {
     assert.notEqual(v.slug, 'rep-provisions');
   }
+});
+
+test('rancherForStateTable exclusion is driven by the SHARED request-only list', () => {
+  // The back-compat alias must be the same object as the canonical set, so a
+  // slug added in lib/requestOnlyRanchers drops out of BOTH engines at once.
+  assert.equal(CAMPAIGN_WAVE_EXCLUDED_SLUGS, REQUEST_ONLY_RANCHER_SLUGS);
+  assert.equal(CAMPAIGN_WAVE_EXCLUDED_SLUGS.has('rep-provisions'), true);
 });
 
 test('isWaveSellable: priced cut or payment link required; dead-end ranchers excluded from table', () => {

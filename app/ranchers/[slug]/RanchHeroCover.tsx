@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { heroImageSources, HERO_COVER_SIZES } from '@/lib/heroImage';
 
 // ── Hero cover with bulletproof degradation ──────────────────────────────
 // P0 #1: the cover photo (first Gallery Photo) must NEVER render as a broken-
@@ -19,6 +20,14 @@ import { useState } from 'react';
 // A raw <img> gives us a reliable onError to fall back on. `loading="eager"`
 // + fetchPriority keep it LCP-fast. The wrapper is absolutely positioned by
 // the parent, so this fills the hero box.
+//
+// RESPONSIVE WEIGHT (ad-readiness 2026-08-17): keeping the raw <img> used to
+// mean keeping the FULL-SIZE original — this is the LCP element on the page
+// paid Meta traffic lands on, and it was shipping ~678 KB of webp to phones.
+// lib/heroImage adds a host-aware srcset (Squarespace / Shopify imaging
+// params) WITHOUT giving up the raw tag: unknown hosts pass through untouched,
+// so the onError fallback below still covers every arbitrary rancher-supplied
+// URL. See lib/heroImage.ts for why we never invent a param a host won't honor.
 
 export default function RanchHeroCover({
   src,
@@ -33,11 +42,18 @@ export default function RanchHeroCover({
     return <RanchCoverFallback />;
   }
 
+  // Pure + memo-free: a string rewrite, cheaper than the hook that'd cache it.
+  // `srcSet` is undefined on hosts we can't resize, and React then omits the
+  // attribute entirely — the <img> is byte-for-byte what it was before.
+  const { src: coverSrc, srcSet } = heroImageSources(src);
+
   return (
     <>
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src={src}
+        src={coverSrc}
+        srcSet={srcSet}
+        sizes={srcSet ? HERO_COVER_SIZES : undefined}
         alt={alt}
         className="absolute inset-0 h-full w-full object-cover"
         loading="eager"

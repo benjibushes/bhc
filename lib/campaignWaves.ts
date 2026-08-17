@@ -72,6 +72,7 @@ import {
 import { MAX_BATCH, DAILY_CAMPAIGN_BUDGET } from './requalifyCampaign';
 import { SUNSET_SUPPRESSED_MARKER } from './marketingSunset';
 import { COMPLAINT_ALERT_THRESHOLD } from './complaintTelemetry';
+import { REQUEST_ONLY_RANCHER_SLUGS, isRequestOnlyRancher } from './requestOnlyRanchers';
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -82,13 +83,16 @@ export const AUTOPILOT_CAMPAIGN_PREFIX = 'autopilot';
 export const AUTOPILOT_RAIL = 'autopilot';
 
 /**
- * Ranchers excluded from the autopilot's first-touch state table. Policy,
- * not data: Rep Provisions is the specialty grass-finished option, reserved
- * for buyers who specifically request it (Ben, 2026-08-12) — their
- * nationwide service range would otherwise make them the default fallback
- * for 30+ states. Campaign waves only; routing/nudges untouched.
+ * Ranchers excluded from the autopilot's first-touch state table.
+ *
+ * @deprecated Back-compat alias. The canonical list moved to
+ * lib/requestOnlyRanchers (2026-08-17) once the live matcher needed the same
+ * rule — this file had been the ONLY engine honoring it. Prefer
+ * `isRequestOnlyRancher(rancher)` / `REQUEST_ONLY_RANCHER_SLUGS`; adding a
+ * slug there excludes it from campaign waves AND generic routing at once.
+ * Behavior here is unchanged: rep-provisions stays out of the wave table.
  */
-export const CAMPAIGN_WAVE_EXCLUDED_SLUGS: ReadonlySet<string> = new Set(['rep-provisions']);
+export const CAMPAIGN_WAVE_EXCLUDED_SLUGS: ReadonlySet<string> = REQUEST_ONLY_RANCHER_SLUGS;
 
 /**
  * Sellability gate (Ben, 2026-08-12: "route them properly"). A first-touch
@@ -325,15 +329,18 @@ export function rancherForStateTable(
     if (!isRancherOperationalForBuyers(r)) continue;
     const slug = String((r as any)['Slug'] || '').trim();
     if (!slug) continue; // requalify-send resolves ranchers by slug — unroutable
-    // CAMPAIGN-ONLY exclusion (Ben, 2026-08-12): Rep Provisions is the
+    // REQUEST-ONLY exclusion (Ben, 2026-08-12). Rep Provisions is the
     // specialty grass-finished option for buyers who specifically request
-    // it — never the nationwide first-touch fallback. Their nationwide
-    // service range was making them the default for 30+ states in the wave
-    // table. Routing/nudges/deals are untouched — this list gates ONLY the
-    // autopilot's first-touch state table. Preference-targeted Rep waves
-    // become possible once the quiz captures a grass-finished preference
-    // (no such Consumers field exists today).
-    if (CAMPAIGN_WAVE_EXCLUDED_SLUGS.has(slug)) continue;
+    // it — never a first-touch wave, never a generic fallback. Their
+    // nationwide service range was making them the default for 30+ states
+    // in this table. The list is now SHARED with the live matcher
+    // (lib/requestOnlyRanchers → app/api/matching/suggest, which had no
+    // such exclusion at all until 2026-08-17); add a slug there and both
+    // engines drop it. Deals/nudges and the rancher's own page/deep-link
+    // are untouched. Preference-targeted waves become possible once the
+    // quiz captures a grass-finished preference (no such Consumers field
+    // exists today).
+    if (isRequestOnlyRancher(r)) continue;
     // Sellability gate — never wave buyers at a page with nothing to buy.
     if (!isWaveSellable(r as Record<string, unknown>)) continue;
     const name =
