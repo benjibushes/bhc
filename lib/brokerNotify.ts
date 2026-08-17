@@ -119,6 +119,33 @@ function esc(str: unknown): string {
 }
 
 /**
+ * The rancher's best contact address: the canonical `Email`, else the FIRST
+ * entry in `Team Emails`.
+ *
+ * MIRRORS lib/rancherNotify.ts::resolveRancherEmail EXACTLY (pinned by a
+ * drift test in lib/brokerSettlement.test.ts). It is duplicated rather than
+ * imported because rancherNotify pulls lib/email at module load and this
+ * module is deliberately I/O-free.
+ *
+ * Why it matters here: reading `Email` alone made a ranch that only ever
+ * filled in Team Emails look like it had NO address. The fulfillment sheet
+ * was never attempted at an address that existed, and the operator alert
+ * asserted "no Email on file" — a false claim of exactly the kind this
+ * module exists to prevent.
+ */
+export function resolveBrokerRancherEmail(rancher: Record<string, any> | null | undefined): string {
+  if (!rancher) return '';
+  const primary = String(rancher['Email'] || '').trim();
+  if (primary) return primary;
+  const team = String(rancher['Team Emails'] || '').trim();
+  if (team) {
+    const first = team.split(/[\s,;\n]+/).map((s) => s.trim()).filter(Boolean)[0];
+    if (first) return first;
+  }
+  return '';
+}
+
+/**
  * Assemble the facts from already-fetched Airtable rows. Pure.
  *
  * Money comes in as cents from the caller (resolved from Stripe metadata at
@@ -154,7 +181,9 @@ export function buildBrokerOrderFacts(args: {
   return {
     ranchName,
     operatorName: String(rancher?.['Operator Name'] || ranchName).trim(),
-    rancherEmail: String(rancher?.['Email'] || '').trim(),
+    // Email → first of Team Emails. NEVER read `Email` alone: a blank primary
+    // with a populated team list is a reachable ranch, not a data gap.
+    rancherEmail: resolveBrokerRancherEmail(rancher),
     rancherPhone: String(rancher?.['Phone'] || '').trim(),
     buyerName: String(referral?.['Buyer Name'] || consumer?.['Full Name'] || '').trim(),
     buyerEmail: String(referral?.['Buyer Email'] || consumer?.['Email'] || '').trim(),
@@ -560,13 +589,194 @@ ${
 }
 
 // ---------------------------------------------------------------------------
+// DELIVERY TRUTH — did the fulfillment sheet actually REACH the ranch?
+// ---------------------------------------------------------------------------
+//
+// On this rail the rancher is off-platform: no dashboard, no login, no Stripe.
+// The fulfillment sheet is his ONLY signal that a paying buyer exists. So a
+// send that did not land is not a logging footnote — it is a paid buyer whom
+// nobody at the ranch knows about, and it must be as loud as a money failure.
+//
+// guardedSend (lib/email.ts) returns { success, suppressed, reason }. ONLY
+// `success === true` is a delivery: a frequency-capped or unsubscribed/bounced/
+// complained recipient comes back { success: false, suppressed: true }, and a
+// Resend API error comes back { success: false } — the SDK resolves API errors
+// rather than throwing, so "no exception" proves nothing at all.
+
+export type BrokerDeliveryOutcome =
+  /** guardedSend confirmed a real send. */
+  | 'sent'
+  /** Frequency cap, or the address is unsubscribed/bounced/complained. */
+  | 'suppressed'
+  /** Provider rejected it (resolved { error }), or returned an unusable shape. */
+  | 'send-failed'
+  /** Network/DNS fault — the send threw. */
+  | 'threw'
+  /** DATA GAP: the rancher record carries no address. No retry can fix it. */
+  | 'no-email';
+
+export interface BrokerRancherDelivery {
+  /** The ONLY field anything may treat as "the ranch was told". */
+  delivered: boolean;
+  outcome: BrokerDeliveryOutcome;
+  /** Short human reason, '' when delivered. Rides the alert + the record stamp. */
+  reason: string;
+}
+
+/**
+ * Pure verdict on a fulfillment-sheet send. Fails CLOSED: anything that is not
+ * an explicit `success === true` is NOT delivered.
+ */
+export function classifyBrokerRancherDelivery(input: {
+  hasEmail: boolean;
+  result?: { success?: boolean; suppressed?: boolean; reason?: string } | null;
+  /** Set when the send threw instead of resolving. */
+  error?: unknown;
+}): BrokerRancherDelivery {
+  if (!input.hasEmail) {
+    return { delivered: false, outcome: 'no-email', reason: 'no email address on the rancher record' };
+  }
+  if (input.error !== undefined && input.error !== null) {
+    const msg = String((input.error as any)?.message || input.error || 'unknown').slice(0, 200);
+    return { delivered: false, outcome: 'threw', reason: msg };
+  }
+  const r = input.result;
+  if (r?.success === true) return { delivered: true, outcome: 'sent', reason: '' };
+  if (r?.suppressed === true) {
+    return { delivered: false, outcome: 'suppressed', reason: String(r.reason || 'suppressed').slice(0, 200) };
+  }
+  return {
+    delivered: false,
+    outcome: 'send-failed',
+    reason: String(r?.reason || 'send returned unsuccessful').slice(0, 200),
+  };
+}
+
+/**
+ * The referral Notes line recording what happened to the fulfillment sheet.
+ * Pure and deterministic so the delivery stamp and the later operator-alert
+ * stamp can rebuild the identical prefix without passing state between them.
+ */
+export function brokerSheetNote(nowIso: string, delivery: BrokerRancherDelivery): string {
+  const outcome = delivery.delivered
+    ? 'DELIVERED'
+    : `NOT DELIVERED (${delivery.outcome}${delivery.reason ? `: ${delivery.reason}` : ''})`;
+  return `[broker] rancher fulfillment sheet ${nowIso} — ${outcome}`;
+}
+
+/** Shape of an operator alert — structurally assignable to sendOperatorSignal's
+ *  input. Declared here rather than imported so this module stays I/O-free.
+ *
+ * ESCAPING: summary/detail are RAW text and must stay raw. sendOperatorSignal
+ * escapes per wire — escHtml() for the email fallback, nothing for SMS — and
+ * sendTelegramMessage retries with tags stripped if raw `<`/`&` breaks HTML
+ * parse mode. Pre-escaping here produced "Smith &amp;amp; Sons" in the email
+ * fallback, degrading exactly the channel Ben is forced onto when Telegram is
+ * down. (Escaping at the Telegram wire instead is NOT an option: existing
+ * callers deliberately put <b>/<i>/<code> in their detail.) */
+export interface BrokerNotifyAlert {
+  urgency: 'loud';
+  kind: 'system-error';
+  summary: string;
+  detail: string;
+  refs: Array<{ type: 'referral' | 'rancher'; id: string }>;
+  dedupeKey: string;
+  dedupeWindowMs: number;
+}
+
+/**
+ * Build the operator alert for a fulfillment sheet that did NOT reach the ranch.
+ * Returns null on a real delivery — a delivered sheet is never an alert.
+ *
+ * The alert has to be enough to hand-fix the order in under a minute WITHOUT
+ * opening Airtable: who to call, about which cut, and the exact amount they
+ * must collect. It goes to the operator's private Telegram/SMS, so buyer
+ * contact details belong in it (they never belong in code or a commit).
+ *
+ * 'no-email' gets its own wording on purpose: it is a DATA GAP on the rancher
+ * record, permanent until someone edits it, and re-sending will never help —
+ * the opposite of a transient provider failure.
+ */
+export function buildBrokerNotifyFailureAlert(
+  f: BrokerOrderFacts,
+  ctx: { referralId: string; rancherId?: string; delivery: BrokerRancherDelivery },
+): BrokerNotifyAlert | null {
+  const { delivery, referralId, rancherId } = ctx;
+  if (delivery.delivered) return null;
+
+  const { range, collectRange } = rangeFacts(f);
+  const collect = range ? `${collectRange} (exact set by hanging weight)` : money(f.balanceCents);
+  const noEmail = delivery.outcome === 'no-email';
+
+  const summary = noEmail
+    ? `BROKER sale: ${f.ranchName} has NO EMAIL on file — the ranch cannot be told (ref ${referralId})`
+    : `BROKER sale: fulfillment sheet DID NOT REACH ${f.ranchName} — notify by hand (ref ${referralId})`;
+
+  const why = noEmail
+    ? 'WHY: the rancher record has no Email address, so nothing was ever sent. This is a DATA GAP, not a transient failure — no retry can fix it.'
+    : delivery.outcome === 'suppressed'
+      ? `WHY: the send was SUPPRESSED (${delivery.reason}) — unsubscribed, bounced, complained, or frequency-capped. Nothing was delivered.`
+      : delivery.outcome === 'threw'
+        ? `WHY: the send threw (${delivery.reason}). Nothing was delivered.`
+        : `WHY: the email provider did not accept the send (${delivery.reason}). Nothing was delivered.`;
+
+  const where = [f.buyerState, f.buyerZip].filter(Boolean).join(' ');
+  const detail = [
+    `The buyer has PAID. BuyHalfCow kept the ${money(f.depositCents)} deposit as its commission, and the ranch does NOT know this order exists.`,
+    '',
+    why,
+    '',
+    `Order ${f.orderRef} — ${f.cutLabel}`,
+    `Ranch: ${f.ranchName}${f.rancherPhone ? ` · ${f.rancherPhone}` : ' · no phone on file'}${
+      f.rancherEmail ? ` · ${f.rancherEmail}` : ''
+    }`,
+    `THE RANCH MUST COLLECT FROM THE BUYER: ${collect}`,
+    `Buyer: ${f.buyerName || '(name not given)'} · ${f.buyerEmail || 'no email'} · ${
+      f.buyerPhone || 'no phone'
+    }${where ? ` · ${where}` : ''}`,
+    '',
+    noEmail
+      ? 'DO NOW: call or text the ranch with the buyer and the amount to collect, then add an Email to the rancher record so the next order sends itself.'
+      : 'DO NOW: call or text the ranch with the buyer and the amount to collect, then forward the fulfillment sheet from the email log.',
+  ].join('\n');
+
+  return {
+    urgency: 'loud',
+    kind: 'system-error',
+    summary,
+    detail,
+    refs: rancherId
+      ? [{ type: 'referral', id: referralId }, { type: 'rancher', id: rancherId }]
+      : [{ type: 'referral', id: referralId }],
+    // Distinct keys: a data gap and a failed send are different jobs for Ben,
+    // and one must never dedupe the other away. Window matches the sibling
+    // money-failure alerts in lib/brokerSettlement.
+    dedupeKey: noEmail ? `broker-rancher-no-email-${referralId}` : `broker-rancher-undelivered-${referralId}`,
+    dedupeWindowMs: 60 * 60 * 1000,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Operator Telegram card
 // ---------------------------------------------------------------------------
 
-export function buildBrokerOperatorCard(f: BrokerOrderFacts): string {
+/**
+ * @param delivery the ACTUAL outcome of the rancher send. Ben reads this card
+ *   as ground truth, so it may only claim the ranch was emailed when the send
+ *   really landed. Omitted (legacy callers) ⇒ the card says delivery is
+ *   unconfirmed rather than asserting a send that nothing verified.
+ */
+export function buildBrokerOperatorCard(f: BrokerOrderFacts, delivery?: BrokerRancherDelivery): string {
   // WEIGHT-PRICED mode: the commission (deposit) line is exact in both modes;
   // the price + collect lines state the honest range.
   const { range, priceRange, collectRange } = rangeFacts(f);
+  const deliveryLine = !delivery
+    ? 'Fulfillment sheet: delivery unconfirmed — check the rancher email log.'
+    : delivery.delivered
+      ? 'Fulfillment sheet emailed to the ranch.'
+      : `🚨 <b>COULD NOT NOTIFY RANCHER — ACTION NEEDED</b> (${esc(delivery.outcome)}${
+          delivery.reason ? `: ${esc(delivery.reason)}` : ''
+        }). The ranch does not know about this order — contact them by hand.`;
   return [
     `🤝 <b>BROKER SALE</b> — ${esc(f.cutLabel)}`,
     '',
@@ -579,7 +789,7 @@ export function buildBrokerOperatorCard(f: BrokerOrderFacts): string {
       ? `Rancher collects direct: ${collectRange} (exact set by hanging weight)`
       : `Rancher collects direct: ${money(f.balanceCents)}`,
     '',
-    `Rancher emailed the fulfillment sheet. No Connect, no payout, no invoice.`,
+    `${deliveryLine} No Connect, no payout, no invoice.`,
     `Ref: ${esc(f.orderRef)}`,
   ].join('\n');
 }

@@ -176,7 +176,7 @@ export async function POST(request: Request) {
   }
 
   const v = validateProductInput(body);
-  if (!v.ok) return NextResponse.json({ error: v.error }, { status: 400 });
+  if (!v.ok) return NextResponse.json({ error: v.error, missing: v.missing }, { status: 400 });
 
   // Rancher entered RETAIL; derive their net. A locked-rate rancher's margin
   // is THEIR Commission Rate (0 is valid — Operator tier nets the full price);
@@ -397,7 +397,11 @@ export async function PATCH(request: Request) {
             : undefined,
     };
     const v = validateProductInput(merged);
-    if (!v.ok) return NextResponse.json({ error: v.error }, { status: 400 });
+    // LEGACY-LISTING EDIT WALL (2026-08-17): `missing` names EVERY post-#524
+    // question this row still owes, not just the first blocker — the tab asks
+    // for all of them at once instead of the rancher discovering them one
+    // rejected save at a time. See lib/rancherProductInput.
+    if (!v.ok) return NextResponse.json({ error: v.error, missing: v.missing }, { status: 400 });
     Object.assign(patch, v.fields);
     shippingIncludedToStamp = v.shippingIncluded;
     // Any price change re-derives the net so Base can never drift from the

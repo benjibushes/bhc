@@ -21,6 +21,7 @@ import {
   PRODUCT_CATEGORIES,
   deriveProductPricing,
   MIN_PRODUCT_PRICE_CENTS,
+  missingRequiredAnswers,
 } from '@/lib/rancherProductInput';
 import { absorptionPreview } from '@/lib/feeMath';
 import { decideSyncManagedRow } from '@/lib/syncManagedProductFence';
@@ -329,6 +330,32 @@ export default function ProductsTab({
           lockedRate: lockedCommissionRate,
         })
       : null;
+  // ── THE LEGACY-LISTING EDIT WALL (live bug 2026-08-17) ────────────────────
+  // Every listing created before #524 (2026-08-01) has a blank ships-in-days
+  // AND a blank shipping answer, and the shared validator requires both on any
+  // shippable row. Editing one used to mean: save → "how many days until this
+  // ships?" → save → "how does shipping work on this one?" → save. Two
+  // question-shaped rejections, each only after a round trip, with nothing on
+  // the form saying anything was outstanding. Ranchers read that as "I can't
+  // edit my products" (10 of 11 live rows were in that state).
+  //
+  // Now the form asks for the whole set UP FRONT, from the SAME pure helper the
+  // API validates with (so the two can never drift), and marks the fields. Only
+  // while EDITING: a blank add-form owes these too, but its `*` markers already
+  // say so and a warning banner over an empty form is just noise.
+  const openAsks = missingRequiredAnswers({
+    shipsNationwide: form.shipsNationwide,
+    shipsInDays: form.shipsInDays.trim() === '' ? '' : Number(form.shipsInDays),
+    shippingCost: form.shippingCost.trim() === '' ? '' : Number(form.shippingCost),
+    shippingChoice: form.shippingChoice,
+  });
+  const asking = editingId ? openAsks : [];
+  const needsDays = asking.includes('shipsInDays');
+  const needsShipping = asking.includes('shippingChoice');
+  // Reused on the two inputs so a marked field is unmistakable next to its
+  // unmarked neighbours.
+  const askField = 'border-weathered ring-1 ring-weathered/40';
+
   // Walkthrough 2026-07-15: below the $5 floor (or with no category) the
   // preview silently vanished — the rancher had no idea why. Say why.
   const previewHint =
@@ -616,6 +643,31 @@ export default function ProductsTab({
       {connectActive && showForm && (
         <div className="border border-dust bg-bone-warm p-5 space-y-4 max-w-2xl">
           <div className="font-serif text-lg">{editingId ? 'edit product' : 'add a product'}</div>
+
+          {/* THE ASK, UP FRONT — the whole point of the edit-wall fix. Said
+              before the rancher touches anything, not discovered one rejected
+              save at a time. Disappears the moment both are answered. */}
+          {asking.length > 0 && (
+            <div className="border border-weathered/50 bg-bone px-4 py-3 space-y-2">
+              <p className="text-sm text-charcoal">
+                <strong>
+                  this listing needs {asking.length === 2 ? 'two answers' : 'one more answer'} before it
+                  can save
+                </strong>{' '}
+                &mdash; marked in red below. everything else about it stays exactly as it is, and it
+                keeps selling while you fill them in.
+              </p>
+              <ul className="text-[13px] text-saddle list-disc pl-5 space-y-0.5">
+                {needsDays && <li>how many days until it ships</li>}
+                {needsShipping && <li>whether your price covers shipping, or the buyer pays it</li>}
+              </ul>
+              <p className="text-[11px] text-saddle">
+                we started asking these on every shipping listing so nobody quietly eats the $40 to
+                $90 cold-chain cost on a box, and so buyers get a real ship date instead of a vague
+                promise. listings made before then never captured them.
+              </p>
+            </div>
+          )}
           {/* The header must match lib/rancherProductInput.ts truth: a
               SHIPPABLE product also 400s without a shipping choice and
               ships-in days — "only name, category, and price" was a lie the
@@ -696,7 +748,7 @@ export default function ProductsTab({
                   }))
                 }
                 disabled={!form.shipsNationwide}
-                className="w-full p-3 border border-dust bg-bone text-[15px] disabled:opacity-40"
+                className={`w-full p-3 border bg-bone text-[15px] disabled:opacity-40 ${needsShipping ? askField : 'border-dust'}`}
               >
                 <option value="">— pick one —</option>
                 <option value="included">my price already includes shipping</option>
@@ -774,7 +826,7 @@ export default function ProductsTab({
                 value={form.shipsInDays}
                 onChange={(e) => setForm((f) => ({ ...f, shipsInDays: e.target.value }))}
                 placeholder="e.g. 3"
-                className="w-full p-3 border border-dust bg-bone text-[15px]"
+                className={`w-full p-3 border bg-bone text-[15px] ${needsDays ? askField : 'border-dust'}`}
               />
               {form.shipsNationwide && (
                 <span className="block text-[11px] text-saddle mt-1">

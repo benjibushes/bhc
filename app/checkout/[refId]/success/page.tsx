@@ -9,6 +9,11 @@ import { trackEvent, metaEventId } from '@/lib/analytics';
 import { track } from '@/lib/track';
 import GearBlock from '@/app/components/GearBlock';
 import { cutForBuyer } from '@/lib/demandRouter';
+import {
+  depositNextSteps,
+  type DepositRail,
+  type RancherSheetDelivery,
+} from '@/lib/depositSuccessCopy';
 
 // Client-safe mirror of lib/metaCapi depositEventId (that module imports node
 // `crypto`, so it must not be pulled into this 'use client' bundle). The server
@@ -85,6 +90,17 @@ function DepositSuccessContent() {
   // return means the charge already succeeded) with a manual "Check again".
   const [pollDone, setPollDone] = useState(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
+  // RAIL (2026-08-17). This page is the success_url of BOTH deposit rails, and
+  // everything it said about "what happens next" was Connect machinery: we
+  // notified the rancher, you settle in your message thread, they get paid out
+  // by Stripe. A BROKER buyer's ranch is REPRESENTED — no login, no dashboard,
+  // no thread, no Connect account — and pays nothing out through us: the buyer
+  // settles the balance with the ranch directly. Default 'connect' so any
+  // read failure lands on the copy that shipped. See lib/depositSuccessCopy.
+  const [rail, setRail] = useState<DepositRail>('connect');
+  // Broker only — whether the ranch was actually sent the fulfillment sheet.
+  // The page claims "we told them" ONLY on a recorded delivery.
+  const [rancherNotified, setRancherNotified] = useState<RancherSheetDelivery>('unknown');
 
   // G4 — deposit_completed client Pixel fire on success landing.
   // Server-side CAPI InitiateCheckout fires from the buyer_deposit branch of
@@ -179,8 +195,20 @@ function DepositSuccessContent() {
           if (j.error === 'referral_closed') {
             setPaidConfirmed(true);
             setPollDone(true);
-            if (j.rancher?.slug && !info) {
-              setInfo({ rancher: { name: '', ranchName: '', slug: j.rancher.slug } });
+            // The rail decides the whole "what happens next" story below, and
+            // the delivery verdict decides whether we may claim we told the
+            // ranch. Both ride this 409 (the deposit GET already reads the
+            // rancher record on this branch).
+            if (j.rail === 'broker') setRail('broker');
+            if (j.rancherNotified) setRancherNotified(j.rancherNotified as RancherSheetDelivery);
+            if ((j.rancher?.slug || j.rancher?.name || j.rancher?.ranchName) && !info) {
+              setInfo({
+                rancher: {
+                  name: String(j.rancher?.name || ''),
+                  ranchName: String(j.rancher?.ranchName || ''),
+                  slug: j.rancher?.slug || undefined,
+                },
+              });
             }
             // T2.2: the buyer's own share code (minted silently at settle) —
             // upgrades the share link below from untracked to attributed.
@@ -196,6 +224,30 @@ function DepositSuccessContent() {
             if (typeof j.depositValue === 'number') setDepositValue(j.depositValue);
             return;
           }
+          // BROKER, NOT YET SETTLED. The deposit GET is the Connect endpoint,
+          // so a broker referral gets this rail 409 until settleBrokerDeposit
+          // stamps Deposit Paid At and the referral_closed branch above takes
+          // over. Treat it exactly like the open-referral case: adopt the rail
+          // + ranch name so the copy below is broker-correct during the wait,
+          // and keep polling for the settle stamp instead of dropping straight
+          // into the terminal state (which used to leave a broker buyer on
+          // "your deposit is in" with a manual re-check button as the only way
+          // forward).
+          if (j.error === 'not_connect_rail' && j.rail === 'broker') {
+            setRail('broker');
+            if (j.rancher && !info) {
+              setInfo({
+                rancher: {
+                  name: String(j.rancher.name || ''),
+                  ranchName: String(j.rancher.ranchName || ''),
+                  slug: j.rancher.slug || undefined,
+                },
+              });
+            }
+            if (sessionId && tries < MAX_TRIES) { tries++; setTimeout(poll, 2500); }
+            else if (alive) setPollDone(true);
+            return;
+          }
           // Any other error (load_failed, not-found, auth) — stop polling and
           // fall into the terminal state rather than an eternal "confirming…".
           if (alive) setPollDone(true);
@@ -208,6 +260,7 @@ function DepositSuccessContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refId, sessionId, refreshNonce]);
 
+  const isBroker = rail === 'broker';
   const rancherName = info?.rancher?.name || 'your rancher';
   // First name for friendly inline mentions. Special-case the "your rancher"
   // default so a missing name reads "your rancher" (not "your"), which would
@@ -283,27 +336,25 @@ function DepositSuccessContent() {
           </Link>
         </div>
 
-        {/* What's next — honest, day-by-day. No tracking promise; rancher
-            coordinates directly. The "today" line is now TRUE: deposit
-            settlement notifies the rancher by email + text (lib/rancherNotify). */}
+        {/* What's next — honest, day-by-day, and RAIL-AWARE (2026-08-17). The
+            words live in lib/depositSuccessCopy so both rails' stories are unit
+            tested: the Connect list is unchanged, and the broker list drops the
+            thread / accept / Stripe-payout machinery a represented ranch does
+            not have. On the broker rail the "we told the ranch" line is earned
+            by a recorded delivery, not assumed. */}
         <div className="bg-white border border-dust p-4 md:p-6 mb-6">
           <h2 className="font-serif text-lg md:text-xl mb-4">What happens next</h2>
           <ol className="space-y-4 text-sm md:text-base text-charcoal">
-            <li className="flex gap-3">
-              <span className="text-saddle font-medium flex-shrink-0">Today:</span>
-              {/* NOT "by email and text" — SMS is behind ENABLE_SMS, which is
-                  off and has no provider configured. Only claim the channel
-                  that actually fires. */}
-              <span>We let {rancherName} know your deposit landed. They reach out directly to set things up, usually the same day.</span>
-            </li>
-            <li className="flex gap-3">
-              <span className="text-saddle font-medium flex-shrink-0">This week:</span>
-              <span>You and {rancherName} settle pickup or delivery details in your message thread &mdash; date, exact location, balance due at pickup.</span>
-            </li>
-            <li className="flex gap-3">
-              <span className="text-saddle font-medium flex-shrink-0">When ready:</span>
-              <span>You pick up or {rancherName} delivers. {rancherName} confirms fulfillment and gets paid out by Stripe.</span>
-            </li>
+            {depositNextSteps({
+              rail,
+              rancherLabel: rancherName,
+              sheetDelivery: rancherNotified,
+            }).map((step) => (
+              <li key={step.when} className="flex gap-3">
+                <span className="text-saddle font-medium flex-shrink-0">{step.when}</span>
+                <span>{step.text}</span>
+              </li>
+            ))}
           </ol>
         </div>
 
@@ -366,10 +417,24 @@ function DepositSuccessContent() {
         </div>
 
         {/* BHC Promise reminder — paid-ad buyers landing here for the first time
-            need the reassurance reinforced. */}
+            need the reassurance reinforced. RAIL-AWARE for the same reason as
+            BHCPromiseBadge's two variants: the Connect promise is keyed to the
+            rancher tapping Accept in a dashboard, which on the broker rail is
+            machinery that does not exist. The broker wording mirrors the
+            checkout page's promise and the buyer receipt exactly — refundable
+            until the ranch confirms the animal, refunded by BuyHalfCow. */}
         <div className="border-l-4 border-sage-dark bg-white p-4 md:p-5 mb-6 md:mb-8">
           <p className="text-sm text-charcoal leading-relaxed">
-            <strong>BHC Promise still applies.</strong> Your deposit is fully refundable until {rancherFirst} accepts your slot &mdash; usually within 24&ndash;48 hours. Once they commit your processing slot it&apos;s non-refundable, but the cold-chain guarantee never goes away: if your beef arrives thawed or short, BHC makes you whole. Anything goes sideways &mdash; reply to your message thread or <Link href={`/support?ref=${encodeURIComponent(refId)}`} className="underline">get help here</Link> and we step in, or email <a href="mailto:hello@buyhalfcow.com" className="underline">hello@buyhalfcow.com</a>.
+            <strong>BHC Promise still applies.</strong>{' '}
+            {isBroker ? (
+              <>
+                Your deposit is fully refundable until {ranchLabel} confirms your animal &mdash; email <a href="mailto:hello@buyhalfcow.com" className="underline">hello@buyhalfcow.com</a> and BuyHalfCow refunds it in full. Once they confirm it&apos;s non-refundable, but the cold-chain guarantee never goes away: if your beef arrives thawed or short, BHC makes you whole. Anything goes sideways &mdash; <Link href={`/support?ref=${encodeURIComponent(refId)}`} className="underline">get help here</Link> and we step in.
+              </>
+            ) : (
+              <>
+                Your deposit is fully refundable until {rancherFirst} accepts your slot &mdash; usually within 24&ndash;48 hours. Once they commit your processing slot it&apos;s non-refundable, but the cold-chain guarantee never goes away: if your beef arrives thawed or short, BHC makes you whole. Anything goes sideways &mdash; reply to your message thread or <Link href={`/support?ref=${encodeURIComponent(refId)}`} className="underline">get help here</Link> and we step in, or email <a href="mailto:hello@buyhalfcow.com" className="underline">hello@buyhalfcow.com</a>.
+              </>
+            )}
           </p>
         </div>
 
@@ -378,7 +443,12 @@ function DepositSuccessContent() {
             href={`/checkout/${refId}/ask`}
             className="flex-1 text-center bg-charcoal text-bone px-6 py-3 min-h-[48px] flex items-center justify-center uppercase tracking-wider text-sm hover:bg-saddle transition"
           >
-            Open thread with {rancherFirst} &rarr;
+            {/* "Open thread" is Connect framing — a represented ranch has no
+                login and never sees a thread UI. The link still works on both
+                rails (every message is mirrored to the other side's email with
+                a routed Reply-To), so the broker label describes what actually
+                happens: a message reaches them. */}
+            {isBroker ? 'Message ' : 'Open thread with '}{rancherFirst} &rarr;
           </Link>
           <Link
             href="/member"
@@ -400,7 +470,14 @@ function DepositSuccessContent() {
             </Link>
             . Signed out later? We&apos;ll email you a sign-in link &mdash; no password needed.
           </p>
-          <p>Questions? Reply to the receipt email or message {rancherName} directly.</p>
+          {/* The broker receipt carries the ranch's own phone + email ("You can
+              reach them directly"), so point there rather than implying a
+              platform channel to a ranch that lives outside the platform. */}
+          <p>
+            {isBroker
+              ? `Questions? Reply to your receipt email — it has ${ranchLabel}'s own phone and email on it.`
+              : `Questions? Reply to the receipt email or message ${rancherName} directly.`}
+          </p>
           {sessionId && (
             <p className="text-xs text-muted mt-3 font-mono break-all">
               ref: {sessionId.slice(0, 24)}&hellip;

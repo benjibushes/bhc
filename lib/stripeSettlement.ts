@@ -504,6 +504,35 @@ export async function settleBuyerDeposit(pi: any): Promise<void> {
       });
       if (!r.emailSent && !r.smsSent) {
         console.warn(`[stripe webhook] rancher deposit notify reached no channel (ref=${referralId}): ${r.skipped || 'send failed'}`);
+        // DATA GAP ONLY (2026-08-17). A transient send failure here is already
+        // backstopped: deposit-accept-sla runs hourly, re-pings the SAME rancher
+        // over the SAME channels, and escalates loud at 72h — alerting on it
+        // would duplicate that into noise. But a rancher with NEITHER email NOR
+        // phone can never be reached by any of those retries, so the backstop
+        // just burns its three re-pings into the void and the buyer waits three
+        // days. That is permanent, not transient, and only a human can fix it.
+        // Lower urgency than the broker rail's equivalent: this rancher still
+        // has a dashboard, and the SLA cron still escalates on its own clock.
+        if (!r.hadEmail && !r.hadPhone) {
+          try {
+            const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+            await sendOperatorSignal({
+              urgency: 'normal',
+              kind: 'system-error',
+              summary: `Deposit paid but the rancher has NO email and NO phone on file — unreachable (ref ${referralId})`,
+              detail:
+                `A buyer's deposit settled on the Connect rail and the rancher cannot be notified through any channel — ` +
+                `the rancher record has neither an Email nor a Phone. Re-pings from deposit-accept-sla will keep failing ` +
+                `for the same reason.\nFIX: add contact details to the rancher record, then reach them by hand so the ` +
+                `buyer is not left waiting.`,
+              refs: [{ type: 'referral', id: referralId }],
+              dedupeKey: `rancher-unreachable-${referralId}`,
+              dedupeWindowMs: 24 * 60 * 60 * 1000,
+            });
+          } catch (sigErr: any) {
+            console.warn('[stripe webhook] rancher-unreachable signal failed:', sigErr?.message);
+          }
+        }
       }
     } else {
       console.warn('[stripe webhook] rancher deposit notify skipped — referral or rancher row unreadable');

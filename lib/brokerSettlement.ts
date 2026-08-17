@@ -30,7 +30,16 @@ import {
   CUT_LABELS,
   type Cut,
 } from '@/lib/brokerRail';
-import { buildBrokerOrderFacts, buildBrokerOperatorCard } from '@/lib/brokerNotify';
+import {
+  buildBrokerOrderFacts,
+  buildBrokerOperatorCard,
+  classifyBrokerRancherDelivery,
+  buildBrokerNotifyFailureAlert,
+  brokerSheetNote,
+  type BrokerOrderFacts,
+  type BrokerRancherDelivery,
+  type BrokerNotifyAlert,
+} from '@/lib/brokerNotify';
 import { sendBrokerRancherOrder, sendBrokerBuyerReceipt } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { fireCapi, depositPurchaseEnabled } from '@/lib/metaCapi';
@@ -223,25 +232,26 @@ export async function settleBrokerDeposit(pi: any): Promise<void> {
   });
 
   // ── RANCHER EMAIL — the deliverable. Everything he needs, no login. ──────
-  if (facts.rancherEmail) {
-    try {
-      const res = await sendBrokerRancherOrder(facts);
-      // Money-truth persisted, not just logged: stamp WHETHER he was told.
-      await updateRecord(TABLES.REFERRALS, referralId, {
-        'Intro Sent At': nowIso,
-        Notes: `${String(referral?.['Notes'] || '')}\n[broker] rancher notified ${nowIso} — sent=${res?.success === true}`.trim(),
-      }).catch(() => {});
-      if (!res?.success) {
-        console.error('[broker settle] rancher order email did not send:', res?.reason);
-      }
-    } catch (e: any) {
-      console.error('[broker settle] rancher order email threw:', e?.message);
-    }
-  } else {
-    console.error(`[broker settle] rancher ${rancherId} has no email — cannot deliver the order`);
+  // Never throws (see deliverBrokerRancherSheet); the belt is for a caller
+  // refactor that breaks that promise. The money is already captured — a
+  // notification problem must never surface into the webhook.
+  let delivery: BrokerRancherDelivery | undefined;
+  try {
+    delivery = await deliverBrokerRancherSheet({
+      facts,
+      referralId,
+      rancherId,
+      nowIso,
+      priorNotes: String(referral?.['Notes'] || ''),
+    });
+  } catch (e: any) {
+    console.error('[broker settle] rancher notify unit threw:', e?.message);
   }
 
   // ── BUYER RECEIPT ───────────────────────────────────────────────────────
+  // MUST come before the operator alert below. See raiseBrokerSheetAlert: the
+  // alert can block for tens of seconds on a Telegram 429, and a timeout here
+  // would strand the receipt permanently behind the idempotency anchor.
   if (facts.buyerEmail) {
     try {
       await sendBrokerBuyerReceipt(facts);
@@ -250,10 +260,187 @@ export async function settleBrokerDeposit(pi: any): Promise<void> {
     }
   }
 
+  // ── OPERATOR ALERT — only when the ranch was NOT reached ─────────────────
+  if (delivery && !delivery.delivered) {
+    try {
+      await raiseBrokerSheetAlert({
+        facts,
+        referralId,
+        rancherId,
+        nowIso,
+        priorNotes: String(referral?.['Notes'] || ''),
+        delivery,
+      });
+    } catch (e: any) {
+      console.error('[broker settle] rancher alert unit threw:', e?.message);
+    }
+  }
+
   // ── OPERATOR CARD ───────────────────────────────────────────────────────
+  // `delivery` is threaded in so the card states the TRUE outcome. Ben reads
+  // this card as ground truth; before this it asserted "Rancher emailed the
+  // fulfillment sheet" unconditionally, which was a lie on every failed send.
   try {
-    await sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, buildBrokerOperatorCard(facts));
+    await sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, buildBrokerOperatorCard(facts, delivery));
   } catch (e: any) {
     console.error('[broker settle] telegram card failed:', e?.message);
   }
+}
+
+// ---------------------------------------------------------------------------
+// THE DELIVERABLE — send the fulfillment sheet and tell the truth about it
+// ---------------------------------------------------------------------------
+
+/**
+ * I/O collaborators, injectable so the delivery contract is behaviourally
+ * tested without Resend/Airtable/Telegram. Production passes nothing.
+ */
+export interface BrokerSheetDeps {
+  send: (facts: BrokerOrderFacts) => Promise<{ success?: boolean; suppressed?: boolean; reason?: string } | null | undefined>;
+  stamp: (referralId: string, fields: Record<string, unknown>) => Promise<unknown>;
+  alert: (input: BrokerNotifyAlert) => Promise<unknown>;
+}
+
+/**
+ * Email the represented rancher his fulfillment sheet, persist whether it
+ * actually landed, and ring the operator when it did not.
+ *
+ * WHY THIS IS LOUD. The rancher is off-platform: no dashboard, no login, no
+ * Stripe. This email is his ONLY signal that a paying buyer exists. A send
+ * that silently fails means the buyer paid, BHC kept the fee, and nobody told
+ * the ranch — the worst failure class on the platform. Before this, a
+ * suppressed/bounced/missing address was a console.error nobody would ever
+ * read, while the record stamped 'Intro Sent At' and the operator card claimed
+ * he had been emailed.
+ *
+ * CONTRACT: never throws, never rolls anything back. The deposit is already
+ * captured; every path here is best-effort and returns a verdict instead.
+ */
+export async function deliverBrokerRancherSheet(
+  args: {
+    facts: BrokerOrderFacts;
+    referralId: string;
+    rancherId?: string;
+    nowIso: string;
+    priorNotes?: string;
+  },
+  deps: Partial<Pick<BrokerSheetDeps, 'send' | 'stamp'>> = {},
+): Promise<BrokerRancherDelivery> {
+  const { facts, referralId, rancherId, nowIso } = args;
+  const send = deps.send || sendBrokerRancherOrder;
+  const stamp = deps.stamp || ((id: string, fields: Record<string, unknown>) => updateRecord(TABLES.REFERRALS, id, fields));
+
+  let delivery: BrokerRancherDelivery;
+  if (!facts.rancherEmail) {
+    console.error(`[broker settle] rancher ${rancherId || '(unknown)'} has no email — cannot deliver the order`);
+    delivery = classifyBrokerRancherDelivery({ hasEmail: false });
+  } else {
+    try {
+      const res = await send(facts);
+      delivery = classifyBrokerRancherDelivery({ hasEmail: true, result: res });
+    } catch (e: any) {
+      delivery = classifyBrokerRancherDelivery({ hasEmail: true, error: e });
+    }
+    if (!delivery.delivered) {
+      console.error(`[broker settle] fulfillment sheet not delivered (${delivery.outcome}): ${delivery.reason}`);
+    }
+  }
+
+  // ── MONEY/COMMS TRUTH (repo rule #2) ────────────────────────────────────
+  // 'Intro Sent At' is stamped ONLY on a real delivery — a suppressed or failed
+  // send previously stamped it anyway, so the record asserted the rancher had
+  // been told when he had not. The Notes line records the outcome either way,
+  // so a human reading the referral can see what happened without Vercel logs.
+  // Stamped HERE, immediately after the send, rather than being deferred with
+  // the alert: this is the money-truth write, and it must land even if the
+  // invocation is later killed mid-notification.
+  try {
+    const fields: Record<string, unknown> = {
+      Notes: `${String(args.priorNotes || '')}\n${brokerSheetNote(nowIso, delivery)}`.trim(),
+    };
+    if (delivery.delivered) fields['Intro Sent At'] = nowIso;
+    await stamp(referralId, fields);
+  } catch (e: any) {
+    console.error('[broker settle] rancher-delivery stamp failed:', e?.message);
+  }
+
+  return delivery;
+}
+
+/**
+ * Raise the operator alert for a sheet that never reached the ranch, then
+ * persist whether the ALERT ITSELF got through.
+ *
+ * DELIBERATELY SEPARATE FROM THE SEND, AND CALLED AFTER THE BUYER RECEIPT.
+ * sendOperatorSignal awaits the Telegram wire, which sleeps up to 30s on a 429
+ * (lib/telegram.ts) before trying the SMS + email fallbacks. Sitting in front
+ * of the buyer receipt, that could push the invocation past the webhook's
+ * maxDuration; Stripe would redeliver, markDepositSucceeded would return false
+ * at the idempotency anchor, and the receipt would never be retried — a buyer
+ * who paid and got no email. Alerting is the least time-critical thing here,
+ * so it goes last.
+ *
+ * WHY THE OUTCOME IS PERSISTED: sendOperatorSignal stamps its dedupe key BEFORE
+ * any wire, so an alert that Telegram rejected AND whose fallbacks failed is
+ * lost outright and holds the key for the dedupe window. Nothing retries the
+ * sheet and nothing re-raises. Writing `operator-alert=failed` on the referral
+ * is what makes that visible afterwards (rule 2).
+ *
+ * CONTRACT: never throws. Returns what happened for the caller's log.
+ */
+export async function raiseBrokerSheetAlert(
+  args: {
+    facts: BrokerOrderFacts;
+    referralId: string;
+    rancherId?: string;
+    nowIso: string;
+    priorNotes?: string;
+    delivery: BrokerRancherDelivery;
+  },
+  deps: Partial<Pick<BrokerSheetDeps, 'stamp' | 'alert'>> = {},
+): Promise<{ raised: boolean; sent: boolean; reason?: string }> {
+  const { facts, referralId, rancherId, nowIso, delivery } = args;
+  const stamp = deps.stamp || ((id: string, fields: Record<string, unknown>) => updateRecord(TABLES.REFERRALS, id, fields));
+  const alert =
+    deps.alert ||
+    (async (input: BrokerNotifyAlert) => {
+      const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+      return sendOperatorSignal(input);
+    });
+
+  let sent = false;
+  let reason: string | undefined;
+  try {
+    // Built INSIDE the try: a future field lookup added to the builder must not
+    // be able to skip the alert and the outcome stamp below it.
+    const signal = buildBrokerNotifyFailureAlert(facts, { referralId, rancherId, delivery });
+    if (!signal) return { raised: false, sent: false };
+    const res: any = await alert(signal);
+    // sendOperatorSignal returns { sent, reason }. An undefined return (an
+    // injected stub, a future refactor) is NOT treated as a confirmed send.
+    sent = res?.sent === true;
+    reason = res?.reason;
+  } catch (e: any) {
+    reason = e?.message || 'alert threw';
+    console.error('[broker settle] rancher-undelivered signal failed:', reason);
+  }
+
+  if (!sent) {
+    console.error(`[broker settle] operator alert for referral ${referralId} was NOT delivered: ${reason || 'unknown'}`);
+  }
+
+  // Append the alert outcome to the SAME note the delivery stamp wrote. The
+  // prefix is rebuilt deterministically (brokerSheetNote is pure), so this
+  // self-heals a delivery stamp that failed rather than depending on it.
+  try {
+    await stamp(referralId, {
+      Notes: `${String(args.priorNotes || '')}\n${brokerSheetNote(nowIso, delivery)} · operator-alert=${
+        sent ? 'sent' : `failed${reason ? ` (${reason})` : ''}`
+      }`.trim(),
+    });
+  } catch (e: any) {
+    console.error('[broker settle] operator-alert outcome stamp failed:', e?.message);
+  }
+
+  return { raised: true, sent, reason };
 }
