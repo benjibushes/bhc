@@ -139,6 +139,55 @@ export function resolveShippingChoice(input: {
   return { ok: false, error: SHIPPING_CHOICE_PROMPT };
 }
 
+// ── THE LEGACY-LISTING EDIT WALL (live bug 2026-08-17) ──────────────────────
+//
+// The two requirements above (a ships-in-days window, an explicit shipping
+// answer) landed 2026-08-01 and were designed to be non-breaking: existing
+// rows keep selling and get asked "the next time they're edited". They did get
+// asked — one fail-fast 400 at a time, phrased as questions, and only AFTER
+// the rancher pressed save. Every listing created before that date has both
+// fields blank, so editing one read as: save → a question → save → a different
+// question → save. Ranchers reported it as "I can't edit my products."
+//
+// The requirements stay (they exist so nobody silently eats $40-90 a box of
+// cold-chain cost). What this adds is the ability to enumerate the outstanding
+// questions UP FRONT, so the edit form asks for all of them at once and a
+// rejection names the complete set instead of the first one.
+
+/** A question #524 started requiring that pre-#524 listings never captured. */
+export type MissingAnswer = 'shipsInDays' | 'shippingChoice';
+
+/**
+ * Which newly-required answers this input still owes, in form order. Pure, and
+ * deliberately narrower than validateProductInput: a BAD answer (a $300
+ * shipping charge, a 90-day window) is a validation error, not a missing one —
+ * telling a rancher a question is outstanding when they just answered it is
+ * the same class of lie this fixes.
+ *
+ * Local pickup is asked neither question, exactly as the validator has it.
+ */
+export function missingRequiredAnswers(body: ProductInput): MissingAnswer[] {
+  const missing: MissingAnswer[] = [];
+  if (body.shipsNationwide === false) return missing;
+
+  const rawDays = body.shipsInDays;
+  if (rawDays === undefined || rawDays === null || rawDays === '') {
+    missing.push('shipsInDays');
+  }
+
+  // Blank amount + no usable choice = the shipping question is still open.
+  // ('charged' with no amount counts as open — they picked the branch that
+  // needs a number and haven't given one.) Any amount at all, in range or not,
+  // counts as answered.
+  const rawCost = body.shippingCost;
+  const costBlank = rawCost === undefined || rawCost === null || rawCost === '';
+  if (costBlank && String(body.shippingChoice || '').trim().toLowerCase() !== 'included') {
+    missing.push('shippingChoice');
+  }
+
+  return missing;
+}
+
 /**
  * Derive the rancher's net from the retail price.
  *
@@ -258,7 +307,18 @@ export type ValidatedProduct =
        */
       shippingIncluded: boolean | null;
     }
-  | { ok: false; error: string };
+  | {
+      ok: false;
+      error: string;
+      /**
+       * Present ONLY when the rejection is an unanswered post-#524 question,
+       * and then it lists EVERY outstanding one — so a single round trip tells
+       * the rancher the complete ask instead of the first blocker. Absent on
+       * ordinary validation failures (bad name, bad price). See
+       * missingRequiredAnswers and the edit-wall note above.
+       */
+      missing?: MissingAnswer[];
+    };
 
 /** Normalize + validate a rancher's product submission. Pure. */
 export function validateProductInput(body: ProductInput): ValidatedProduct {
@@ -356,6 +416,8 @@ export function validateProductInput(body: ProductInput): ValidatedProduct {
       ok: false,
       error:
         'how many days until this ships? buyers see it at checkout, and it is what we hold the order to — a real number you can hit beats an optimistic one.',
+      // Name the shipping gap too if it is also open — one trip, whole ask.
+      missing: missingRequiredAnswers(body),
     };
   }
 
@@ -366,7 +428,11 @@ export function validateProductInput(body: ProductInput): ValidatedProduct {
     shippingCost: body.shippingCost,
     shippingChoice: body.shippingChoice,
   });
-  if (!shipping.ok) return { ok: false, error: shipping.error };
+  if (!shipping.ok) {
+    const missing = missingRequiredAnswers(body);
+    // An out-of-range amount is a bad answer, not a missing one — no `missing`.
+    return missing.length ? { ok: false, error: shipping.error, missing } : { ok: false, error: shipping.error };
+  }
   const shippingCostField = shipping.shippingCostField;
 
   // External checkout URL (BYOC): optional; when present must be a real
