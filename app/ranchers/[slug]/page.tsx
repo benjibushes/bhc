@@ -20,6 +20,9 @@ import { safeExternalUrl, heroPillText, formatCustomProductPrice } from '@/lib/r
 import { isProcessingDatePast } from '@/lib/processingDate';
 import RancherOrderForm from './RancherOrderForm';
 import DepositReserveForm from './DepositReserveForm';
+import BrokerReserve from './BrokerReserve';
+import { isBrokerSelfServe } from '@/lib/brokerRail';
+import { buildBrokerSelfServeView } from '@/lib/brokerSelfServe';
 import RancherPageAnalytics, { RancherPricingCTA } from './RancherPageAnalytics';
 import RanchHeroCover, { RanchCoverFallback } from './RanchHeroCover';
 import CertificationBadges from './CertificationBadges';
@@ -199,6 +202,21 @@ export default async function RancherPage(
 
   const r = rancherRaw;
   const isProspect = r['Verification Status'] === 'Prospect';
+
+  // ── BROKER SELF-SERVE branch (2026-08-17) ──────────────────────────────────
+  // A represented (broker rail) ranch is only fetchable here at all when Ben
+  // opted it in via `Broker Self Serve` (see rancherOrProspectBySlugFormula).
+  // For that ranch the page keeps its generic story sections but swaps the
+  // ENTIRE money surface for the broker-correct reserve experience: no Connect
+  // deposit form, no depositDisplay fee math, no Payment Links / Reserve Link /
+  // product money paths — those belong to the other two rails and rendering
+  // any of them here would quote the wrong money model. The cut cards come
+  // from the SAME assertBrokerEligible gate the /r/b redemption + checkout
+  // run, so a rendered card can never bounce at pay.
+  const brokerSelfServe = isBrokerSelfServe(r);
+  const brokerView = brokerSelfServe ? buildBrokerSelfServeView(r) : null;
+  const brokerCanReserve = !!brokerView && brokerView.cards.length > 0;
+
   const name = r['Ranch Name'] || r['Operator Name'] || 'Ranch';
   const operatorName = r['Operator Name'] || '';
   // Display name(s) for the operator without the surname — so a couple-run
@@ -350,7 +368,9 @@ export default async function RancherPage(
   // legacy Custom Products JSON rendered — the Silverline gap). Fail-soft: a
   // read error just hides the section.
   let liveProducts: MarketplaceProduct[] = [];
-  if (!isProspect) {
+  // Broker self-serve skips the read entirely: a represented ranch has no
+  // marketplace products, and their buy paths are Connect-rail money anyway.
+  if (!isProspect && !brokerSelfServe) {
     try {
       liveProducts = await loadProductsForRancher(String(r.id || ''));
     } catch (e) {
@@ -402,7 +422,11 @@ export default async function RancherPage(
     return d ? Math.round(d.dueNowCents / 100) : undefined;
   };
 
-  const hasPricing = !isProspect && (quarterPrice || halfPrice || wholePrice);
+  // Broker self-serve NEVER enters the Connect/legacy pricing surface — its
+  // reserve section renders from brokerView instead (fee-inclusive
+  // depositDisplay math, DepositReserveForm, and RancherOrderForm are all
+  // wrong money models for a represented ranch).
+  const hasPricing = !isProspect && !brokerSelfServe && (quarterPrice || halfPrice || wholePrice);
   const embedUrl = getYouTubeEmbedUrl(videoUrl);
 
   // Cover photo — first gallery photo if available, else null. We layer a
@@ -438,9 +462,11 @@ export default async function RancherPage(
   const lng = Number(r['Longitude']);
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
-  // Build offers array + priceRange (verified ranchers only)
+  // Build offers array + priceRange (verified ranchers only). Broker
+  // self-serve suppresses both: a weight-priced share has no exact price to
+  // publish, and the reserve section states the honest numbers itself.
   const offers: any[] = [];
-  if (!isProspect && quarterPrice) {
+  if (!isProspect && !brokerSelfServe && quarterPrice) {
     offers.push({
       '@type': 'Offer',
       name: 'Quarter Beef',
@@ -449,7 +475,7 @@ export default async function RancherPage(
       availability: 'https://schema.org/InStock',
     });
   }
-  if (!isProspect && halfPrice) {
+  if (!isProspect && !brokerSelfServe && halfPrice) {
     offers.push({
       '@type': 'Offer',
       name: 'Half Beef',
@@ -458,7 +484,7 @@ export default async function RancherPage(
       availability: 'https://schema.org/InStock',
     });
   }
-  if (!isProspect && wholePrice) {
+  if (!isProspect && !brokerSelfServe && wholePrice) {
     offers.push({
       '@type': 'Offer',
       name: 'Whole Beef',
@@ -468,7 +494,7 @@ export default async function RancherPage(
     });
   }
 
-  const prices = [quarterPrice, halfPrice, wholePrice]
+  const prices = (brokerSelfServe ? [] : [quarterPrice, halfPrice, wholePrice])
     .filter((p) => typeof p === 'number' && p > 0) as number[];
   const priceRange =
     prices.length > 0 ? `$${Math.min(...prices)}–$${Math.max(...prices)}` : undefined;
@@ -706,7 +732,23 @@ export default async function RancherPage(
                   ?rancher=<slug> so attribution survives (2026-07-28: hero was
                   linking bare /access, dropping the rancher on every ad click). */}
               <div className="flex flex-wrap gap-3 pt-2">
-                {hasPricing && onConnect ? (
+                {brokerSelfServe ? (
+                  // Broker self-serve: jump to the broker reserve form when it
+                  // has sellable cuts; render NO primary CTA otherwise. NEVER
+                  // the /access quiz — a represented ranch is outside routing
+                  // and the quiz can only strand this buyer on another rail.
+                  brokerCanReserve ? (
+                    <RancherPricingCTA
+                      href="#reserve"
+                      rancherSlug={slug}
+                      rancherState={state}
+                      className="inline-flex items-center gap-2 px-7 py-3.5 bg-bone text-charcoal text-sm font-medium tracking-wide uppercase transition-base hover:bg-bone-warm"
+                    >
+                      Reserve your share
+                      <span aria-hidden>↓</span>
+                    </RancherPricingCTA>
+                  ) : null
+                ) : hasPricing && onConnect ? (
                   <RancherPricingCTA
                     href="#reserve"
                     rancherSlug={slug}
@@ -779,8 +821,11 @@ export default async function RancherPage(
                 )}
               </div>
 
-              {/* Secondary CTA: Ask a question (verified ranchers only) */}
-              {!isProspect && (
+              {/* Secondary CTA: Ask a question (verified ranchers only —
+                  hidden for broker self-serve: the contact flow emails the
+                  rancher directly, and a represented rancher never signed up
+                  for platform mail; questions route through the reserve flow). */}
+              {!isProspect && !brokerSelfServe && (
                 <div className="pt-4">
                   <Link
                     href={`/ranchers/${slug}/contact`}
@@ -849,7 +894,10 @@ export default async function RancherPage(
         <section className="py-16 md:py-20">
           <Container>
             <div className="max-w-4xl mx-auto">
-              <BHCPromiseBadge />
+              {/* RAIL-MATRIX: the broker variant states the rail's real
+                  mechanics (no dashboard Accept, refund comes from BuyHalfCow)
+                  — the Connect copy promises machinery this rail doesn't have. */}
+              <BHCPromiseBadge variant={brokerSelfServe ? 'broker' : 'connect'} />
             </div>
           </Container>
         </section>
@@ -871,6 +919,43 @@ export default async function RancherPage(
                 </p>
                 <p className="text-saddle mt-1 whitespace-pre-wrap">{refundPolicy}</p>
               </div>
+            </div>
+          </Container>
+        </section>
+      )}
+
+      {/* ── BROKER SELF-SERVE RESERVE ────────────────────────────────────────
+          Replaces the entire Connect/legacy pricing surface for an opted-in
+          represented ranch (hasPricing is forced false above, so none of the
+          other money forms can render beside this). Cards, ranges, deposit and
+          balance all come from lib/brokerSelfServe — the same gates the /r/b
+          redemption + broker checkout run. Copy contract: deposit "toward your
+          share", balance "paid to the ranch" — never a word about what BHC
+          keeps, never Connect-rail framing.
+         ───────────────────────────────────────────────────────────────────── */}
+      {brokerCanReserve && brokerView && (
+        <section id="shares" className="py-16 md:py-20 scroll-mt-20">
+          <Container>
+            <div className="max-w-4xl mx-auto space-y-8">
+              <div className="text-center space-y-3">
+                <Pill tone="neutral" className="mx-auto">Available shares</Pill>
+                <h2 className="font-serif text-3xl md:text-5xl">Reserve your share</h2>
+                <p className="text-saddle max-w-xl mx-auto">
+                  Put down a deposit toward your share today. {name} arranges
+                  pickup or delivery with you directly, and you pay the balance
+                  straight to the ranch.
+                </p>
+              </div>
+              <BrokerReserve
+                slug={slug}
+                ranchName={name}
+                cards={brokerView.cards}
+                balanceNote={brokerView.balanceNote}
+                pricingNote={brokerView.pricingNote}
+                fulfillmentSteps={brokerView.fulfillmentSteps}
+                additionalCosts={brokerView.additionalCosts}
+              />
+              <p className="text-center text-xs text-muted">Prices in USD.</p>
             </div>
           </Container>
         </section>
@@ -1313,8 +1398,10 @@ export default async function RancherPage(
         </section>
       )}
 
-      {/* ── CUSTOM PRODUCTS ──────────────────────────────────────────────── */}
-      {!isProspect && customProducts.length > 0 && (
+      {/* ── CUSTOM PRODUCTS ── (suppressed for broker self-serve: the cards
+          carry raw external buy links / Connect reserve CTAs — money paths
+          that don't exist on the broker rail) ─────────────────────────────── */}
+      {!isProspect && !brokerSelfServe && customProducts.length > 0 && (
         <section className="py-16 md:py-20 bg-bone-warm border-y border-dust/60">
           <Container>
             <div className="max-w-5xl mx-auto space-y-10">
@@ -1374,8 +1461,10 @@ export default async function RancherPage(
         </section>
       )}
 
-      {/* ── RESERVE / NEXT PROCESSING ────────────────────────────────────── */}
-      {!isProspect && (processingDateDisplay || reserveLink) && (
+      {/* ── RESERVE / NEXT PROCESSING ── (suppressed for broker self-serve:
+          this card renders the raw Reserve Link / routes into /access — both
+          are other rails' money paths) ───────────────────────────────────── */}
+      {!isProspect && !brokerSelfServe && (processingDateDisplay || reserveLink) && (
         <section className="py-16 md:py-20">
           <Container>
             <Card
@@ -1524,6 +1613,15 @@ export default async function RancherPage(
           href="#reserve"
           label="Reserve your share"
           subLabel="small refundable deposit holds it"
+        />
+      )}
+      {/* Broker self-serve sticky CTA — jumps to the broker reserve form.
+          Copy stays on the rail's contract: a deposit toward the share. */}
+      {brokerCanReserve && (
+        <StickyMobileCTA
+          href="#reserve"
+          label="Reserve your share"
+          subLabel="a deposit toward your share holds it"
         />
       )}
     </main>

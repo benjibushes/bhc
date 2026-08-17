@@ -147,6 +147,33 @@ export function isBrokerRancher(rancher: any): boolean {
   return false;
 }
 
+// Per-rancher SELF-SERVE opt-in (2026-08-17). Ben can flip ONE represented
+// ranch publicly promotable: with BOTH `Broker Rail` and this box checked, the
+// ranch's public page renders a broker-correct reserve experience and
+// /api/checkout/broker-reserve runs the same referral+checkout flow the /r/b
+// redemption uses — no operator-minted token. Everything else about the rail's
+// invisibility (routing, matching, campaigns, the map, the sitemap) is
+// untouched: only the direct page URL becomes public.
+// Verified against the live schema 2026-08-17.
+export const BROKER_SELF_SERVE_FIELD = 'Broker Self Serve'; // checkbox, Ranchers
+
+/**
+ * Is this rancher a SELF-SERVE broker ranch — represented (broker rail) AND
+ * explicitly opted in to public promotion?
+ *
+ * Requires isBrokerRancher: the self-serve box on a NON-broker rancher is a
+ * data error and must never relax anything (fail closed in both directions,
+ * same strict parse as isBrokerRancher — Airtable omits unchecked boxes and a
+ * string 'false' is truthy in JS).
+ */
+export function isBrokerSelfServe(rancher: any): boolean {
+  if (!isBrokerRancher(rancher)) return false;
+  const raw = rancher?.[BROKER_SELF_SERVE_FIELD];
+  if (raw === true) return true;
+  if (typeof raw === 'string') return raw.trim().toLowerCase() === 'true';
+  return false;
+}
+
 /**
  * Does this rancher have ANY Stripe Connect footprint?
  *

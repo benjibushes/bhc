@@ -1014,6 +1014,34 @@ export async function findOrCreateRancherByEmail(
   return { record: created, created: true, matchedBy: null };
 }
 
+// Pure formula builder for getRancherOrProspectBySlug — exported so the test
+// can pin the exact string (lib/rancherSlugFormula.test.ts, same convention as
+// referralsByRancherFormula above / lib/cronReadFilters).
+//
+// BROKER SELF-SERVE (2026-08-17): the blanket NOT({Broker Rail} = 1) exclusion
+// is relaxed to admit ONLY a represented ranch Ben explicitly opted in via the
+// `Broker Self Serve` checkbox — every other broker ranch stays invisible.
+// Two clauses move together:
+//   • the broker exclusion becomes OR(NOT broker, self-serve) — a self-serve
+//     broker ranch resolves by its public slug;
+//   • the Page Live OR gains AND(broker, self-serve) — a self-serve broker
+//     ranch is page-live BY DEFINITION of the opt-in (the launch ranch has
+//     Page Live unset; represented ranchers never ran the wizard that sets
+//     it). Deliberately AND-ed with {Broker Rail} so a stray self-serve tick
+//     on a NON-broker ranch can never publish a page (fail closed).
+// Public Map Hidden + Verification != Removed still gate unconditionally, so
+// an opted-out ranch stays unreachable even by direct URL.
+export function rancherOrProspectBySlugFormula(slug: string): string {
+  const safeSlug = escapeAirtableValue(slug);
+  return (
+    `AND({Slug} = "${safeSlug}", NOT({Public Map Hidden} = 1), ` +
+    `{Verification Status} != "Removed", ` +
+    `OR(NOT({Broker Rail} = 1), {Broker Self Serve} = 1), ` +
+    `OR({Page Live} = 1, {Verification Status} = "Prospect", ` +
+    `AND({Broker Rail} = 1, {Broker Self Serve} = 1)))`
+  );
+}
+
 // Get a single rancher by slug INCLUDING Prospect records (Page Live=false).
 // Used by the public landing page when the slug points to a Prospect that
 // hasn't been claimed yet. Filters out hidden / removed records so opted-out
@@ -1024,7 +1052,6 @@ export async function getRancherOrProspectBySlug(slug: string) {
   // landing page renders.
   if (isDemoMode()) return (require('./demo/demoStore') as typeof import('./demo/demoStore')).demoRancherForSlug(slug);
   try {
-    const safeSlug = escapeAirtableValue(slug);
     // U17: wrap in withRateLimitRetry — this powers the PUBLIC rancher page,
     // where paid ads land. An un-retried Airtable 429 here threw straight
     // through to a generic error page = a wasted ad click. Now transient rate
@@ -1033,10 +1060,7 @@ export async function getRancherOrProspectBySlug(slug: string) {
     const records = await withRateLimitRetry(() =>
       base(TABLES.RANCHERS)
         .select({
-          filterByFormula:
-            `AND({Slug} = "${safeSlug}", NOT({Public Map Hidden} = 1), ` +
-            `{Verification Status} != "Removed", NOT({Broker Rail} = 1), ` +
-            `OR({Page Live} = 1, {Verification Status} = "Prospect"))`,
+          filterByFormula: rancherOrProspectBySlugFormula(slug),
           maxRecords: 1,
         })
         .all(),
