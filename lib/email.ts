@@ -5333,7 +5333,11 @@ export async function sendMatchNowRescue(data: {
   buyerState: string;
 }) {
   const first = data.firstName || 'there';
-  const subject = `your rancher is lined up — intro coming in 24 hours`;
+  // F17 (2026-08-18): this email ALSO fires on the branch where auto-route
+  // FAILED (no rancher with capacity — the path ends at a manual operator
+  // /match), so the copy must not claim a match already exists nor promise
+  // the intro or rancher outreach on a deadline no machine backs.
+  const subject = `we're lining up your rancher`;
   return guardedSend({
     templateName: 'sendMatchNowRescue',
     recipientEmail: data.email,
@@ -5346,10 +5350,10 @@ export async function sendMatchNowRescue(data: {
       html: `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}</style>
 </head><body><div class="container">
-  <h1>Your rancher is lined up</h1>
+  <h1>We're lining up your rancher</h1>
   <p>Hi ${esc(first)},</p>
-  <p>You clicked "ready to buy" — thanks for the signal. I've matched you with a real rancher in ${esc(data.buyerState)} who's got capacity for you this season.</p>
-  <p>You'll get a second email within the next 24 hours with their name, pricing (Quarter / Half / Whole), processing date, and direct contact info. They'll also reach out to you within 48 hours.</p>
+  <p>You clicked "ready to buy" — thanks for the signal. I'm personally lining up a real rancher in ${esc(data.buyerState)} with capacity for you this season.</p>
+  <p>As soon as your match is locked in, you'll get a second email with their name, pricing (Quarter / Half / Whole), processing date, and direct contact info.</p>
   <p>This is a ranch I work with myself. You buy direct: real beef, raised right, straight from the ranch.</p>
   <p>If anything changes, reply to this email and I'll handle it.</p>
   <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>

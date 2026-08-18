@@ -52,6 +52,32 @@ export const REQUEST_ONLY_RANCHER_SLUGS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * REC-ID BELT (F10, Wave 1 rails hardening 2026-08-18). The slug set alone
+ * left two holes: a slug RENAME in Airtable silently dropped the protection,
+ * and any config that names the RECORD ID directly (the demand-router's
+ * DEMAND_CAMPAIGN_RANCHER_IDS pool env) never consulted the slug at all —
+ * Rep Provisions' record id in that env would have armed a generic campaign
+ * pool with zero request-only guard. Same policy, second key: consumed
+ * alongside the slug set everywhere the slug set is consumed
+ * (isRequestOnlyRancher below checks BOTH), plus directly wherever only an
+ * id is on hand (demand-router resolveSlot). Airtable record ids are
+ * case-sensitive — matched verbatim, trimmed only.
+ */
+export const REQUEST_ONLY_RANCHER_IDS: ReadonlySet<string> = new Set([
+  // Rep Provisions (grass-finished specialty supply — Ben, 2026-08-12).
+  'recYE5zpedhPg6KIV',
+]);
+
+/**
+ * Is this Airtable record id a request-only rancher? Pure; empty/garbage ids
+ * are NOT request-only (the gate stays narrow on purpose).
+ */
+export function isRequestOnlyRancherId(id: unknown): boolean {
+  const s = String(id ?? '').trim();
+  return s !== '' && REQUEST_ONLY_RANCHER_IDS.has(s);
+}
+
+/**
  * Resolve a rancher record's slug the way every other read path does:
  * the `Slug` field, stringified and trimmed. Never guessed — see
  * lib/campaignWaves.rancherForStateTable and the direct-pin block in
@@ -70,10 +96,17 @@ function slugOf(rancher: unknown): string {
  * the gate; that only ever TIGHTENS the exclusion (the direct-pin path
  * resolves slugs separately and is deliberately untouched).
  *
- * A record with no slug is NOT request-only — it is unroutable for other
- * reasons already, and this gate stays narrow on purpose.
+ * Checks BOTH keys of the same policy: the slug set AND the record-id belt
+ * (F10) — a slug rename in Airtable must never drop the protection, so every
+ * existing call site (live matcher, campaign-wave table, launch warmup)
+ * inherits the id belt through this one function.
+ *
+ * A record with neither a listed slug nor a listed id is NOT request-only —
+ * this gate stays narrow on purpose.
  */
 export function isRequestOnlyRancher(rancher: unknown): boolean {
   const slug = slugOf(rancher).toLowerCase();
-  return slug !== '' && REQUEST_ONLY_RANCHER_SLUGS.has(slug);
+  if (slug !== '' && REQUEST_ONLY_RANCHER_SLUGS.has(slug)) return true;
+  const id = (rancher as Record<string, unknown> | null | undefined)?.['id'];
+  return isRequestOnlyRancherId(id);
 }

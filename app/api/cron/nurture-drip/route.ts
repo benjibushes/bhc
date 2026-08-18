@@ -32,6 +32,7 @@ import { dueNurtureTouch } from '@/lib/nurtureDrip';
 import { isActiveDealReferral } from '@/lib/capacityCount';
 import { getServedStates } from '@/lib/routingSegment';
 import { nurtureLaneGate } from '@/lib/marketingSupplyGate';
+import { cooledDown } from '@/lib/marketingTouch';
 import {
   sendNurtureEducation,
   sendNurtureShopBridge,
@@ -94,6 +95,10 @@ async function realHandler(_request: Request): Promise<DripResult> {
   // that will serve them are later phases; nothing interim is sent.
   let skippedNational = 0;
   let skippedCustomer = 0;
+  // F18 (2026-08-18): cross-rail marketing cooldown — otherwise-due buyers
+  // another rail touched within 24h. Skipped WITHOUT stamping, so the touch
+  // stays due and fires on a later daily run.
+  let skippedCooldown = 0;
   for (const c of consumers) {
     const t = dueNurtureTouch(
       {
@@ -124,10 +129,20 @@ async function realHandler(_request: Request): Promise<DripResult> {
       else skippedCustomer++;
       continue;
     }
+    // F18 (2026-08-18): CROSS-RAIL MARKETING COOLDOWN. The drip had NO
+    // cross-rail recency check — a buyer the demand-router / requalify /
+    // email-sequences / warmup rail emailed this morning could get a nurture
+    // touch the same afternoon. The shared lib/marketingTouch gate (24h
+    // between ANY two marketing touches; chase rails exempt) holds them for
+    // a later run — nothing is stamped, the touch stays due.
+    if (!cooledDown(c, now)) {
+      skippedCooldown++;
+      continue;
+    }
     due.push({ c, touch: t.touch });
   }
   const laneNote =
-    ` skippedNational=${skippedNational} skippedCustomer=${skippedCustomer}`;
+    ` skippedNational=${skippedNational} skippedCustomer=${skippedCustomer} skippedCooldown=${skippedCooldown}`;
 
   if (dryRun) {
     const byTouch: Record<string, number> = {};
@@ -147,6 +162,7 @@ async function realHandler(_request: Request): Promise<DripResult> {
         'dry-run-due': due.length,
         'lane-national': skippedNational,
         'lane-customer': skippedCustomer,
+        'cross-rail-cooldown': skippedCooldown,
       },
     };
   }
@@ -216,6 +232,7 @@ async function realHandler(_request: Request): Promise<DripResult> {
     skipReasonBreakdown: {
       'lane-national': skippedNational,
       'lane-customer': skippedCustomer,
+      'cross-rail-cooldown': skippedCooldown,
     },
   };
 }

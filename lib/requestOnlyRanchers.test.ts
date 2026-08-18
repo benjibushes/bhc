@@ -2,7 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   REQUEST_ONLY_RANCHER_SLUGS,
+  REQUEST_ONLY_RANCHER_IDS,
   isRequestOnlyRancher,
+  isRequestOnlyRancherId,
 } from './requestOnlyRanchers';
 import { nationwideFitVerdict } from './nationwideFit';
 import { CAMPAIGN_WAVE_EXCLUDED_SLUGS, rancherForStateTable } from './campaignWaves';
@@ -194,4 +196,32 @@ test('campaign waves still exclude the request-only rancher after the refactor',
   for (const [, v] of table) {
     assert.notEqual(v.slug, 'rep-provisions');
   }
+});
+
+// ── Rec-ID belt (F10, Wave 1 rails hardening 2026-08-18) ─────────────────────
+// The slug set alone left a hole: a slug RENAME in Airtable (or a pool config
+// naming the record id directly, as DEMAND_CAMPAIGN_RANCHER_IDS does) slipped
+// the gate. The record-id set is the belt — same list, consumed alongside the
+// slug set everywhere the slug set is consumed.
+
+test('rec-id belt: REQUEST_ONLY_RANCHER_IDS is seeded with the Rep Provisions record', () => {
+  assert.ok(REQUEST_ONLY_RANCHER_IDS.has('recYE5zpedhPg6KIV'));
+});
+
+test('rec-id belt: isRequestOnlyRancherId refuses the listed id and nothing else', () => {
+  assert.equal(isRequestOnlyRancherId('recYE5zpedhPg6KIV'), true);
+  assert.equal(isRequestOnlyRancherId(' recYE5zpedhPg6KIV '), true, 'whitespace-trimmed');
+  assert.equal(isRequestOnlyRancherId('recSomeoneElse999'), false);
+  assert.equal(isRequestOnlyRancherId(''), false);
+  assert.equal(isRequestOnlyRancherId(null), false);
+  assert.equal(isRequestOnlyRancherId(undefined), false);
+});
+
+test('rec-id belt: a slug RENAME must not drop protection (record id still refuses)', () => {
+  assert.equal(isRequestOnlyRancher({ id: 'recYE5zpedhPg6KIV', Slug: 'renamed-rep' }), true);
+  assert.equal(isRequestOnlyRancher({ id: 'recYE5zpedhPg6KIV' }), true, 'slug-less record still refused');
+});
+
+test('rec-id belt: control — a different id with an open slug stays open', () => {
+  assert.equal(isRequestOnlyRancher({ id: 'recOpenRanch12345', Slug: 'foodstead' }), false);
 });
