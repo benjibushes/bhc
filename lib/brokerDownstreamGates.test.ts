@@ -851,6 +851,20 @@ test('GATE telegram markpaid: "commission payment received" only ever goes out o
   assert.match(slice, /already collected from the buyer at deposit/);
 });
 
+test('GATE markpaid render: the Mark Paid button hides when the close did not ride the invoice rail', () => {
+  const tg = read('./telegram.ts');
+  // Optional and default-render: the three sibling close paths that also call
+  // sendTelegramSaleCelebration are out of this wave's scope, so an absent
+  // flag must keep their button (the markpaid handler gate is their belt).
+  assert.match(tg, /postCloseInvoiceRail\?: boolean;/);
+  assert.match(tg, /data\.postCloseInvoiceRail === false\n\s*\? \[\]/);
+  assert.match(tg, /\{ text: '💰 Mark Paid', callback_data: `markpaid_\$\{data\.referralId\}` \}/);
+  // The close-reply path in the telegram route passes the rail it already
+  // computed for the invoice skip — the two decisions can never disagree.
+  const route = telegramRouteSrc();
+  assert.match(route, /postCloseInvoiceRail: !skipLegacyInvoice,/);
+});
+
 // ---------------------------------------------------------------------------
 // 11. BROKER DEPOSIT CHASE LANE (Wave 1 F5, 2026-08-18) — the third selector
 //     in deposit-request-nudge. Rail A never matches a broker row (Status
@@ -910,18 +924,4 @@ test('BROKER LANE touch honesty: the copy tier rides the planner for BOTH planne
   // touches long. The plan (rail B's or the broker lane's) owns the tier.
   assert.match(src, /const plan = depositAbandonPlan\(r, nowMs\) \?\? brokerDepositChasePlan\(r, nowMs\);/);
   assert.match(src, /else if \(plan\) touch = plan\.tier === 'decay' \? 2 : 'mid';/);
-});
-
-test('GATE markpaid render: the Mark Paid button hides when the close did not ride the invoice rail', () => {
-  const tg = read('./telegram.ts');
-  // Optional and default-render: the three sibling close paths that also call
-  // sendTelegramSaleCelebration are out of this wave's scope, so an absent
-  // flag must keep their button (the markpaid handler gate is their belt).
-  assert.match(tg, /postCloseInvoiceRail\?: boolean;/);
-  assert.match(tg, /data\.postCloseInvoiceRail === false\n\s*\? \[\]/);
-  assert.match(tg, /\{ text: '💰 Mark Paid', callback_data: `markpaid_\$\{data\.referralId\}` \}/);
-  // The close-reply path in the telegram route passes the rail it already
-  // computed for the invoice skip — the two decisions can never disagree.
-  const route = telegramRouteSrc();
-  assert.match(route, /postCloseInvoiceRail: !skipLegacyInvoice,/);
 });
