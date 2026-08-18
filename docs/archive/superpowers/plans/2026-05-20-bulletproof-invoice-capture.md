@@ -10,11 +10,11 @@
 
 ---
 
-## Context — The Eric Turner / Ashcraft case study
+## Context — The Ashcraft $1-placeholder case study
 
 Reference: `rec6u9xNRJMsYjzQF` (2026-05-20).
 
-Buyer (Eric Turner, TX) signed up. Matched to John & Kellie Ashcraft (Ashcraft Beef). Off-platform deal closed (rancher contacted buyer directly, agreed pickup-on-delivery in Houston). Ben tapped "Won" on Telegram close-detector card. `clcheck_won` handler at `app/api/webhooks/telegram/route.ts:2094-2115` flipped `Status='Closed Won'` + `Closed At=now` with NO financial validation. Soft text-prompt "reply with sale $" was ignored. Later, manual Airtable edits set Sale=$1 (placeholder — actual amount unknown until delivery) + Commission=$95. Stripe invoice fired against John for $95 based on a $1 sale.
+A TX buyer signed up. Matched to John & Kellie Ashcraft (Ashcraft Beef). Off-platform deal closed (rancher contacted buyer directly, agreed pickup-on-delivery in Houston). Ben tapped "Won" on Telegram close-detector card. `clcheck_won` handler at `app/api/webhooks/telegram/route.ts:2094-2115` flipped `Status='Closed Won'` + `Closed At=now` with NO financial validation. Soft text-prompt "reply with sale $" was ignored. Later, manual Airtable edits set Sale=$1 (placeholder — actual amount unknown until delivery) + Commission=$95. Stripe invoice fired against John for $95 based on a $1 sale.
 
 Three problems compounded:
 1. Close-detector Telegram path bypasses the saleAmount gate that the dashboard close-flow enforces (post PR #30).
@@ -553,7 +553,7 @@ git add docs/COMMISSION-FLOW.md
 git commit -m "docs(commission): canonical state-machine + rules
 
 Two-stage close. Per-rancher commission rate. Sanity floors + ratio
-guards. Nightly audits. Born from the 2026-05-20 Ashcraft/Eric Turner
+guards. Nightly audits. Born from the 2026-05-20 Ashcraft $1-placeholder
 incident — codify the model so it doesn't drift."
 ```
 

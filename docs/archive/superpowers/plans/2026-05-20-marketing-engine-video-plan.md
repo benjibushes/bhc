@@ -313,7 +313,7 @@ These videos exist to build BHC's identity as a real-person company, not a facel
 - **Length:** 3 minutes
 - **Hook:** "Something broke last week. Here's what I did about it."
 - **Outline:**
-  - Pick a real recent incident (e.g. Ashcraft Eric Turner $1 placeholder + invoice gap)
+  - Pick a real recent incident (e.g. Ashcraft $1 placeholder + invoice gap)
   - Walk through what happened
   - Walk through what got fixed
   - Show the code/process change live
