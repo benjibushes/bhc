@@ -27,6 +27,20 @@
 // Both ride the SAME stamps/cadence, skip 'rancher-added' CRM leads (#511),
 // and NEVER email the buyer (deliberate).
 //
+// F12 (2026-08-18) — BROKER lane ('broker-pickup' kind). The old formula
+// required {Rancher Accepted At}, which is empty FOREVER on a broker row
+// (lib/depositSla.ts — a represented ranch has no dashboard, no Accept
+// button), so after the one 72h deposit-accept escalation NOBODY verified a
+// broker buyer got their beef. Cohort (lib/fulfillmentChase.selectBrokerPickup):
+// broker marker + Deposit Paid At + fulfillment sheet DELIVERED ('Intro Sent
+// At' ≥ 'Deposit Paid At' — the stamp deliverBrokerRancherSheet writes only on
+// a real delivery) + not closed/confirmed. Cadence mirrors the confirm lane
+// (T+2/5/8, shared stamps). The ask goes to the BUYER — "did pickup happen?"
+// (balance-at-pickup framing, no commission words; the ranch is off-platform,
+// so the buyer is the only party who can confirm) — with the tier-2/3
+// operator escalation mirroring the Connect lane. The rancher nudge email
+// NEVER fires on this kind (the #628/#634 leak class).
+//
 // Mirrors deposit-accept-sla exactly: CRON_SECRET fail-closed auth wrapper +
 // withCronRun + maintenance gate + claim-stamp-BEFORE-send ordering +
 // per-referral try/catch.
@@ -44,11 +58,12 @@ import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
-import { sendRancherFulfillmentNudge } from '@/lib/email';
+import { sendRancherFulfillmentNudge, sendEmail } from '@/lib/email';
 import { resolveRancherEmail, rancherFirstName } from '@/lib/rancherNotify';
 import { FULFILLMENT_FIELDS } from '@/lib/fulfillmentTracking';
 import {
   selectFulfillmentChase,
+  buildBrokerPickupEmail,
   CHASE_FIELDS,
   CHASE_AIRTABLE_FIELDS_NEEDED,
 } from '@/lib/fulfillmentChase';
@@ -67,18 +82,26 @@ async function realHandler(
   const nowIso = new Date().toISOString();
   const fallbackDays = Number(process.env.FULFILLMENT_CHASE_FALLBACK_DAYS) || undefined;
 
-  // Formula on LONG-STANDING fields only ({Deposit Paid At} + {Rancher
-  // Accepted At} are already in the deposit-accept-sla formula; {Status} is
-  // core). The fulfillment fields ({Fulfillment Confirmed At}, {Fulfillment
-  // Status}) and this cron's own stamps may not exist in the schema yet — an
-  // unknown field name in a formula errors the WHOLE query (the {Refunded At}
-  // lesson), so every check on those lives in the JS selector, where an
-  // absent field is just `undefined`.
+  // Formula on LONG-STANDING fields only ({Deposit Paid At} is already in the
+  // deposit-accept-sla formula; {Status} is core). The fulfillment fields
+  // ({Fulfillment Confirmed At}, {Fulfillment Status}) and this cron's own
+  // stamps may not exist in the schema yet — an unknown field name in a
+  // formula errors the WHOLE query (the {Refunded At} lesson), so every check
+  // on those lives in the JS selector, where an absent field is just
+  // `undefined`.
+  //
+  // F12: the {Rancher Accepted At} clause moved into the JS selector — a
+  // broker row NEVER gets acceptance (no dashboard, no Accept button), so the
+  // formula version made the broker lane unreachable forever. The selector
+  // still requires acceptance for every Connect kind (byte-identical
+  // behavior) and routes broker rows to the broker-pickup branch only; the
+  // extra rows this admits (deposit-paid, not-yet-accepted Connect deals —
+  // deposit-accept-sla territory) are dropped there.
   let candidates: any[] = [];
   try {
     candidates = (await getAllRecords(
       TABLES.REFERRALS,
-      `AND({Deposit Paid At} != '', {Rancher Accepted At} != '', {Status} != 'Closed Lost')`,
+      `AND({Deposit Paid At} != '', {Status} != 'Closed Lost')`,
     )) as any[];
   } catch (e: any) {
     return {
@@ -186,7 +209,67 @@ async function realHandler(
           ? `processing date ${ref[FULFILLMENT_FIELDS.processingDate]}`
           : `no handoff/processing date set (accept + fallback window)`;
 
-      if (kind !== 'confirm' || tier === 1 || tier === 2) {
+      // ── BROKER lane (F12): the ask goes to the BUYER, never the ranch ───
+      // A represented ranch is off-platform — no dashboard, no confirm
+      // button, and no BHC emails TO it (the #628/#634 containment rule).
+      // Tier 1/2 → buyer "did pickup happen?" (balance-at-pickup framing, no
+      // commission words — copy pinned in lib/fulfillmentChase.test.ts);
+      // tier 2/3 → operator signal, mirroring the Connect confirm ladder.
+      // guardedSend inside sendEmail handles unsubscribed/bounced buyers.
+      if (kind === 'broker-pickup') {
+        const buyerEmail = String(ref['Buyer Email'] || '').trim();
+        const ranchName = String(rancher['Ranch Name'] || rancher['Operator Name'] || 'the ranch');
+        if (tier === 1 || tier === 2) {
+          if (buyerEmail) {
+            try {
+              const { subject, html } = buildBrokerPickupEmail({
+                // NOT the loop's `buyerName` — that defaults to '?' for the
+                // operator surfaces; the buyer greeting wants 'there'.
+                buyerFirstName: String(ref['Buyer Name'] || '').split(/\s+/)[0] || 'there',
+                ranchName,
+                cutLabel: cut || undefined,
+                tier,
+              });
+              await sendEmail({
+                to: buyerEmail,
+                subject,
+                html,
+                templateName: 'buyer_broker_pickup_check',
+                // Replies land in the resend-inbound webhook tagged to this
+                // referral — a "YES" is classified there, same as the chasup
+                // buyer chase.
+                _replyContext: { type: 'ref', recordId: String(referralId) },
+              });
+            } catch (e: any) {
+              errors.push(`${referralId}: broker buyer email failed (${e?.message?.slice(0, 80)})`);
+            }
+          } else {
+            errors.push(`${referralId}: broker buyer has no email`);
+          }
+        }
+        if (tier === 2 || tier === 3) {
+          try {
+            await sendOperatorSignal({
+              urgency: 'loud',
+              kind: 'stuck-rancher',
+              summary: `BROKER pickup unverified ${daysPastDue}d past window — did the buyer get their beef?`,
+              detail:
+                tier === 2
+                  ? `${buyerName} paid a broker-rail deposit and ${rancherName} was emailed the fulfillment sheet, but nothing confirms pickup ${daysPastDue}d past the window. Second buyer check-in just sent. If this stays silent it escalates to human takeover at T+8d.`
+                  : `${buyerName} paid a broker-rail deposit and ${rancherName} was emailed the fulfillment sheet, but nothing confirms pickup ${daysPastDue}d past the window after two buyer check-ins. HUMAN TAKEOVER: call ${rancherName} — the ranch is off-platform, so a phone call is the only rancher-side channel.`,
+              refs: [
+                { type: 'referral', id: String(referralId), label: String(buyerName) },
+                { type: 'rancher', id: String(rancherId), label: String(rancherName) },
+              ],
+              dedupeKey: `fulfillment-chase:${referralId}:t${tier}`,
+            });
+          } catch (e: any) {
+            errors.push(`${referralId}: broker operator signal failed (${e?.message?.slice(0, 80)})`);
+          }
+        }
+      }
+
+      if (kind !== 'broker-pickup' && (kind !== 'confirm' || tier === 1 || tier === 2)) {
         const email = resolveRancherEmail(rancher);
         if (email) {
           try {
@@ -238,7 +321,7 @@ async function realHandler(
   return {
     status: errors.length ? 'partial' : 'success',
     recordsTouched: touched,
-    notes: `candidates=${candidates.length} eligible=${eligible.length} chased=${touched} kinds=[${toChase.map((c) => (c.kind === 'confirm' ? `t${c.tier}` : c.kind)).join(',')}] errs=${errors.length}${errors.length ? ' err1=' + errors[0].slice(0, 80) : ''}`,
+    notes: `candidates=${candidates.length} eligible=${eligible.length} chased=${touched} kinds=[${toChase.map((c) => (c.kind === 'confirm' ? `t${c.tier}` : c.kind === 'broker-pickup' ? `bp${c.tier}` : c.kind)).join(',')}] errs=${errors.length}${errors.length ? ' err1=' + errors[0].slice(0, 80) : ''}`,
   };
 }
 
