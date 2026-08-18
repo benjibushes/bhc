@@ -170,6 +170,8 @@ async function realHandler(_request: Request): Promise<CronResult> {
   let nudgedEmail = 0;
   let nudgedSms = 0;
   let skippedSameDayInvite = 0;
+  // Marker-broker rows whose rancher read failed this run — waiting, not lost.
+  let brokerWaits = 0;
   let claimed = 0; // buyers claimed (stamp written → send attempted) this run
   const failures: string[] = [];
   // A buyer with multiple in-window referrals gets at most ONE nudge per run
@@ -246,6 +248,17 @@ async function realHandler(_request: Request): Promise<CronResult> {
     const confirmedBroker =
       referralCarriesBrokerMarker(ref) ||
       (!!rancher && railForLoadedRancher(rancher) === 'broker');
+    // EVIDENCE-BAR PARITY with rail C (deposit-request-nudge resolveContext,
+    // confirmedBroker && !rancher → null): a marker-carrying row whose rancher
+    // read FAILED must WAIT for the next hourly run, not send — the broker
+    // checkout refuses fail-closed when the rancher is unverifiable, and the
+    // per-referral dedup stamp below means a buyer bounced off that refusal
+    // never gets a retry. Skipping BEFORE the claim keeps the row eligible for
+    // the rest of the 4h window.
+    if (confirmedBroker && !rancher) {
+      brokerWaits++;
+      continue;
+    }
 
     // Claim BEFORE sending: stamp the dedup note first so a stamp failure skips
     // + retries next run rather than re-nudging. This cron runs hourly with a
@@ -335,7 +348,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
   return {
     status,
     recordsTouched: nudgedEmail + nudgedSms,
-    notes: `refsInWindow=${candidateRefs.length} claimed=${claimed}/${MAX_SENDS_PER_RUN} email=${nudgedEmail} sms=${nudgedSms} sameDayInviteSkips=${skippedSameDayInvite} failures=${failures.length}`,
+    notes: `refsInWindow=${candidateRefs.length} claimed=${claimed}/${MAX_SENDS_PER_RUN} email=${nudgedEmail} sms=${nudgedSms} sameDayInviteSkips=${skippedSameDayInvite} brokerWaits=${brokerWaits} failures=${failures.length}`,
   };
 }
 

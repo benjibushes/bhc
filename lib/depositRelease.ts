@@ -60,7 +60,7 @@
 // read and every write, this module only answers "may we release this row,
 // and if not, why not."
 
-import { DEPOSIT_NUDGE_LIFETIME_CAP } from './depositRequestNudge';
+import { DEPOSIT_NUDGE_LIFETIME_CAP, DEPOSIT_NUDGE_SUPPRESSED_SENTINEL } from './depositRequestNudge';
 import { isReferralOnHold } from './referralHold';
 import { type LossReason } from './lossReasons';
 
@@ -319,10 +319,19 @@ export function releaseNoteStamp(
   const silentDays = lastMs === null ? '?' : String(Math.floor((opts.nowMs - lastMs) / DAY_MS));
   const rawCount = Number(r?.['Deposit Nudge Count']);
   const count = Number.isFinite(rawCount) && rawCount > 0 ? rawCount : 0;
+  // SENTINEL 99 (#634 comms containment): a suppressed buyer's row carries
+  // 'Deposit Nudge Count' = 99 to retire it from every chase selector — that
+  // is a suppression marker, NOT a send count. The release itself is correct
+  // (the row still frees its capacity slot), but the audit note must record
+  // WHY the chase ended, never "99 nudges sent" as fact.
+  const chase =
+    count >= DEPOSIT_NUDGE_SUPPRESSED_SENTINEL
+      ? 'chase suppressed (unsubscribe/bounce)'
+      : `${count} nudge${count === 1 ? '' : 's'} sent`;
   const opened = isPresent(r?.['Deposit Link Opened At']) ? 'link opened' : 'link NEVER opened';
   return (
     `[auto-released ${opts.today}: deposit requested ${ageDays}d ago, never paid — ` +
-    `${count} nudge${count === 1 ? '' : 's'} sent, silent ${silentDays}d, ${opened} — ` +
+    `${chase}, silent ${silentDays}d, ${opened} — ` +
     `no payment on file; buyer released back to matching]`
   );
 }

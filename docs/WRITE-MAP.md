@@ -58,6 +58,7 @@ Sem (NO-DEAD-ENDS, 2026-07-30): 'Dormant' is now written by THREE tiers of refer
 W: lib/contracts/rancher.ts:72 buildRecordCloseUpdates on 'won' (recordClose :89 — settleFinalInvoice, quick-action, confirm-payment); app/api/rancher/referrals/[id]/route.ts:702 — dashboard close; quick-action :262; confirm-payment :148 (fallback); admin PATCH app/api/referrals/[id]/route.ts:75 (:142 undo); telegram :3624 (operator replies $ to close prompt); lib/refundLifecycle.ts:38 — NULLED on full refund; inquiries :98 + wholesale signup :197 (created 0).
 R: lib/replenishment.ts:75; lib/salesMetrics.ts:49; lib/testimonials.ts:77 + stats/public :134 (social proof >0); commission-invoices :117.
 Sem: the REALIZED close amount, stamped at close. Guard: rancher PATCH :690-700 rejects edits on already-Closed-Won rows.
+Sem (BROKER, 2026-08-18): on a broker referral (Match Type 'Broker — Deposit'), `Sale Amount` = the FULL animal price — matching `Total Sale Amount` at settle — NEVER "what the ranch collected". Every rancher-facing net read (lib/commission.ts referralNetDollars, dashboard net sum, earnings CSV) computes net = Sale Amount − the deposit BHC kept; hand-entering price − deposit double-subtracts the deposit and understates the ranch's net.
 
 ### Total Sale Amount (currency)
 W: request-deposit :218; send-deposit-invoice :143,160; send-final-invoice :359 (refreshed).

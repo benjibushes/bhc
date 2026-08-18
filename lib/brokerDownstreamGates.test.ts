@@ -52,8 +52,18 @@ test('GATE bulkRoute: refuses a represented ranch before any rancher intro fires
   const gateIdx = src.indexOf('if (isBrokerRancher(rancher)) {');
   // Everything wrong it would have sent sits AFTER the refusal.
   assert.ok(src.indexOf('/rancher/inbox', gateIdx) > gateIdx, 'dashboard link a broker ranch has no login for');
-  assert.ok(src.indexOf('10% commission on BHC referral sales', gateIdx) > gateIdx, 'wrong money model');
+  assert.ok(src.indexOf('commission on BHC referral sales', gateIdx) > gateIdx, 'wrong money model');
   assert.ok(src.indexOf('BuyHalfCow Introduction:', gateIdx) > gateIdx);
+});
+
+test('TIER TRUTH bulkRoute: the intro footer derives the rate from the loaded rancher, framing kept', () => {
+  const src = read('./bulkRoute.ts');
+  // Legacy commission-on-sales framing STAYS (this router is Connect/legacy
+  // only — the broker gate above refuses first); only the tier-blind 10%
+  // literal dies. A Pasture rancher reads 7%, Ranch 3%, a locked rate wins,
+  // and a genuinely legacy/no-tier rancher still reads 10% via the derivation.
+  assert.match(src, /\$\{commissionPercentLabelForRancher\(rancher\)\} commission on BHC referral sales\./);
+  assert.doesNotMatch(src, /10% commission/, 'a tier-blind 10% footer came back');
 });
 
 test('GATE admin reassign: refuses a represented ranch as a reassign target', () => {
@@ -61,9 +71,22 @@ test('GATE admin reassign: refuses a represented ranch as a reassign target', ()
   assert.match(src, /import \{ isBrokerRancher \} from '@\/lib\/brokerRail'/);
   assert.match(src, /if \(isBrokerRancher\(newRancher\)\) \{/);
   const gateIdx = src.indexOf('if (isBrokerRancher(newRancher)) {');
-  // The intro this blocks claims "our 10% is added on top" — false on a rail
+  // The intro this blocks claims the buyer-pays-on-top model — false on a rail
   // where the ranch nets price − deposit and nothing is added on top.
-  assert.ok(src.indexOf('our 10% is added on top', gateIdx) > gateIdx);
+  assert.ok(src.indexOf('is added on top and paid by the buyer', gateIdx) > gateIdx);
+});
+
+test('TIER TRUTH admin reassign: the added-on-top footer derives the rate from the target rancher', () => {
+  const src = read('../app/api/admin/referrals/[id]/reassign/route.ts');
+  // tier_v2 added-on-top framing STAYS (it is the truth of the deposit rail);
+  // only the rate number derives — "our 10%" was flatly false for a Pasture
+  // (7%) or Ranch (3%) target. Same derivation as the charge path, so the
+  // footer can never quote a rate the deposit fee would contradict.
+  assert.match(
+    src,
+    /our \$\{commissionPercentLabelForRancher\(newRancher\)\} is added on top and paid by the buyer\./,
+  );
+  assert.doesNotMatch(src, /our 10% is added on top/, 'the tier-blind 10% footer came back');
 });
 
 // ---------------------------------------------------------------------------
@@ -544,6 +567,24 @@ test('GATE qualified-no-action: a confirmed-broker buyer is sent to the broker c
     src,
     /const ctaLabel = confirmedBroker \? 'Reserve your share' : depositCapable \? 'Reserve your slot' : 'View your match';/,
   );
+});
+
+test('GATE qualified-no-action: a marker row whose rancher would not load WAITS, exactly like rail C', () => {
+  const src = read('../app/api/cron/qualified-no-action/route.ts');
+  // Evidence-bar parity with deposit-request-nudge's resolveContext
+  // (confirmedBroker && !rancher → null): a marker-carrying row whose rancher
+  // read failed must SKIP THIS RUN, not send the buyer into the broker
+  // checkout's fail-closed refusal — the per-referral dedup stamp means a
+  // buyer bounced off that refusal never gets a retry.
+  const waitIdx = src.indexOf('if (confirmedBroker && !rancher) {');
+  assert.ok(waitIdx > -1, 'the wait gate must exist');
+  assert.match(src, /if \(confirmedBroker && !rancher\) \{\n\s*brokerWaits\+\+;\n\s*continue;\n\s*\}/);
+  // The wait must sit BEFORE the claim stamp — a skipped buyer stays eligible
+  // for the next hourly run inside the 4h window.
+  const claimIdx = src.indexOf('await updateRecord(TABLES.CONSUMERS, buyerId', waitIdx);
+  assert.ok(claimIdx > waitIdx, 'the wait must precede the dedup claim stamp');
+  // And it is counted, never silent.
+  assert.match(src, /brokerWaits=\$\{brokerWaits\}/);
 });
 
 test('TIER TRUTH: telegram rancher-email footers derive the commission rate from the loaded rancher', () => {

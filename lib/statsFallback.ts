@@ -40,6 +40,11 @@ export const STATS_FALLBACK = {
  * outages, never for overwriting true answers we'd rather not render. (The
  * old /founders coercion floors did exactly that: familiesMatched<=0 → 1533,
  * states<=0 → 5. Killed 2026-08-17.)
+ *
+ * The check is `typeof === 'number'`, not Number() coercion (#632 review
+ * hardening): Number(null) is 0, so a corrupted cached payload carrying a
+ * null field rendered a fake zero instead of tripping the fallback. Only a
+ * genuine finite JSON number passes.
  */
 export function requireLiveStats<K extends string>(
   json: unknown,
@@ -48,8 +53,8 @@ export function requireLiveStats<K extends string>(
   const bag = (json ?? {}) as Record<string, unknown>;
   const out = {} as Record<K, number>;
   for (const field of fields) {
-    const n = Number(bag[field]);
-    if (!Number.isFinite(n)) {
+    const n = bag[field];
+    if (typeof n !== 'number' || !Number.isFinite(n)) {
       throw new Error(`stats payload missing/non-numeric "${field}"`);
     }
     out[field] = n;

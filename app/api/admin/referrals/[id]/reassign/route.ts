@@ -6,6 +6,7 @@ import { requireAdmin } from '@/lib/adminAuth';
 import { getMaxActiveReferrals, getLiveCapacity, incrementCapacity, decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
 import { isBrokerRancher } from '@/lib/brokerRail';
+import { commissionPercentLabelForRancher } from '@/lib/tiers';
 
 function esc(s: string): string {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -97,10 +98,10 @@ export async function POST(
     // BROKER RAIL (2026-08-17). The gate above now admits a self-serve
     // represented ranch, but this handler's intro email is Connect-shaped: it
     // hands the RANCH the buyer's contact block and states "You keep 100% of
-    // your price; our 10% is added on top and paid by the buyer" — flatly false
-    // on this rail, where the ranch nets price − deposit and nothing is added
-    // on top. Represented ranches take buyers only through the deposit-first
-    // match path (lib/brokerMatch).
+    // your price; our commission is added on top and paid by the buyer" —
+    // flatly false on this rail, where the ranch nets price − deposit and
+    // nothing is added on top. Represented ranches take buyers only through
+    // the deposit-first match path (lib/brokerMatch).
     if (isBrokerRancher(newRancher)) {
       return NextResponse.json({
         error: `${newRancher['Operator Name'] || newRancher['Ranch Name'] || 'That ranch'} is a represented (broker-rail) ranch — buyers reach it through the deposit link, not a rancher intro. Pick another.`,
@@ -194,7 +195,7 @@ export async function POST(
   ${buyerNotes ? `<p><strong>Notes:</strong> ${esc(buyerNotes)}</p>` : ''}
 </div>
 <p>Please reach out to them directly to discuss availability and pricing.</p>
-<p style="font-size:12px;color:#6B4F3F;margin-top:30px;">— Benjamin, BuyHalfCow · You keep 100% of your price; our 10% is added on top and paid by the buyer.</p>
+<p style="font-size:12px;color:#6B4F3F;margin-top:30px;">— Benjamin, BuyHalfCow · You keep 100% of your price; our ${commissionPercentLabelForRancher(newRancher)} is added on top and paid by the buyer.</p>
 </body></html>`,
         });
       } catch (e) {
