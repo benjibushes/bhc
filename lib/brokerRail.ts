@@ -643,8 +643,41 @@ export function readBrokerMoney(pi: any): {
 // careless admin flip must not change any of this, in either direction.
 
 /** Airtable filterByFormula fragment. AND() this into any Ranchers query that
- *  feeds a public / marketplace / SEO surface. */
+ *  feeds a public / marketplace / SEO surface — UNLESS that surface is a
+ *  discovery surface where a self-serve ranch must appear; those use
+ *  BROKER_SELF_SERVE_CARVE_OUT_FORMULA below instead. */
 export const BROKER_RAIL_EXCLUSION_FORMULA = 'NOT({Broker Rail} = 1)';
+
+/**
+ * WAVE A (2026-08-17) — the DISCOVERY CARVE-OUT. AND() this instead of
+ * BROKER_RAIL_EXCLUSION_FORMULA on every surface where a SELF-SERVE broker
+ * ranch must be visible: the slug resolver (rancherOrProspectBySlugFormula),
+ * the state pages + directory/sitemap builders in lib/airtable, and the /map
+ * pin query. ONE fragment on purpose — the next rail change edits one place,
+ * never five hand-copied strings. Semantics:
+ *   • non-broker rows pass via the first arm (byte-unchanged);
+ *   • broker + self-serve rows pass via the second arm;
+ *   • TOKEN-ONLY broker rows (Broker Rail without Broker Self Serve) fail
+ *     BOTH arms and stay invisible — the invariant every discovery surface
+ *     must preserve.
+ * `Broker Self Serve` unchecked = the field is OMITTED from the Airtable
+ * payload and reads blank; `{Broker Self Serve} = 1` is false for blank, so
+ * the carve-out natively treats missing as opted-out (fail closed).
+ */
+export const BROKER_SELF_SERVE_CARVE_OUT_FORMULA =
+  `OR(${BROKER_RAIL_EXCLUSION_FORMULA}, {Broker Self Serve} = 1)`;
+
+/**
+ * "Page-live BY DEFINITION of the opt-in": a self-serve broker ranch never ran
+ * the wizard that sets {Page Live} (the launch ranch has it unset), so OR()
+ * this fragment into any `{Page Live} = 1` gate that sits next to the
+ * carve-out — the two clauses move together, same rule as
+ * rancherOrProspectBySlugFormula (#617). Deliberately AND-ed with
+ * {Broker Rail} so a stray self-serve tick on a NON-broker ranch can never
+ * publish an unpublished page (fail closed).
+ */
+export const BROKER_SELF_SERVE_PAGE_LIVE_FORMULA =
+  'AND({Broker Rail} = 1, {Broker Self Serve} = 1)';
 
 /** Drop represented ranchers from an already-fetched list. Use immediately at
  *  the read boundary of any cron that scans the Ranchers table. */

@@ -3,10 +3,23 @@
 // A represented (broker rail) ranch is invisible to the platform by design;
 // deposits normally happen only via operator-minted /r/b/<token> links. The
 // per-rancher `Broker Self Serve` checkbox (see lib/brokerRail
-// BROKER_SELF_SERVE_FIELD) opts ONE ranch into public promotion: its page
-// renders a broker-correct pricing/reserve experience and
-// POST /api/checkout/broker-reserve runs the same referral+checkout flow the
-// /r/b redemption uses — no token, the buyer self-serves.
+// BROKER_SELF_SERVE_FIELD) opts ONE ranch into public promotion — and since
+// Wave A (2026-08-17) that is the whole platform, not just the page. With
+// the box checked the ranch:
+//   • resolves by public slug and renders the broker-correct pricing/reserve
+//     experience (#617, lib/airtable rancherOrProspectBySlugFormula), with
+//     POST /api/checkout/broker-reserve running the same referral+checkout
+//     flow the /r/b redemption uses — no token, the buyer self-serves;
+//   • appears on every discovery surface: /access/[state] and
+//     /half-a-cow/[state] (shared stateDiscoveryRanchersFormula), /map pins
+//     (mapPinsFormula), and the sitemap + /ranchers directory +
+//     /api/public/ranchers + /start + /wholesale set fed by
+//     getActiveRancherPages (activeRancherPagesFormula);
+//   • counts as live share supply in the lib/stateSupply per-state counts;
+//   • is ROUTABLE supply via isBrokerRoutable (#628, lib/rancherEligibility),
+//     so its state reads as SERVED everywhere getServedStates is consulted —
+//     including the state-coverage-notify unserved→served waitlist letters.
+// UNCHECKED, the ranch is token-only and invisible on ALL of the above.
 //
 // Everything here is PURE and hermetic (imports lib/brokerRail only) so the
 // page's cut cards and the route's gate are unit-testable without Airtable.

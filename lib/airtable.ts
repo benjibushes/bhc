@@ -6,6 +6,13 @@ import { withTimeout, AirtableTimeoutError, resolveAirtableTimeoutMs } from './a
 // fixture store is required LAZILY inside each gated branch below so its data
 // never loads in production.
 import { isDemoMode } from './demo/demoMode';
+// Shared broker-visibility fragments (Wave A, 2026-08-17) — the ONE edit
+// point for "who is public supply". Hermetic import (brokerRail pulls only
+// lib/pricing), so no cycle.
+import {
+  BROKER_SELF_SERVE_CARVE_OUT_FORMULA,
+  BROKER_SELF_SERVE_PAGE_LIVE_FORMULA,
+} from './brokerRail';
 
 // Re-export so callers can `instanceof AirtableTimeoutError` without a
 // separate import path.
@@ -722,7 +729,64 @@ export async function deleteRecord(tableName: string, recordId: string) {
   }
 }
 
-// Get all ranchers with active landing pages (Page Live = true)
+// ---------------------------------------------------------------------------
+// DISCOVERY-VISIBILITY FORMULA BUILDERS (Wave A, 2026-08-17). Pure + exported
+// so tests pin the exact strings (lib/brokerDiscoverySurfaces.test.ts, same
+// convention as rancherOrProspectBySlugFormula below). All three compose the
+// SAME two lib/brokerRail fragments:
+//   • BROKER_SELF_SERVE_CARVE_OUT_FORMULA — a broker ranch is visible ONLY
+//     with the `Broker Self Serve` opt-in; token-only stays invisible;
+//   • BROKER_SELF_SERVE_PAGE_LIVE_FORMULA — a self-serve ranch is page-live
+//     by definition of the opt-in ({Page Live} is unset; represented
+//     ranchers never ran the wizard that sets it).
+// ---------------------------------------------------------------------------
+
+/** The getActiveRancherPages visibility gate: sitemap, /ranchers,
+ *  /api/public/ranchers, /start, /wholesale + generateStaticParams. */
+export function activeRancherPagesFormula(): string {
+  return (
+    `AND(OR({Page Live} = 1, ${BROKER_SELF_SERVE_PAGE_LIVE_FORMULA}), ` +
+    `NOT({Public Map Hidden} = 1), {Verification Status} != "Removed", ` +
+    `${BROKER_SELF_SERVE_CARVE_OUT_FORMULA})`
+  );
+}
+
+/**
+ * State-page supply fetch — /access/[state] AND /half-a-cow/[state] send this
+ * exact formula, and lib/stateSupply.countLiveShareRanchesByState mirrors it
+ * in JS; the three surfaces must never disagree about who is public supply in
+ * a state. The `{State}` field is unnormalized (some records carry the
+ * 2-letter code, some the full name) — match both, case-insensitively.
+ */
+export function stateDiscoveryRanchersFormula(stateCode: string, stateName: string): string {
+  const safeCode = escapeAirtableValue(String(stateCode || '').toUpperCase());
+  const safeName = escapeAirtableValue(String(stateName || '').toUpperCase());
+  return (
+    `AND(OR({Page Live} = 1, ${BROKER_SELF_SERVE_PAGE_LIVE_FORMULA}), ` +
+    `NOT({Public Map Hidden} = 1), {Verification Status} != "Removed", ` +
+    `${BROKER_SELF_SERVE_CARVE_OUT_FORMULA}, ` +
+    `OR(UPPER({State}) = "${safeCode}", UPPER({State}) = "${safeName}"))`
+  );
+}
+
+/**
+ * /map pin query — the loosest public surface (no {Page Live} gate, no
+ * operational gate: prospects and mid-onboarding rows plot on purpose). A
+ * broker ranch's blank `Active Status` passes both != checks, so the
+ * carve-out is the ONLY thing keeping token-only represented ranches off a
+ * public map; a self-serve ranch plots because its page really resolves.
+ */
+export function mapPinsFormula(): string {
+  return (
+    `AND({Verification Status} != "Removed", NOT({Public Map Hidden} = 1), ` +
+    `${BROKER_SELF_SERVE_CARVE_OUT_FORMULA}, ` +
+    `{Active Status} != "Paused", {Active Status} != "Non-Compliant", ` +
+    `{Latitude} != BLANK(), {Longitude} != BLANK())`
+  );
+}
+
+// Get all ranchers with active landing pages (Page Live = 1, or a self-serve
+// broker ranch — see activeRancherPagesFormula above)
 export async function getActiveRancherPages() {
   // DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
   // lib/demo/demoMode.ts. The demo rancher is Page Live, so it's the one
@@ -741,15 +805,15 @@ export async function getActiveRancherPages() {
           // Mirror getRancherOrProspectBySlug's visibility gates: a hidden or
           // removed rancher must not appear in the directory/map only to
           // soft-404 when clicked (au-beef asymmetry).
-          // BROKER RAIL (2026-07-31): a REPRESENTED rancher never gets a public
-          // page. They never signed up, never agreed to be listed, and have no
-          // slug — excluding them here covers generateStaticParams, the
-          // sitemap, /ranchers, /api/public/ranchers, /start and /wholesale in
-          // one place. (Page Live is already false for them; this is the
-          // explicit belt so a future flip can't publish them.)
-          filterByFormula:
-            'AND({Page Live} = 1, NOT({Public Map Hidden} = 1), {Verification Status} != "Removed", ' +
-            'NOT({Broker Rail} = 1))',
+          // BROKER RAIL (2026-07-31, relaxed Wave A 2026-08-17): a represented
+          // rancher stays out of the directory/sitemap UNLESS Ben opted it in
+          // via `Broker Self Serve` — with the box checked the ranch has a
+          // real resolvable page (the #617 slug carve-out), so listing it here
+          // links to something that renders, and gating in ONE place still
+          // covers generateStaticParams, the sitemap, /ranchers,
+          // /api/public/ranchers, /start and /wholesale together. Token-only
+          // broker ranches fail both carve-out arms and remain unpublished.
+          filterByFormula: activeRancherPagesFormula(),
         })
         .all(),
       TABLES.RANCHERS,
@@ -1036,9 +1100,9 @@ export function rancherOrProspectBySlugFormula(slug: string): string {
   return (
     `AND({Slug} = "${safeSlug}", NOT({Public Map Hidden} = 1), ` +
     `{Verification Status} != "Removed", ` +
-    `OR(NOT({Broker Rail} = 1), {Broker Self Serve} = 1), ` +
+    `${BROKER_SELF_SERVE_CARVE_OUT_FORMULA}, ` +
     `OR({Page Live} = 1, {Verification Status} = "Prospect", ` +
-    `AND({Broker Rail} = 1, {Broker Self Serve} = 1)))`
+    `${BROKER_SELF_SERVE_PAGE_LIVE_FORMULA}))`
   );
 }
 

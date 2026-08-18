@@ -8,10 +8,13 @@
 // share-ranches, cross-links the buyer to /half-a-cow/[state] instead of
 // implying a supply desert.
 //
-// COUNTING CRITERIA — deliberately IDENTICAL to /half-a-cow/[state]'s
-// fetchStateCounts (the page whose claim we must agree with): a ranch counts
-// for its primary {State} when Page Live is set, Public Map Hidden is not,
-// and Verification Status != "Removed". If you change one, change both.
+// COUNTING CRITERIA — deliberately IDENTICAL to the shared discovery formula
+// (lib/airtable stateDiscoveryRanchersFormula) that /access/[state] and
+// /half-a-cow/[state] send to Airtable: a ranch counts for its primary
+// {State} when Public Map Hidden is not set, Verification Status !=
+// "Removed", and it is page-live — {Page Live} for onboarded ranchers, the
+// `Broker Self Serve` opt-in for represented ones (Wave A, 2026-08-17; a
+// token-only broker ranch stays invisible). If you change one, change both.
 //
 // FAILURE CONTRACT (mirrors lib/stateWaitlist): null = unknown (Airtable
 // unreachable/timed out) → callers render nothing. A failed fetch must never
@@ -24,7 +27,7 @@
 
 import { getAllRecords, TABLES, withTimeout, resolveAirtableTimeoutMs } from './airtable';
 import { normalizeState } from './states';
-import { isBrokerRancher } from './brokerRail';
+import { isBrokerRancher, isBrokerSelfServe } from './brokerRail';
 
 /**
  * Pure aggregation (exported for tests): live share-ranch count per
@@ -37,13 +40,21 @@ export function countLiveShareRanchesByState(
 ): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const row of rows) {
-    if (!row?.['Page Live']) continue;
     if (row?.['Public Map Hidden']) continue;
     if (String(row?.['Verification Status'] || '') === 'Removed') continue;
-    // BROKER RAIL: a represented rancher is not public supply. They have no
-    // listing for a visitor to reach, so counting them would advertise depth
-    // in a state that the /shop surface cannot actually show.
-    if (isBrokerRancher(row)) continue;
+    if (isBrokerRancher(row)) {
+      // BROKER RAIL (Wave A, 2026-08-17): a SELF-SERVE represented ranch has
+      // a real public page (the #617 slug carve-out) and is routable supply,
+      // so it counts — page-live BY DEFINITION of the opt-in ({Page Live} is
+      // unset; represented ranchers never ran the wizard that sets it). A
+      // TOKEN-ONLY broker ranch has no listing a visitor can reach, so
+      // counting it would advertise depth no surface can show — invisible,
+      // even with a stray Page Live tick. Mirrors {Broker Self Serve} = 1 in
+      // the shared Airtable formula (blank = opted out, fail closed).
+      if (!isBrokerSelfServe(row)) continue;
+    } else if (!row?.['Page Live']) {
+      continue;
+    }
     const st = normalizeState(row?.['State']);
     if (!st) continue;
     counts[st] = (counts[st] || 0) + 1;

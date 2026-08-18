@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
-import { getAllRecords, TABLES } from '@/lib/airtable';
-import { isRancherOnConnect } from '@/lib/rancherEligibility';
+import { getAllRecords, TABLES, mapPinsFormula } from '@/lib/airtable';
+import { derivePinStatus, isPinDepositReady, type MapPinStatus } from '@/lib/mapPinStatus';
 import { normalizeImageUrl } from '@/lib/imageUrl';
 import Container from '../components/Container';
 import StickyMobileCTA from '../components/StickyMobileCTA';
@@ -27,9 +27,14 @@ export const metadata: Metadata = {
 // phone, or operator name on non-verified pins (legal + spam concern).
 //
 // Pipeline-aligned status (added so the public map reflects the full
-// onboarding pipeline, not just verified vs prospect):
+// onboarding pipeline, not just verified vs prospect). The bucketing itself
+// lives in lib/mapPinStatus (derivePinStatus) so tests can pin it:
 //   verified       → Verification=Verified + Onboarding Status=Live
 //                    (green pin, public-routable, buyer can reach out)
+//   represented    → Broker self-serve ranch (#628/#630): BuyHalfCow
+//                    represents it and takes deposits for it TODAY. Never ran
+//                    the wizard, never signed anything — all pipeline fields
+//                    empty by construction (green pin, tallow center).
 //   onboarding     → Onboarding Status set + not yet Live
 //                    (orange pin — actively being onboarded; visible but not
 //                    yet routable). Covers Call Scheduled / Call Complete /
@@ -50,7 +55,7 @@ export type MapPin = {
   ranchName: string;
   state: string;
   slug: string;
-  status: 'verified' | 'onboarding' | 'self-submitted' | 'prospect';
+  status: MapPinStatus;
   // Sub-stage label for onboarding pins — surfaced in the popup so visitors
   // see "Pending verification" / "Docs signed" etc. instead of a generic
   // orange pin. Empty string for non-onboarding statuses.
@@ -72,23 +77,16 @@ export type MapPin = {
   // tier that price is (half/quarter/whole) so the card reads "from $X/half".
   fromPrice: number | null;
   fromLabel: 'half' | 'quarter' | 'whole' | '';
-  // Reserve-ability — true only when the storefront will actually render a
-  // deposit form for this rancher: tier_v2 pricing model + an ACTIVE Stripe
-  // Connect account (mirrors isRancherOnConnect / isRancherOperationalForBuyers).
-  // The map must not paint "Reserve →" on a verified rancher who can't take a
-  // deposit — that dead-ends the buyer at the checkout page. When false the
-  // card shows "View ranch →" (they can still browse + contact on the store).
-  onConnect: boolean;
+  // Reserve-ability — true only when the rancher's page will actually render
+  // a deposit form: Connect rail (tier_v2 + ACTIVE Stripe Connect) OR broker
+  // rail (isBrokerRoutable — self-serve + an eligible cut). Computed by
+  // lib/mapPinStatus isPinDepositReady, the union of the exact gates each
+  // checkout runs. The map must not paint "Reserve →" on a rancher who can't
+  // take a deposit — that dead-ends the buyer at the checkout page. When
+  // false the card shows "View ranch →" (they can still browse + contact on
+  // the store).
+  depositReady: boolean;
 };
-
-const ONBOARDING_STAGES = [
-  'Call Scheduled',
-  'Call Complete',
-  'Docs Sent',
-  'Agreement Signed',
-  'Verification Pending',
-  'Verification Complete',
-];
 
 async function fetchPins(): Promise<MapPin[]> {
   // Pull every rancher we'd consider plottable: Verification not Removed,
@@ -96,21 +94,17 @@ async function fetchPins(): Promise<MapPin[]> {
   // ranchers join the discovery surface so visitors see the network is
   // alive + filling out, not just "verified or nothing".
   //
-  // BROKER RAIL (2026-07-31): represented ranchers are EXCLUDED. This is the
-  // loosest public surface in the app — it has no {Page Live} gate and no
-  // operational gate, so prospects and mid-onboarding rows are plotted. That
-  // makes it the one place a rancher who never signed up for anything could
-  // otherwise appear on a public map. Their `Active Status` is blank, which
-  // passes both != checks below, so nothing else here would stop them.
-  const formula = `AND(
-    {Verification Status} != "Removed",
-    NOT({Public Map Hidden} = 1),
-    NOT({Broker Rail} = 1),
-    {Active Status} != "Paused",
-    {Active Status} != "Non-Compliant",
-    {Latitude} != BLANK(),
-    {Longitude} != BLANK()
-  )`.replace(/\s+/g, ' ');
+  // BROKER RAIL (2026-07-31, relaxed Wave A 2026-08-17): a represented ranch
+  // is excluded UNLESS Ben opted it in via `Broker Self Serve` — the shared
+  // carve-out inside mapPinsFormula (lib/airtable). This is the loosest
+  // public surface in the app — no {Page Live} gate, no operational gate, so
+  // prospects and mid-onboarding rows plot — which makes it the one place a
+  // rancher who never signed up for anything could otherwise appear. Their
+  // `Active Status` is blank (passes both != checks), so the carve-out is the
+  // ONLY thing keeping token-only represented ranches off the map. A
+  // self-serve ranch plots because its page really resolves (the #617 slug
+  // carve-out) — the pin links to something that renders.
+  const formula = mapPinsFormula();
 
   let rows: any[] = [];
   try {
@@ -125,49 +119,22 @@ async function fetchPins(): Promise<MapPin[]> {
       const lat = Number(r['Latitude']);
       const lng = Number(r['Longitude']);
       if (!isFinite(lat) || !isFinite(lng)) return null;
-      const verification = (r['Verification Status'] || '').toString();
-      const onboarding = (r['Onboarding Status'] || '').toString();
-      const selfSubmittedAt = (r['Self-Submitted At'] || '').toString();
-
-      // Status priority — most-progressed wins.
-      //
-      // Onboarding="Live" is the canonical terminal state — by the time a
-      // rancher reaches Live, they've cleared agreement + verification and
-      // are routable. Verification Status is a legacy/duplicate gate; some
-      // ranchers reach Live without it ever being flipped to "Verified"
-      // (Self-Submit drip path skips that field). Treat Live as verified
-      // regardless of Verification Status (Removed is already excluded at
-      // fetch time via filterByFormula).
-      //
-      // Onboarding stages between Call Scheduled and Verification Complete
-      // are visible but not yet routable (orange pin). Self-submitted vs
-      // cold prospect differentiates raised-hand vs discovered.
-      let status: MapPin['status'];
-      let stageLabel = '';
-      if (onboarding === 'Live') {
-        status = 'verified';
-      } else if (verification === 'Verified') {
-        // Verified field set but Onboarding not yet Live — still treat as
-        // verified for the public map (they cleared the verification gate).
-        status = 'verified';
-      } else if (ONBOARDING_STAGES.includes(onboarding)) {
-        status = 'onboarding';
-        stageLabel = onboarding;
-      } else if (selfSubmittedAt) {
-        status = 'self-submitted';
-      } else {
-        status = 'prospect';
-      }
+      // Status priority — most-progressed wins; a represented (broker
+      // self-serve) ranch buckets 'represented', NOT 'prospect', even though
+      // all its pipeline fields are empty. The full doctrine + ordering lives
+      // with the shared bucketing in lib/mapPinStatus.
+      const { status, stageLabel } = derivePinStatus(r);
 
       const ranchName = (r['Ranch Name'] || r['Operator Name'] || 'Ranch').toString();
 
-      // Reserve-ability gate — the storefront only shows a deposit form for
-      // tier_v2 ranchers with an ACTIVE Stripe Connect account. Use the SAME
-      // canonical helper the deposit path uses so the map CTA ("Reserve →" vs
+      // Reserve-ability gate — a page only shows a deposit form on the
+      // Connect rail (tier_v2 + ACTIVE Connect) or the broker rail
+      // (isBrokerRoutable). isPinDepositReady is the union of the SAME
+      // canonical gates each checkout runs, so the map CTA ("Reserve →" vs
       // "View ranch →") can never drift from what the rancher's page actually
       // offers. A verified pin without Connect is real + browsable but not
       // deposit-ready — sending a buyer to a deposit there is a dead-end.
-      const onConnect = isRancherOnConnect(r);
+      const depositReady = isPinDepositReady(r);
 
       // Prices — Airtable stores these as numbers. Coerce defensively (a
       // stray "$1,800" string or empty cell must become null, never NaN).
@@ -182,9 +149,11 @@ async function fetchPins(): Promise<MapPin[]> {
 
       // "from $X" anchor — cheapest entry point wins (almost always the
       // quarter, then half, then whole). The label tracks the tier so the
-      // card can read "from $X/quarter". Only verified pins carry pricing on
-      // the card (non-verified ranchers haven't set/confirmed prices), but we
-      // compute it for all so the SSR list can show it where present.
+      // card can read "from $X/quarter". Only verified + represented pins
+      // carry pricing on the card (other statuses haven't set/confirmed
+      // prices — a represented ranch's prices are Ben-entered and are the
+      // exact numbers its reserve page charges against), but we compute it
+      // for all so the SSR list can show it where present.
       let fromPrice: number | null = null;
       let fromLabel: MapPin['fromLabel'] = '';
       if (quarterPrice) { fromPrice = quarterPrice; fromLabel = 'quarter'; }
@@ -210,7 +179,7 @@ async function fetchPins(): Promise<MapPin[]> {
         wholePrice,
         fromPrice,
         fromLabel,
-        onConnect,
+        depositReady,
       };
     })
     .filter((x): x is MapPin => x !== null);
@@ -218,12 +187,21 @@ async function fetchPins(): Promise<MapPin[]> {
 
 function deriveStats(pins: MapPin[]) {
   const verified = pins.filter((p) => p.status === 'verified').length;
+  const represented = pins.filter((p) => p.status === 'represented').length;
   const onboarding = pins.filter((p) => p.status === 'onboarding').length;
   const selfSubmitted = pins.filter((p) => p.status === 'self-submitted').length;
   const prospects = pins.filter((p) => p.status === 'prospect').length;
   const states = new Set(pins.map((p) => p.state).filter(Boolean));
   return {
     verified,
+    represented,
+    // The number every "shipping today" label uses. Represented ranches
+    // COUNT — a buyer can open the page and put a deposit down right now,
+    // which is exactly what that label promises. No surface labels this
+    // number "verified" (the copy everywhere says "shipping today" /
+    // "taking reservations"); `verified` above stays pure for anything that
+    // ever needs the strict count.
+    shippingToday: verified + represented,
     onboarding,
     prospects,
     selfSubmitted,
@@ -249,7 +227,7 @@ export default async function MapPage() {
       <section className="relative">
         <DiscoverMapClient
           pins={pins}
-          verifiedCount={stats.verified}
+          shippingTodayCount={stats.shippingToday}
           statesCovered={stats.statesCovered}
           listSlot={<RancherList pins={pins} />}
         />
@@ -268,9 +246,9 @@ export default async function MapPage() {
               </h2>
               <p className="text-charcoal/80 leading-relaxed">
                 Drop a pin in your state and reserve a quarter, half, or whole direct
-                from the rancher who raised it. Green pins are verified partners
-                taking reservations right now — amber and grey show who&rsquo;s coming
-                next.
+                from the rancher who raised it. Green pins are taking reservations
+                right now — verified partners and ranches we represent — amber and
+                grey show who&rsquo;s coming next.
               </p>
               {/* Lead with what a buyer can act on TODAY (verified + states).
                   Pipeline-vanity counts (onboarding/self-submitted/prospect) are
@@ -278,7 +256,7 @@ export default async function MapPage() {
                   not a CRM funnel. */}
               <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2 pt-1">
                 <span className="text-saddle text-sm">
-                  <strong className="text-charcoal text-xl align-baseline">{stats.verified}</strong>{' '}
+                  <strong className="text-charcoal text-xl align-baseline">{stats.shippingToday}</strong>{' '}
                   shipping today
                 </span>
                 <span className="text-saddle text-sm">
@@ -325,7 +303,7 @@ export default async function MapPage() {
       <StickyMobileCTA
         href="/access"
         label="Find a rancher near you"
-        subLabel={`${stats.verified} shipping today · ${stats.statesCovered} states`}
+        subLabel={`${stats.shippingToday} shipping today · ${stats.statesCovered} states`}
       />
     </main>
   );

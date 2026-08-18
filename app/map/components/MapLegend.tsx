@@ -6,20 +6,30 @@
 //              doubles as indexable "how the map works" copy.
 //
 // Swatch shapes mirror the live pins exactly: teardrops for verified /
-// onboarding / self-submitted, a muted DOT for prospects (prospects render as
-// dots on the map, not teardrops — de-emphasized on purpose).
+// represented / onboarding / self-submitted, a muted DOT for prospects
+// (prospects render as dots on the map, not teardrops — de-emphasized on
+// purpose). Verified and represented share the in-network green body; the
+// represented pin's tallow-gold CENTER is what tells them apart, so its
+// swatch carries the same gold center dot.
 
-function PinSwatch({ fill, stroke }: { fill: string; stroke: string }) {
+function PinSwatch({ fill, stroke, center }: { fill: string; stroke: string; center?: string }) {
   return (
     <span
       aria-hidden
-      className="mt-0.5 inline-block h-3.5 w-2.5 shrink-0"
+      className="mt-0.5 inline-flex h-3.5 w-2.5 shrink-0 items-center justify-center"
       style={{
         backgroundColor: fill,
         border: `1.5px solid ${stroke}`,
         borderRadius: '6px 6px 0 50%',
       }}
-    />
+    >
+      {center ? (
+        <span
+          className="inline-block h-1 w-1 rounded-full"
+          style={{ backgroundColor: center }}
+        />
+      ) : null}
+    </span>
   );
 }
 
@@ -41,6 +51,16 @@ const ROWS = [
       <>
         <strong>Taking reservations</strong> — verified partner shipping via
         BuyHalfCow today
+      </>
+    ),
+  },
+  {
+    swatch: <PinSwatch fill="#4F7A3F" stroke="#2A4A20" center="#E3C381" />,
+    short: 'Represented · deposits open',
+    long: (
+      <>
+        <strong>Represented</strong> — a ranch BuyHalfCow represents. Reserve
+        and put a deposit down today; we coordinate the deal with the ranch.
       </>
     ),
   },

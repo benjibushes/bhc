@@ -6,21 +6,26 @@ import { fromPriceLabel, locationLabel } from './priceLabel';
 // so without this the page would index as an empty <div>. Doubles as a
 // mobile-friendly scan mode behind the list/map toggle.
 //
-// We surface the buyer-actionable set (verified + onboarding) by default —
-// verified first (shipping today), then onboarding (coming soon). Prospects and
-// self-submitted ranchers are intentionally excluded from the SEO list: they
-// aren't routable and a thin "unclaimed" entry is low-quality for indexing.
-// The map itself still shows them (with their own filter).
+// We surface the buyer-actionable set (verified + represented + onboarding) by
+// default — verified first (shipping today), then represented (broker
+// self-serve, deposits open today, #630), then onboarding (coming soon).
+// Prospects and self-submitted ranchers are intentionally excluded from the
+// SEO list: they aren't routable and a thin "unclaimed" entry is low-quality
+// for indexing. The map itself still shows them (with their own filter).
 
 function rank(status: MapPin['status']): number {
   if (status === 'verified') return 0;
-  if (status === 'onboarding') return 1;
-  return 2;
+  if (status === 'represented') return 1;
+  if (status === 'onboarding') return 2;
+  return 3;
 }
 
 export default function RancherList({ pins }: { pins: MapPin[] }) {
   const listed = pins
-    .filter((p) => p.status === 'verified' || p.status === 'onboarding')
+    .filter(
+      (p) =>
+        p.status === 'verified' || p.status === 'represented' || p.status === 'onboarding',
+    )
     .filter((p) => p.slug) // only ranchers with a real page to link to
     .sort((a, b) => {
       const r = rank(a.status) - rank(b.status);
@@ -76,9 +81,16 @@ export default function RancherList({ pins }: { pins: MapPin[] }) {
               <span className="min-w-0 flex-1">
                 <span className="flex items-baseline gap-2 flex-wrap">
                   <span className="font-medium text-charcoal truncate">{p.ranchName}</span>
+                  {/* Badge words stay honest per status: a represented ranch
+                      is never labeled "verified" — sage green only signals
+                      "you can reserve today" for both. */}
                   {p.status === 'verified' ? (
                     <span className="text-[11px] uppercase tracking-wide text-sage shrink-0">
                       verified
+                    </span>
+                  ) : p.status === 'represented' ? (
+                    <span className="text-[11px] uppercase tracking-wide text-sage shrink-0">
+                      represented
                     </span>
                   ) : (
                     <span className="text-[11px] uppercase tracking-wide text-rust-dark shrink-0">

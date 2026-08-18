@@ -193,8 +193,14 @@ export async function loadMarketplaceProducts(
         const serves = new Set<string>(normalizeStates(r['States Served']));
         if (home) serves.add(home);
         servesByRancher[r.id] = Array.from(serves);
-        // Stand link only when the public page actually resolves — mirror
-        // getActiveRancherPages' visibility gates exactly.
+        // Stand link only when the public page actually resolves — mirrors
+        // the CONNECT-side gates of getActiveRancherPages (Page Live + not
+        // hidden + not Removed). INTENTIONAL divergence from Wave A
+        // (2026-08-17): activeRancherPagesFormula now also admits broker
+        // self-serve ranches without {Page Live}, but that carve-out is
+        // deliberately NOT mirrored here — every represented rancher's
+        // product rows are dropped wholesale by the brokerRancherIds filter
+        // below, so a broker slug computed here could never be consumed.
         const publiclyLive =
           r['Page Live'] === true &&
           r['Public Map Hidden'] !== true &&
