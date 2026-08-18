@@ -72,7 +72,23 @@ test('buyer reply templates quote no dollar figures and no middleman-markup clai
 // (a represented ranch never reaches out) and cron-unbacked on Connect.
 // Every survivor below is allowlisted WITH the machine (or rail) that backs
 // it; any new/restored clock promise outside the allowlist fails here.
-const REACHOUT_CLOCK = /(reach(?:es|ing)?\s+out|hear\s+back\s+from\s+us)[^.]{0,80}?\b(?:24|48)\b[^.]{0,15}hours?/i;
+// Copy-tails widen (2026-08-18): the original regex only saw "reach out" /
+// "hear back from us" phrasings, which let two clock promises walk past it —
+// sendPartnerConfirmation ("You'll hear from me within 24-48 hours") and
+// sendRerouteNotification ("This usually takes 24-48 hours"). Now also
+// catches the "hear (back) from me/us" and bare "within/takes 24-48 hours"
+// families. Deliberately NOT matched: "24-48 hrs" thaw instructions (no
+// "hours", no promise verb) and the "if you don't hear back within 48
+// hours, reply" escape hatches (no "from us/me", no 24-48 pair).
+const REACHOUT_CLOCK = new RegExp(
+  [
+    // verb-anchored: a reach-out / hear-from promise with a 24/48h clock
+    /(?:reach(?:es|ing)?\s+out|hear\s+(?:back\s+)?from\s+(?:us|me))[^.]{0,80}?\b(?:24|48)\b[^.]{0,15}hours?/.source,
+    // bare clock: "within/takes 24-48 hours" is a promise with no verb needed
+    /\b(?:within|takes)\b[^.]{0,20}?\b24\s*(?:[-–—]|to)\s*48\s*hours?/.source,
+  ].join('|'),
+  'i',
+);
 const REACHOUT_ALLOWLIST: Record<string, string> = {
   // Signup ack: consumers auto-approve at POST time and the welcome rail
   // fires within minutes — the 24h "hear back" is machine-kept trivially.
@@ -92,6 +108,11 @@ const REACHOUT_ALLOWLIST: Record<string, string> = {
   sendWholesaleConfirmation: 'operator-handled B2B lane',
   // Rancher-bound claim flow — Ben's own onboarding promise.
   sendProspectClaimMagicLink: 'rancher-bound; Ben-run onboarding',
+  // Partner-application ack ("You'll hear from me within 24-48 hours"):
+  // Ben-personal, NOT machine-backed — he manually reviews every partner
+  // application and replies himself, and this is a promise he does keep.
+  // Caught by the copy-tails regex widen (2026-08-18); kept deliberately.
+  sendPartnerConfirmation: 'Ben-personal promise — he hand-reviews every partner application',
 };
 
 // Comments legitimately QUOTE the struck lines (that's how the fixes are
@@ -219,4 +240,55 @@ test('swapped templates carry no literal $-figures (derived values only)', () =>
     assert.ok(fn, `${name} missing from lib/email.ts`);
     assert.doesNotMatch(fn!.body, /\$\d/, `${name} hardcodes a dollar figure — derive it or drop it`);
   }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// COPY TAILS (2026-08-18) — follow-ups from the #645 review notes.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── quiz-length canon: 90 seconds (docs/BHC.md CTA library) ─────────────────
+// #645 standardized the abandoned-quiz nudge on 90 seconds (v4) but left
+// 60-second claims on sibling surfaces: sendQuizInvite subject+body,
+// resend-link, the manychat closer prompt (×4), the SMS quiz invite, and
+// abandoned-recovery stage 1. One number everywhere a send or prompt can
+// claim it — this scan keeps every send-capable file at 90.
+const SIXTY_SECOND = /\b(?:60|sixty)(?:[-\s]?sec(?:ond)?s?|s)\b/i;
+test('no 60-second quiz claims in send-capable code — canon is 90 (docs/BHC.md)', () => {
+  const files = [
+    './email.ts',
+    './emailMinimal.ts',
+    './smsEvents.ts',
+    './buyerReplyTemplates.ts',
+    './demandRouter.ts',
+    './productRecovery.ts',
+    './requalifyCampaign.ts',
+    '../app/api/qualify/resend-link/route.ts',
+    '../app/api/webhooks/manychat/route.ts',
+    '../app/api/cron/abandoned-quiz-nudge/route.ts',
+  ];
+  for (const f of files) {
+    assert.doesNotMatch(
+      stripComments(read(f)),
+      SIXTY_SECOND,
+      `${f} carries a 60-second claim — the quiz is 90 seconds (docs/BHC.md CTA library)`,
+    );
+  }
+  // The two primary quiz surfaces must carry the canonical number, not just
+  // lack the stale one.
+  assert.match(stripComments(read('./email.ts')), /90-second match quiz/);
+  assert.match(stripComments(read('../app/api/qualify/resend-link/route.ts')), /90-second qualification quiz/);
+});
+
+// ── count-interpolation grammar: 1 renders singular ─────────────────────────
+// The #645 Day-2 drip demand line rendered "1 families in AZ have asked us"
+// at count 1. The template must carry an n===1 branch ("1 family … has").
+test('day-2 drip demand line has a grammatical singular at count 1', () => {
+  const src = stripComments(read('./email.ts'));
+  const fn = functionBlocks(src).find((b) => b.name === 'sendRancherOnboardingDripDay2');
+  assert.ok(fn, 'sendRancherOnboardingDripDay2 missing from lib/email.ts');
+  assert.match(
+    fn!.body,
+    /1 family in \$\{esc\(data\.state\)\} has asked us/,
+    'singular branch missing — count 1 must render "1 family … has asked", not "1 families … have"',
+  );
 });

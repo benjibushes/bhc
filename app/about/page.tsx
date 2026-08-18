@@ -89,7 +89,7 @@ export default function AboutPage() {
                 <div>
                   <h3 className="font-medium text-lg mb-2">For buyers</h3>
                   <ol className="list-decimal list-outside space-y-2 ml-5 text-saddle">
-                    <li>Apply for access &mdash; takes 60 seconds.</li>
+                    <li>Apply for access &mdash; takes 90 seconds.</li>
                     <li>Get approved (I review every application manually).</li>
                     <li>See the ranches live in your state.</li>
                     <li>Reserve a quarter, half, or whole with a deposit. The rancher takes it from there.</li>

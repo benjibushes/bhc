@@ -54,8 +54,8 @@ export default async function AccessPage({
     // Buyers used to be silently teleported here mid-checkout with zero
     // explanation. Copy rule: NEVER name ZIPs or territories (exclusivity
     // contracts must not be probeable from the banner).
-    'out_of_area': "that ranch doesn't deliver to your area — 60 seconds of questions and we'll match you with one that does.",
-    'reserve_fallback': "that ranch can't take instant deposits right now — 60 seconds and we'll get you matched.",
+    'out_of_area': "that ranch doesn't deliver to your area — 90 seconds of questions and we'll match you with one that does.",
+    'reserve_fallback': "that ranch can't take instant deposits right now — 90 seconds and we'll get you matched.",
   };
   // Welcome-back treatment for re-engagement links: an honest banner (+ state
   // prefill via ?state= when the minting link carries it). The quiz itself
