@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { getRancherBySlug, getAllRecords, createRecord, createReferral, updateRecord, escapeAirtableValue, TABLES } from '@/lib/airtable';
+import { getRancherBySlug, getRancherOrProspectBySlug, getAllRecords, createRecord, createReferral, updateRecord, escapeAirtableValue, TABLES } from '@/lib/airtable';
+import { isBrokerRancher } from '@/lib/brokerRail';
 import { sendTrackedContactEmail } from '@/lib/email';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
@@ -80,7 +81,43 @@ export async function POST(
 
     // Look up the rancher
     const rancher: any = await getRancherBySlug(slug);
+
+    // BROKER RAIL (comms containment wave 0-A, 2026-08-18). On the broker rail
+    // the deposit IS BHC's entire fee, and any buyer↔ranch contact before that
+    // deposit is the direct-transaction leak (docs/BUSINESS-MODEL.md model 3).
+    // This public form emails the ranch the buyer's name + email + phone —
+    // exactly that leak. Two independent layers:
+    //   1. getRancherBySlug's formula already excludes {Broker Rail} = 1, so a
+    //      represented slug lands in the null branch below — but that defense
+    //      is an ACCIDENT of a lookup formula. If this route ever switches to
+    //      getRancherOrProspectBySlug (which now resolves self-serve broker
+    //      ranches), the explicit belt here refuses.
+    if (rancher && isBrokerRancher(rancher)) {
+      return NextResponse.json({
+        error:
+          `${rancher['Ranch Name'] || rancher['Operator Name'] || 'This ranch'} takes reservations through ` +
+          `BuyHalfCow directly — reserve your share with a deposit and we coordinate everything from there.`,
+        rail: 'broker',
+        redirectUrl: `/ranchers/${slug}#reserve`,
+      }, { status: 400 });
+    }
+
     if (!rancher) {
+      //   2. Distinguish a REPRESENTED ranch from a genuinely unknown slug: the
+      //      live self-serve broker ranch has a public page (via
+      //      rancherOrProspectBySlugFormula's self-serve carve-out), so its
+      //      /contact URL used to dead-end in a false "Rancher not found".
+      //      Point the buyer at the rail that actually takes their money.
+      const represented: any = await getRancherOrProspectBySlug(slug).catch(() => null);
+      if (represented && isBrokerRancher(represented)) {
+        return NextResponse.json({
+          error:
+            `${represented['Ranch Name'] || represented['Operator Name'] || 'This ranch'} takes reservations through ` +
+            `BuyHalfCow directly — reserve your share with a deposit and we coordinate everything from there.`,
+          rail: 'broker',
+          redirectUrl: `/ranchers/${slug}#reserve`,
+        }, { status: 400 });
+      }
       return NextResponse.json({ error: 'Rancher not found' }, { status: 404 });
     }
 

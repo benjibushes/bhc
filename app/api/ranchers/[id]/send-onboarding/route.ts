@@ -4,6 +4,8 @@ import { TABLES } from '@/lib/airtable';
 import { sendEmail } from '@/lib/email';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import { requireAdmin } from '@/lib/adminAuth';
+import { isBrokerRancher } from '@/lib/brokerRail';
+import { commissionPercentLabelForRancher } from '@/lib/tiers';
 import jwt from 'jsonwebtoken';
 
 import { JWT_SECRET } from '@/lib/secrets';
@@ -35,6 +37,25 @@ export async function POST(
     }
 
     const rancher: any = await getRecordById(TABLES.RANCHERS, id);
+
+    // BROKER RAIL (comms containment wave 0-A, 2026-08-18). This endpoint
+    // sends the Commission Agreement packet — signing link, onboarding steps,
+    // "our N% is added on top" — to ANY rancher id. A represented (broker
+    // rail) ranch signed nothing and has no agreement rail: BHC's fee is the
+    // buyer's deposit on BHC's own Stripe account, and the ranch never
+    // onboards, never logs in, never lists. Belt refusal here (the pool that
+    // picks candidates is another gate's job); nothing below may fire for a
+    // represented ranch.
+    if (isBrokerRancher(rancher)) {
+      return NextResponse.json({
+        error:
+          `${rancher?.['Operator Name'] || rancher?.['Ranch Name'] || 'That ranch'} is a represented (broker-rail) ranch — ` +
+          `there is no commission agreement or onboarding to send. Their buyers reserve with a deposit; ` +
+          `nothing is signed and nothing is added on top.`,
+        rail: 'broker',
+      }, { status: 400 });
+    }
+
     const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
     const rancherEmail = rancher['Email'];
 
@@ -131,7 +152,7 @@ export async function POST(
 
           <h3 style="margin: 20px 0 10px;">1. Review & Sign Commission Agreement</h3>
           <ul style="color: #6B4F3F; line-height: 1.8;">
-            <li>You keep 100% of your price — our 10% is added on top and paid by the buyer</li>
+            <li>You keep 100% of your price — our ${commissionPercentLabelForRancher(rancher)} is added on top and paid by the buyer</li>
             <li>Buyers pay you directly — you control pricing</li>
             <li>24-month commission term from first referral</li>
             <li>No upfront fees</li>

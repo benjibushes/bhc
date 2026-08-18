@@ -6,6 +6,8 @@ import { sendTelegramUpdate } from '@/lib/telegram';
 import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
 import { logAuditEntry, buildAirtableUpdateReverse } from '@/lib/auditLog';
 import { requireAdmin } from '@/lib/adminAuth';
+import { railForLoadedRancher, referralCarriesBrokerMarker } from '@/lib/brokerDownstream';
+import { commissionPercentLabelForRancher } from '@/lib/tiers';
 
 function esc(str: string): string {
   return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -35,6 +37,27 @@ export async function PATCH(
     }
 
     const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
+
+    // BROKER RAIL (comms containment wave 0-A, 2026-08-18). This is the FOURTH
+    // ungated promote path: /admin/referrals Approve, /admin/desk
+    // Approve-and-intro AND Assign (arbitrary rancherId via the body override
+    // above), and bulk-approve all fan into this handler. A broker referral
+    // stuck in Pending Approval and approved here would write 'Intro Sent' and
+    // fire the full Connect intro — the rancher email below hands the ranch the
+    // buyer's email + phone, and on the broker rail two parties holding each
+    // other's contact details is the whole fee gone (the deposit IS BHC's
+    // commission). Refuse BEFORE any write, exactly like the sibling
+    // resend-intro gate: marker on the row OR the rail of the loaded rancher
+    // (fail-closed — an unreadable rancher refuses rather than proceeds).
+    if (referralCarriesBrokerMarker(referral) || railForLoadedRancher(rancher) === 'broker') {
+      return NextResponse.json({
+        error:
+          `${rancher?.['Operator Name'] || rancher?.['Ranch Name'] || 'That ranch'} is a represented (broker-rail) ranch — ` +
+          `there is no Connect intro to approve. Send the buyer the deposit link instead: /checkout/${id}/broker`,
+        rail: 'broker',
+        redirectUrl: `/checkout/${id}/broker`,
+      }, { status: 400 });
+    }
 
     // Capacity check
     const currentRefs = rancher['Current Active Referrals'] || 0;
@@ -127,7 +150,7 @@ export async function PATCH(
               <p>Please reach out to them directly to discuss availability and pricing.</p>
               <p><strong>Reply-all to this email to keep me in the loop.</strong></p>
               <div class="footer">
-                <p>— Benjamin, BuyHalfCow<br>Remember: you keep 100% of your price — our 10% is added on top and paid by the buyer.</p>
+                <p>— Benjamin, BuyHalfCow<br>Remember: you keep 100% of your price — our ${commissionPercentLabelForRancher(rancher)} is added on top and paid by the buyer.</p>
               </div>
             </div>
           </body>
