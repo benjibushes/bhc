@@ -49,6 +49,7 @@ import {
   renderDepositSmsNudge,
   durableDepositPayLink,
   DEPOSIT_SMS_SENT_FIELD,
+  DEPOSIT_NUDGE_SUPPRESSED_SENTINEL,
 } from '@/lib/depositRequestNudge';
 import { isRancherOperationalForBuyers, isRancherOnConnect } from '@/lib/rancherEligibility';
 import {
@@ -147,9 +148,23 @@ async function runReserveAbandonRail(nowMs: number): Promise<ReserveRailResult> 
   out.selectedSms = picked.sms.length;
   const smsOn = smsEnabled();
 
-  // Shared per-referral context: linked rancher must be operational AND on
-  // Connect (the deposit page hard-409s off-Connect — never email a dead-end
-  // link), linked Consumer carries the suppression trio + email/phone/state.
+  // Shared per-referral context: linked rancher settles the RAIL first, then
+  // the Connect leg keeps its operational+Connect gate (the Connect deposit
+  // page hard-409s off-Connect — never email a dead-end link). Linked
+  // Consumer carries the suppression trio + email/phone/state.
+  //
+  // BROKER RAIL (comms containment 2026-08-18): a self-serve broker reserve
+  // mints Status 'Pending' with ALL THREE stamp fields blank — byte-for-byte
+  // this rail's cohort formula ('Broker — Deposit' contains 'Deposit') — and
+  // the Connect gate above used to drop it silently every hour forever: ZERO
+  // recovery chase on a deposit that is BHC's entire fee for the sale. Same
+  // two evidence bars as the rail-A/B loop below: DIVERTING to the broker
+  // checkout takes AFFIRMATIVE evidence (marker, or a loaded rancher the
+  // shared predicate calls broker); a marker row whose rancher would not load
+  // WAITS for the next run rather than mailing a link into the broker route's
+  // fail-closed 503. The recovery copy carries no rancher phone on ANY rail
+  // (renderRecovery* has no phone token), so the broker leg withholds contact
+  // for free.
   const resolveContext = async (r: any): Promise<
     | { buyer: any; buyerId: string; buyerEmail: string; rancherName: string; cut: string; link: string }
     | 'suppressed'
@@ -158,7 +173,13 @@ async function runReserveAbandonRail(nowMs: number): Promise<ReserveRailResult> 
     const rancherId: string = ((r['Rancher'] || r['Suggested Rancher'] || []) as string[])[0] || '';
     if (!rancherId) return null;
     const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId).catch(() => null);
-    if (!rancher || !isRancherOperationalForBuyers(rancher) || !isRancherOnConnect(rancher)) return null;
+    const confirmedBroker =
+      referralCarriesBrokerMarker(r) ||
+      (!!rancher && railForLoadedRancher(rancher) === 'broker');
+    if (confirmedBroker && !rancher) return null;
+    if (!confirmedBroker) {
+      if (!rancher || !isRancherOperationalForBuyers(rancher) || !isRancherOnConnect(rancher)) return null;
+    }
     const buyerId: string = ((r['Buyer'] || []) as string[])[0] || '';
     if (!buyerId) return null;
     const buyer: any = await getRecordById(TABLES.CONSUMERS, buyerId).catch(() => null);
@@ -169,10 +190,13 @@ async function runReserveAbandonRail(nowMs: number): Promise<ReserveRailResult> 
     const rancherName = String(rancher['Operator Name'] || rancher['Ranch Name'] || 'your rancher').trim();
     const cutRaw = String(r['Order Type'] || buyer['Order Type'] || '').trim().toLowerCase().split(/\s+/)[0];
     const cut = cutRaw === 'quarter' || cutRaw === 'half' || cutRaw === 'whole' ? cutRaw : 'beef';
-    // Magic-link hop → deposit page (fresh Stripe session minted on arrival —
-    // NEVER the stored ~24h-expiry Checkout URL). Same link rails A+B use.
+    // Magic-link hop → the deposit page FOR THIS RAIL (fresh Stripe session
+    // minted on arrival — NEVER the stored ~24h-expiry Checkout URL). The
+    // Connect page 409s `not_connect_rail` on a broker row, so the broker leg
+    // must point at the checkout that can actually take the money.
     const token = generateMemberLoginToken(buyerId, buyerEmail);
-    const link = `${SITE_URL}/api/auth/member/verify?token=${token}&next=${encodeURIComponent(`/checkout/${r.id}/deposit`)}`;
+    const reservePath = confirmedBroker ? `/checkout/${r.id}/broker` : `/checkout/${r.id}/deposit`;
+    const link = `${SITE_URL}/api/auth/member/verify?token=${token}&next=${encodeURIComponent(reservePath)}`;
     return { buyer, buyerId, buyerEmail, rancherName, cut, link };
   };
 
@@ -195,7 +219,22 @@ async function runReserveAbandonRail(nowMs: number): Promise<ReserveRailResult> 
       if (!isRecoveryEmailEligible(r, selectOpts)) continue;
 
       const ctx = await resolveContext(r);
-      if (ctx === 'suppressed') { out.suppressed++; continue; }
+      if (ctx === 'suppressed') {
+        out.suppressed++;
+        // ONE-SHOT (comms containment 2026-08-18): a suppressed buyer can
+        // never receive this recovery, yet an unstamped row re-entered the
+        // selector every run until the 14d age cap — and the SMS step (keyed
+        // off the email stamp) has NO age cap at all. Retire both steps in
+        // one best-effort write; a failed write just retries next hour.
+        const suppressedStamp = new Date(nowMs).toISOString();
+        try {
+          await updateRecord(TABLES.REFERRALS, r.id, {
+            [RESERVE_RECOVERY_EMAIL_FIELD]: suppressedStamp,
+            [RESERVE_RECOVERY_SMS_FIELD]: suppressedStamp,
+          });
+        } catch {}
+        continue;
+      }
       if (!ctx) continue;
 
       // CLAIM BEFORE SEND + verify-persist: the stamp fields are NEW on
@@ -239,7 +278,18 @@ async function runReserveAbandonRail(nowMs: number): Promise<ReserveRailResult> 
   for (const r of picked.sms) {
     try {
       const ctx = await resolveContext(r);
-      if (ctx === 'suppressed') { out.suppressed++; continue; }
+      if (ctx === 'suppressed') {
+        out.suppressed++;
+        // ONE-SHOT: same retirement as the email step — the SMS list has no
+        // age cap, so an unstamped suppressed row re-selects hourly forever.
+        const suppressedStamp = new Date(nowMs).toISOString();
+        try {
+          await updateRecord(TABLES.REFERRALS, r.id, {
+            [RESERVE_RECOVERY_SMS_FIELD]: suppressedStamp,
+          });
+        } catch {}
+        continue;
+      }
       if (!ctx) continue;
       // ENABLE_SMS / opt-in / TCPA-window checks BEFORE any stamp — a skip
       // here must not burn the one-shot SMS stamp.
@@ -324,7 +374,19 @@ async function runDepositSmsRescue(
       if (!buyerId) continue;
       const buyer: any = await getRecordById(TABLES.CONSUMERS, buyerId).catch(() => null);
       if (!buyer) continue;
-      if (buyer['Unsubscribed'] || buyer['Bounced'] || buyer['Complained']) { out.suppressed++; continue; }
+      if (buyer['Unsubscribed'] || buyer['Bounced'] || buyer['Complained']) {
+        out.suppressed++;
+        // ONE-SHOT: without the stamp this row re-enters the cap-10 rescue
+        // list every hour forever. The shared stamp is the cross-rail "one
+        // deposit-chase SMS ever" field — writing it on suppression keeps
+        // that invariant (a suppressed buyer gets none) and ends the loop.
+        try {
+          await updateRecord(TABLES.REFERRALS, r.id, {
+            [DEPOSIT_SMS_SENT_FIELD]: new Date(nowMs).toISOString(),
+          });
+        } catch {}
+        continue;
+      }
       const buyerEmail = String(buyer['Email'] || '').trim().toLowerCase();
       if (!buyerEmail) continue; // magic-link mint needs the email identity
 
@@ -445,7 +507,24 @@ async function realHandler(_request: Request): Promise<CronResult> {
       if (!buyerId) continue;
       const buyer: any = await getRecordById(TABLES.CONSUMERS, buyerId);
       if (!buyer) continue;
-      if (buyer['Unsubscribed'] || buyer['Bounced'] || buyer['Complained']) { suppressed++; continue; }
+      if (buyer['Unsubscribed'] || buyer['Bounced'] || buyer['Complained']) {
+        suppressed++;
+        // ONE-SHOT (comms containment 2026-08-18): a suppressed buyer can
+        // never receive this chase, yet an unstamped row re-entered the
+        // selectors every hour FOREVER, eating a slot of the 25-cap each run.
+        // Fields can't be created from code, so the touch budget itself is
+        // the marker: exhaust it in one write (sentinel ≥ every rail's cap),
+        // and stamp the cross-rail SMS field so the rescue leg can't inherit
+        // the loop. Best-effort — a failed write just retries next hour.
+        try {
+          await updateRecord(TABLES.REFERRALS, r.id, {
+            'Deposit Nudge Last Sent At': new Date().toISOString(),
+            'Deposit Nudge Count': DEPOSIT_NUDGE_SUPPRESSED_SENTINEL,
+            [DEPOSIT_SMS_SENT_FIELD]: new Date().toISOString(),
+          });
+        } catch {}
+        continue;
+      }
       const buyerEmail = String(buyer['Email'] || '').trim().toLowerCase();
       if (!buyerEmail) continue;
 

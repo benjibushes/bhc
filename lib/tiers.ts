@@ -219,6 +219,26 @@ export function depositCommissionRate(rancher: any, tier: TierSlug | null): numb
   return commissionRateForTier(tier);
 }
 
+/**
+ * Display label for the commission rate a SPECIFIC rancher actually pays —
+ * "10%", "7%", "3%", "3.5%", "0%" (comms containment 2026-08-18).
+ *
+ * The telegram rancher-email footers hardcoded "10% commission" for every
+ * rancher their broker gates let through — broker-scoped but TIER-blind, so a
+ * manual intro to a tier_v2 Pasture (7%) or Ranch (3%) rancher carried a 10%
+ * footer. Rides depositCommissionRate — locked `Commission Rate` first (the
+ * mandated rate source since the Ashcraft 2026-05-20 dispute), then the tier
+ * constant, then the legacy env default — so the footer can never quote a
+ * rate the charge path would contradict. A genuinely legacy/no-tier rancher
+ * still reads "10%", via the derivation rather than a literal.
+ */
+export function commissionPercentLabelForRancher(rancher: any): string {
+  const rate = depositCommissionRate(rancher, tierFor(rancher));
+  // Round to one decimal of a percent, fp-safe (0.07 * 100 → 7.000000000000001).
+  const pct = Math.round(rate * 1000) / 10;
+  return `${pct}%`;
+}
+
 // Routing priority weight + the pure priority comparator live in
 // ./routingPriority (kept there, side-effect-free + independently unit-tested,
 // so the matching route can import them without pulling tiers' secrets deps

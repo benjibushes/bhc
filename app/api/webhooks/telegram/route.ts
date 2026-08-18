@@ -21,7 +21,7 @@ import { CLOSE_CHECK_MUTE_DAYS, closeCheckMuteUntilISO } from '@/lib/closeCheckM
 import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
 import { normalizeState, normalizeStates } from '@/lib/states';
 import { buildCronStatusCard, pauseCron, resumeCron } from '@/lib/cronIntrospection';
-import { tierFor, commissionRateForTier, TIERS } from '@/lib/tiers';
+import { tierFor, commissionRateForTier, commissionPercentLabelForRancher, TIERS } from '@/lib/tiers';
 import { sendStagedReply } from '@/lib/stagedReply';
 import jwt from 'jsonwebtoken';
 
@@ -964,9 +964,9 @@ async function processUpdate(update: any) {
 
           const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
           // BROKER RAIL — the approve_ tap fires the CONNECT double intro: the
-          // ranch gets the buyer's contact block plus "10% commission on BHC
-          // referral sales" (an agreement a represented ranch never signed),
-          // and the buyer gets the ranch's email + phone. On this rail BHC's
+          // ranch gets the buyer's contact block plus a commission footer for
+          // an agreement a represented ranch never signed, and the buyer gets
+          // the ranch's email + phone. On this rail BHC's
           // whole fee is the deposit, so that tap costs the entire sale.
           // Refuse at the tap — the buyer already has their deposit link from
           // lib/brokerMatch, and Ben already has the operator handoff card.
@@ -1055,7 +1055,7 @@ async function processUpdate(update: any) {
                   ${referral['Notes'] ? `<p><strong>Notes:</strong> ${referral['Notes']}</p>` : ''}
                   <hr style="border: none; height: 1px; background: #A7A29A; margin: 20px 0;">
                   <p>Please reach out to them directly. Reply-all to keep me in the loop.</p>
-                  <p style="font-size: 12px; color: #A7A29A; margin-top: 30px;">— Benjamin, BuyHalfCow | 10% commission on BHC referral sales.</p>
+                  <p style="font-size: 12px; color: #A7A29A; margin-top: 30px;">— Benjamin, BuyHalfCow | ${commissionPercentLabelForRancher(rancher)} commission on BHC referral sales.</p>
                 </div>
               `,
             });
@@ -1719,6 +1719,23 @@ Source: ${c['Source'] || 'organic'}`;
           }
 
           const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
+          // BROKER RAIL (comms containment 2026-08-18): this callback emails
+          // the ranch the buyer's email + phone — the exact pre-deposit
+          // contact leak #628 gated at approve_ and /bulkfire but missed
+          // here. The stalled-nudge pool in referral-chasup now filters
+          // broker rows before the card is ever minted; this refusal is the
+          // belt for cards already sitting in the chat (and for any future
+          // pool regression). Same predicate pair, same fail-closed shape.
+          if (referralCarriesBrokerMarker(ref) || railForLoadedRancher(rancher) === 'broker') {
+            await answerCallbackQuery(queryId, 'Represented ranch — send the deposit link instead.');
+            if (chatId) {
+              await sendTelegramMessage(
+                chatId,
+                `🚫 <b>Broker rail</b> — ${rancher?.['Operator Name'] || rancher?.['Ranch Name'] || 'that ranch'} is represented: there is no rancher to nudge, and the buyer's contact details never go to the ranch pre-deposit.\n\nThe buyer's deposit link: <code>/checkout/${refId}/broker</code>`,
+              );
+            }
+            return NextResponse.json({ ok: true });
+          }
           const rancherEmail = rancher['Email'];
           const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Partner';
           const buyerName = ref['Buyer Name'] || 'the buyer';
@@ -1756,7 +1773,7 @@ Source: ${c['Source'] || 'organic'}`;
               🥩 Wants: ${orderType}</p>
               <p>If you can shoot them a quick note today — even a "got your inquiry, here's when I can deliver" — that usually gets the ball rolling. If you're slammed and need me to reroute, just reply and let me know.</p>
               <p>Thanks,<br>— Benjamin</p>
-              <p style="font-size:12px;color:#A7A29A;margin-top:30px;">BuyHalfCow | 10% commission on closed referrals</p>
+              <p style="font-size:12px;color:#A7A29A;margin-top:30px;">BuyHalfCow | ${commissionPercentLabelForRancher(rancher)} commission on closed referrals</p>
             </div>`,
           });
 

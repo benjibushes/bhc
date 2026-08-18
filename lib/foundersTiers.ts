@@ -34,6 +34,14 @@ export const TITLE_FOUNDER_DOLLARS = 15000;
 /** "$15,000" — Title Founder display label. */
 export const TITLE_FOUNDER_PRICE_LABEL = `$${TITLE_FOUNDER_DOLLARS.toLocaleString('en-US')}`;
 
+/** The Title Founder CHARGE amount in cents, derived from the SAME constant
+ *  the display label renders so the two can never drift —
+ *  /api/founders/checkout used to hardcode the cents beside a page that
+ *  derived the dollars (comms containment 2026-08-18). CHARGE TRUTH: must
+ *  stay byte-identical to the old literal (1500000);
+ *  lib/foundersTiers.test.ts pins the value. */
+export const TITLE_FOUNDER_CENTS = TITLE_FOUNDER_DOLLARS * 100;
+
 /** "$1,500" — what Founding 100 costs once the early-bird window closes. */
 export const FOUNDING_100_POST_EARLY_BIRD_LABEL = `$${Math.round(
   FOUNDING_100_POST_EARLY_BIRD_CENTS / 100

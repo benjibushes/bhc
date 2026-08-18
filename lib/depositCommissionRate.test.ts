@@ -21,7 +21,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { depositCommissionRate, TIERS } from './tiers';
+import { depositCommissionRate, commissionPercentLabelForRancher, TIERS } from './tiers';
 
 test('locked 0.04 beats the Pasture tier constant (0.07)', () => {
   assert.equal(depositCommissionRate({ 'Commission Rate': 0.04 }, 'pasture'), 0.04);
@@ -67,4 +67,23 @@ test('null tier: locked rate still wins; no locked rate → legacy env-default f
   } finally {
     if (prev !== undefined) process.env.COMMISSION_RATE_DEFAULT = prev;
   }
+});
+
+// ── commissionPercentLabelForRancher (comms containment 2026-08-18) ─────────
+// The telegram rancher-email footers said "10% commission" for EVERY rancher
+// the broker gates let through — tier-blind. The label must always render the
+// rate the charge path would use (same precedence as depositCommissionRate),
+// so the footer can never quote a rate the invoice would contradict.
+
+test('commissionPercentLabelForRancher: label = the rate the charge path would use', () => {
+  assert.equal(commissionPercentLabelForRancher({}), '10%'); // legacy env default
+  assert.equal(commissionPercentLabelForRancher({ Tier: 'Pasture' }), '7%');
+  assert.equal(commissionPercentLabelForRancher({ Tier: 'Ranch' }), '3%');
+  assert.equal(commissionPercentLabelForRancher({ Tier: 'Operator' }), '0%');
+  assert.equal(commissionPercentLabelForRancher({ Tier: 'Legacy Connect' }), '10%');
+  // Locked rate beats the tier constant — including a locked 0 (valid).
+  assert.equal(commissionPercentLabelForRancher({ 'Commission Rate': 0.035 }), '3.5%');
+  assert.equal(commissionPercentLabelForRancher({ Tier: 'Pasture', 'Commission Rate': 0 }), '0%');
+  // Airtable singleSelect object shape parses too.
+  assert.equal(commissionPercentLabelForRancher({ Tier: { name: 'Ranch' } }), '3%');
 });

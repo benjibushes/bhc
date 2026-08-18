@@ -32,6 +32,18 @@ export const DEPOSIT_NUDGE_LIFETIME_CAP = 2;
 export const DEPOSIT_NUDGE_MIN_AGE_MS = 24 * 60 * 60 * 1000; // 24h after request
 export const DEPOSIT_NUDGE_COOLDOWN_MS = 48 * 60 * 60 * 1000; // 48h between nudges
 
+/** 'Deposit Nudge Count' value the cron writes on the SUPPRESSED path (comms
+ *  containment 2026-08-18). A suppressed buyer (Unsubscribed/Bounced/
+ *  Complained) can never receive this chase, yet with no stamp the row
+ *  re-entered the selector every hour FOREVER, eating a batch-cap slot each
+ *  run. Fields can't be created from code (docs/WRITE-MAP.md discipline), so
+ *  the touch budget itself is the one-shot marker: any value at or above
+ *  every rail's cap (rail A caps at 2; rail B's planner exhausts at its
+ *  policy total) permanently retires the row from BOTH selectors — same
+ *  field-reuse trade as DEPOSIT_SMS_SENT_FIELD below. Deliberately loud in
+ *  the base: a count of 99 is greppable as "retired by suppression". */
+export const DEPOSIT_NUDGE_SUPPRESSED_SENTINEL = 99;
+
 export interface DepositNudgeReferralLike {
   id?: string;
   ['Status']?: unknown;

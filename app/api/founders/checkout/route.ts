@@ -7,6 +7,7 @@ import {
   getFounding100PriceCents,
   FOUNDERS_TEST_MODE,
 } from '@/lib/secrets';
+import { TITLE_FOUNDER_CENTS } from '@/lib/foundersTiers';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
@@ -18,7 +19,7 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com
 //
 // Body: { tier: 'founding-100' | 'title-founder' | 'test-1', email?, firstName? }
 //
-// The 6 subscription tiers + the regular Title Founder $15k tier ship as
+// The 6 subscription tiers + the regular Title Founder tier ship as
 // Payment Links rendered directly on /founders. They land in the same Stripe
 // webhook with metadata.type = 'founder-subscription' | 'founder-lifetime' and
 // metadata.tier = 'herd-monthly' | etc.
@@ -63,7 +64,9 @@ export async function POST(request: Request) {
       cap = FOUNDING_100_CAP;
       metadataTier = 'founding-100';
     } else if (tier === 'title-founder') {
-      unitAmount = 1500000; // $15,000
+      // Charge truth: derived from the same constant the /founders display
+      // renders — byte-identical to the old literal, pinned by test.
+      unitAmount = TITLE_FOUNDER_CENTS;
       productName = 'BuyHalfCow Title Founder';
       productDescription =
         'Title Founder — one-time backer. 10 spots. Top of the wall. Co-build access.';

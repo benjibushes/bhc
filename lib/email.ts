@@ -13,7 +13,17 @@ import {
 } from './emailStreams';
 import { getAllRecords, escapeAirtableValue, TABLES } from './airtable';
 import { checkFrequencyCap, logEmailSend } from './emailFrequencyGuard';
-import { JWT_SECRET } from './secrets';
+import { JWT_SECRET, FOUNDING_100_CAP } from './secrets';
+// FOUNDING HERD PRICE TRUTH (comms containment 2026-08-18): the no-budget
+// founder pitch quoted a dead price ladder that the /founders page and
+// checkout would contradict. Every tier price this module states derives
+// from lib/foundersTiers — lib/foundersTiers.test.ts scans this file for
+// hardcoded tier-price literals.
+import {
+  HERD_MONTHLY_DOLLARS,
+  OUTLAW_MONTHLY_DOLLARS,
+  TITLE_FOUNDER_PRICE_LABEL,
+} from './foundersTiers';
 import {
   getOperatorBookingStatus,
   OPERATOR_BOOKING_FALLBACK_URL,
@@ -4657,8 +4667,20 @@ export async function sendRancherLaunchWarmup(data: {
   ranchName: string;
   buyerState: string;
   engageUrl: string;
+  /** BROKER RAIL (comms containment 2026-08-18): on the represented-seller
+   *  rail the ranch never reaches out pre-deposit and contact info arrives
+   *  only after the deposit settles — so the Connect promise ("full info +
+   *  they'll reach out in 24–48h") is false twice over. 'broker' swaps ONLY
+   *  the promise line for the deposit-first truth; omitted/'connect' renders
+   *  the original byte-identical. Buyer copy never frames the deposit as a
+   *  fee — it is a deposit toward their share, full stop. */
+  rail?: 'broker' | 'connect';
 }) {
   const first = data.firstName || 'there';
+  const isBroker = data.rail === 'broker';
+  const promiseLine = isBroker
+    ? `If yes, click below — I'll send you a reserve link right after. A deposit locks your share, and pickup details follow once your animal is confirmed.`
+    : `If yes, click below — I'll send the rancher's full info (pricing, processing date, contact) right after, and they'll reach out to you directly within 24–48 hours.`;
   const subject = `${data.ranchName} just went live in ${data.buyerState} — ready to buy?`;
   return guardedSend({
     templateName: 'sendRancherLaunchWarmup',
@@ -4677,7 +4699,7 @@ export async function sendRancherLaunchWarmup(data: {
   <p>When you signed up for BuyHalfCow, there wasn't a verified rancher in ${esc(data.buyerState)} yet. That just changed.</p>
   <p><strong>${esc(data.ranchName)}</strong> just passed our verification and is opening their first round of buyers this week. Since you've been waiting, I want to introduce you first.</p>
   <div class="q"><strong>One question first:</strong> Are you looking to buy in the next 1–2 months?</div>
-  <p>If yes, click below — I'll send the rancher's full info (pricing, processing date, contact) right after, and they'll reach out to you directly within 24–48 hours.</p>
+  <p>${promiseLine}</p>
   <div style="text-align:center;margin:30px 0;">
     <a href="${data.engageUrl}" class="cta">Yes — Ready to Buy</a>
     <p style="font-size:13px;color:#A7A29A;margin-top:10px;">Clicking confirms you're ready to purchase in the next 1–2 months. Only confirmed buyers are introduced — keeps quality high for ranchers.</p>
@@ -4695,8 +4717,16 @@ export async function sendRancherLaunchWarmupNudge(data: {
   firstName: string;
   ranchName: string;
   engageUrl: string;
+  /** Same broker/Connect split as sendRancherLaunchWarmup above — the nudge's
+   *  "I'll send the rancher's info right after" is the same false promise on
+   *  the broker rail. Omitted/'connect' renders the original byte-identical. */
+  rail?: 'broker' | 'connect';
 }) {
   const first = data.firstName || 'there';
+  const isBrokerNudge = data.rail === 'broker';
+  const nudgeAskLine = isBrokerNudge
+    ? `<strong>Are you ready to buy in the next 1–2 months?</strong> If yes, tap below and I'll send your reserve link right after — a deposit locks your share. Otherwise I'll drop you off the active list — you won't get more about this rancher until you tell me to.`
+    : `<strong>Are you ready to buy in the next 1–2 months?</strong> If yes, tap below and I'll send the rancher's info right after. Otherwise I'll drop you off the active list — you won't get more about this rancher until you tell me to.`;
   const nudgeSubject = `Last call — ${data.ranchName} still has slots`;
   return guardedSend({
     templateName: 'sendRancherLaunchWarmupNudge',
@@ -4713,7 +4743,7 @@ export async function sendRancherLaunchWarmupNudge(data: {
   <h1>Quick follow-up</h1>
   <p>Hi ${esc(first)},</p>
   <p>I sent you a note last week about <strong>${esc(data.ranchName)}</strong> opening spots. Didn't hear back, so this is my last nudge.</p>
-  <p><strong>Are you ready to buy in the next 1–2 months?</strong> If yes, tap below and I'll send the rancher's info right after. Otherwise I'll drop you off the active list — you won't get more about this rancher until you tell me to.</p>
+  <p>${nudgeAskLine}</p>
   <div style="text-align:center;margin:30px 0;">
     <a href="${data.engageUrl}" class="cta">Yes — Ready to Buy</a>
   </div>
@@ -5449,9 +5479,13 @@ export async function sendIncompleteProfileAsk(data: {
 /**
  * NO_BUDGET_FOUNDER_PITCH segment — buyer signed up wanting BHC beef but
  * their budget is under share-cost (<$500). They care about the mission
- * but can't drop $1k+ on a Quarter this year. Pitch them the Founding
- * Herd — back the platform for $100, get a numbered patch and
- * founders-wall placement. Works in any state.
+ * but can't drop four figures on a Quarter this year. Pitch them the
+ * Founding Herd — back the platform from a few dollars a month, get the
+ * patch and founders-wall placement. Works in any state.
+ *
+ * Prices DERIVE from lib/foundersTiers (never literals): the old copy quoted
+ * a dead one-time-Herd ladder the live /founders page and checkout
+ * contradicted.
  *
  * Cadence: 1 lifetime send, then monthly community letter.
  */
@@ -5462,7 +5496,7 @@ export async function sendNoBudgetFounderPitch(data: {
 }) {
   const first = data.firstName || 'there';
   const FOUNDERS_URL = `${SITE_URL}/founders`;
-  const subject = `beef's not in the budget? back the mission for $100`;
+  const subject = `beef's not in the budget? back the mission from $${HERD_MONTHLY_DOLLARS}/mo`;
   return guardedSend({
     templateName: 'sendNoBudgetFounderPitch',
     recipientEmail: data.email,
@@ -5480,7 +5514,7 @@ export async function sendNoBudgetFounderPitch(data: {
   <p>You signed up for BuyHalfCow. You care about how cattle gets raised. You're on the right side of the food fight. But a freezer full of beef is a real chunk of money up front — and that's not in the budget for a lot of people this year. I won't pretend otherwise.</p>
   <p>Here's another way to be part of this without the freezer commitment.</p>
   <div class="divider"></div>
-  <p><strong>The Founding Herd.</strong> 100 numbered spots. Back the platform from $100 (Herd) to $1k (Outlaw+) to $15k (Title Founder). You get:</p>
+  <p><strong>The Founding Herd.</strong> Back the platform from $${HERD_MONTHLY_DOLLARS}/mo (Herd) to $${OUTLAW_MONTHLY_DOLLARS}/mo (Outlaw), or take one of ${FOUNDING_100_CAP} numbered Founding 100 spots — all the way up to ${TITLE_FOUNDER_PRICE_LABEL} (Title Founder). You get:</p>
   <ul style="color:#6B4F3F;padding-left:20px;">
     <li>Numbered embroidered patch shipped to your door</li>
     <li>Name on the public Founders Wall (opt-in)</li>
@@ -5490,7 +5524,7 @@ export async function sendNoBudgetFounderPitch(data: {
   <div style="text-align:center;margin:30px 0;">
     <a href="${FOUNDERS_URL}" class="cta">See the Founding Herd</a>
   </div>
-  <p style="font-size:14px;">If $100 isn't in the budget either, no worries — you stay on the list and I'll email when ${esc(data.buyerState)} comes online. The work continues either way.</p>
+  <p style="font-size:14px;">If $${HERD_MONTHLY_DOLLARS}/mo isn't in the budget either, no worries — you stay on the list and I'll email when ${esc(data.buyerState)} comes online. The work continues either way.</p>
   <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
 </div></body></html>`,
     }),
@@ -5644,7 +5678,7 @@ export async function sendBuyerFulfillmentConfirmation(data: {
 // Fires from /api/rancher/referrals/[id]/fulfillment on the FIRST save of a
 // tracking number only (the route checks the prior value — edits/corrections
 // never re-send). This is the answer to the #1 post-deposit anxiety: "where
-// is my $1,000 of frozen meat?" Pure status mail — no payment action.
+// is my four-figure freezer of meat?" Pure status mail — no payment action.
 export async function sendBuyerShippingNotification(data: {
   email: string;
   firstName: string;
