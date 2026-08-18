@@ -4,6 +4,7 @@ import { TABLES } from '@/lib/airtable';
 import { sendInquiryToRancher } from '@/lib/email';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import { requireAdmin } from '@/lib/adminAuth';
+import { railForLoadedRancher } from '@/lib/brokerDownstream';
 
 // Wholesale Status state machine. New is the signup-time default; admin can
 // progress New → Routed → Quoted → Closed Won/Lost. We allow free-form
@@ -69,6 +70,41 @@ export async function PATCH(
       fields['Matched Rancher IDs'] = cleanIds.join('\n');
     }
 
+    // BROKER RAIL (comms containment wave 0-A, 2026-08-18). Approving a retail
+    // inquiry fires sendInquiryToRancher below — the buyer's email + phone
+    // straight into the ranch inbox. On the broker rail that contact IS the
+    // fee leak (the deposit is BHC's entire commission), so a represented
+    // ranch's inquiry must refuse. Load the rancher HERE, before the status
+    // write, so a refused approve leaves the inquiry in its prior state
+    // instead of Approved-but-silent. Fail-closed via railForLoadedRancher:
+    // an unreadable or unlinked rancher refuses rather than proceeds (before
+    // this gate, that same failure sent nothing anyway — it just stamped
+    // Approved first and then paged Ben about the email).
+    let approvedRancher: any = null;
+    if (wasApproved && !isWholesale) {
+      const approveRancherId = String(currentInquiry['Rancher ID'] || '').trim();
+      try {
+        approvedRancher = approveRancherId
+          ? await getRecordById(TABLES.RANCHERS, approveRancherId)
+          : null;
+      } catch {
+        approvedRancher = null; // railForLoadedRancher(null) → 'broker' (fail closed)
+      }
+      if (railForLoadedRancher(approvedRancher) === 'broker') {
+        const ranchLabel =
+          approvedRancher?.['Ranch Name'] || approvedRancher?.['Operator Name'] || currentInquiry['Ranch Name'] || 'This ranch';
+        const slug = String(approvedRancher?.['Slug'] || '').trim();
+        return NextResponse.json({
+          error:
+            `${ranchLabel} is a represented (broker-rail) ranch, or its record could not be verified — ` +
+            `approving would email the buyer's contact details to the ranch before any deposit. ` +
+            `Send the buyer the ranch's reserve link instead.`,
+          rail: 'broker',
+          ...(slug ? { redirectUrl: `/ranchers/${slug}#reserve` } : {}),
+        }, { status: 400 });
+      }
+    }
+
     // Update the record
     const updatedRecord = await updateRecord(TABLES.INQUIRIES, id, fields);
 
@@ -107,8 +143,9 @@ export async function PATCH(
     // If retail inquiry was just approved, send email to rancher
     if (wasApproved && !isWholesale) {
       try {
-        const rancherId = currentInquiry['Rancher ID'];
-        const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
+        // Reuse the row the broker gate above already loaded and cleared —
+        // one read, and the rail decision and the send can never diverge.
+        const rancher: any = approvedRancher;
 
         await sendInquiryToRancher({
           rancherName: rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher',

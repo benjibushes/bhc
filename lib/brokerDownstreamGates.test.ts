@@ -219,6 +219,9 @@ test('SHARED PREDICATE: every post-match gate consults lib/brokerDownstream, not
     '../app/api/cron/rancher-launch-warmup/route.ts',
     '../app/api/cron/qualified-no-action/route.ts',
     '../app/api/rancher/quick-action/route.ts',
+    // Comms containment wave 0-A (2026-08-18) — public + admin doors.
+    '../app/api/referrals/[id]/approve/route.ts',
+    '../app/api/inquiries/[id]/route.ts',
   ];
   for (const rel of sites) {
     const src = read(rel);
@@ -585,6 +588,117 @@ test('GATE qualified-no-action: a marker row whose rancher would not load WAITS,
   assert.ok(claimIdx > waitIdx, 'the wait must precede the dedup claim stamp');
   // And it is counted, never silent.
   assert.match(src, /brokerWaits=\$\{brokerWaits\}/);
+});
+
+// ---------------------------------------------------------------------------
+// 10. COMMS CONTAINMENT WAVE 0-A (2026-08-18) — the PUBLIC contact door and
+//     the admin promote/onboarding doors. Same convention as sections 6/9:
+//     source pins, refusal before every send AND every write, and the
+//     operator/buyer is pointed at the rail that actually takes the money.
+// ---------------------------------------------------------------------------
+
+test('GATE public contact POST: a represented ranch refuses the message before any email or referral row', () => {
+  const src = read('../app/api/public/ranchers/[slug]/contact/route.ts');
+  assert.match(src, /import \{ isBrokerRancher \} from '@\/lib\/brokerRail'/);
+  assert.doesNotMatch(src, /\['Broker Rail'\]/, 'the rail must come from the shared predicate, never inline');
+  // Layer 1 — the belt on a loaded row (today unreachable: getRancherBySlug's
+  // formula excludes broker; this refuses the day that lookup ever changes).
+  assert.match(src, /if \(rancher && isBrokerRancher\(rancher\)\) \{/);
+  // Layer 2 — the null branch distinguishes a REPRESENTED slug (which resolves
+  // via the self-serve carve-out) from a genuinely unknown one.
+  assert.match(src, /const represented: any = await getRancherOrProspectBySlug\(slug\)\.catch\(\(\) => null\);/);
+  assert.match(src, /if \(represented && isBrokerRancher\(represented\)\) \{/);
+  // Both refusals point the buyer at the ranch's reserve surface.
+  assert.equal(
+    src.split('redirectUrl: `/ranchers/${slug}#reserve`').length - 1,
+    2,
+    'both refusal layers must carry the reserve redirect',
+  );
+  // Everything the leak consists of sits AFTER the belt refusal.
+  const gateIdx = src.indexOf('if (rancher && isBrokerRancher(rancher)) {');
+  assert.ok(gateIdx > -1);
+  assert.ok(src.indexOf('sendTrackedContactEmail({', gateIdx) > gateIdx, 'the ranch-inbox email must be gated');
+  assert.ok(src.indexOf('await createReferral(referralFields);', gateIdx) > gateIdx, 'no referral row may be minted either');
+  // CONNECT UNCHANGED: the primary lookup stays the strict Page Live one — a
+  // prospect or hidden ranch must not become contactable via this fix.
+  assert.match(src, /const rancher: any = await getRancherBySlug\(slug\);/);
+});
+
+test('GATE contact page render: a broker slug redirects to the reserve section, not a dead form or false 404', () => {
+  const src = read('../app/ranchers/[slug]/contact/page.tsx');
+  assert.match(src, /import \{ isBrokerRancher \} from '@\/lib\/brokerRail'/);
+  assert.match(src, /const rancher: any = await getRancherOrProspectBySlug\(slug\)\.catch\(\(\) => null\);/);
+  assert.match(src, /if \(rancher && isBrokerRancher\(rancher\)\) \{\n\s*redirect\(`\/ranchers\/\$\{slug\}#reserve`\);/);
+  // The form itself lives in the client component this server gate renders —
+  // a Connect ranch's contact page is byte-identical to before the split.
+  assert.match(src, /return <ContactPageClient \/>;/);
+  // No build-time Airtable prerender (the known transient-timeout landmine).
+  assert.match(src, /export const dynamic = 'force-dynamic';/);
+  // And the client half FOLLOWS a rail redirect from the POST instead of
+  // rendering it as an error — same convention as the deposit page.
+  const client = read('../app/ranchers/[slug]/contact/ContactPageClient.tsx');
+  assert.match(client, /if \(data\.redirectUrl\) \{\n\s*window\.location\.href = String\(data\.redirectUrl\);\n\s*return;\n\s*\}/);
+});
+
+test('GATE admin approve: the FOURTH promote path refuses a broker referral before any write or intro', () => {
+  const src = read('../app/api/referrals/[id]/approve/route.ts');
+  // Marker OR loaded-rancher rail — the resend-intro twin, fail-closed.
+  assert.match(src, /if \(referralCarriesBrokerMarker\(referral\) \|\| railForLoadedRancher\(rancher\) === 'broker'\) \{/);
+  const gateIdx = src.indexOf("railForLoadedRancher(rancher) === 'broker'");
+  // The refusal precedes EVERY write and the whole Connect intro:
+  assert.ok(src.indexOf("'Status': 'Intro Sent',", gateIdx) > gateIdx, 'the Intro Sent write must be gated');
+  assert.ok(src.indexOf("'Last Assigned At': now,", gateIdx) > gateIdx, 'no rancher-side write either');
+  assert.ok(src.indexOf('BuyHalfCow Introduction:', gateIdx) > gateIdx, 'the contact-details intro must be gated');
+  // The operator is pointed at the rail that DOES take money.
+  assert.match(src, /redirectUrl: `\/checkout\/\$\{id\}\/broker`/);
+});
+
+test('TIER TRUTH admin approve: the added-on-top footer derives the rate from the loaded rancher', () => {
+  const src = read('../app/api/referrals/[id]/approve/route.ts');
+  assert.match(
+    src,
+    /our \$\{commissionPercentLabelForRancher\(rancher\)\} is added on top and paid by the buyer\./,
+  );
+  assert.doesNotMatch(src, /our 10% is added on top/, 'the tier-blind 10% footer came back');
+});
+
+test('GATE inquiry approve: a represented ranch refuses BEFORE the Approved write, and the send reuses the cleared row', () => {
+  const src = read('../app/api/inquiries/[id]/route.ts');
+  assert.match(src, /import \{ railForLoadedRancher \} from '@\/lib\/brokerDownstream'/);
+  assert.match(src, /if \(railForLoadedRancher\(approvedRancher\) === 'broker'\) \{/);
+  const gateIdx = src.indexOf("if (railForLoadedRancher(approvedRancher) === 'broker') {");
+  // A refused approve leaves the inquiry in its prior state — the refusal must
+  // sit before the status write, not between the write and the email.
+  const writeIdx = src.indexOf('await updateRecord(TABLES.INQUIRIES, id, fields);');
+  assert.ok(gateIdx > -1 && writeIdx > gateIdx, 'the refusal must precede the Approved write');
+  assert.ok(src.indexOf('await sendInquiryToRancher({', gateIdx) > gateIdx, 'the contact email must be gated');
+  // Fail-closed loader: an unreadable or unlinked rancher refuses rather than proceeds.
+  assert.match(src, /approvedRancher = null; \/\/ railForLoadedRancher\(null\) → 'broker' \(fail closed\)/);
+  // One read: the send branch rides the SAME row the gate cleared, so the rail
+  // decision and the send can never diverge.
+  assert.match(src, /const rancher: any = approvedRancher;/);
+});
+
+test('GATE send-onboarding: a represented ranch never receives the Commission Agreement packet', () => {
+  const src = read('../app/api/ranchers/[id]/send-onboarding/route.ts');
+  assert.match(src, /import \{ isBrokerRancher \} from '@\/lib\/brokerRail'/);
+  assert.doesNotMatch(src, /\['Broker Rail'\]/, 'the rail must come from the shared predicate, never inline');
+  assert.match(src, /if \(isBrokerRancher\(rancher\)\) \{/);
+  const gateIdx = src.indexOf('if (isBrokerRancher(rancher)) {');
+  // The whole packet — signing token, agreement CTA, onboarding-state write —
+  // sits after the refusal.
+  assert.ok(src.indexOf("type: 'agreement-signing'", gateIdx) > gateIdx, 'no signing token may be minted');
+  assert.ok(src.indexOf('REVIEW &amp; SIGN AGREEMENT', gateIdx) > gateIdx || src.indexOf('REVIEW & SIGN AGREEMENT', gateIdx) > gateIdx, 'the signing packet must be gated');
+  assert.ok(src.indexOf("'Onboarding Status': 'Docs Sent',", gateIdx) > gateIdx, 'no onboarding-state write either');
+});
+
+test('TIER TRUTH send-onboarding: the agreement bullet derives the rate from the loaded rancher', () => {
+  const src = read('../app/api/ranchers/[id]/send-onboarding/route.ts');
+  assert.match(
+    src,
+    /our \$\{commissionPercentLabelForRancher\(rancher\)\} is added on top and paid by the buyer/,
+  );
+  assert.doesNotMatch(src, /our 10% is added on top/, 'the tier-blind 10% bullet came back');
 });
 
 test('TIER TRUTH: telegram rancher-email footers derive the commission rate from the loaded rancher', () => {
