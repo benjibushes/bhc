@@ -29,7 +29,7 @@ export default function NotFound() {
               </p>
               <p className="font-serif text-xl mb-2">Reserve your share</p>
               <p className="text-xs text-saddle group-hover:text-bone/70 leading-relaxed">
-                90 seconds. We match you to a verified rancher in your state.
+                90 seconds. We match you to a real rancher in your state.
               </p>
             </a>
             <a

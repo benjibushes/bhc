@@ -102,7 +102,7 @@ export default function LinksButtons() {
         </span>
         <span className="block text-[13px] mt-2.5 text-bone/75 leading-snug max-w-[34ch] mx-auto">
           steaks, roasts, and ground at one honest price per pound — from a
-          named ranch we verified. 90 seconds to get matched.
+          named ranch we work with. 90 seconds to get matched.
         </span>
         <span className="mt-5 inline-block rounded-full bg-tallow text-charcoal px-7 py-3 text-[13px] font-semibold uppercase tracking-wider">
           reserve your share &rarr;
@@ -135,7 +135,7 @@ export default function LinksButtons() {
       >
         <span className="block font-medium text-[15px]">
           <IconPin />
-          find a verified ranch near you
+          find a real ranch near you
         </span>
         <span className="block text-[13px] mt-1 text-saddle">
           browse the map — real family ranches, state by state

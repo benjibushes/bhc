@@ -8,7 +8,7 @@ import Link from 'next/link';
 
 export const metadata = {
   title: 'Confirm your match · BuyHalfCow',
-  description: 'Looks like your invite link expired. Start a new application to get matched with a verified rancher.',
+  description: 'Looks like your invite link expired. Start a new application to get matched with a real rancher.',
 };
 
 export default function QualifyLandingPage() {

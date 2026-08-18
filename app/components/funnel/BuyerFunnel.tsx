@@ -726,7 +726,7 @@ export default function BuyerFunnel({
                 {/* Honesty (walkthrough 2026-07-15): familiesMatched is
                     Math.max(1900-floor, closed) — the 1,900 is the WAITLIST,
                     not matched families. "on the list" is the true claim. */}
-                {commas(stats.familiesMatched)}+ families on the list · {commas(stats.verifiedRanches)}+ verified ranches
+                {commas(stats.familiesMatched)}+ families on the list · {commas(stats.verifiedRanches)}+ ranches live
               </span>
             )}
           </div>
@@ -1438,7 +1438,7 @@ function Reveal({
               we&apos;re bringing ranches to {state || 'your state'}.
             </h2>
             <p className="mt-3 text-sm leading-relaxed text-saddle">
-              you&apos;re a qualified buyer the moment a verified rancher opens up near you — and you&apos;ll
+              you&apos;re a qualified buyer the moment a rancher opens up near you — and you&apos;ll
               be the first we reach out to. we&apos;re working on it.
             </p>
             {/* Nationwide opt-in choice (2026-07-01 founder directive) — the

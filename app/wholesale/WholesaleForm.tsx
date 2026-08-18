@@ -118,7 +118,7 @@ export default function WholesaleForm() {
 
       setSuccessMessage(
         data?.message ||
-          "We've received your application. Ben will personally reach out within 24-48 hours with verified ranchers in your state matching your volume + timeline.",
+          "We've received your application. Ben will personally reach out within 24-48 hours with ranchers in your state matching your volume + timeline.",
       );
       setIsSubmitted(true);
       // E-4 audit fix: server CAPI Lead at app/api/wholesale/signup/route.ts:235

@@ -53,7 +53,7 @@ export default function PartnersPage() {
             <h1 className="font-serif text-4xl md:text-5xl">partner with buyhalfcow</h1>
             <Divider />
             <p className="text-lg leading-relaxed text-saddle">
-              you have an audience that cares about real food. we have the beef — verified
+              you have an audience that cares about real food. we have the beef — real
               family ranches, shipped nationwide or picked up local. share it, and earn a
               commission on every buyer you send. free to join, no minimums, no exclusivity.
               &mdash; Ben

@@ -18,7 +18,7 @@ const ranges = typicalShareRanges();
 export const metadata: Metadata = {
   title: 'Buy Half a Cow Near You — Ranch Beef Shares in All 50 States',
   description:
-    `Buy half a cow direct from a verified family ranch near you. Typical half-beef shares run ${fmtRange(ranges.half)} all-in (~$8–11/lb hanging weight). Pick your state, take the 90-second quiz, reserve with a ${ranges.depositPercent}% refundable deposit.`,
+    `Buy half a cow direct from a real family ranch near you. Typical half-beef shares run ${fmtRange(ranges.half)} all-in (~$8–11/lb hanging weight). Pick your state, take the 90-second quiz, reserve with a ${ranges.depositPercent}% refundable deposit.`,
   robots: { index: true, follow: true },
   alternates: { canonical: `${BASE_URL}/half-a-cow` },
   openGraph: {
@@ -58,7 +58,7 @@ export default function HalfACowIndexPage() {
             </h1>
             <Divider />
             <p className="text-lg md:text-xl max-w-2xl mx-auto leading-snug md:leading-relaxed text-saddle">
-              A half beef from a verified family ranch typically runs{' '}
+              A half beef from a family ranch typically runs{' '}
               {fmtRange(ranges.half)} all-in — about $8&ndash;11 per pound hanging
               weight, against $13&ndash;17/lb from boxed-delivery services. Pick your
               state, or let the 90-second quiz match you straight away.
@@ -96,7 +96,7 @@ export default function HalfACowIndexPage() {
             <p className="text-center text-[13.5px] text-saddle">
               prefer to browse?{' '}
               <Link href="/map" className="underline hover:text-charcoal transition-colors">
-                see every verified ranch on the map →
+                see every ranch on the map →
               </Link>
             </p>
           </div>

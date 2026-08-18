@@ -47,7 +47,7 @@ export default function AboutPage() {
               </p>
               <p>
                 BuyHalfCow exists to fix both halves of that. Families get direct
-                access to verified ranchers in their state. Ranchers get
+                access to real ranchers in their state. Ranchers get
                 pre-screened buyers ready to commit to a quarter, half, or whole.
                 We only earn when a deal actually closes &mdash; never a markup on your beef.
               </p>
@@ -75,7 +75,7 @@ export default function AboutPage() {
               </p>
               <p className="text-saddle text-sm italic">
                 BuyHalfCow is small and founders-funded. No VC, no growth-at-all-costs
-                pressure. Just a network getting wider, one verified rancher at a time.
+                pressure. Just a network getting wider, one rancher at a time.
               </p>
             </section>
 
@@ -91,7 +91,7 @@ export default function AboutPage() {
                   <ol className="list-decimal list-outside space-y-2 ml-5 text-saddle">
                     <li>Apply for access &mdash; takes 60 seconds.</li>
                     <li>Get approved (I review every application manually).</li>
-                    <li>See verified ranchers in your state.</li>
+                    <li>See the ranches live in your state.</li>
                     <li>Reserve a quarter, half, or whole with a deposit. The rancher takes it from there.</li>
                   </ol>
                 </div>
@@ -142,11 +142,11 @@ export default function AboutPage() {
                 </li>
                 <li className="flex items-start">
                   <span className="mr-3 text-weathered" aria-hidden="true">&times;</span>
-                  <span>Not a dropship outfit. Every rancher is a real verified operation.</span>
+                  <span>Not a dropship outfit. Every rancher is a real operation.</span>
                 </li>
                 <li className="flex items-start">
                   <span className="mr-3 text-weathered" aria-hidden="true">&times;</span>
-                  <span>Not open to everyone. Buyers and ranchers both vetted &mdash; that&apos;s the point.</span>
+                  <span>Not open to everyone. Buyers vetted, ranchers hand-picked &mdash; that&apos;s the point.</span>
                 </li>
               </ul>
             </section>

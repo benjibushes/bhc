@@ -8,17 +8,17 @@ import { normalizeImageUrl } from '@/lib/imageUrl';
 
 export const metadata: Metadata = {
   title: 'Our Ranchers',
-  description: 'Browse BuyHalfCow\'s verified rancher partners. Grass-fed, pasture-raised beef — bought direct from the ranch.',
+  description: 'Browse the ranches on BuyHalfCow. Grass-fed, pasture-raised beef — bought direct from the ranch.',
   openGraph: {
     title: 'Our Ranchers',
-    description: 'Browse BuyHalfCow\'s verified rancher partners. Grass-fed, pasture-raised beef — bought direct from the ranch.',
+    description: 'Browse the ranches on BuyHalfCow. Grass-fed, pasture-raised beef — bought direct from the ranch.',
     url: 'https://www.buyhalfcow.com/ranchers',
     images: ['/og-image.png'],
   },
   twitter: {
     card: 'summary_large_image',
     title: 'Our Ranchers',
-    description: 'Browse BuyHalfCow\'s verified rancher partners. Grass-fed, pasture-raised beef — bought direct from the ranch.',
+    description: 'Browse the ranches on BuyHalfCow. Grass-fed, pasture-raised beef — bought direct from the ranch.',
     images: ['/og-image.png'],
   },
 };
@@ -68,16 +68,16 @@ export default async function RanchersPage() {
           <div className="text-center space-y-4">
             <p className="text-xs uppercase tracking-widest text-saddle">
               {rancherCount > 0
-                ? `${rancherCount} verified ${rancherCount === 1 ? 'rancher' : 'ranchers'}${stateCount > 0 ? ` · ${stateCount} ${stateCount === 1 ? 'state' : 'states'}` : ''}`
-                : 'verified ranchers'}
+                ? `${rancherCount} ${rancherCount === 1 ? 'rancher' : 'ranchers'}${stateCount > 0 ? ` · ${stateCount} ${stateCount === 1 ? 'state' : 'states'}` : ''}`
+                : 'our ranchers'}
             </p>
             <h1 className="font-serif text-4xl md:text-5xl lowercase">
               our ranchers
             </h1>
             <Divider />
             <p className="text-base md:text-lg text-saddle max-w-2xl mx-auto leading-relaxed">
-              Every rancher here has been approved by BuyHalfCow — vetted, USDA
-              processing confirmed, real operation. Buy direct.
+              Every ranch here is one BuyHalfCow works with directly — real
+              operations you can name, picture, and talk to. Buy direct.
             </p>
           </div>
 

@@ -140,7 +140,7 @@ export function stateFaqs(stateName: string): FaqItem[] {
     {
       q: `What if there's no ranch near me in ${stateName}?`,
       a:
-        `Join the list. We are actively recruiting verified family ranches in ${stateName}, and the moment one goes live we route waiting families first — in the order they signed up.`,
+        `Join the list. We are actively recruiting family ranches in ${stateName}, and the moment one goes live we route waiting families first — in the order they signed up.`,
     },
   ];
 }

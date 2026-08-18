@@ -15,11 +15,11 @@ export const revalidate = 1800;
 export const metadata: Metadata = {
   title: 'Discover Map — Direct-to-Consumer Ranchers Across America',
   description:
-    'Every direct-to-consumer rancher in America we know about. Verified partners + prospects we are working to bring into the network. Add a rancher you know — buyers find the nearest one in their state.',
+    'Every direct-to-consumer rancher in America we know about. Ranches taking reservations today + prospects we are working to bring into the network. Add a rancher you know — buyers find the nearest one in their state.',
   openGraph: {
     title: 'BuyHalfCow Discover Map — Direct-to-Consumer Ranchers',
     description:
-      'A live map of every direct-to-consumer rancher in America. Verified partners + prospects.',
+      'A live map of every direct-to-consumer rancher in America. Ranches taking reservations + prospects.',
   },
 };
 
