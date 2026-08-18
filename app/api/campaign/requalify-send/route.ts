@@ -53,7 +53,7 @@
 
 import { NextResponse } from 'next/server';
 import { requireCron } from '@/lib/cronAuth';
-import { sendEmail } from '@/lib/email';
+import { sendEmail, getSuppressionList, didSuppressionListBuildFail } from '@/lib/email';
 import {
   renderRequalifyEmail,
   validateRequalifyBatch,
@@ -315,6 +315,22 @@ export async function POST(request: Request) {
         planned[0].variantSent ?? 'A',
       ),
     });
+  }
+
+  // FAIL CLOSED on suppression (F24 slice, 2026-08-18): guardedSend's per-send
+  // suppression re-check fails OPEN when the list can't be built (the
+  // transactional posture) — a campaign batch during an Airtable suppression-
+  // list outage would email unsubscribed addresses, and the claim stamp would
+  // mark them campaigned on top of it. Pre-warm once per call and refuse the
+  // whole batch — same posture as the budget check below, and the documented
+  // didSuppressionListBuildFail contract send-scheduled honors. (dryRun above
+  // sends nothing, so it stays usable during an outage.)
+  await getSuppressionList();
+  if (didSuppressionListBuildFail()) {
+    return NextResponse.json(
+      { error: 'suppression-list build failed — refusing to send blind' },
+      { status: 503 },
+    );
   }
 
   // DOMAIN-WIDE DAILY BUDGET: all rancher campaigns share one deliverability

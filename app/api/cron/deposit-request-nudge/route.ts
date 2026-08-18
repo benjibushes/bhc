@@ -33,7 +33,8 @@ import { findPaymentsByReferral } from '@/lib/contracts/payments';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendDepositRequestNudge } from '@/lib/emailMinimal';
 import { railForLoadedRancher, referralCarriesBrokerMarker, resolveReferralRail } from '@/lib/brokerDownstream';
-import { sendDemandRouterCampaign } from '@/lib/email';
+import { BROKER_MATCH_TYPE } from '@/lib/brokerRail';
+import { sendDemandRouterCampaign, getSuppressionList, didSuppressionListBuildFail } from '@/lib/email';
 import { sendSMSToConsumer } from '@/lib/twilio';
 import { smsEnabled } from '@/lib/smsFlag';
 import { isSmsWindow } from '@/lib/sendWindow';
@@ -45,6 +46,8 @@ import {
   selectDepositNudges,
   selectDepositAbandonNudges,
   depositAbandonPlan,
+  brokerDepositChasePlan,
+  selectBrokerDepositChase,
   selectDepositSmsRescues,
   renderDepositSmsNudge,
   durableDepositPayLink,
@@ -92,6 +95,21 @@ const CANDIDATE_FORMULA =
 // 'Deposit Nudge Last Sent At' truth, same verify-persist abort.
 const ABANDON_CANDIDATE_FORMULA =
   `AND(NOT({Deposit Invite Sent At}=""), {Deposit Requested At}="", {Deposit Paid At}="")`;
+
+// BROKER DEPOSIT CHASE LANE (Wave 1 F5, 2026-08-18): broker matches with a
+// DELIVERED ask ('Deposit Invite Sent At' stamped — #639 send-truth) that
+// were never paid. Rail A never matches them (Status stays 'Intro Sent', not
+// 'Awaiting Payment'), and rail B EJECTS the highest-intent ones the moment
+// /api/checkout/broker stamps 'Deposit Requested At' at session mint — so a
+// broker buyer who abandoned at Stripe fell out of every chase, on the rail
+// where the deposit IS 100% of BHC's fee. Formula mirrors the pure selector
+// (lib/depositRequestNudge.brokerDepositChasePlan), which re-checks every row
+// via the shared lib/brokerDownstream marker predicate; the match-type clause
+// below interpolates the ONE canonical constant, never a new string literal.
+// Overlap with rail B (requested-empty broker rows) is deliberate: same
+// planner, same stamps, and the merged loop dedupes by id.
+const BROKER_CHASE_FORMULA =
+  `AND({Match Type}="${BROKER_MATCH_TYPE}", {Status}="Intro Sent", NOT({Deposit Invite Sent At}=""), {Deposit Paid At}="")`;
 
 // RAIL C — RESERVE-ABANDON (2026-07-22, reactivation audit): a self-serve
 // reserve referral (Match Type contains 'Deposit' — minted by /api/checkout/
@@ -454,6 +472,24 @@ async function realHandler(_request: Request): Promise<CronResult> {
     return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
   }
 
+  // FAIL CLOSED on suppression (F24 slice, 2026-08-18): the per-send
+  // suppression check inside the email wrapper fails OPEN when the list can't
+  // be built (transactional posture) — so during an Airtable suppression-list
+  // outage every loop below would happily email unsubscribed/bounced/
+  // complained buyers. This cron is a bulk chaser, not a money-critical
+  // transactional send: pre-warm the list once per run and ABORT the whole
+  // batch when the build failed — the documented didSuppressionListBuildFail
+  // contract that send-scheduled already honors. Selectors are pure and
+  // stamps unwritten, so the retry next tick loses nothing.
+  await getSuppressionList();
+  if (didSuppressionListBuildFail()) {
+    return {
+      status: 'partial',
+      recordsTouched: 0,
+      notes: 'suppression-list build FAILED — deposit chase aborted (fail closed), will retry next tick',
+    };
+  }
+
   const nowMs = Date.now();
 
   let candidates: any[] = [];
@@ -484,12 +520,30 @@ async function realHandler(_request: Request): Promise<CronResult> {
     }
   }
 
-  // Merge both rails, dedupe by id (the two selectors are disjoint by design,
-  // but dedupe is cheap insurance), total capped so one run never floods.
+  // Broker lane (F5) — best-effort like rail B: a read failure here must not
+  // sink the Connect rails.
+  let brokerCandidates: any[] = [];
+  try {
+    brokerCandidates = (await getAllRecords(TABLES.REFERRALS, BROKER_CHASE_FORMULA)) as any[];
+  } catch (e: any) {
+    if (isInvalidFilterFormulaError(e)) {
+      console.warn('[deposit-request-nudge] broker-chase formula rejected; falling back to full scan');
+      brokerCandidates = (await getAllRecords(TABLES.REFERRALS).catch(() => [])) as any[];
+    } else {
+      console.warn('[deposit-request-nudge] broker-chase read failed (non-fatal):', e?.message);
+      brokerCandidates = [];
+    }
+  }
+
+  // Merge the rails, dedupe by id (rails A/B are disjoint by design; the
+  // broker lane deliberately overlaps rail B on requested-empty broker rows —
+  // same planner, same stamps, so the dedupe keeps one arc), total capped so
+  // one run never floods.
   const railA = selectDepositNudges(candidates, { nowMs, batchCap: 25 });
   const railB = selectDepositAbandonNudges(abandonCandidates, { nowMs, batchCap: 25 });
+  const brokerLane = selectBrokerDepositChase(brokerCandidates, { nowMs, batchCap: 25 });
   const seen = new Set<string>();
-  const selected = [...railA, ...railB].filter((r) => {
+  const selected = [...railA, ...railB, ...brokerLane].filter((r) => {
     const id = String(r.id || '');
     if (!id || seen.has(id)) return false;
     seen.add(id);
@@ -498,6 +552,9 @@ async function realHandler(_request: Request): Promise<CronResult> {
 
   let sent = 0;
   let suppressed = 0;
+  // Confirmed-broker rows whose rancher read failed this run — waiting for
+  // the next hourly tick, not dropped and not claimed (see the wait gate).
+  let brokerWaits = 0;
   const errors: string[] = [];
 
   for (const r of selected) {
@@ -527,34 +584,6 @@ async function realHandler(_request: Request): Promise<CronResult> {
       }
       const buyerEmail = String(buyer['Email'] || '').trim().toLowerCase();
       if (!buyerEmail) continue;
-
-      const priorCount = Number(r['Deposit Nudge Count']) || 0;
-      // Copy variant. Rail A keeps its original 2-touch mapping (1 = urgency,
-      // 2 = "last note"). Rail B (P5′) has up to 6 touches, so "last note" on
-      // touch 2 would be a lie — the decay touch is the true final; everything
-      // between touch 1 and decay is the honest 'mid' check-in.
-      const isRailB =
-        !String(r['Deposit Requested At'] || '').trim() &&
-        !!String(r['Deposit Invite Sent At'] || '').trim();
-      let touch: 1 | 2 | 'mid';
-      if (priorCount === 0) touch = 1;
-      else if (isRailB) touch = depositAbandonPlan(r, nowMs)?.tier === 'decay' ? 2 : 'mid';
-      else touch = 2;
-
-      // CLAIM BEFORE SEND + verify-persist (fields-missing abort).
-      const updated: any = await updateRecord(TABLES.REFERRALS, r.id, {
-        'Deposit Nudge Last Sent At': new Date().toISOString(),
-        'Deposit Nudge Count': priorCount + 1,
-      });
-      if (!updated || !updated['Deposit Nudge Last Sent At']) {
-        return {
-          status: 'error',
-          recordsTouched: sent,
-          notes:
-            `ABORT: nudge stamp did not persist for ${r.id} — verify "Deposit Nudge Last Sent At" ` +
-            `(dateTime) + "Deposit Nudge Count" (number) exist on Referrals. sentBeforeAbort=${sent}`,
-        };
-      }
 
       // Rancher context for the copy (name + phone) AND the rail. Best-effort
       // on the name; NEVER best-effort on the rail — resolveReferralRail fails
@@ -596,6 +625,47 @@ async function realHandler(_request: Request): Promise<CronResult> {
       const confirmedBroker =
         referralCarriesBrokerMarker(r) ||
         (!!loadedRancher && railForLoadedRancher(loadedRancher) === 'broker');
+      // BROKER-WAIT PARITY (#635 gave this to rail C + qualified-no-action;
+      // the rails A/B loop claimed BEFORE the rancher read, so a marker row
+      // whose rancher read failed burned a lifetime-capped touch on a CTA into
+      // the broker checkout's fail-closed refusal). A confirmed-broker row
+      // with no loaded rancher WAITS for the next hourly run — skip BEFORE the
+      // claim below, so no touch is consumed. Connect rows are untouched: an
+      // unreadable rancher there still nudges with the safe Connect CTA and
+      // no phone (rail fails closed to 'broker' for the phone only).
+      if (confirmedBroker && !loadedRancher) {
+        brokerWaits++;
+        continue;
+      }
+
+      const priorCount = Number(r['Deposit Nudge Count']) || 0;
+      // Copy variant. Rail A keeps its original 2-touch mapping (1 = urgency,
+      // 2 = "last note"). Rail B and the broker lane ride the planner (up to 6
+      // touches), so "last note" on touch 2 would be a lie — the decay touch
+      // is the true final; everything between touch 1 and decay is the honest
+      // 'mid' check-in. brokerDepositChasePlan covers the broker rows rail B
+      // can't see (checkout-minted 'Deposit Requested At' — those are NOT
+      // rail A rows either, so the old requested-set ⇒ touch-2 mapping lied).
+      const plan = depositAbandonPlan(r, nowMs) ?? brokerDepositChasePlan(r, nowMs);
+      let touch: 1 | 2 | 'mid';
+      if (priorCount === 0) touch = 1;
+      else if (plan) touch = plan.tier === 'decay' ? 2 : 'mid';
+      else touch = 2;
+
+      // CLAIM BEFORE SEND + verify-persist (fields-missing abort).
+      const updated: any = await updateRecord(TABLES.REFERRALS, r.id, {
+        'Deposit Nudge Last Sent At': new Date().toISOString(),
+        'Deposit Nudge Count': priorCount + 1,
+      });
+      if (!updated || !updated['Deposit Nudge Last Sent At']) {
+        return {
+          status: 'error',
+          recordsTouched: sent,
+          notes:
+            `ABORT: nudge stamp did not persist for ${r.id} — verify "Deposit Nudge Last Sent At" ` +
+            `(dateTime) + "Deposit Nudge Count" (number) exist on Referrals. sentBeforeAbort=${sent}`,
+        };
+      }
 
       const cutTier = String(r['Order Type'] || 'share').replace(/\s*cow\s*$/i, '').trim() || 'share';
       const buyerFirst = String(buyer['Full Name'] || r['Buyer Name'] || 'there').split(/\s+/)[0];
@@ -674,7 +744,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
       urgency: 'normal',
       kind: 'other',
       summary: `deposit-request-nudge: ${totalSent} buyer nudge${totalSent === 1 ? '' : 's'} sent`,
-      detail: `request=${candidates.length} abandon=${abandonCandidates.length} selected=${selected.length} sent=${sent} suppressed=${suppressed + smsRescue.suppressed + reserve.suppressed} errs=${errors.length}${smsRescueNote}${reserveNote}`,
+      detail: `request=${candidates.length} abandon=${abandonCandidates.length} broker=${brokerCandidates.length} selected=${selected.length} sent=${sent} suppressed=${suppressed + smsRescue.suppressed + reserve.suppressed} brokerWaits=${brokerWaits} errs=${errors.length}${smsRescueNote}${reserveNote}`,
       dedupeKey: 'deposit-request-nudge-summary',
       dedupeWindowMs: 6 * 60 * 60 * 1000,
     }).catch(() => {});
@@ -684,8 +754,8 @@ async function realHandler(_request: Request): Promise<CronResult> {
     status: errors.length || reserve.aborted || smsRescue.aborted ? 'partial' : 'success',
     recordsTouched: totalSent,
     notes:
-      `candidates=${candidates.length} selected=${selected.length} sent=${sent} ` +
-      `suppressed=${suppressed + smsRescue.suppressed + reserve.suppressed} errs=${errors.length}` +
+      `candidates=${candidates.length} broker=${brokerCandidates.length} selected=${selected.length} sent=${sent} ` +
+      `suppressed=${suppressed + smsRescue.suppressed + reserve.suppressed} brokerWaits=${brokerWaits} errs=${errors.length}` +
       smsRescueNote +
       reserveNote +
       (errors.length ? ` err1=${errors[0].slice(0, 80)}` : ''),
