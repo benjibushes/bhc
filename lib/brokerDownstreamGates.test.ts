@@ -703,13 +703,164 @@ test('TIER TRUTH send-onboarding: the agreement bullet derives the rate from the
 
 test('TIER TRUTH: telegram rancher-email footers derive the commission rate from the loaded rancher', () => {
   const src = read('../app/api/webhooks/telegram/route.ts');
-  // Both footers (approve_ intro + nudgerancher) derive; the tier-blind 10%
-  // literal is dead. A genuinely legacy/no-tier rancher still renders "10%"
-  // (env default) — via the derivation, never a literal.
+  // All three footers (approve_ intro + nudgerancher + assignto intro) derive;
+  // the tier-blind 10% literal is dead. A genuinely legacy/no-tier rancher
+  // still renders "10%" (env default) — via the derivation, never a literal.
   assert.equal(
     src.split('commissionPercentLabelForRancher(rancher)').length - 1,
-    2,
-    'both footers must derive from the loaded rancher',
+    3,
+    'all three footers must derive from the loaded rancher',
   );
   assert.doesNotMatch(src, /10% commission/, 'a tier-blind 10% footer came back');
+});
+
+// ---------------------------------------------------------------------------
+// 10. TELEGRAM WAVE 0-B (2026-08-18) — the operator-tap rails the #634 sweep
+//     missed inside app/api/webhooks/telegram/route.ts itself: the three
+//     mass-send pools (F2), the matchfire/assignto Connect double intros
+//     (F11), and the rail-blind markpaid "commission payment received"
+//     receipt (F14). Same convention as sections 6/7/9: source pins.
+// ---------------------------------------------------------------------------
+
+const telegramRouteSrc = () => read('../app/api/webhooks/telegram/route.ts');
+
+test('GATE telegram mass-send pools: rcheckin/blitz/bulkonboard _send pools exclude a represented ranch, counted', () => {
+  const src = telegramRouteSrc();
+  // Rancher-row pools gate on the raw rail predicate, like trust-promotion and
+  // first-touch-sla — NOT on Active Status, which a represented ranch leaves
+  // BLANK (app/api/partner/represent never writes it), so the existing
+  // Suspended/Rejected line can never bite.
+  assert.match(src, /import \{ isBrokerRancher \} from '@\/lib\/brokerRail'/);
+  const pools: Array<[string, string, string]> = [
+    ["else if (callbackData === 'rcheckin_send') {", "else if (callbackData === 'blitz_cancel') {", 'sendRancherCheckIn'],
+    ["else if (callbackData === 'blitz_send') {", "else if (callbackData === 'bulkonboard_cancel') {", 'sendPipelineUpdateEmail'],
+    ["else if (callbackData === 'bulkonboard_send') {", "else if (callbackData?.startsWith('bcsend_')) {", '/send-onboarding'],
+  ];
+  for (const [start, end, sender] of pools) {
+    const a = src.indexOf(start);
+    const b = src.indexOf(end, a);
+    assert.ok(a > -1 && b > a, `${start} branch must exist`);
+    const slice = src.slice(a, b);
+    // The exclusion sits FIRST in the pool filter, and it is counted.
+    const gateIdx = slice.indexOf('if (isBrokerRancher(r)) { brokerSkipped++; return false; }');
+    assert.ok(gateIdx > -1, `${start} pool must count-skip represented ranches`);
+    const statusIdx = slice.indexOf("['Suspended', 'Rejected'].includes");
+    assert.ok(statusIdx > gateIdx, 'the exclusion must precede, and not depend on, Active Status');
+    assert.ok(slice.indexOf(sender, gateIdx) > gateIdx, `${sender} must sit downstream of the exclusion`);
+    // Reported in the completion card, never silent — /bulkfire's convention.
+    assert.match(slice, /Broker-rail skipped: \$\{brokerSkipped\}/, `${start} must report the skip`);
+  }
+});
+
+test('GATE telegram mass-send previews: the "Send to N ranchers" confirm counts exclude broker too', () => {
+  const src = telegramRouteSrc();
+  // Without this the preview lists the represented ranch and the confirm
+  // button promises N sends, then the _send pool skips it and reports N-1 —
+  // an operator staring at a mismatched mass-send count is how bad taps happen.
+  const previews: Array<[string, string]> = [
+    ["else if (text === '/checkin') {", 'rcheckin_send'],
+    ["else if (text === '/blitz') {", 'blitz_send'],
+    ["else if (text === '/bulkonboard') {", 'bulkonboard_send'],
+  ];
+  for (const [start, confirmCb] of previews) {
+    const a = src.indexOf(start);
+    assert.ok(a > -1, `${start} branch must exist`);
+    const b = src.indexOf(confirmCb, a);
+    assert.ok(b > a, `${start} must mint the ${confirmCb} confirm button`);
+    const slice = src.slice(a, b);
+    assert.ok(
+      slice.includes('if (isBrokerRancher(r)) return false;'),
+      `${start} preview pool must exclude represented ranches`,
+    );
+  }
+});
+
+test('GATE telegram matchfire: a represented ranch refuses BEFORE a referral row or either intro exists', () => {
+  const src = telegramRouteSrc();
+  const a = src.indexOf("if (action === 'matchfire') {");
+  const b = src.indexOf("if (action === 'matchcancel') {");
+  assert.ok(a > -1 && b > a);
+  const slice = src.slice(a, b);
+  // No referral exists yet, so the rail comes from the loaded rancher alone —
+  // fail-closed via railForLoadedRancher (an unreadable rancher reads broker).
+  const gateIdx = slice.indexOf("if (railForLoadedRancher(rancher) === 'broker') {");
+  assert.ok(gateIdx > -1, 'the matchfire branch must refuse a broker-rail rancher');
+  assert.match(slice, /Represented ranch — send the deposit link instead\./);
+  // Everything wrong sits AFTER the refusal: the row mint, both intro halves.
+  assert.ok(slice.indexOf('createReferral', gateIdx) > gateIdx, 'no referral row may be minted first');
+  assert.ok(slice.indexOf('sendBuyerIntroNotification', gateIdx) > gateIdx, 'buyer intro must be gated');
+  assert.ok(slice.indexOf('BuyHalfCow Introduction:', gateIdx) > gateIdx, 'rancher intro must be gated');
+  // The operator is pointed at the rail that DOES take money on this ranch.
+  assert.ok(slice.indexOf('/forcematch', gateIdx) > gateIdx, 'the refusal must name the broker routing path');
+});
+
+test('GATE telegram assignto: a represented target refuses BEFORE any capacity move, write, or intro', () => {
+  const src = telegramRouteSrc();
+  const a = src.indexOf("else if (action === 'assignto') {");
+  const b = src.indexOf("else if (action === 'details') {");
+  assert.ok(a > -1 && b > a);
+  const slice = src.slice(a, b);
+  // Marker OR rail — the referral itself may carry the broker marker even
+  // when the tap targets a Connect rancher (that row's economics stay broker).
+  const gateIdx = slice.indexOf("if (referralCarriesBrokerMarker(referral) || railForLoadedRancher(rancher) === 'broker') {");
+  assert.ok(gateIdx > -1, 'the assignto branch must refuse like approve_ does');
+  assert.match(slice, /Represented ranch — send the deposit link instead\./);
+  assert.match(slice, /\/checkout\/\$\{refId\}\/broker/);
+  // The target-rancher read must PRECEDE the refusal, and the refusal must
+  // precede the old-rancher slot decrement — refusing after the DECR would
+  // corrupt capacity on every refused tap.
+  const readIdx = slice.indexOf('getRecordById(TABLES.RANCHERS, newRancherId)');
+  assert.ok(readIdx > -1 && readIdx < gateIdx, 'the rancher read must precede the gate');
+  assert.ok(slice.indexOf('decrementCapacity(oldRancherId)', gateIdx) > gateIdx, 'no capacity move before the refusal');
+  assert.ok(slice.indexOf('updateRecord(TABLES.REFERRALS', gateIdx) > gateIdx, 'no referral write before the refusal');
+  assert.ok(slice.indexOf('sendBuyerIntroNotification', gateIdx) > gateIdx, 'buyer intro must be gated');
+  assert.ok(slice.indexOf('BuyHalfCow Introduction:', gateIdx) > gateIdx, 'rancher intro must be gated');
+});
+
+test('TIER TRUTH telegram assignto: the reassign intro carries the same tier-true footer approve_ has', () => {
+  const src = telegramRouteSrc();
+  const a = src.indexOf("else if (action === 'assignto') {");
+  const b = src.indexOf("else if (action === 'details') {");
+  const slice = src.slice(a, b);
+  // approve_'s intro discloses the commission; assignto's identical intro
+  // disclosed nothing — same email, less truth. Derived, never a literal.
+  assert.match(slice, /\$\{commissionPercentLabelForRancher\(rancher\)\} commission on BHC referral sales\./);
+});
+
+test('GATE telegram markpaid: "commission payment received" only ever goes out on the legacy invoice rail', () => {
+  const src = telegramRouteSrc();
+  const a = src.indexOf("else if (action === 'markpaid') {");
+  const b = src.indexOf("else if (action === 'thankrancher') {");
+  assert.ok(a > -1 && b > a);
+  const slice = src.slice(a, b);
+  // Same predicate as the close-reply invoice skip — one rail question.
+  assert.match(slice, /const \{ isPostCloseInvoiceRail, isBrokerReferralRow \} = await import\('@\/lib\/commission'\);/);
+  const gateIdx = slice.indexOf('if (!isPostCloseInvoiceRail(ref)) {');
+  assert.ok(gateIdx > -1, 'markpaid must consult the rail before asserting a payment');
+  // The already-paid idempotency guard stays FIRST (a pre-belt stamped row
+  // still short-circuits)…
+  const idemIdx = slice.indexOf("if (ref['Commission Paid'] === true) {");
+  assert.ok(idemIdx > -1 && idemIdx < gateIdx, 'the idempotency guard stays first');
+  // …and on a non-invoice rail NOTHING below the gate runs: no Commission
+  // Paid stamp (an unpaid broker row's receivable dies with that stamp — see
+  // partitionUnpaidByRail), no "Commission received" receipt email.
+  assert.ok(slice.indexOf("'Commission Paid': true", gateIdx) > gateIdx, 'no stamp on a non-invoice rail');
+  assert.ok(slice.indexOf('Commission received', gateIdx) > gateIdx, 'no receipt on a non-invoice rail');
+  // The acknowledgement is honest about BOTH non-invoice rails.
+  assert.match(slice, /the deposit IS the commission/);
+  assert.match(slice, /already collected from the buyer at deposit/);
+});
+
+test('GATE markpaid render: the Mark Paid button hides when the close did not ride the invoice rail', () => {
+  const tg = read('./telegram.ts');
+  // Optional and default-render: the three sibling close paths that also call
+  // sendTelegramSaleCelebration are out of this wave's scope, so an absent
+  // flag must keep their button (the markpaid handler gate is their belt).
+  assert.match(tg, /postCloseInvoiceRail\?: boolean;/);
+  assert.match(tg, /data\.postCloseInvoiceRail === false\n\s*\? \[\]/);
+  assert.match(tg, /\{ text: '💰 Mark Paid', callback_data: `markpaid_\$\{data\.referralId\}` \}/);
+  // The close-reply path in the telegram route passes the rail it already
+  // computed for the invoice skip — the two decisions can never disagree.
+  const route = telegramRouteSrc();
+  assert.match(route, /postCloseInvoiceRail: !skipLegacyInvoice,/);
 });

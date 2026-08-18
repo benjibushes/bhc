@@ -330,6 +330,17 @@ export async function sendTelegramSaleCelebration(data: {
   monthlyCommission: number;
   lifetimeWins: number;
   lifetimeCommission: number;
+  /**
+   * May this close ever fire a post-close commission invoice?
+   * (lib/commission.isPostCloseInvoiceRail — legacy rail only.) When FALSE the
+   * "💰 Mark Paid" button is not rendered: on the deposit rail the fee was
+   * collected from the buyer at deposit, and on the broker rail the deposit IS
+   * the commission, so "commission payment received" is a message with nothing
+   * true to say. OPTIONAL and default-render on purpose — callers that don't
+   * know their rail keep the button, and the markpaid webhook handler refuses
+   * rail-blind taps as the belt.
+   */
+  postCloseInvoiceRail?: boolean;
 }) {
   const banner = data.isFirstSaleForRancher
     ? `🎉🎉🎉 <b>FIRST SALE — ${escapeHtml(data.rancherName.toUpperCase())}</b> 🎉🎉🎉\n\nThis is their first closed deal on BuyHalfCow. Big moment.`
@@ -353,7 +364,10 @@ export async function sendTelegramSaleCelebration(data: {
   const keyboard = {
     inline_keyboard: [
       [
-        { text: '💰 Mark Paid', callback_data: `markpaid_${data.referralId}` },
+        // Only an explicit FALSE hides the button — see postCloseInvoiceRail.
+        ...(data.postCloseInvoiceRail === false
+          ? []
+          : [{ text: '💰 Mark Paid', callback_data: `markpaid_${data.referralId}` }]),
         { text: '🙏 Thank Rancher', callback_data: `thankrancher_${data.referralId}` },
       ],
     ],
