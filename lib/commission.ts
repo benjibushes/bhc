@@ -240,6 +240,84 @@ export function isBrokerReferralRow(ref: any): boolean {
 }
 
 /**
+ * The fee a BROKER row actually carried, in dollars — money-truth reads wave
+ * (2026-08-18). On the broker rail the buyer's deposit goes 100% to BHC and
+ * IS the entire fee (docs: /partner/represent; lib/brokerSettlement stamps
+ * 'BHC Fee Cents' = the whole deposit at settle).
+ *
+ *   paid, fee stamped     → BHC Fee Cents / 100 (the exact captured deposit)
+ *   paid, stamp missing   → Deposit Amount (partial hand-fix after a stamp
+ *                           failure — on this rail deposit ≡ fee by definition)
+ *   unpaid                → 0. NEVER the legacy 'Commission Due' fallback that
+ *                           referralFeeDollars-style readers use: a Commission
+ *                           Due on a broker row is a phantom written by a
+ *                           pre-belt hand-close (see shouldWriteLegacyCommission-
+ *                           Due), and the represented rancher's agreement is
+ *                           "the deposit is the commission, you are never
+ *                           invoiced" — an unpaid deposit means BHC earned
+ *                           NOTHING, so subtracting the phantom would both
+ *                           understate the rancher's net and contradict the
+ *                           "Commission Owed $0" the dashboard correctly shows.
+ *
+ * Tolerates raw Airtable ('BHC Fee Cents'), shaped dashboard (bhc_fee_cents),
+ * and camelCase EarningsRow (bhcFeeCents) key forms, like its rail siblings.
+ */
+export function brokerFeeDollars(ref: any): number {
+  const feeCents = Number(ref?.['BHC Fee Cents'] ?? ref?.bhc_fee_cents ?? ref?.bhcFeeCents);
+  if (Number.isFinite(feeCents) && feeCents > 0) return Math.round(feeCents) / 100;
+  // referralRail === 'tier_v2' ⇔ Deposit Paid At stamped (all key forms).
+  if (referralRail(ref) === 'tier_v2') {
+    const deposit = Number(ref?.['Deposit Amount'] ?? ref?.deposit_amount ?? ref?.depositAmount);
+    if (Number.isFinite(deposit) && deposit > 0) return deposit;
+  }
+  return 0;
+}
+
+/**
+ * THE per-row net every rancher-facing money surface reads — money-truth
+ * reads wave (2026-08-18). One function so the dashboard netEarnings sum, the
+ * completed-sales table, the "you keep 100%" banner predicate, and the
+ * earnings CSV can never disagree about what a single row netted:
+ *
+ *   broker row (Match Type 'Broker — Deposit'):
+ *     net = sale − brokerFeeDollars. Paid ⇒ sale − the deposit BHC kept
+ *     (its Deposit Paid At stamp otherwise reads tier_v2 → full sale,
+ *     OVERSTATED by the deposit). Unpaid hand-close ⇒ full sale (a legacy
+ *     read subtracts the phantom Commission Due, UNDERSTATED).
+ *   tier_v2 deposit row: full sale (fee was buyer-paid on top at deposit).
+ *   legacy / off-rail row: sale − Commission Due (byte-identical old math).
+ *
+ * Accepts raw Airtable, shaped dashboard, and camelCase row key forms.
+ * DISPLAY ONLY — never used on a charge path.
+ */
+export function referralNetDollars(ref: any): number {
+  const sale = Number(ref?.['Sale Amount'] ?? ref?.sale_amount ?? ref?.saleAmount) || 0;
+  if (isBrokerReferralRow(ref)) {
+    return netEarningsFor('broker', sale, brokerFeeDollars(ref));
+  }
+  const commission = Number(ref?.['Commission Due'] ?? ref?.commission_due ?? ref?.commissionDue) || 0;
+  return netEarningsFor(referralRail(ref), sale, commission);
+}
+
+/**
+ * Did the rancher keep 100% of the price on EVERY closed-won row? — the
+ * "You keep 100% of your price" banner predicate (money-truth reads wave,
+ * 2026-08-18). The banner sits on the same screen as Total Revenue and Net
+ * Earnings; when any Closed Won row netted below its sale (a legacy invoice
+ * row, an off-rail tier_v2 close, or a broker-era deal whose deposit came out
+ * of the price), the unqualified claim is visibly false — revenue ≠ net two
+ * cards up. Pass the CLOSED WON rows only. Empty history ⇒ true (a new
+ * Connect rancher sees the promise; it is true of every deal they will close
+ * on the rail).
+ */
+export function netsFullSaleOnEveryClosedWon(closedWonRows: any[]): boolean {
+  return (closedWonRows || []).every((r) => {
+    const sale = Number(r?.['Sale Amount'] ?? r?.sale_amount ?? r?.saleAmount) || 0;
+    return referralNetDollars(r) >= sale;
+  });
+}
+
+/**
  * May THIS row ever fire a post-close commission invoice? — the ONE rail
  * question every close-time `createCommissionInvoice` site must ask
  * (confirm-payment, dashboard my-leads close, quick-action, Telegram close).

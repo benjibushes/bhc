@@ -11,6 +11,7 @@ import {
   EARNINGS_CSV_HEADERS,
   type EarningsRow,
 } from './earningsCsv';
+import { BROKER_MATCH_TYPE } from './brokerRail';
 
 function row(over: Partial<EarningsRow> = {}): EarningsRow {
   return {
@@ -158,6 +159,84 @@ test('buildEarningsCsv mixes share + product rows without cross-contamination', 
   const lines = csv.trimEnd().split('\r\n');
   assert.match(lines[1], /^share,refA,.*2000\.00,200\.00,1800\.00/);
   assert.match(lines[2], /^product,ORD-9,.*100\.00,15\.00,85\.00/);
+});
+
+// ── BROKER rows (money-truth reads wave, 2026-08-18) ─────────────────────────
+// Broker rail money model (#523): the buyer's deposit goes 100% to BHC and IS
+// the entire fee; the ranch collects price − deposit at pickup; no commission
+// invoice ever. The CSV — a tax-adjacent document — must net broker rows that
+// way: paid-deposit → sale − deposit (a Deposit Paid At stamp otherwise reads
+// tier_v2 → full sale, OVERSTATED by the deposit BHC kept); hand-closed unpaid
+// → full sale (a legacy read subtracts a phantom Commission Due, UNDERSTATED).
+
+test('buildEarningsCsv BROKER paid-deposit row: Net = sale − the deposit BHC kept; Commission = the deposit', () => {
+  const csv = buildEarningsCsv(
+    [
+      row({
+        matchType: BROKER_MATCH_TYPE,
+        saleAmount: 3000,
+        commissionDue: 0, // never written on this rail
+        depositPaidAt: '2026-08-10T12:00:00.000Z',
+        bhcFeeCents: 50000, // the whole $500 deposit, stamped at settle
+        depositAmount: 500,
+      }),
+    ],
+    'legacy',
+  );
+  const lines = csv.trimEnd().split('\r\n');
+  // Sale 3000.00, Commission 500.00 (the deposit IS the fee), Net 2500.00 —
+  // Sale − Commission = Net holds for the sheet.
+  assert.match(lines[1], /3000\.00,500\.00,2500\.00/);
+});
+
+test('buildEarningsCsv BROKER hand-closed (deposit never paid): Net = FULL sale, phantom Commission Due scrubbed', () => {
+  const csv = buildEarningsCsv(
+    [
+      row({
+        matchType: BROKER_MATCH_TYPE,
+        saleAmount: 3000,
+        commissionDue: 300, // phantom, written by a pre-belt hand-close
+        depositPaidAt: '',
+      }),
+    ],
+    'legacy',
+  );
+  const lines = csv.trimEnd().split('\r\n');
+  // BHC collected nothing and the agreement says "never invoiced" — the tax
+  // file must show Commission 0.00 and Net = the full sale.
+  assert.match(lines[1], /3000\.00,0\.00,3000\.00/);
+});
+
+test('buildEarningsCsv BROKER paid row missing the fee stamp falls back to Deposit Amount', () => {
+  const csv = buildEarningsCsv([
+    row({
+      matchType: BROKER_MATCH_TYPE,
+      saleAmount: 3000,
+      commissionDue: 0,
+      depositPaidAt: '2026-08-10T12:00:00.000Z',
+      bhcFeeCents: 0, // partial hand-fix: fee stamp lost
+      depositAmount: 450,
+    }),
+  ]);
+  assert.match(csv.trimEnd().split('\r\n')[1], /3000\.00,450\.00,2550\.00/);
+});
+
+test('buildEarningsCsv BROKER rows ignore fallbackRail entirely', () => {
+  const brokerRow = row({
+    matchType: BROKER_MATCH_TYPE,
+    saleAmount: 3000,
+    commissionDue: 300,
+    depositPaidAt: '',
+  });
+  assert.equal(buildEarningsCsv([brokerRow], 'legacy'), buildEarningsCsv([brokerRow], 'tier_v2'));
+});
+
+test('buildEarningsCsv non-broker rows are byte-identical with matchType present-but-not-broker', () => {
+  const a = buildEarningsCsv([row({ matchType: '' })]);
+  const b = buildEarningsCsv([row({ matchType: 'Nearest Match' })]);
+  const c = buildEarningsCsv([row()]);
+  assert.equal(a, c);
+  assert.equal(b, c);
 });
 
 // Money-truth trail (2026-07-28): the settled final-invoice amount rides the

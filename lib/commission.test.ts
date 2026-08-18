@@ -27,6 +27,9 @@ import {
   shouldWriteLegacyCommissionDue,
   isBrokerReferralRow,
   isPostCloseInvoiceRail,
+  brokerFeeDollars,
+  referralNetDollars,
+  netsFullSaleOnEveryClosedWon,
 } from './commission';
 import { BROKER_MATCH_TYPE } from './brokerRail';
 
@@ -449,4 +452,99 @@ test('broker row net: sale − the deposit BHC kept, via netEarningsFor non-tier
   const sale = 1800;
   const feeDollars = 400; // BHC Fee Cents 40000 — the whole deposit
   assert.equal(netEarningsFor('broker', sale, feeDollars), 1400); // price − deposit
+});
+
+// ── brokerFeeDollars: the fee a BROKER row actually carried ─────────────────
+
+test('brokerFeeDollars: paid row → the BHC Fee Cents stamp (the whole deposit), in dollars', () => {
+  assert.equal(brokerFeeDollars({ 'BHC Fee Cents': 50000, 'Deposit Paid At': 't', 'Deposit Amount': 500 }), 500);
+  // shaped dashboard read
+  assert.equal(brokerFeeDollars({ bhc_fee_cents: 50000, deposit_paid_at: 't' }), 500);
+  // camelCase (EarningsRow)
+  assert.equal(brokerFeeDollars({ bhcFeeCents: 50000, depositPaidAt: 't' }), 500);
+});
+
+test('brokerFeeDollars: paid row missing the fee stamp falls back to Deposit Amount (on this rail the deposit IS the fee)', () => {
+  assert.equal(brokerFeeDollars({ 'Deposit Paid At': '2026-08-10T00:00:00Z', 'Deposit Amount': 450 }), 450);
+  assert.equal(brokerFeeDollars({ deposit_paid_at: 't', deposit_amount: 450 }), 450);
+  assert.equal(brokerFeeDollars({ depositPaidAt: 't', depositAmount: 450 }), 450);
+});
+
+test('brokerFeeDollars: UNPAID row → 0, NEVER the phantom Commission Due (nothing was collected; never invoiced)', () => {
+  assert.equal(brokerFeeDollars({ 'Commission Due': 300 }), 0);
+  assert.equal(brokerFeeDollars({ 'Commission Due': 300, 'Deposit Amount': 500 }), 0); // amount without a paid stamp is not a fee
+  assert.equal(brokerFeeDollars({}), 0);
+  assert.equal(brokerFeeDollars({ 'BHC Fee Cents': 'abc' }), 0);
+});
+
+// ── referralNetDollars: THE per-row net every rancher money surface reads ───
+
+test('referralNetDollars: PAID broker row nets sale − the deposit BHC kept (not the full sale)', () => {
+  const r = {
+    'Match Type': BROKER_MATCH_TYPE,
+    'Sale Amount': 3000,
+    'Deposit Paid At': 't',
+    'Deposit Amount': 500,
+    'BHC Fee Cents': 50000,
+    'Commission Due': 0,
+  };
+  assert.equal(referralNetDollars(r), 2500);
+});
+
+test('referralNetDollars: UNPAID hand-closed broker row nets the FULL sale — phantom Commission Due ignored', () => {
+  const r = { 'Match Type': BROKER_MATCH_TYPE, 'Sale Amount': 3000, 'Commission Due': 300 };
+  assert.equal(referralNetDollars(r), 3000);
+});
+
+test('referralNetDollars: tier_v2 deposit row keeps 100% (byte-identical to the old branch)', () => {
+  assert.equal(referralNetDollars({ 'Sale Amount': 2000, 'Commission Due': 0, 'Deposit Paid At': 't' }), 2000);
+});
+
+test('referralNetDollars: legacy/off-rail row nets out the commission (byte-identical to the old branch)', () => {
+  assert.equal(referralNetDollars({ 'Sale Amount': 2000, 'Commission Due': 200 }), 1800);
+});
+
+test('referralNetDollars: shaped dashboard rows (sale_amount/commission_due/match_type) work identically', () => {
+  assert.equal(
+    referralNetDollars({ match_type: BROKER_MATCH_TYPE, sale_amount: 3000, deposit_paid_at: 't', bhc_fee_cents: 50000 }),
+    2500,
+  );
+  assert.equal(referralNetDollars({ sale_amount: 2000, commission_due: 200 }), 1800);
+});
+
+// ── netsFullSaleOnEveryClosedWon: the "You keep 100%" banner predicate ──────
+
+test('banner predicate: pure-Connect history (every close deposit-railed) → banner claim TRUE', () => {
+  const rows = [
+    { 'Sale Amount': 2000, 'Commission Due': 0, 'Deposit Paid At': 't' },
+    { sale_amount: 1500, commission_due: 0, deposit_paid_at: 't' },
+  ];
+  assert.equal(netsFullSaleOnEveryClosedWon(rows), true);
+});
+
+test('banner predicate: a legacy-netted close present → banner claim FALSE (suppress/qualify)', () => {
+  // The live example: revenue 6687.23 vs net 6318.40 on the same screen as
+  // "Commission Owed $0" — one off-rail close netted as legacy.
+  const rows = [
+    { 'Sale Amount': 2998.93, 'Commission Due': 0, 'Deposit Paid At': 't' },
+    { 'Sale Amount': 3688.3, 'Commission Due': 368.83 }, // off-rail: nets below sale
+  ];
+  assert.equal(netsFullSaleOnEveryClosedWon(rows), false);
+});
+
+test('banner predicate: a PAID broker-era close also falsifies "you keep 100%" (deposit came out of the price)', () => {
+  const rows = [
+    { 'Sale Amount': 2000, 'Commission Due': 0, 'Deposit Paid At': 't' },
+    { 'Match Type': BROKER_MATCH_TYPE, 'Sale Amount': 3000, 'Deposit Paid At': 't', 'BHC Fee Cents': 50000 },
+  ];
+  assert.equal(netsFullSaleOnEveryClosedWon(rows), false);
+});
+
+test('banner predicate: an off-rail close with a $0 commission does not contradict the claim', () => {
+  const rows = [{ 'Sale Amount': 2000, 'Commission Due': 0 }];
+  assert.equal(netsFullSaleOnEveryClosedWon(rows), true);
+});
+
+test('banner predicate: no closed-won rows yet → claim stands (new Connect rancher sees the promise)', () => {
+  assert.equal(netsFullSaleOnEveryClosedWon([]), true);
 });
