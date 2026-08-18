@@ -263,6 +263,9 @@ export async function POST(
       buyerEmail: email.trim().toLowerCase(),
       buyerPhone: phone?.trim() || '',
       message: message.trim(),
+      // F15 (2026-08-18): the loaded row, so the money-truth footer quotes
+      // THIS rancher's real commission rate instead of a hardcoded 10%.
+      rancher,
     });
 
     // Send Telegram notification

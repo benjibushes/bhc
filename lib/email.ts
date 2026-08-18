@@ -13,17 +13,15 @@ import {
 } from './emailStreams';
 import { getAllRecords, escapeAirtableValue, TABLES } from './airtable';
 import { checkFrequencyCap, logEmailSend } from './emailFrequencyGuard';
-import { JWT_SECRET, FOUNDING_100_CAP } from './secrets';
+import { JWT_SECRET } from './secrets';
 // FOUNDING HERD PRICE TRUTH (comms containment 2026-08-18): the no-budget
 // founder pitch quoted a dead price ladder that the /founders page and
 // checkout would contradict. Every tier price this module states derives
 // from lib/foundersTiers — lib/foundersTiers.test.ts scans this file for
-// hardcoded tier-price literals.
-import {
-  HERD_MONTHLY_DOLLARS,
-  OUTLAW_MONTHLY_DOLLARS,
-  TITLE_FOUNDER_PRICE_LABEL,
-} from './foundersTiers';
+// hardcoded tier-price literals. (Campaign-rewrite v46: the pitch now names
+// only the Herd tier — /founders carries the ladder — so the Herd constant
+// is the one price this module still interpolates.)
+import { HERD_MONTHLY_DOLLARS } from './foundersTiers';
 import {
   getOperatorBookingStatus,
   OPERATOR_BOOKING_FALLBACK_URL,
@@ -55,6 +53,10 @@ import {
   SHARE_WEIGHT_RANGE_CU_FT,
   shareTierFromOrderType,
 } from './beefWeights';
+// Campaign-rewrite F15 (2026-08-18): the inquiry/contact footers hardcoded
+// "our 10%" for every rancher — a tier_v2 Pasture (7%) or Ranch (3%) rancher
+// read a rate the charge path would contradict. Derived label, #639 pattern.
+import { commissionPercentLabelForRancher } from './tiers';
 // P4 (marketing revamp 2026-08): operation-type labels — "local share —
 // serves [state]" on the share intro's pricing block, from the ONE shared
 // classifier (lib/operationType). Null state → the line renders nothing.
@@ -797,7 +799,12 @@ export async function sendConsumerApproval(data: {
     <p><strong>How It Works:</strong></p>
     <ol style="color: #6B4F3F; line-height: 2;">
       <li><strong>Confirm timing</strong> — In a separate email I'll ask if you're ready to buy in the next 1–2 months. One click on "Yes — Ready to Buy" is all it takes.</li>
-      <li><strong>Personal introduction</strong> — As soon as you click yes, I match you with a real rancher in your state. They'll reach out within 24–48 hours.</li>
+      ${''/* Campaign-rewrite (2026-08-18): "They'll reach out within 24–48
+           hours" was the same rail-false, clock-unbacked promise the fleet
+           struck from sendWelcomeAndReadyToBuy (v21) — a represented ranch
+           never reaches out and no cron backs the clock on Connect either.
+           Same rail-neutral promise as the rest of the welcome family. */}
+      <li><strong>Personal introduction</strong> — As soon as you click yes, I match you with a real ranch in your state. Your match lands by email within minutes — the ranch, current pricing, and a reserve link.</li>
       <li><strong>Buy direct</strong> — You purchase directly from the rancher at their price. No middlemen, no markup.</li>
     </ol>
     <div class="divider"></div>
@@ -890,19 +897,27 @@ export async function sendWelcomeAndReadyToBuy(data: {
   const first = data.firstName || 'there';
   const stateLabel = data.state || 'your state';
 
+  // Campaign-rewrite (2026-08-18): the old branch promised direct contact
+  // info, a scheduling link, and a 24–48h rancher reach-out — all three are
+  // structurally false on the broker rail (a represented ranch never reaches
+  // out; contact info is deliberately withheld) and the reach-out clock has no
+  // cron behind it on Connect either. The promise is now rail-neutral around
+  // what EVERY rail actually delivers within minutes of YES: the ranch,
+  // current pricing, and a reserve button. YES button, subjects, progress bar,
+  // and the unserved branch are byte-identical to the previous version.
   const ctaBlock = data.rancherAvailable && data.engageUrl
     ? `
       <div class="q"><strong>One question:</strong> are you ready to buy in the next 1–2 months?</div>
-      <p>If yes, click below. I'll personally match you with a real rancher in ${esc(stateLabel)} and you'll get an email within minutes with everything you need:</p>
+      <p>If yes, click below. I'll personally match you with a real ranch in ${esc(stateLabel)} and your match lands by email within minutes with everything you need:</p>
       <ul style="color:#2A2A2A;line-height:1.9;padding-left:22px;">
-        <li><strong>Direct contact info</strong> — name, email, phone. Plus a 15-min scheduling link if your rancher offers one (most do).</li>
-        <li><strong>Current pricing + processing date</strong> right in the email so you don't have to ask.</li>
-        <li><strong>A reserve-your-share button</strong> if your rancher takes deposits — secures your slot for the next processing run.</li>
+        <li><strong>The ranch</strong> — who they are and how the beef is raised.</li>
+        <li><strong>Current pricing + timing</strong> right in the email so you don't have to ask.</li>
+        <li><strong>A reserve button</strong> — your deposit holds a share for the next processing run, fully refundable until the ranch confirms your order.</li>
       </ul>
-      <p style="font-size:14px;color:#2A2A2A;">By clicking <strong>Yes</strong> you're confirming you want to be contacted. The rancher will know you're coming and reach out within 24–48 hours. Next move is yours: schedule a call, pay a deposit, or reply with questions.</p>
+      <p style="font-size:14px;color:#2A2A2A;">By clicking <strong>Yes</strong> you're confirming you want the match. Next move is yours: reserve your share, or reply with questions — a real person answers.</p>
       <div style="text-align:center;margin:30px 0;">
         <a href="${data.engageUrl}" class="cta">Yes — Ready to Buy</a>
-        <p style="font-size:13px;color:#A7A29A;margin-top:10px;">One click confirms. We only introduce ranchers to confirmed buyers — keeps quality high on both sides.</p>
+        <p style="font-size:13px;color:#A7A29A;margin-top:10px;">One click confirms. We only make introductions for confirmed buyers — keeps quality high on both sides.</p>
       </div>
       <p style="font-size:14px;color:#6B4F3F;">Not ready yet? Just don't click. You stay on the list, no pressure.</p>
     `
@@ -1007,7 +1022,11 @@ export async function sendWaitingActivationNudge(data: {
 }): Promise<{ success: boolean; suppressed?: boolean; reason?: string }> {
   const first = data.firstName || 'there';
   const stateLabel = data.state ? esc(data.state) : 'your area';
-  const subject = 'Your beef match is waiting — 2 minutes to finish';
+  // Campaign-rewrite (2026-08-18): "you started reserving a beef share" was a
+  // truth stretch — the WAITING pool is buyers who signed up and never
+  // finished qualification; most never started any reservation. Subject
+  // downcased per the lowercase rule; signature em dash unified.
+  const subject = 'your beef match is waiting — 2 minutes to finish';
   return guardedSend({
     templateName: 'sendWaitingActivationNudge',
     recipientEmail: data.email,
@@ -1021,7 +1040,7 @@ export async function sendWaitingActivationNudge(data: {
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 18px}p{margin:14px 0;color:#2A2A2A}.cta{display:inline-block;padding:16px 36px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px}.divider{height:1px;background:#A7A29A;margin:24px 0}</style>
 </head><body><div class="container">
   <h1>Hey ${esc(first)} —</h1>
-  <p>A while back you started reserving a beef share with BuyHalfCow, but never finished the last step.</p>
+  <p>A while back you signed up with BuyHalfCow to get matched with a rancher, but never finished the last step.</p>
   <p>Qualified ranchers in ${stateLabel} have open slots right now. Finishing takes about two minutes — a few quick questions so I know your size, timing, and storage, and can match you with the right rancher.</p>
   <p>No payment. It just tells me what you actually want.</p>
   <div style="text-align:center;margin:30px 0;">
@@ -1029,7 +1048,7 @@ export async function sendWaitingActivationNudge(data: {
   </div>
   <p style="font-size:14px;color:#6B4F3F;">If the timing's off, no problem — just reply and tell me.</p>
   <div class="divider"></div>
-  <p style="font-size:12px;color:#A7A29A;">- Ben<br>BuyHalfCow</p>
+  <p style="font-size:12px;color:#A7A29A;">— Ben<br>BuyHalfCow</p>
 </div></body></html>`,
     }),
   });
@@ -1134,10 +1153,28 @@ export async function sendFounderLetterWaiting(data: {
   email: string;
   state: string;
   letterNumber: number; // 1 = Day 7, 2 = Day 30, 3+ = monthly
+  // Campaign-rewrite (2026-08-18): live counts pulled by the CALLER at cron
+  // time (same pattern as sendBackerMonthlyLetter's stats payload). A founder
+  // letter's entire currency is that it can't be faked — the old letters
+  // rolled unverifiable claims ("processing facility tours", "active
+  // conversations in your area") every month forever, and letter 3+ was
+  // byte-identical each month; a real number each month IS the freshness
+  // signal. All optional: missing/zero counts render count-free fallback
+  // lines, never a "0 ranches" claim.
+  stats?: {
+    rancherCount?: number;
+    stateCount?: number;
+    /** WAITING families in THIS buyer's state — rendered only when > 0. */
+    waitingInState?: number;
+  };
 }): Promise<{ success: boolean; error?: any }> {
   const first = data.firstName || 'there';
   const stateLabel = data.state || 'your state';
   const n = data.letterNumber;
+  const rancherCount = data.stats?.rancherCount ?? 0;
+  const stateCount = data.stats?.stateCount ?? 0;
+  const waitingInState = data.stats?.waitingInState ?? 0;
+  const haveNetworkCounts = rancherCount > 0 && stateCount > 0;
 
   // Letter 1 (Day 7) — "what's actually happening" framing
   // Letter 2 (Day 30) — "the ranchers I'm meeting" + mission line
@@ -1148,45 +1185,40 @@ export async function sendFounderLetterWaiting(data: {
     ? `the ranchers I'm meeting are the real deal`
     : `month ${n} update — ${stateLabel} status`;
 
+  // L1: the network line carries live counts when the caller could pull them.
+  const networkToday = haveNetworkCounts
+    ? `The network today: ${rancherCount} ranches across ${stateCount} states, and my whole job is signing the next one — including yours.`
+    : `My whole job right now is signing the next ranch — including yours.`;
+  // L3+: what's-true line — live counts, in-state waiting count only when > 0.
+  const whatsTrue = haveNetworkCounts
+    ? waitingInState > 0
+      ? `What's true right now: ${rancherCount} ranches live across ${stateCount} states, and ${waitingInState} families waiting alongside you in ${esc(stateLabel)}. That waiting list is exactly what I show ranchers to get them to sign — you being on it is doing work.`
+      : `What's true right now: ${rancherCount} ranches live across ${stateCount} states. The ${esc(stateLabel)} waiting list is exactly what I show ranchers to get them to sign — you being on it is doing work.`
+    : `The ${esc(stateLabel)} waiting list is exactly what I show ranchers to get them to sign — you being on it is doing work.`;
+
   const body = n === 1 ? `
   <p>Hey ${esc(first)},</p>
-  <p>Quick update — not marketing, just the real situation.</p>
-  <p>I'm on the road right now visiting ranches, signing new partners, and building the supply chain so that when we match you, it's the right rancher — not just whoever's available.</p>
-  <p><strong>What's happening this week:</strong></p>
-  <ul style="color:#2A2A2A;line-height:2;">
-    <li>Locking down rancher partnerships across multiple states</li>
-    <li>Processing facility tours and agreements</li>
-    <li>Working on getting a rancher live in ${esc(stateLabel)}</li>
-  </ul>
+  <p>Quick update — not marketing, just where things stand.</p>
+  <p>You're on the list for ${esc(stateLabel)}. ${networkToday}</p>
   <p><strong>Two things you can do right now:</strong></p>
   <ol style="color:#2A2A2A;line-height:2;">
-    <li><strong>Follow the build</strong> — I'm documenting everything in real time. Ranch visits, negotiations, the whole thing.</li>
-    <li><strong>Help us expand faster</strong> — Know a rancher in ${esc(stateLabel)} who sells direct? Reply with their name.</li>
+    <li><strong>Follow the build</strong> — I document the ranch visits and signings at <a href="https://www.instagram.com/buyhalfcow" style="color:#0E0E0E;">@buyhalfcow</a> on Instagram.</li>
+    <li><strong>Speed up ${esc(stateLabel)}</strong> — know a rancher near you who sells direct? Reply with the name and I'll reach out personally. A buyer referral is the fastest way a state goes live.</li>
   </ol>
   <p>You'll hear from me the moment there's a rancher ready in ${esc(stateLabel)}. You're already in.</p>
   ` : n === 2 ? `
   <p>Hey ${esc(first)},</p>
-  <p>Quick update from the road. I've been visiting ranches, meeting families who've been raising cattle for generations. These aren't factory farms — these are real operations getting squeezed out by big processors.</p>
+  <p>Quick update from the road. I've been meeting families who've been raising cattle for generations — real operations getting squeezed by the big processors, looking for buyers who care where their beef comes from. That's you.</p>
   <div style="border-left:3px solid #0E0E0E;padding:12px 20px;margin:24px 0;font-style:italic;color:#0E0E0E;background:#FAF8F4;">
     "We're gonna take back American ranching and agriculture." That's not a tagline. That's why I'm doing this.
   </div>
-  <p>The ranchers I'm partnering with want buyers who care about where their beef comes from. That's you.</p>
-  <p><strong>Here's what I need from you:</strong></p>
-  <ul style="color:#2A2A2A;line-height:2;">
-    <li><strong>Reply to this email</strong> — tell me what cut you're looking for (quarter, half, whole). Helps me prioritize ${esc(stateLabel)}.</li>
-    <li><strong>Know a rancher in ${esc(stateLabel)}?</strong> Reply with their name. I'll reach out personally.</li>
-  </ul>
+  <p><strong>One thing I need from you:</strong> hit reply and tell me what you're after — quarter, half, or whole. It tells me exactly how much ${esc(stateLabel)} supply to chase. And if you know a rancher in ${esc(stateLabel)} who sells direct, send the name. I'll reach out personally.</p>
   <p>We're close. More soon.</p>
   ` : `
   <p>Hey ${esc(first)},</p>
-  <p>Month ${n} update. ${esc(stateLabel)} is still in the build phase. Here's where things are:</p>
-  <p><strong>What I'm working on this month:</strong></p>
-  <ul style="color:#2A2A2A;line-height:2;">
-    <li>Active conversations with ranchers in your area</li>
-    <li>Scaling the operation in states already live</li>
-    <li>Building the case studies that recruit the next wave of ranchers</li>
-  </ul>
-  <p>If you've gotten this far, you're committed — and I appreciate it. The wait is real, but so is the network we're building. Reply if you have questions or know a rancher I should meet.</p>
+  <p>Month ${n}. Straight answer: ${esc(stateLabel)} doesn't have a live ranch yet.</p>
+  <p>${whatsTrue}</p>
+  <p>If you've read this far, you're committed, and I don't take that lightly. Same ask as always: know a rancher I should meet? Reply with the name. Nothing signs a rancher like "I already have families in your county."</p>
   `;
 
   return guardedSend({
@@ -1706,11 +1738,14 @@ export async function sendRepeatPurchaseAsk(data: {
       html: `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}p{margin:14px 0;color:#2A2A2A}.footer{margin-top:36px;padding-top:18px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
 </head><body><div class="container">
+  ${''/* Campaign-rewrite (2026-08-18): "their fall harvest" hardcoded a season
+       that is false most of the year, and the first==='there' ternary was a
+       nonsense branch keyed on whether we know the buyer's name. */}
   <p>Hey ${esc(first)},</p>
-  <p>Five months since your last order with ${esc(data.rancherName)}. Most of our buyers are running low about now.</p>
-  <p>Want me to reach out to ${esc(data.rancherName)} about reserving the next ${esc(first === 'there' ? 'share' : 'one')} from their fall harvest? Just reply with "yes" and I'll set it up.</p>
-  <p>Want to try a different rancher this round? Also fine — reply with "different" and I'll match you with someone new.</p>
-  <p>Don't need anything? Reply with "not yet" and I'll check back in a few months.</p>
+  <p>Five months since your order with ${esc(data.rancherName)}. Most families are getting near the bottom of the freezer about now.</p>
+  <p>Want me to ask ${esc(data.rancherName)} about reserving your next share from their next batch? Reply "yes" and I'll set it up.</p>
+  <p>Want to try a different ranch this round? Also fine — reply "different" and I'll match you with someone new.</p>
+  <p>Don't need anything? Reply "not yet" and I'll check back in a few months.</p>
   <p style="margin-top:32px;">— Ben</p>
 </div></body></html>`,
     }),
@@ -2224,6 +2259,17 @@ async function resolveBookUrlGuarded(
 
 // Tier A — WARM. Legacy ranchers who got partway through onboarding
 // (Call Complete / Docs Sent / Verification Complete) but never went live.
+//
+// Campaign-rewrite (2026-08-18): rewritten as a plain personal note — no h1,
+// no pill buttons, text links only. These go to people Ben knows, and 41 of
+// them already got a dead-link email on 06-14; a second obviously-automated
+// touch compounds the burn. The old subject/body ("still want buyers from
+// us" / "to KEEP sending you buyers") claimed a history that doesn't exist —
+// warm-tier ranchers never went live and never got a buyer. The note now
+// owns the stall, leads with what actually changed (deposits up front, money
+// in the rancher's own account, keep 100% of price with the fee paid by the
+// buyer on top), and keeps reply as a first-class door. Rail stays paused —
+// copy only; resuming is Ben's call.
 export async function sendRancherReactivationWarm(data: {
   firstName: string;
   ranchName: string;
@@ -2233,9 +2279,8 @@ export async function sendRancherReactivationWarm(data: {
   campaign?: string;
 }) {
   const first = (data.firstName || '').trim() || 'there';
-  const subject = `still want buyers from us, ${first}?`;
+  const subject = `finishing what we started with ${data.ranchName}`;
   const bookUrl = await resolveBookUrlGuarded('reactivation-warm', 'rancher');
-  const removeUrl = getUnsubscribeUrl(data.email);
   return guardedSend({
     templateName: 'sendRancherReactivationWarm',
     recipientEmail: data.email,
@@ -2253,32 +2298,19 @@ export async function sendRancherReactivationWarm(data: {
           <style>
             body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #0E0E0E; background: #F4F1EC; margin: 0; padding: 20px; }
             .container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border: 1px solid #A7A29A; }
-            h1 { font-family: Georgia, serif; font-size: 26px; margin: 0 0 20px 0; }
-            p { margin: 16px 0; color: #6B4F3F; }
-            .button { display: inline-block; padding: 14px 32px; background: #0E0E0E; color: #F4F1EC !important; text-decoration: none; font-weight: bold; font-size: 13px; letter-spacing: 1px; text-transform: uppercase; }
-            .button-secondary { display: inline-block; padding: 12px 28px; background: #FFFFFF; color: #0E0E0E !important; text-decoration: none; font-weight: bold; font-size: 13px; letter-spacing: 1px; text-transform: uppercase; border: 1px solid #0E0E0E; }
-            .divider { height: 1px; background: #A7A29A; margin: 28px 0; }
-            .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #A7A29A; font-size: 12px; color: #A7A29A; }
+            p { margin: 16px 0; color: #2A2A2A; }
+            a { color: #0E0E0E; }
           </style>
         </head>
         <body>
           <div class="container">
-            <h1>Still want buyers from us?</h1>
             <p>Hi ${esc(first)},</p>
-            <p>We're putting BuyHalfCow ranchers on direct deposits, and I'm running every buyer call myself now.</p>
-            <p>To keep sending you buyers I need about 15 minutes to get ${esc(data.ranchName)} set up on the new flow. Pick a time and I'll handle the rest.</p>
-            <div style="text-align:center;margin:28px 0;">
-              <a href="${esc(bookUrl)}" class="button">Book a 15-min call</a>
-            </div>
-            <p>If you're not taking orders anymore, no problem — remove yourself below and I'll close it out.</p>
-            <div style="text-align:center;margin:14px 0;">
-              <a href="${esc(removeUrl)}" class="button-secondary">Remove me</a>
-            </div>
-            <div class="divider"></div>
-            <p style="font-size:13px;">Reply to this email if you've got a question instead.</p>
-            <div class="footer">
-              <p>— Ben<br>BuyHalfCow</p>
-            </div>
+            <p>Ben here. We got partway through setting up ${esc(data.ranchName)} on BuyHalfCow a while back and it never crossed the finish line — that's on me as much as you.</p>
+            <p>Here's what's changed since: buyers now put a deposit down up front, the money lands in your own bank account, and I run the buyer calls myself. You raise the beef, I bring the family. You keep 100% of your price — our fee rides on top, paid by the buyer.</p>
+            <p>It takes about 15 minutes to finish your setup. Grab a time: <a href="${esc(bookUrl)}">${esc(bookUrl)}</a></p>
+            <p>Or just reply to this email and tell me where you left off — I read every reply.</p>
+            <p>If you're not taking orders anymore, reply "close it" and I'll take ${esc(data.ranchName)} off the roster. No hard feelings.</p>
+            <p style="margin-top:32px;">— Ben<br>BuyHalfCow</p>
           </div>
         </body>
         </html>
@@ -2289,6 +2321,13 @@ export async function sendRancherReactivationWarm(data: {
 
 // Tier B — COLD. Legacy ranchers listed but never onboarded (blank
 // Onboarding Status). Harder cleanup-or-book ask.
+//
+// Campaign-rewrite (2026-08-18): plain-note restyle (see the warm variant's
+// comment). The cold ultimatum now carries a REAL two week archive deadline
+// so the loss aversion is honest — a "closing unless…" with no date is soft.
+// That deadline is a new promise Ben must be willing to execute before the
+// paused rail resumes (his call, with REACTIVATION_CAL_URL verified live
+// first per the 06-14 incident).
 export async function sendRancherReactivationCold(data: {
   firstName: string;
   ranchName: string;
@@ -2299,7 +2338,6 @@ export async function sendRancherReactivationCold(data: {
   const first = (data.firstName || '').trim() || 'there';
   const subject = 'closing your BuyHalfCow listing unless…';
   const bookUrl = await resolveBookUrlGuarded('reactivation-cold', 'rancher');
-  const removeUrl = getUnsubscribeUrl(data.email);
   return guardedSend({
     templateName: 'sendRancherReactivationCold',
     recipientEmail: data.email,
@@ -2317,32 +2355,19 @@ export async function sendRancherReactivationCold(data: {
           <style>
             body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #0E0E0E; background: #F4F1EC; margin: 0; padding: 20px; }
             .container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border: 1px solid #A7A29A; }
-            h1 { font-family: Georgia, serif; font-size: 26px; margin: 0 0 20px 0; }
-            p { margin: 16px 0; color: #6B4F3F; }
-            .button { display: inline-block; padding: 14px 32px; background: #0E0E0E; color: #F4F1EC !important; text-decoration: none; font-weight: bold; font-size: 13px; letter-spacing: 1px; text-transform: uppercase; }
-            .button-secondary { display: inline-block; padding: 12px 28px; background: #FFFFFF; color: #0E0E0E !important; text-decoration: none; font-weight: bold; font-size: 13px; letter-spacing: 1px; text-transform: uppercase; border: 1px solid #0E0E0E; }
-            .divider { height: 1px; background: #A7A29A; margin: 28px 0; }
-            .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #A7A29A; font-size: 12px; color: #A7A29A; }
+            p { margin: 16px 0; color: #2A2A2A; }
+            a { color: #0E0E0E; }
           </style>
         </head>
         <body>
           <div class="container">
-            <h1>Closing your listing unless…</h1>
             <p>Hi ${esc(first)},</p>
-            <p>${esc(data.ranchName)} is listed on BuyHalfCow but we never got you live. I'm cleaning up the roster.</p>
-            <p>Want buyers? Book 15 minutes and I'll set you up on the new direct-deposit flow.</p>
-            <div style="text-align:center;margin:28px 0;">
-              <a href="${esc(bookUrl)}" class="button">Book a 15-min call</a>
-            </div>
-            <p>Otherwise I'll close your listing — no hard feelings. You can remove yourself below.</p>
-            <div style="text-align:center;margin:14px 0;">
-              <a href="${esc(removeUrl)}" class="button-secondary">Remove me</a>
-            </div>
-            <div class="divider"></div>
-            <p style="font-size:13px;">Reply to this email if you've got a question instead.</p>
-            <div class="footer">
-              <p>— Ben<br>BuyHalfCow</p>
-            </div>
+            <p>${esc(data.ranchName)} has been listed on BuyHalfCow for a while, but we never got you live — my fault for letting it sit. I'm cleaning up the roster this month, and I'd rather get you paid than delete the row.</p>
+            <p>The short pitch: families come to us looking for a quarter, half, or whole. When one matches ${esc(data.ranchName)}, they put a deposit down and the money lands in your own bank account. You keep 100% of your price — our fee is added on top and the buyer pays it.</p>
+            <p>15 minutes gets you live: <a href="${esc(bookUrl)}">${esc(bookUrl)}</a></p>
+            <p>Or reply and I'll handle it over email.</p>
+            <p>If you'd rather come off the map, reply "remove" and I'll close it out same day. Otherwise I'll take silence as a no and archive the listing in two weeks — no hard feelings either way.</p>
+            <p style="margin-top:32px;">— Ben<br>BuyHalfCow</p>
           </div>
         </body>
         </html>
@@ -3170,17 +3195,23 @@ export async function sendFoundingHerdWelcome(data: {
   let dynamicBlock = '';
   let subject = '';
 
+  // Campaign-rewrite (2026-08-18): the Herd block said "${dollars} a year" —
+  // but Herd sells monthly AND annual payment links (lib/foundersTiers), so a
+  // monthly backer read a false cadence. The money line is now cadence-safe.
+  // F100's "the price the next 100 won't" was wrong on its face (there is no
+  // next 100 — the cap is forever) and read as manufactured scarcity; the cap
+  // alone is the honest scarcity. Hyphens cleaned per the Ben rule.
   switch (data.tier) {
     case 'Herd':
       subject = `welcome to the founding herd, ${firstRaw}`;
       dynamicBlock = `
-        <p>You're in at <strong>Herd</strong> tier — ${dollars} a year toward
+        <p>You're in at <strong>Herd</strong> tier — ${dollars} toward
         building something that puts ranchers back in front of families. Quiet
         backing, real impact.</p>
-        <p>What you get: monthly founder letter from the road, early heads-up
-        when a new rancher goes live in your state, and a first-print
+        <p>What you get: a monthly founder letter from the road, early word
+        when a new rancher goes live in your state, and a first print
         BuyHalfCow patch in the mail. Your name stays private unless you reply
-        to this email asking to be on the public Wall.</p>
+        asking to be on the public Wall.</p>
       `;
       break;
     case 'Outlaw':
@@ -3198,7 +3229,7 @@ export async function sendFoundingHerdWelcome(data: {
       subject = `welcome to the founding herd, steward ${firstRaw}`;
       dynamicBlock = `
         <p>You're in at <strong>Steward</strong> tier — ${dollars}. This is
-        the level where you start showing up in my decision-making. A
+        the level where your voice starts counting in my decisions. A
         Steward's vote weighs more than a survey response.</p>
         <p>What you get: Outlaw perks plus public placement on the Founders
         Wall and a direct email line to me — flag a rancher to add or a
@@ -3208,26 +3239,26 @@ export async function sendFoundingHerdWelcome(data: {
     case 'Founding 100':
       subject = `welcome to the founding herd, founder #${data.founderNumber || ''}`.trim();
       dynamicBlock = `
-        <p>You're <strong>Founding 100 — ${numberLine}</strong> ${dollars} one-time.
-        Only 100 of these exist. You're getting in at the price the next
-        100 won't.</p>
+        <p>You're <strong>Founding 100 — ${numberLine}</strong> ${dollars},
+        paid once. Only 100 of these will ever exist, and your number is
+        yours for good.</p>
         <p>What you get: numbered placement on the public Founders Wall,
         lifetime priority routing on every rancher we onboard in your state,
-        a first-print BuyHalfCow patch with your number on it, and a 30-min
+        a first print BuyHalfCow patch with your number on it, and a 30 minute
         call with me when you're ready to use it (calendar below).</p>
         <p>Practical: you don't need to do anything else right now. The wall
         placement is live tonight, and your numbered patch rides the first
-        print run (see the p.s. below for where that stands).</p>
+        print run (see the p.s. for where that stands).</p>
       `;
       break;
     case 'Title Founder':
       subject = `welcome to the founding herd, title founder ${firstRaw}`;
       dynamicBlock = `
-        <p>You're a <strong>Title Founder — ${numberLine}</strong> ${dollars}
-        one-time. There are 10 of these. You're one of them.</p>
+        <p>You're a <strong>Title Founder — ${numberLine}</strong> ${dollars},
+        paid once. There are 10 of these. You're one of them.</p>
         <p>What you get: top of the public Founders Wall with name + logo
-        treatment, co-build access (I'll loop you in on the next-rancher /
-        next-state / next-product calls before they're public), lifetime
+        treatment, build access (I'll loop you in on the next rancher, next
+        state, and next product calls before they're public), lifetime
         everything, and a direct line to me — reply to any email and it lands
         with me personally.</p>
         <p>Practical: I'll reach out within 48 hours to get your wall
@@ -3532,7 +3563,17 @@ export async function sendInquiryToRancher(data: {
   message: string;
   interestType: string;
   inquiryId: string;
+  /**
+   * F15 (2026-08-18): the loaded Ranchers row, so the money-truth footer can
+   * quote THIS rancher's real rate instead of a hardcoded 10%. Optional —
+   * callers without the record get the rate-free (still universally true)
+   * fee line rather than a number that might be wrong.
+   */
+  rancher?: any;
 }) {
+  const commissionFooterLine = data.rancher
+    ? `Remember: you keep 100% of your price — our ${commissionPercentLabelForRancher(data.rancher)} is added on top and paid by the buyer.`
+    : `Remember: you keep 100% of your price — our fee is added on top and paid by the buyer.`;
   const interestLabels: Record<string, string> = {
     half_cow: 'Half Cow',
     quarter_cow: 'Quarter Cow',
@@ -3599,7 +3640,7 @@ export async function sendInquiryToRancher(data: {
             <div class="footer">
               <p>This inquiry was facilitated by BuyHalfCow.<br>
               Inquiry Reference: #${data.inquiryId.slice(0, 8)}<br>
-              Remember: you keep 100% of your price — our 10% is added on top and paid by the buyer.</p>
+              ${commissionFooterLine}</p>
             </div>
           </div>
         </body>
@@ -4075,7 +4116,13 @@ export async function sendRancherCheckIn(data: {
     ? "Your verification is in progress."
     : "We'd love to get you up and running.";
 
-  const checkInSubject = `Quick check-in — ${data.ranchName} + BuyHalfCow`;
+  // Campaign-rewrite (2026-08-18): subject downcased; the filler opener
+  // ("just wanted to reach out and see where things stand") and the vendor
+  // vague "buyers in the pipeline looking for ranchers like you" (skirting
+  // the never-promise-leads rule) are gone. The copy now leads with the
+  // reader's status, states Ben's honest motive without promising lead
+  // volume, and keeps the three-button triage exactly as wired.
+  const checkInSubject = `quick check-in — ${data.ranchName} + BuyHalfCow`;
   return guardedSend({
     templateName: 'sendRancherCheckIn',
     recipientEmail: data.email,
@@ -4104,29 +4151,28 @@ export async function sendRancherCheckIn(data: {
         </head>
         <body>
           <div class="container">
-            <h1>Quick Check-In</h1>
             <p>Hi ${esc(data.operatorName)},</p>
-            <p>Ben here from BuyHalfCow. Just wanted to reach out and see where things stand with ${esc(data.ranchName)} joining the network.</p>
+            <p>Ben from BuyHalfCow. Where do things stand with ${esc(data.ranchName)}?</p>
             <p>${statusNote}</p>
-            <p>We've got buyers in the pipeline looking for ranchers like you, and I want to make sure we don't lose momentum.</p>
+            <p>My job is routing families to ranches that are live, and ${esc(data.ranchName)} isn't there yet — I want to fix whichever side is stuck, mine or yours.</p>
 
             <div class="divider"></div>
 
-            <p><strong>Click one option below to let me know where you're at:</strong></p>
+            <p><strong>Tap one and I'll act on it same day:</strong></p>
 
             <div style="text-align: center; margin: 24px 0;">
-              <a href="${confirmUrl}" class="btn btn-primary">I'm Still In — Let's Move Forward</a>
+              <a href="${confirmUrl}" class="btn btn-primary">I'm still in — let's move</a>
             </div>
             <div style="text-align: center; margin: 12px 0;">
-              <a href="${callUrl}" class="btn btn-secondary">I Have Questions — Schedule a Call</a>
+              <a href="${callUrl}" class="btn btn-secondary">I have questions — get me a call</a>
             </div>
             <div style="text-align: center; margin: 16px 0;">
-              <a href="${outUrl}" class="btn btn-muted">Not interested right now</a>
+              <a href="${outUrl}" class="btn btn-muted">not interested right now</a>
             </div>
 
             <div class="divider"></div>
 
-            <p>No pressure either way — just want to stay in the loop so we can send the right buyers to the right ranchers.</p>
+            <p>No pressure either way. Reply works too — it lands in my inbox.</p>
 
             <div class="footer">
               <p>— Ben<br>BuyHalfCow<br>Questions? Reply directly or email ${ADMIN_EMAIL}</p>            </div>
@@ -4326,7 +4372,12 @@ export async function sendTrackedContactEmail(data: {
   buyerEmail: string;
   buyerPhone: string;
   message: string;
+  /** F15 (2026-08-18): loaded Ranchers row — see sendInquiryToRancher. */
+  rancher?: any;
 }) {
+  const commissionFooterLine = data.rancher
+    ? `Remember: you keep 100% of your price — our ${commissionPercentLabelForRancher(data.rancher)} is added on top and paid by the buyer.`
+    : `Remember: you keep 100% of your price — our fee is added on top and paid by the buyer.`;
   // Plain-text header — never esc() a subject.
   const trackedSubject = `New message from ${data.buyerName} via BuyHalfCow`;
   return guardedSend({
@@ -4362,7 +4413,7 @@ export async function sendTrackedContactEmail(data: {
   <p><strong>Reply directly to this email</strong> to respond to ${esc(data.buyerName)}.</p>
   <div class="footer">
     <p>This message was facilitated by BuyHalfCow.<br>
-    Remember: you keep 100% of your price — our 10% is added on top and paid by the buyer.</p>
+    ${commissionFooterLine}</p>
     <p>— Ben<br>BuyHalfCow</p>
   </div>
 </div></body></html>`,
@@ -4853,28 +4904,33 @@ export async function sendAbandonedRecoveryEmail(data: {
   // funnel collects the email fresh.
   const accessUrl = utm(`${SITE_URL}/access?resume=1`, 'abandoned-recovery', `stage-${data.stage}`);
 
+  // Campaign-rewrite (2026-08-18): stage 2 promised "they reach out within
+  // 24–48 hours" — false on the broker rail (a represented ranch never
+  // reaches out) and clock-unbacked on Connect. The promise is now
+  // rail-neutral: what actually happens after YES on every rail is pricing +
+  // a reserve link by email. Subjects downcased; hyphens cleaned.
   const subject = data.stage === 1
-    ? 'You started something on BuyHalfCow — finish in 60 seconds?'
+    ? 'you started something on buyhalfcow — finish in 60 seconds?'
     : data.stage === 2
-      ? 'Still want in? Picking up where you left off'
-      : 'Last touch — what BuyHalfCow actually does';
+      ? 'still want in? picking up where you left off'
+      : 'last note — what buyhalfcow actually does';
 
   const body = data.stage === 1
     ? `
       <p>${greeting}</p>
       <p>You started signing up for BuyHalfCow but didn't finish. No pressure — I just wanted to leave the door open.</p>
-      <p>If you tell us what you're looking for (Quarter, Half, or Whole; budget; state), I'll send a one-click "ready to buy?" prompt right after — and the moment you tap YES, you get matched with a real rancher in your state.</p>
+      <p>Tell us what you're looking for (Quarter, Half, or Whole; budget; state) and I'll send a one click "ready to buy?" prompt right after — the moment you tap YES, I match you with a real ranch in your state.</p>
       <p>Takes about 60 seconds, start to finish.</p>`
     : data.stage === 2
       ? `
       <p>${greeting}</p>
-      <p>Quick check-in — you signed up for BuyHalfCow a few days ago but didn't finish the application.</p>
-      <p>The flow is simple: finish the form (Quarter/Half/Whole + budget + state), then I send you a one-click "Ready to Buy in 1–2 months?" prompt. The moment you click YES, I match you with a real rancher in your state — they reach out within 24–48 hours.</p>
-      <p>If something stopped you (questions about pricing, how it works, what you'd actually get) just reply to this email and I'll answer personally.</p>`
+      <p>Quick check in — you signed up for BuyHalfCow a few days ago but didn't finish the application.</p>
+      <p>The flow is simple: finish the form (Quarter/Half/Whole + budget + state), then I send a one click "Ready to Buy in 1–2 months?" prompt. The moment you tap YES, I match you with a real ranch in your state — current pricing and a reserve link land in your inbox within minutes.</p>
+      <p>If something stopped you (pricing, how it works, what you'd actually get), just reply to this email and I'll answer personally.</p>`
       : `
       <p>${greeting}</p>
       <p>Last note from me — I won't keep emailing.</p>
-      <p>BuyHalfCow isn't a marketplace. It's a private network where I personally introduce serious buyers to real ranchers. Members end up with 6-12 months of premium, traceable cuts in the freezer — from one animal, one rancher they can actually call, raised the way they'd raise it themselves.</p>
+      <p>BuyHalfCow isn't a marketplace. It's a private network where I personally introduce serious buyers to real ranchers. Members end up with 6 to 12 months of premium, traceable cuts in the freezer — from one animal, one ranch they can actually name, raised the way they'd raise it themselves.</p>
       <p>If you're still interested, finishing the form takes a minute. If not, no hard feelings — this is my last note about the application.</p>`;
 
   return guardedSend({
@@ -4889,7 +4945,6 @@ export async function sendAbandonedRecoveryEmail(data: {
       html: `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.cta{display:inline-block;padding:14px 28px;background:#0E0E0E;color:#F4F1EC!important;text-decoration:none;font-weight:600;text-transform:uppercase;letter-spacing:1px;font-size:13px;margin:16px 0}.footer{margin-top:30px;padding-top:20px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
 </head><body><div class="container">
-  <h1>${subject}</h1>
   ${body}
   <p style="text-align:center;margin-top:24px;"><a href="${accessUrl}" class="cta">Finish My Application →</a></p>
   <div class="footer">
@@ -5186,25 +5241,34 @@ export async function sendRancherCommunityIntro(data: {
 // (Day 2 nudge, Day 5 case-study, Day 14 last-call)
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Campaign-rewrite (2026-08-18): "families in ${state} are searching
+// BuyHalfCow right now" was an unverifiable live claim — false the day a
+// state has zero demand ("never promise lead volume"). Day 2 now renders a
+// REAL count when the caller could pull one (buyers-by-state definition) and
+// a durably true network line when it couldn't. Wizard times unified to 10
+// minutes across the drip (D2 said 5, D14 and the welcome said 10).
 export async function sendRancherOnboardingDripDay2(data: {
   to: string;
   ranchName: string;
   operatorName: string;
   setupUrl?: string; // when present → self-serve wizard is the PRIMARY CTA
-  state?: string;    // when present → state-specific urgency line
+  state?: string;    // when present → state-specific demand line
+  /** Live in-state routable-buyer count (cron-pulled). 0/absent → network line. */
+  familiesInState?: number;
 }): Promise<{ success: boolean; error?: any }> {
   const first = (data.operatorName || '').split(' ')[0] || 'there';
   // No fake "Re:" — faking a reply thread is a spam-filter trigger and a
   // trust burn the moment the rancher notices (email-hygiene 2026-08-02).
   const subject = `${data.ranchName} on the map — still a yellow pin`;
-  const buyersLine = data.state
-    ? `families in ${esc(data.state)} are searching BuyHalfCow for a half or whole cow right now`
-    : `families near you are searching BuyHalfCow for a half or whole cow right now`;
+  const familiesInState = data.familiesInState ?? 0;
+  const demandLine = data.state && familiesInState > 0
+    ? `${familiesInState} families in ${esc(data.state)} have asked us for a beef share, and your pin can't take them until you're live.`
+    : `Families across the network are asking for a half or whole cow, and your pin can't take them until you're live.`;
   const ctaBlock = data.setupUrl
     ? `<div style="text-align:center;margin:24px 0;">
-    <a href="${utm(data.setupUrl, 'self-submit-drip', 'day2-wizard')}" class="cta">Set up your page &rarr; (5 min)</a>
+    <a href="${utm(data.setupUrl, 'self-submit-drip', 'day2-wizard')}" class="cta">Set up your page &rarr;</a>
   </div>
-  <p style="font-size:13px;color:#6B4F3F;text-align:center;">No call needed &mdash; or if you'd rather talk first, <a href="${utm(RANCHER_BOOK_CALL_URL, 'self-submit-drip', 'day2-call')}">grab 15 min with me</a>.</p>`
+  <p style="font-size:13px;color:#6B4F3F;text-align:center;">Rather talk first? <a href="${utm(RANCHER_BOOK_CALL_URL, 'self-submit-drip', 'day2-call')}">Book 15 minutes with me</a>.</p>`
     : `<div style="text-align:center;margin:24px 0;">
     <a href="${utm(RANCHER_BOOK_CALL_URL, 'self-submit-drip', 'day2')}" class="cta">Grab a slot</a>
   </div>`;
@@ -5221,8 +5285,8 @@ export async function sendRancherOnboardingDripDay2(data: {
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}p{margin:14px 0;color:#2A2A2A}.cta{display:inline-block;padding:14px 30px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px}</style>
 </head><body><div class="container">
   <p>Hey ${esc(first)},</p>
-  <p>${esc(data.ranchName)} is on the map but still a yellow pin &mdash; visible, but not getting routed customers. Meanwhile ${buyersLine}, and your pin can't take them until you're live.</p>
-  <p>Flipping green is a 5-minute self-serve setup &mdash; logo, prices, done. No call unless you want one.</p>
+  <p>${esc(data.ranchName)} is on the map but still a yellow pin &mdash; visible, not routable. ${demandLine}</p>
+  <p>Going green is about 10 minutes in the setup wizard &mdash; prices, bank connection, one signature. No call unless you want one.</p>
   ${ctaBlock}
   <p style="font-size:13px;color:#6B4F3F;">Reply with a phone number if email isn't your thing. I'll call you.</p>
   <p style="font-size:12px;color:#A7A29A;">&mdash; Ben</p>
@@ -5239,12 +5303,19 @@ export async function sendRancherOnboardingDripDay5(data: {
   state?: string;
 }): Promise<{ success: boolean; error?: any }> {
   const first = (data.operatorName || '').split(' ')[0] || 'there';
-  const subject = `What we actually do for ranchers like you`;
+  // Campaign-rewrite (2026-08-18): Day 5 is now the money-truth email — the
+  // rancher's #2 fear is surprise commission rules, so it states the fee
+  // model plainly (keep 100% of your price, fee added on top and paid by the
+  // buyer — the Connect-rail line; this drip only targets self-submitted
+  // wizard ranchers, never broker-represented ones). The hardcoded
+  // "$7/lb instead of $4/lb" price framing is gone (never-hardcode-dollars).
+  const subject = `what we actually do for ranchers like you`;
+  const stateLabel = data.state ? esc(data.state) : 'your area';
   const ctaBlock = data.setupUrl
     ? `<div style="text-align:center;margin:24px 0;">
-    <a href="${utm(data.setupUrl, 'self-submit-drip', 'day5-wizard')}" class="cta">Set up ${esc(data.ranchName)} &rarr; (5 min)</a>
+    <a href="${utm(data.setupUrl, 'self-submit-drip', 'day5-wizard')}" class="cta">Set up ${esc(data.ranchName)} &rarr;</a>
   </div>
-  <p style="font-size:13px;color:#6B4F3F;text-align:center;">Rather talk it through first? <a href="${utm(RANCHER_BOOK_CALL_URL, 'self-submit-drip', 'day5-call')}">Book 15 min with me</a>.</p>`
+  <p style="font-size:13px;color:#6B4F3F;text-align:center;">Rather talk it through first? <a href="${utm(RANCHER_BOOK_CALL_URL, 'self-submit-drip', 'day5-call')}">Book 15 minutes with me</a>.</p>`
     : `<div style="text-align:center;margin:24px 0;">
     <a href="${utm(RANCHER_BOOK_CALL_URL, 'self-submit-drip', 'day5')}" class="cta">Book the call</a>
   </div>`;
@@ -5261,13 +5332,13 @@ export async function sendRancherOnboardingDripDay5(data: {
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}p{margin:14px 0;color:#2A2A2A}ul{margin:14px 0;padding-left:22px}li{margin:6px 0}.cta{display:inline-block;padding:14px 30px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px}</style>
 </head><body><div class="container">
   <p>Hey ${esc(first)},</p>
-  <p>I haven't bombarded you with a sales deck because that's not what we do. Two-line version of what BuyHalfCow does for D2C ranchers:</p>
+  <p>No sales deck &mdash; that's not how I work. The short version of what BuyHalfCow does for ranchers who sell direct:</p>
   <ul>
-    <li><strong>Public map + listing</strong> &mdash; families searching for real beef in your county find you, not Walmart.</li>
-    <li><strong>Buyer matching</strong> &mdash; we route pre-screened families with confirmed budgets and timing directly to ranchers we've vetted.</li>
-    <li><strong>Marketing services</strong> &mdash; story-driven email, content, and outreach so families understand why your beef is worth $7/lb instead of $4/lb.</li>
+    <li><strong>Public map + your own page</strong> &mdash; families searching for real beef in ${stateLabel} find ${esc(data.ranchName)}, not a grocery chain.</li>
+    <li><strong>Buyer routing</strong> &mdash; families who've told us their budget and timing get sent straight to you. You talk to them direct; the customer is yours.</li>
+    <li><strong>The money</strong> &mdash; you keep 100% of your price. Our fee is added on top and paid by the buyer. Free to start.</li>
   </ul>
-  <p>You don't need a call to start &mdash; the 5-minute self-serve wizard gets ${esc(data.ranchName)} live and routable today.</p>
+  <p>The setup wizard gets ${esc(data.ranchName)} live and routable today &mdash; about 10 minutes.</p>
   ${ctaBlock}
   <p style="font-size:12px;color:#A7A29A;">&mdash; Ben<br>BuyHalfCow</p>
 </div></body></html>`,
@@ -5283,10 +5354,10 @@ export async function sendRancherOnboardingDripDay14(data: {
   state?: string;
 }): Promise<{ success: boolean; error?: any }> {
   const first = (data.operatorName || '').split(' ')[0] || 'there';
-  const subject = `Last note from me`;
+  const subject = `last note from me`;
   const ctaBlock = data.setupUrl
     ? `<div style="text-align:center;margin:24px 0;">
-    <a href="${utm(data.setupUrl, 'self-submit-drip', 'day14-wizard')}" class="cta">Set up in 5 min &rarr;</a>
+    <a href="${utm(data.setupUrl, 'self-submit-drip', 'day14-wizard')}" class="cta">Set up in 10 min &rarr;</a>
   </div>
   <p style="font-size:13px;color:#6B4F3F;text-align:center;">Or <a href="${utm(RANCHER_BOOK_CALL_URL, 'self-submit-drip', 'day14-call')}">grab a quick call</a> if you'd rather.</p>`
     : `<div style="text-align:center;margin:24px 0;">
@@ -5305,10 +5376,10 @@ export async function sendRancherOnboardingDripDay14(data: {
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}p{margin:14px 0;color:#2A2A2A}.cta{display:inline-block;padding:14px 30px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px}</style>
 </head><body><div class="container">
   <p>Hey ${esc(first)},</p>
-  <p>Last note from me unless I hear back &mdash; I don't want to be that guy who emails forever.</p>
+  <p>Last note from me unless I hear back &mdash; I don't want to be the guy who emails forever.</p>
   <p>${esc(data.ranchName)} stays on the map as a yellow pin either way. But yellow doesn't get routed buyers &mdash; green does, and green is about 10 minutes of setup away.</p>
   ${ctaBlock}
-  <p>If you want OFF the map, just reply "remove" and you're gone, same day.</p>
+  <p>If you want off the map entirely, reply "remove" and it's done same day.</p>
   <p style="font-size:12px;color:#A7A29A;">&mdash; Ben</p>
 </div></body></html>`,
     }),
@@ -5333,11 +5404,13 @@ export async function sendMatchNowRescue(data: {
   buyerState: string;
 }) {
   const first = data.firstName || 'there';
-  // F17 (2026-08-18): this email ALSO fires on the branch where auto-route
-  // FAILED (no rancher with capacity — the path ends at a manual operator
-  // /match), so the copy must not claim a match already exists nor promise
-  // the intro or rancher outreach on a deadline no machine backs.
-  const subject = `we're lining up your rancher`;
+  // Campaign-rewrite v42 (2026-08-18, supersedes the F17 minimal edit): the
+  // follow-through is a Telegram card Ben acts on by hand — no cron backs a
+  // clock, and "direct contact info" / "they'll reach out" are structurally
+  // false on the broker rail. Rail-neutral, clock-free promise: the match
+  // email is next, and it carries the ranch, pricing, and a reserve link on
+  // every rail. Key stays DARK until Ben allowlists it.
+  const subject = `your ranch is lined up — your match is next`;
   return guardedSend({
     templateName: 'sendMatchNowRescue',
     recipientEmail: data.email,
@@ -5350,12 +5423,11 @@ export async function sendMatchNowRescue(data: {
       html: `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}</style>
 </head><body><div class="container">
-  <h1>We're lining up your rancher</h1>
+  <h1>Your ranch is lined up</h1>
   <p>Hi ${esc(first)},</p>
-  <p>You clicked "ready to buy" — thanks for the signal. I'm personally lining up a real rancher in ${esc(data.buyerState)} with capacity for you this season.</p>
-  <p>As soon as your match is locked in, you'll get a second email with their name, pricing (Quarter / Half / Whole), processing date, and direct contact info.</p>
-  <p>This is a ranch I work with myself. You buy direct: real beef, raised right, straight from the ranch.</p>
-  <p>If anything changes, reply to this email and I'll handle it.</p>
+  <p>You clicked "ready to buy" — thanks for the signal. There's a real ranch in ${esc(data.buyerState)} with capacity for you this season, and I'm lining up your match now.</p>
+  <p>Your match email comes next: the ranch, current pricing for a quarter, half, or whole, and a reserve link. Nothing you need to do until it lands.</p>
+  <p>If anything changes on your end — or the match email doesn't show — reply here and I'll handle it personally.</p>
   <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
 </div></body></html>`,
     }),
@@ -5389,15 +5461,19 @@ export async function sendNudgeToEngage(data: {
       html: `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.cta{display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px}.q{background:#FAF8F4;border:1px solid #A7A29A;padding:16px 20px;margin:24px 0;font-family:Georgia,serif;font-size:18px}</style>
 </head><body><div class="container">
+  ${''/* Campaign-rewrite v43 (2026-08-18): "full info within 24 hours" +
+       "they reach out to you direct" were both false on the broker rail and
+       the clock was wrong on Connect too (YES fires the match within
+       minutes). Same rail-neutral promise as the welcome/warm-lead family. */}
   <h1>One question on timing</h1>
   <p>Hi ${esc(first)},</p>
-  <p>You signed up for BuyHalfCow a while back and we've got real ranchers in ${esc(data.buyerState)} with capacity right now. Before I introduce you, I want to make sure the timing is right.</p>
+  <p>You signed up for BuyHalfCow a while back, and there's real ranch capacity in ${esc(data.buyerState)} right now. Before I make the match, I want the timing right.</p>
   <div class="q"><strong>Are you ready to buy in the next 1–2 months?</strong></div>
-  <p>If yes, tap below and I'll send the rancher's full info within 24 hours. They reach out to you direct. No middleman, no markup — just real beef from a ranch I work with myself.</p>
+  <p>If yes, tap below and your match lands by email — the ranch, current pricing, and a reserve link. Real beef, bought direct from a ranch I work with myself.</p>
   <div style="text-align:center;margin:30px 0;">
     <a href="${data.engageUrl}" class="cta">Yes — Ready to Buy</a>
   </div>
-  <p style="font-size:14px;">If not yet, just don't click. You stay on the list and we'll check back in a couple weeks. No pressure.</p>
+  <p style="font-size:14px;">If not yet, just don't click. You stay on the list and I'll check back. No pressure.</p>
   <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
 </div></body></html>`,
     }),
@@ -5418,7 +5494,11 @@ export async function sendWarmLeadReadyCheck(data: {
   engageUrl: string;
 }) {
   const first = data.firstName || 'there';
-  const subject = `ready to buy yet? quick check-in`;
+  // Campaign-rewrite v20 (2026-08-18): "I'll send rancher info within 24
+  // hours" was rail-false on broker (no rancher contact info is ever sent)
+  // and the clock was wrong the other way on Connect (YES fires matching
+  // immediately). Rail-neutral promise; subject hyphen dropped.
+  const subject = `ready to buy yet?`;
   return guardedSend({
     templateName: 'sendWarmLeadReadyCheck',
     recipientEmail: data.email,
@@ -5433,8 +5513,8 @@ export async function sendWarmLeadReadyCheck(data: {
 </head><body><div class="container">
   <h1>Ready yet?</h1>
   <p>Hi ${esc(first)},</p>
-  <p>You said you were interested in beef from a ${esc(data.buyerState)} rancher. We've still got capacity and I want to make sure I introduce you at the right time.</p>
-  <p><strong>If you're ready to buy in the next 1–2 months</strong>, tap below and I'll send rancher info within 24 hours. If timing isn't right yet, just sit tight — I'll check back in a couple weeks.</p>
+  <p>You said you were interested in beef from a ${esc(data.buyerState)} ranch. Capacity is real right now, and I only make the match when your timing is right.</p>
+  <p><strong>If you're ready to buy in the next 1–2 months</strong>, tap below. Your match lands by email — the ranch, current pricing, and a reserve link. If the timing isn't right yet, sit tight — I'll check back.</p>
   <div style="text-align:center;margin:30px 0;">
     <a href="${data.engageUrl}" class="cta">Yes — Ready to Buy</a>
   </div>
@@ -5511,6 +5591,16 @@ export async function sendNoBudgetFounderPitch(data: {
 }) {
   const first = data.firstName || 'there';
   const FOUNDERS_URL = `${SITE_URL}/founders`;
+  // Campaign-rewrite v46 (2026-08-18): the old perk bullets promised F100
+  // perks (numbered patch) and Outlaw+ perks (Wall placement, first dibs) to
+  // a $/mo Herd prospect — a mission-backer email that overstates perks burns
+  // the exact trust it is selling. The rewrite names ONLY Herd (a broke
+  // reader needs one easy yes; /founders shows the ladder), matches the
+  // welcome email's Herd perk list word for word, drops the nonexistent
+  // "recruiting team" (founder-led: there is no team), and ties the backing
+  // to the reader's own state going live sooner. Dollar figures stay derived
+  // from lib/foundersTiers — never literals. Key stays DARK until Ben
+  // allowlists it.
   const subject = `beef's not in the budget? back the mission from $${HERD_MONTHLY_DOLLARS}/mo`;
   return guardedSend({
     templateName: 'sendNoBudgetFounderPitch',
@@ -5522,24 +5612,24 @@ export async function sendNoBudgetFounderPitch(data: {
       subject,
       headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html><html><head>
-<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.cta{display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px}.divider{height:1px;background:#A7A29A;margin:24px 0}</style>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}ul{color:#6B4F3F;padding-left:20px}li{margin:6px 0}.cta{display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px}.divider{height:1px;background:#A7A29A;margin:24px 0}</style>
 </head><body><div class="container">
-  <h1>Beef this year isn't in the budget? I get it.</h1>
-  <p>Hi ${esc(first)},</p>
-  <p>You signed up for BuyHalfCow. You care about how cattle gets raised. You're on the right side of the food fight. But a freezer full of beef is a real chunk of money up front — and that's not in the budget for a lot of people this year. I won't pretend otherwise.</p>
-  <p>Here's another way to be part of this without the freezer commitment.</p>
+  <p>Hey ${esc(first)},</p>
+  <p>You signed up for BuyHalfCow because you care how cattle get raised. A freezer full of beef is real money up front — and if that's not in the budget this year, I won't pretend otherwise.</p>
+  <p>There's another way to be part of this without the freezer commitment.</p>
   <div class="divider"></div>
-  <p><strong>The Founding Herd.</strong> Back the platform from $${HERD_MONTHLY_DOLLARS}/mo (Herd) to $${OUTLAW_MONTHLY_DOLLARS}/mo (Outlaw), or take one of ${FOUNDING_100_CAP} numbered Founding 100 spots — all the way up to ${TITLE_FOUNDER_PRICE_LABEL} (Title Founder). You get:</p>
-  <ul style="color:#6B4F3F;padding-left:20px;">
-    <li>Numbered embroidered patch shipped to your door</li>
-    <li>Name on the public Founders Wall (opt-in)</li>
-    <li>First-pick access when a rancher comes online in your state</li>
+  <p><strong>The Founding Herd.</strong> Back the build from $${HERD_MONTHLY_DOLLARS}/mo. Herd tier gets you:</p>
+  <ul>
+    <li>a monthly founder letter from the road — where the money went, what got built, no PR fluff</li>
+    <li>early word when a rancher goes live in ${esc(data.buyerState)}</li>
+    <li>a first print BuyHalfCow patch in the mail</li>
   </ul>
-  <p>I'm not selling equity. I'm not running a crowdfund I'm going to disappear from. I'm building a marketplace I'd want to use, and the Founding Herd capital is what funds the recruiting team that brings ranchers + buyers together.</p>
+  <p>No equity, no securities, no theatrics. Your backing pays for the work that signs the next rancher — which is exactly what gets ${esc(data.buyerState)} live sooner.</p>
+  <p style="font-style:italic;color:#6B4F3F;font-family:Georgia,serif;font-size:16px;border-left:3px solid #0E0E0E;padding-left:14px;margin:24px 0;">We're gonna take back American ranching and agriculture. One family, one rancher, one freezer at a time.</p>
   <div style="text-align:center;margin:30px 0;">
     <a href="${FOUNDERS_URL}" class="cta">See the Founding Herd</a>
   </div>
-  <p style="font-size:14px;">If $${HERD_MONTHLY_DOLLARS}/mo isn't in the budget either, no worries — you stay on the list and I'll email when ${esc(data.buyerState)} comes online. The work continues either way.</p>
+  <p style="font-size:14px;">If $${HERD_MONTHLY_DOLLARS}/mo isn't in the budget either, no worries — you stay on the list and I'll email you the moment ${esc(data.buyerState)} comes online. The work continues either way.</p>
   <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
 </div></body></html>`,
     }),
@@ -5635,7 +5725,10 @@ export async function sendStateWaitlistLetter(data: {
   <p>I'm recruiting D2C ranchers in uncovered states every week, and ${esc(data.buyerState)} is on the list. When your area opens, you'll get one email from me — that's the whole promise.</p>
   <p>In the meantime you may hear from me now and then with what's actually useful — never a blast, and every email has an unsubscribe link that works.</p>
   <p>You can check your spot on the list anytime at <a href="${SITE_URL}/member" style="color:#6B4F3F;">buyhalfcow.com/member</a> — we'll email you a sign-in link, no password needed.</p>
-  <p>Thanks for being patient w/ a small platform doing it right.</p>
+  ${''/* Campaign-rewrite v11 (2026-08-18): "w/ a small platform" — sloppy
+       abbreviation + coastal-startup vocabulary inside the one letter whose
+       whole job is earning trust. One-line voice fix, no promise change. */}
+  <p>Thanks for being patient with a small outfit doing it right.</p>
   <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
 </div></body></html>`,
     }),
@@ -6230,8 +6323,10 @@ export async function sendNurtureEducation(data: { firstName: string; email: str
         inner: `
   <p>Hi ${esc(data.firstName)},</p>
   <p>While we line up your rancher in ${esc(data.state)}, here's the thing most folks ask first: what does this actually cost?</p>
+  ${''/* Campaign-rewrite v7 (2026-08-18): "99% of grocery shoppers" was an
+       invented stat — softened to a claim that needs no citation. */}
   <div class="highlight">A share is priced per pound, cut how you want it, straight from one animal. Most families find a quarter fills a standard freezer drawer set; a half runs a chest freezer. The guide walks the exact math — price per pound, freezer space, and how the deposit works.</div>
-  <p>Ten minutes of reading and you'll know more than 99% of grocery shoppers ever will about where beef prices come from.</p>`,
+  <p>Ten minutes of reading and you'll know exactly what you're buying — and what nobody selling beef by the pound wants to explain.</p>`,
         ctaHref: `${SITE_URL}/guide`,
         ctaLabel: 'read the guide',
       }),
@@ -6254,9 +6349,15 @@ export async function sendNurtureShopBridge(data: { firstName: string; email: st
       html: nurtureShell({
         title: "Don't wait on a freezer full to taste it",
         inner: `
+  ${''/* Campaign-rewrite v45 (2026-08-18): "your share spot is still held"
+       overstated a waitlist position as a held share (no hold exists for an
+       unrouted WAITING buyer), "starting at $13" hardcoded a shop price
+       (no-hardcoded-dollars rule — the live floor had already drifted), and
+       "verified" must never leak onto represented supply. The pages carry
+       the prices. */}
   <p>Hi ${esc(data.firstName)},</p>
-  <p>Your share spot is still held — supply moves at the speed of ranchers, and we don't rush the folks raising your beef.</p>
-  <p>But the shop ships now: jerky, sampler boxes, and ground beef bundles from the same verified ranches, starting at $13. Shipping's included or shown up front — never a checkout surprise.</p>
+  <p>You're still in line for a share — supply moves at the speed of ranchers, and we don't rush the folks raising your beef.</p>
+  <p>But the shop ships now: jerky, sampler boxes, and ground beef bundles from the same ranches. Every price is on the page, shipping included or shown up front — never a checkout surprise.</p>
   <div class="highlight">Most share buyers start with a box. You'll know exactly whose beef you're committing a freezer to.</div>`,
         ctaHref: `${SITE_URL}/shop`,
         ctaLabel: 'see the shop',
@@ -6283,7 +6384,9 @@ export async function sendNurtureCheckIn(data: { firstName: string; email: strin
   <p>Hi ${esc(data.firstName)},</p>
   <p>You're still on the ${esc(data.state)} list and nothing's needed from you — I just don't want to route a rancher's limited slots to anyone who's moved on.</p>
   <div class="highlight">Still want a share this season? You don't have to do anything — you're in. If your timing or freezer situation changed, hit reply and tell me; it helps me route the right families first.</div>
-  <p>And if you're hungry meanwhile, the shop ships this week from the same ranches.</p>`,
+  ${''/* Campaign-rewrite v7: "from the same ranches" dropped — the shop's
+       live stands are not necessarily the ranch that would serve this buyer. */}
+  <p>And if you're hungry meanwhile, the shop ships this week.</p>`,
         ctaHref: `${SITE_URL}/member`,
         ctaLabel: 'see your status',
       }),
@@ -6293,7 +6396,10 @@ export async function sendNurtureCheckIn(data: { firstName: string; email: strin
 
 /** Touch 4 (day 21) — the long-haul note: honest supply talk + refer-a-ranch. */
 export async function sendNurtureLongHaul(data: { firstName: string; email: string; state: string }) {
-  const subject = `the honest update on ${data.state.toLowerCase()} beef`;
+  // Campaign-rewrite v7 (2026-08-18): state CODE stays uppercase — the
+  // house lowercase-subject rule is about the words, and "the honest update
+  // on az beef" read broken.
+  const subject = `the honest update on ${data.state} beef`;
   return guardedSend({
     templateName: 'sendNurtureLongHaul',
     recipientEmail: data.email,
@@ -6366,15 +6472,20 @@ export async function sendLossRecoveryDownsell(data: {
   /** The cut they walked away from — shapes the pitch. */
   cut: string;
 }) {
-  const subject = 'a smaller freezer-full';
+  // Campaign-rewrite v32 (2026-08-18): "starting at $13" was hardcoded twice
+  // (the no-hardcoded-dollars rule this file's header fought for — box
+  // prices drift the same way share prices did) and "a monthly box" claimed
+  // a subscription the shop doesn't sell. Point at the shop and let the
+  // pages carry the prices. Subject hyphen dropped.
+  const subject = 'a smaller way to start';
   // If they balked at a quarter already, the honest next step is the shop —
   // don't re-pitch the same commitment with different words.
   const pitch =
     data.cut === 'quarter'
       ? `<p>A quarter wasn't the right fit this time — that's honest, and useful to know.</p>
-  <div class="highlight">The shop ships boxes from the same verified ranches starting at $13 — jerky, samplers, ground beef bundles. Real beef, no freezer commitment, and you'll know exactly whose ranch you're buying from.</div>`
+  <div class="highlight">The shop ships smaller boxes from the same ranches — jerky, samplers, ground beef bundles. Real beef, no freezer commitment, every price on the page before you pay, shipping included or shown up front.</div>`
       : `<p>A ${esc(data.cut)} is a big first bite — most folks don't start there.</p>
-  <div class="highlight">Most families start with a quarter (${SHARE_WEIGHTS.quarter.lbs} — your rancher's page shows their exact price) or a monthly box from the shop starting at $13. Real beef from the same ranches, smaller commitment.</div>`;
+  <div class="highlight">Most families start with a quarter (${SHARE_WEIGHTS.quarter.lbs} — your ranch's page shows their exact price) or a smaller box from the shop. Same ranches, smaller commitment.</div>`;
   return guardedSend({
     templateName: 'sendLossRecoveryDownsell',
     recipientEmail: data.email,

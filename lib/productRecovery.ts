@@ -9,7 +9,7 @@
 // product BUYERS — so this module drives two once-ever nudges off a PRODUCT_BUYER
 // Consumer:
 //
-//   CROSS-SELL (earlier, ~10d): "you tasted it — here's the freezer-fill." The
+//   CROSS-SELL (earlier, ~10d): "you tasted it — the freezer fill is next." The
 //     ladder-up to a share (the anchor). → /map.  Stamp: Share Cross-Sell Sent At.
 //   REPEAT     (later, ~35d):   "running low? restock." Recurring revenue on the
 //     same product. → /shop.     Stamp: Product Repeat Nudged At.
@@ -181,15 +181,20 @@ ${bodyHtml}
 }
 
 /** Cross-sell to a share (the ladder-up). Pure. */
+// Campaign-rewrite (2026-08-18): "the best price per pound you'll find" was a
+// sell-on-savings superlative (D2C beef is often MORE per pound than grocery,
+// and the claim is unverifiable as written). The honest version is relative to
+// the SAME beef: per pound, a share is the cheapest way to buy this ranch's
+// beef. Hyphens dropped from the outbound copy per the Ben rule.
 export function renderCrossSellEmail(ctx: NudgeCtx): RenderedEmail {
   const first = esc(ctx.firstName || 'there');
   const product = esc(ctx.product || 'your order');
   const rancher = esc(ctx.rancher || 'the ranch');
-  const subject = `you tasted it, ${ctx.firstName || 'there'} — here's the freezer-fill`;
+  const subject = `you tasted it, ${ctx.firstName || 'there'} — the freezer fill is next`;
   const html = wrap(
     `<p style="margin:14px 0;font-size:15px;line-height:1.6;">hey ${first},</p>
-<p style="margin:14px 0;font-size:15px;line-height:1.6;">you tried the <strong>${product}</strong> from <strong>${rancher}</strong>. if you liked it, here's the honest next step: a half or whole share is that same beef by the freezer-full — and it's the best price per pound you'll find.</p>
-<p style="margin:14px 0;font-size:15px;line-height:1.6;">one animal, one ranch, a year of dinners. no rush — the box is always here if you'd rather keep it small.</p>`,
+<p style="margin:14px 0;font-size:15px;line-height:1.6;">you tried the <strong>${product}</strong> from <strong>${rancher}</strong>. if it earned a spot in the rotation, the honest next step is a share — the same beef by the freezer full, and per pound a share is the lowest this beef ever costs.</p>
+<p style="margin:14px 0;font-size:15px;line-height:1.6;">one animal, one ranch, months of dinners. no rush — the box is always here if you'd rather keep it small.</p>`,
     'find a ranch →',
     ctx.url,
   );

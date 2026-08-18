@@ -76,26 +76,32 @@ function esc(s: string): string {
 function buildEmail(touchNum: number, firstName: string, quizUrl: string, state: string) {
   const first = esc(firstName || 'there');
   const st = esc(state || 'your state');
+  // Campaign-rewrite (2026-08-18): quiz-length claims standardized on 90
+  // seconds (the canonical BHC.md number for the 7-step quiz — requalify,
+  // state-coverage-opened, and the guide all say 90; this drip said 60, so a
+  // buyer touched by two rails got two different claims about the same quiz).
+  // T2/T4 subjects downcased per the BHC.md lowercase-subject rule. No
+  // cadence, promise, or mechanics change.
   const variants: Record<number, { subject: string; lead: string; body: string }> = {
     1: {
       subject: `${firstName || 'there'}, finish your quiz to lock in a rancher (${state})`,
-      lead: `You started signing up for BuyHalfCow but haven't finished the 60-second quiz yet.`,
-      body: `The quiz tells me <strong>which rancher in ${st} fits you</strong>, what cut breakdown to push, and when you'll get your beef. About a minute. No payment, no pressure.`,
+      lead: `You started signing up for BuyHalfCow but haven't finished the 90 second quiz yet.`,
+      body: `The quiz tells me <strong>which rancher in ${st} fits you</strong>, what cut breakdown to push, and when you'll get your beef. About 90 seconds. No payment, no pressure.`,
     },
     2: {
-      subject: `Still time to get matched in ${state}`,
+      subject: `still time to get matched in ${state}`,
       lead: `Circling back — your BuyHalfCow quiz is still open.`,
-      body: `Sixty seconds and I'll match you with a real ${st} rancher and lock in your cut breakdown. No payment to take it — it just tells me what you actually want.`,
+      body: `Ninety seconds and I'll match you with a real ${st} rancher and lock in your cut breakdown. No payment to take it — it just tells me what you actually want.`,
     },
     3: {
       subject: `${first}, still want matched with a ${state} rancher?`,
       lead: `Quick heads up, ${first}.`,
-      body: `Our ${st} ranchers take a limited number of families each season, and slots fill as buyers come through. The 60-second quiz is what gets you matched to the right one — there's nothing to pay and nothing you're on the hook for, it just tells me what you're after.`,
+      body: `Our ${st} ranchers take a limited number of families each season, and slots fill as buyers come through. The 90 second quiz is what gets you matched to the right one — there's nothing to pay and nothing you're on the hook for, it just tells me what you're after.`,
     },
     4: {
-      subject: `Last call, ${firstName || 'there'} — should I close your file?`,
+      subject: `last call, ${firstName || 'there'} — should I close your file?`,
       lead: `This is my last note, ${first} — I don't want to keep emailing if the timing's off.`,
-      body: `If you still want real beef from a ${st} rancher, the quiz is right here and takes a minute. If not, no worries at all — just reply and I'll close it out.`,
+      body: `If you still want real beef from a ${st} rancher, the quiz is right here and takes about 90 seconds. If not, no worries at all — just reply and I'll close it out.`,
     },
   };
   const v = variants[touchNum] || variants[1];
@@ -132,7 +138,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
   // Lead Source exclusion (2026-07-17, pressure audit): guide-only downloaders
   // now enter the pipeline as Status='Approved' + Buyer Stage='NEW' so they
   // aren't orphaned — but they NEVER started the quiz, so this drip's copy
-  // ("you started signing up but haven't finished the 60-second quiz") is
+  // ("you started signing up but haven't finished the 90 second quiz") is
   // FALSE for them and reads as a spammy wrong-cohort nag. Exclude them here;
   // they're still reachable by waiting-activation and the buyer sequences.
   // ENGAGEMENT-RECENCY WINDOW (2026-07-22, reactivation audit): the 21-day

@@ -122,9 +122,14 @@ export async function sendQuizCompleteDepositInvite(opts: {
       </p>
       <p style="margin:0 0 24px 0;font-size:12px;color:#6B4F3F;text-align:center">fully refundable until processing · payment secured by stripe</p>
       <p style="margin:24px 0 0 0;font-size:14px;color:#6B4F3F;text-align:center">
-        not ready? <a href="${cal}" style="color:#6B4F3F;text-decoration:underline">or book a 15-min call with ben first</a>
+        not ready? <a href="${cal}" style="color:#6B4F3F;text-decoration:underline">or book a 15 minute call with ben first</a>
       </p>
-      <p style="margin:14px 0 0 0;font-size:13px;color:#6B4F3F;text-align:center">no rush either way — ${rancher ? escape(rancher) : 'your rancher'} already has your details and will reach out within 24–48 hours.</p>
+      ${''/* Campaign-rewrite (2026-08-18): no cron backs a pre-deposit rancher
+           reach-out (historically most intros never got the call), and a
+           "they'll reach out in 24–48 hours" promise hands the buyer a reason
+           to sit and wait — deposit-first doctrine says never undercut the
+           deposit CTA with a passive clock. Active support line instead. */}
+      <p style="margin:14px 0 0 0;font-size:13px;color:#6B4F3F;text-align:center">no rush either way — ${rancher ? escape(rancher) : 'your rancher'} already has your details. question first? just reply to this email and i'll get you an answer.</p>
       <p style="font-size:12px;color:#A7A29A;margin-top:28px">— Ben<br>BuyHalfCow<br><em>Connecting every household to a ranch they trust.</em></p>
     </div>`,
     templateName: 'quiz_complete_deposit_invite',

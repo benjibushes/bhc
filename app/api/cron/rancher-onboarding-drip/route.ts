@@ -52,6 +52,39 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
     const now = Date.now();
     const DAY_MS = 86_400_000;
 
+    // ── Day 2 live demand count (campaign-rewrite 2026-08-18) ───────────────
+    // Same definition as /api/stats/buyers-by-state (Beef Buyer segment,
+    // routable stage, not suppressed). Pulled lazily ONCE per run, only when
+    // a Day 2 send is actually due; a read failure renders the email's
+    // count-free network line instead — never blocks a send, never claims a
+    // number we didn't count.
+    const ROUTABLE_STAGES = ['NEW', 'WAITING', 'READY', 'MATCHED'];
+    let buyersByStatePromise: Promise<Map<string, number>> | null = null;
+    const buyersByState = () => {
+      if (!buyersByStatePromise) {
+        buyersByStatePromise = (async () => {
+          const map = new Map<string, number>();
+          try {
+            const buyers = (await getAllRecords(
+              TABLES.CONSUMERS,
+              '{Segment} = "Beef Buyer"',
+            )) as any[];
+            for (const b of buyers) {
+              if (b['Unsubscribed'] || b['Bounced'] || b['Complained']) continue;
+              if (!ROUTABLE_STAGES.includes(String(b['Buyer Stage'] || ''))) continue;
+              const st = String(b['State'] || '').trim().toUpperCase();
+              if (!/^[A-Z]{2}$/.test(st)) continue;
+              map.set(st, (map.get(st) || 0) + 1);
+            }
+          } catch (e) {
+            console.error('[drip] buyers-by-state pull failed — Day 2 renders count-free line:', e);
+          }
+          return map;
+        })();
+      }
+      return buyersByStatePromise;
+    };
+
     const sent: Array<{ id: string; ranch: string; sent: string }> = [];
     const stopped: Array<{ id: string; ranch: string; reason: string }> = [];
 
@@ -170,7 +203,9 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
 
       try {
         if (stage === 'welcome-sent' && elapsedDays >= 2) {
-          await dripStep('day2-sent', () => sendRancherOnboardingDripDay2({ to: email, ranchName, operatorName, setupUrl, state }), 'day2');
+          const st = state.trim().toUpperCase();
+          const familiesInState = /^[A-Z]{2}$/.test(st) ? (await buyersByState()).get(st) || 0 : 0;
+          await dripStep('day2-sent', () => sendRancherOnboardingDripDay2({ to: email, ranchName, operatorName, setupUrl, state, familiesInState }), 'day2');
         } else if (stage === 'day2-sent' && elapsedDays >= 5) {
           await dripStep('day5-sent', () => sendRancherOnboardingDripDay5({ to: email, ranchName, operatorName, setupUrl, state }), 'day5');
         } else if (stage === 'day5-sent' && elapsedDays >= 14) {

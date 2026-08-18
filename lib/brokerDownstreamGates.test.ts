@@ -182,6 +182,29 @@ test('CAMPAIGN: quiz and one-tap bodies are unchanged by the new mode', () => {
   assert.match(oneTap.html, /Reserve your half cow/);
 });
 
+// Campaign-rewrite (2026-08-18): the autopilot pool has no funnel-started
+// requirement, so "the quiz you started" was false for the never-started
+// cohort the quiz fallback fires on. The claim now renders ONLY for buyers
+// the decision proved started (consumer + cut resolved), and the scarcity
+// line cites the round's real count, never a count "on that page" (/access
+// shows none).
+test('CAMPAIGN: the quiz branch only claims "you started" for genuine starters', () => {
+  const rancher = { name: 'Stone Fork Beef', slug: 'stone-fork-beef' };
+  const url = requalifyCta('MT', 'stone-fork-beef');
+  const cold = renderRequalifyEmail('Alex R', 'MT', rancher, { mode: 'quiz', url });
+  assert.doesNotMatch(cold.html, /quiz you started/, 'never-started buyers must not be told they started');
+  assert.match(cold.html, /a 90 second quiz\. Take it/);
+  assert.match(cold.html, /Take the quiz:/);
+  const starter = renderRequalifyEmail('Alex R', 'MT', rancher, { mode: 'quiz', url, started: true });
+  assert.match(starter.html, /the 90 second quiz you started\. Finish it/);
+  assert.match(starter.html, /Finish the quiz:/);
+  // Both variants: the honest scarcity line, and no page-count claim.
+  for (const built of [cold, starter]) {
+    assert.match(built.html, /the share count this round is real/);
+    assert.doesNotMatch(built.html, /shares on that page/);
+  }
+});
+
 test('CAMPAIGN wiring: a broker wave owner never mints a Connect one-tap deposit token', () => {
   const src = read('../app/api/campaign/requalify-send/route.ts');
   // getRancherBySlug still excludes broker ⇒ rancherRec stays null ⇒
