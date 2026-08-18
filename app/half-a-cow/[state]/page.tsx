@@ -25,7 +25,7 @@ import Button from '../../components/Button';
 import Divider from '../../components/Divider';
 import ProofStrip from '../../components/ProofStrip';
 import ProductCard from '../../components/ProductCard';
-import base, { TABLES, escapeAirtableValue, withTimeout, resolveAirtableTimeoutMs } from '@/lib/airtable';
+import base, { TABLES, escapeAirtableValue, withTimeout, resolveAirtableTimeoutMs, stateDiscoveryRanchersFormula } from '@/lib/airtable';
 import { getMarketProductsCached } from '@/lib/stateMarket';
 import { marketStripFor } from '@/lib/marketStands';
 import { jsonLdSafe } from '@/lib/jsonLdSafe';
@@ -103,12 +103,13 @@ async function fetchStateCounts(s: SeoState): Promise<StateCounts> {
     const records = await withTimeout(
       base(TABLES.RANCHERS)
         .select({
-          filterByFormula:
-            // NOT({Broker Rail} = 1): keep this count identical to
-            // lib/stateSupply.countLiveShareRanchesByState, which also excludes
-            // represented ranchers — the two surfaces must never disagree.
-            `AND({Page Live} = 1, NOT({Public Map Hidden} = 1), ` +
-            `{Verification Status} != "Removed", NOT({Broker Rail} = 1), ${stateMatch})`,
+          // Shared discovery-visibility builder (Wave A, 2026-08-17) — the
+          // SAME formula /access/[state] sends, and the same criteria
+          // lib/stateSupply.countLiveShareRanchesByState mirrors in JS: a
+          // SELF-SERVE broker ranch counts as live supply, a token-only
+          // represented ranch stays invisible. The three surfaces must never
+          // disagree — change the builder, never a local copy.
+          filterByFormula: stateDiscoveryRanchersFormula(s.code, s.name),
           fields: ['Slug'],
           maxRecords: 100,
         })

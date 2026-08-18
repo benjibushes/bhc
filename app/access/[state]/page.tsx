@@ -5,7 +5,7 @@ import Image from 'next/image';
 import Container from '../../components/Container';
 import Button from '../../components/Button';
 import Divider from '../../components/Divider';
-import base, { TABLES, escapeAirtableValue } from '@/lib/airtable';
+import base, { TABLES, escapeAirtableValue, stateDiscoveryRanchersFormula } from '@/lib/airtable';
 import { US_STATES, stateName, normalizeState } from '@/lib/states';
 import { normalizeImageUrl } from '@/lib/imageUrl';
 import StateLandingAnalytics from './StateLandingAnalytics';
@@ -89,12 +89,13 @@ async function fetchStateData(stateCode: string, stateName: string): Promise<{
   try {
     const records = await base(TABLES.RANCHERS)
       .select({
-        filterByFormula:
-          // NOT({Broker Rail} = 1): a represented rancher is not public supply
-          // in this state — they have no page for a visitor to land on.
-          `AND({Page Live} = 1, NOT({Public Map Hidden} = 1), ` +
-          `{Verification Status} != "Removed", NOT({Broker Rail} = 1), ` +
-          `OR(UPPER({State}) = "${safeCode}", UPPER({State}) = "${safeName.toUpperCase()}"))`,
+        // Shared discovery-visibility builder (Wave A, 2026-08-17): a
+        // SELF-SERVE broker ranch (real public page, {Page Live} unset) is
+        // state supply here; a token-only represented ranch stays invisible.
+        // Kept in lib/airtable so this page, /half-a-cow/[state], and the
+        // lib/stateSupply counts can never disagree about who is public
+        // supply — change the builder, never a local copy.
+        filterByFormula: stateDiscoveryRanchersFormula(stateCode, stateName),
         maxRecords: 50,
       })
       .all();

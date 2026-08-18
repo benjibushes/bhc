@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { getAllRecords, TABLES } from '@/lib/airtable';
+import { getAllRecords, TABLES, mapPinsFormula } from '@/lib/airtable';
 import { isRancherOnConnect } from '@/lib/rancherEligibility';
 import { normalizeImageUrl } from '@/lib/imageUrl';
 import Container from '../components/Container';
@@ -96,21 +96,17 @@ async function fetchPins(): Promise<MapPin[]> {
   // ranchers join the discovery surface so visitors see the network is
   // alive + filling out, not just "verified or nothing".
   //
-  // BROKER RAIL (2026-07-31): represented ranchers are EXCLUDED. This is the
-  // loosest public surface in the app — it has no {Page Live} gate and no
-  // operational gate, so prospects and mid-onboarding rows are plotted. That
-  // makes it the one place a rancher who never signed up for anything could
-  // otherwise appear on a public map. Their `Active Status` is blank, which
-  // passes both != checks below, so nothing else here would stop them.
-  const formula = `AND(
-    {Verification Status} != "Removed",
-    NOT({Public Map Hidden} = 1),
-    NOT({Broker Rail} = 1),
-    {Active Status} != "Paused",
-    {Active Status} != "Non-Compliant",
-    {Latitude} != BLANK(),
-    {Longitude} != BLANK()
-  )`.replace(/\s+/g, ' ');
+  // BROKER RAIL (2026-07-31, relaxed Wave A 2026-08-17): a represented ranch
+  // is excluded UNLESS Ben opted it in via `Broker Self Serve` — the shared
+  // carve-out inside mapPinsFormula (lib/airtable). This is the loosest
+  // public surface in the app — no {Page Live} gate, no operational gate, so
+  // prospects and mid-onboarding rows plot — which makes it the one place a
+  // rancher who never signed up for anything could otherwise appear. Their
+  // `Active Status` is blank (passes both != checks), so the carve-out is the
+  // ONLY thing keeping token-only represented ranches off the map. A
+  // self-serve ranch plots because its page really resolves (the #617 slug
+  // carve-out) — the pin links to something that renders.
+  const formula = mapPinsFormula();
 
   let rows: any[] = [];
   try {
