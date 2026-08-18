@@ -37,6 +37,7 @@ import jwt from 'jsonwebtoken';
 export const maxDuration = 180;
 
 import { JWT_SECRET, generateMemberLoginToken } from '@/lib/secrets';
+import { railForLoadedRancher, referralCarriesBrokerMarker } from '@/lib/brokerDownstream';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -414,6 +415,18 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
               const rancherId = stuckRef['Rancher']?.[0] || stuckRef['Suggested Rancher']?.[0];
               if (rancherId) {
                 const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
+                // BROKER RAIL — the failure-conditioned twin of the match gate
+                // (lib/brokerMatch). A broker match that threw on its 'Intro
+                // Sent' write leaves the row at 'Pending Approval', which is
+                // exactly what promote-PA hunts for; it would then fire the
+                // full CONNECT double intro — the ranch gets the buyer's
+                // contact block, the buyer gets the ranch's email + phone —
+                // and BHC's entire fee on that sale is gone. Leave the row for
+                // the operator handoff the match already raised.
+                if (referralCarriesBrokerMarker(stuckRef) || railForLoadedRancher(rancher) === 'broker') {
+                  console.warn('[promote-pa] broker-rail referral skipped (deposit-first rail):', stuckRef.id);
+                  continue;
+                }
                 const rancherEmail = rancher['Email'];
                 const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
                 let promoteSentDepositInvite = false;

@@ -174,3 +174,158 @@ test('CAMPAIGN wiring: a broker wave owner never mints a Connect one-tap deposit
   // decideRequalifyCta refuse one-tap for a ranch with no Stripe account.
   assert.match(read('./airtable.ts'), /\{Page Live\} = 1, NOT\(\{Broker Rail\} = 1\)/);
 });
+
+// ---------------------------------------------------------------------------
+// 6. THE POST-MATCH RAILS — a broker referral row is SHAPE-IDENTICAL to a
+//    Connect lead (Status 'Intro Sent', `Rancher` set, 'Deposit Invite Sent
+//    At' stamped), and every rail below keyed off exactly that shape. All five
+//    consult the ONE predicate in lib/brokerDownstream; these pins fail if any
+//    of them grows its own inline check again.
+// ---------------------------------------------------------------------------
+
+test('SHARED PREDICATE: every post-match gate consults lib/brokerDownstream, not a private copy', () => {
+  const sites = [
+    '../app/api/cron/referral-chasup/route.ts',
+    '../app/api/cron/deposit-request-nudge/route.ts',
+    '../app/api/member/content/route.ts',
+    '../app/api/admin/referrals/[id]/resend-intro/route.ts',
+    '../app/api/cron/email-sequences/route.ts',
+    '../app/api/webhooks/telegram/route.ts',
+  ];
+  for (const rel of sites) {
+    const src = read(rel);
+    assert.match(src, /from '@\/lib\/brokerDownstream'/, `${rel} must consult the shared predicate`);
+    // The drift this module exists to stop: a hand-rolled `Broker Rail` read.
+    assert.doesNotMatch(src, /\['Broker Rail'\]/, `${rel} re-derived the rail inline`);
+  }
+});
+
+test('GATE rancher lead digest: a represented ranch is never emailed the buyer\'s phone + email', () => {
+  const src = read('../app/api/cron/referral-chasup/route.ts');
+  assert.match(src, /import \{ railForLoadedRancher, referralCarriesBrokerMarker \} from '@\/lib\/brokerDownstream'/);
+  assert.match(src, /refs\.some\(referralCarriesBrokerMarker\) \|\|\n\s*railForLoadedRancher\(rancher\) === 'broker'/);
+  const gateIdx = src.indexOf("skipReasons['broker-rail']");
+  assert.ok(gateIdx > -1, 'the skip must be counted, not silent');
+  // Everything the digest would have done sits AFTER the refusal.
+  assert.ok(src.indexOf('sendRancherLeadDigest', gateIdx) > gateIdx, 'the digest send must be gated');
+  assert.ok(src.indexOf("'Lead Digest Sent At': stampNow", gateIdx) > gateIdx, 'no rancher-side write either');
+  // It must NOT ride the Active Status list — a represented ranch's is BLANK
+  // (app/api/partner/represent never writes it), so that check can never bite.
+  const activeIdx = src.indexOf("['Paused', 'Non-Compliant', 'Removed'].includes(activeStatus)");
+  assert.ok(activeIdx > gateIdx, 'the broker refusal must precede, and not depend on, Active Status');
+});
+
+test('GATE deposit-request-nudge: the rail is resolved fail-closed, and decides phone + destination', () => {
+  const src = read('../app/api/cron/deposit-request-nudge/route.ts');
+  assert.match(src, /from '@\/lib\/brokerDownstream'/);
+  // Rail B's cohort formula is EXACTLY the post-broker-match state, so this
+  // cron was armed by the routable-broker PR itself.
+  assert.match(src, /const ABANDON_CANDIDATE_FORMULA =\n\s*`AND\(NOT\(\{Deposit Invite Sent At\}=""\), \{Deposit Requested At\}="", \{Deposit Paid At\}=""\)`/);
+  assert.match(src, /const rail = await resolveReferralRail\(r, async \(rancherId\) => \{/);
+  // The ranch's phone becomes an sms: link in the buyer's email — the leak.
+  assert.match(src, /if \(rail !== 'broker'\) rancherPhone = String\(loadedRancher\['Phone'\]/);
+  // And the CTA must point at a page that can actually take the money —
+  // but only on AFFIRMATIVE broker evidence. `rail` fails closed to 'broker'
+  // when the rancher read throws, and diverting a CONNECT buyer to the broker
+  // checkout on an Airtable blip would refuse a payment we could have taken.
+  assert.match(src, /const confirmedBroker =\n\s*referralCarriesBrokerMarker\(r\) \|\|\n\s*\(!!loadedRancher && railForLoadedRancher\(loadedRancher\) === 'broker'\);/);
+  assert.match(src, /const depositPath = confirmedBroker \? `\/checkout\/\$\{r\.id\}\/broker` : `\/checkout\/\$\{r\.id\}\/deposit`;/);
+  assert.match(src, /rail: confirmedBroker \? 'broker' : 'connect',/);
+  // The SMS rescue leg rides the same rail decision (same read, no extra I/O).
+  assert.match(src, /const smsDepositPath = smsRail === 'broker' \? `\/checkout\/\$\{r\.id\}\/broker`/);
+});
+
+test('GATE deposit nudge TEMPLATE: broker never renders an sms: link, even if a caller passes one', () => {
+  const src = read('./emailMinimal.ts');
+  assert.match(src, /const isBroker = opts\.rail === 'broker';/);
+  assert.match(src, /const phoneLine = opts\.rancherPhone && !isBroker/);
+  // "accepts your slot" is Connect machinery a represented ranch does not have.
+  assert.match(src, /const refundLine = isBroker\n\s*\? `fully refundable until \$\{rancherFirst\} confirms your animal\.`/);
+});
+
+test('GATE /member: rancher email + phone are withheld on the broker rail until the deposit lands', () => {
+  const src = read('../app/api/member/content/route.ts');
+  assert.match(src, /const rail = referralCarriesBrokerMarker\(r\) \? 'broker' : railForLoadedRancher\(rr\);/);
+  assert.match(src, /if \(mayRevealRancherContact\(r, rail\)\) \{/);
+  const gateIdx = src.indexOf('if (mayRevealRancherContact(r, rail)) {');
+  const closeIdx = src.indexOf('      }', gateIdx);
+  const guarded = src.slice(gateIdx, closeIdx);
+  // Everything that becomes a direct channel in RancherContactBlock.
+  for (const field of ["rr['Email']", "rr['Phone']", "'Pickup Address'", "'Pickup Instructions'"]) {
+    assert.ok(guarded.includes(field), `${field} must sit INSIDE the reveal gate`);
+  }
+  // The name/slug stay outside — the buyer must still see WHO they matched.
+  const beforeGate = src.slice(src.indexOf('const rr: any = ranchersById.get(rancherId);'), gateIdx);
+  assert.ok(beforeGate.includes("rr['Slug']"), 'the ranch page link is not contact details');
+});
+
+test('GATE admin resend-intro: refuses a represented ranch (the sibling reassign gate\'s twin)', () => {
+  const src = read('../app/api/admin/referrals/[id]/resend-intro/route.ts');
+  assert.match(src, /if \(referralCarriesBrokerMarker\(referral\) \|\| railForLoadedRancher\(rancher\) === 'broker'\) \{/);
+  const gateIdx = src.indexOf("railForLoadedRancher(rancher) === 'broker'");
+  // BOTH halves of the double intro sit after the refusal.
+  assert.ok(src.indexOf('BuyHalfCow Introduction:', gateIdx) > gateIdx, 'rancher-side intro must be gated');
+  assert.ok(src.indexOf('sendBuyerIntroNotification', gateIdx) > gateIdx, 'buyer-side intro must be gated');
+  assert.ok(src.indexOf('rancherPhone:', gateIdx) > gateIdx);
+  // The operator is pointed at the rail that DOES take money.
+  assert.match(src, /redirectUrl: `\/checkout\/\$\{id\}\/broker`/);
+});
+
+test('GATE deposit page: a rail redirect from the GET is FOLLOWED, not rendered as an error', () => {
+  const src = read('../app/checkout/[refId]/deposit/page.tsx');
+  const getBranch = src.slice(src.indexOf("fetch(`/api/checkout/deposit?refId="), src.indexOf('const continueToCheckout'));
+  assert.match(getBranch, /if \(j\.redirectUrl\) \{\n\s*window\.location\.href = String\(j\.redirectUrl\);\n\s*return;\n\s*\}/);
+  // It must run BEFORE the generic error shell takes over.
+  const redirIdx = getBranch.indexOf('if (j.redirectUrl) {');
+  const errIdx = getBranch.indexOf('setErrCode(String(j.error));');
+  assert.ok(redirIdx > -1 && errIdx > redirIdx, 'the redirect must pre-empt setErrCode');
+  // And the server half must still hand one back for a broker referral.
+  const api = read('../app/api/checkout/deposit/route.ts');
+  assert.match(api, /error: 'not_connect_rail',\n\s*redirectUrl: `\/checkout\/\$\{referralId\}\/broker`/);
+});
+
+// ---------------------------------------------------------------------------
+// 7. FAILURE-CONDITIONED TWINS — if the match's 'Intro Sent' write throws, the
+//    broker row is left at 'Pending Approval', which is exactly what these
+//    three promote paths hunt for. Same money outcome, so same gate.
+// ---------------------------------------------------------------------------
+
+test('GATE promote-PA: a stuck broker row is skipped, not promoted into a Connect double intro', () => {
+  const src = read('../app/api/cron/email-sequences/route.ts');
+  assert.match(src, /if \(referralCarriesBrokerMarker\(stuckRef\) \|\| railForLoadedRancher\(rancher\) === 'broker'\) \{/);
+  const gateIdx = src.indexOf("railForLoadedRancher(rancher) === 'broker'");
+  assert.ok(src.indexOf('sendBuyerIntroNotification', gateIdx) > gateIdx);
+  assert.ok(src.indexOf("'Status': 'Intro Sent'", gateIdx) > gateIdx, 'no status write either');
+});
+
+test('GATE telegram /bulkfire + approve_: neither can mass-fire a Connect intro on the broker rail', () => {
+  const src = read('../app/api/webhooks/telegram/route.ts');
+  assert.match(src, /if \(referralCarriesBrokerMarker\(ref\) \|\| railForLoadedRancher\(rancher\) === 'broker'\) \{\n\s*brokerSkipped\+\+;/);
+  assert.match(src, /Broker-rail skipped: \$\{brokerSkipped\}/, 'the skip is reported, never silent');
+  assert.match(src, /if \(referralCarriesBrokerMarker\(referral\) \|\| railForLoadedRancher\(rancher\) === 'broker'\) \{/);
+  const approveIdx = src.indexOf("referralCarriesBrokerMarker(referral) || railForLoadedRancher(rancher) === 'broker'");
+  // The "10% commission on BHC referral sales" line — an agreement a
+  // represented ranch never signed — sits after the refusal.
+  assert.ok(src.indexOf('10% commission on BHC referral sales', approveIdx) > approveIdx);
+});
+
+// ---------------------------------------------------------------------------
+// 8. THE MATCH GATE'S OWN CONTRACT — the doc comment used to promise a
+//    fail-closed that the code did not implement.
+// ---------------------------------------------------------------------------
+
+test('planMatchNotifications: an UNREADABLE rancher gets the broker plan, as documented', async () => {
+  const { planMatchNotifications } = await import('./brokerMatch');
+  for (const bad of [null, undefined, 'recSomething', 0]) {
+    const plan = planMatchNotifications(bad as any);
+    assert.equal(plan.rail, 'broker', `a ${typeof bad} rancher must fail closed`);
+    assert.equal(plan.rancherLeadEmail, false);
+    assert.equal(plan.buyerIntroHandoff, false);
+    assert.equal(plan.expectACallSms, false);
+  }
+  // A REAL row with no `Broker Rail` key is the normal Connect wire shape
+  // (Airtable omits unchecked checkboxes) — it must stay Connect, or the whole
+  // platform silently converts to the broker plan.
+  assert.equal(planMatchNotifications({ id: 'recX', 'Ranch Name': 'R' }).rail, 'connect');
+  assert.equal(planMatchNotifications({ id: 'recX', 'Broker Rail': true }).rail, 'broker');
+});

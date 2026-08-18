@@ -5,6 +5,7 @@ import { sendTelegramUpdate } from '@/lib/telegram';
 import jwt from 'jsonwebtoken';
 import { requireAdmin } from '@/lib/adminAuth';
 import { isRancherOnConnect } from '@/lib/rancherEligibility';
+import { railForLoadedRancher, referralCarriesBrokerMarker } from '@/lib/brokerDownstream';
 
 import { JWT_SECRET, generateMemberLoginToken } from '@/lib/secrets';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
@@ -39,6 +40,28 @@ export async function POST(
     const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
     if (!rancher) {
       return NextResponse.json({ error: 'Rancher not found' }, { status: 404 });
+    }
+
+    // BROKER RAIL (2026-08-17). This handler fires BOTH halves of the Connect
+    // double intro: it emails the RANCH the buyer's email + phone, and it calls
+    // sendBuyerIntroNotification with the RANCH's email + phone. On the broker
+    // rail that is a total revenue loss — BHC's entire fee is the deposit, and
+    // two parties holding each other's phone numbers do not need us. The
+    // sibling reassign route was gated when broker ranches became routable;
+    // this one was missed, and it is one admin button click away on both
+    // /admin/desk/[referralId] and /admin/referrals.
+    //
+    // Refuse rather than silently half-send: the operator pressing this wants a
+    // lead delivered, and on this rail the honest answer is "that is not how
+    // this ranch gets buyers — send them the deposit link".
+    if (referralCarriesBrokerMarker(referral) || railForLoadedRancher(rancher) === 'broker') {
+      return NextResponse.json({
+        error:
+          `${rancher['Operator Name'] || rancher['Ranch Name'] || 'That ranch'} is a represented (broker-rail) ranch — ` +
+          `there is no rancher intro to resend. Send the buyer the deposit link instead: /checkout/${id}/broker`,
+        rail: 'broker',
+        redirectUrl: `/checkout/${id}/broker`,
+      }, { status: 400 });
     }
 
     const rancherEmail = rancher['Email'];

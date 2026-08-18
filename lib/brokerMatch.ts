@@ -97,9 +97,28 @@ const BROKER_PLAN: MatchNotificationPlan = {
  * thing that decides what may be sent. A represented ranch that somehow
  * reached the end of the pipeline while NOT routable must still never be
  * emailed a Connect lead, and its buyer must still never be handed its phone
- * number. Fail closed toward the broker plan.
+ * number.
+ *
+ * FAIL-CLOSED, STATED EXACTLY (2026-08-17 — the old comment promised "fail
+ * closed toward the broker plan" while the code returned CONNECT_PLAN for a
+ * null rancher; the comment was the lie, so the CODE moved):
+ *
+ *   • rancher is not an object (null, undefined, a bare record id) → BROKER.
+ *     Nothing was read, so Connect cannot be proven, and the Connect ending is
+ *     the irreversible one: contact details out, fee gone.
+ *   • a real row with NO `Broker Rail` key → CONNECT. This is deliberately NOT
+ *     treated as unknown: Airtable omits unchecked checkboxes from the fields
+ *     payload entirely, so "no key" is the normal wire shape of every Connect
+ *     rancher in the base. Failing closed on it would silently convert the
+ *     whole platform to the broker plan and stop the Connect rail dead — a
+ *     far worse outcome than the leak it would be guarding against.
+ *
+ * Same contract, same reasoning, as lib/brokerDownstream's
+ * BROKER_RAIL_FAIL_CLOSED — which is what every rail DOWNSTREAM of the match
+ * consults.
  */
 export function planMatchNotifications(rancher: any): MatchNotificationPlan {
+  if (!rancher || typeof rancher !== 'object') return BROKER_PLAN;
   return isBrokerRancher(rancher) ? BROKER_PLAN : CONNECT_PLAN;
 }
 

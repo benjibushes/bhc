@@ -32,6 +32,7 @@ import { getAllRecords, getRecordById, updateRecord, TABLES, isInvalidFilterForm
 import { findPaymentsByReferral } from '@/lib/contracts/payments';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendDepositRequestNudge } from '@/lib/emailMinimal';
+import { railForLoadedRancher, referralCarriesBrokerMarker, resolveReferralRail } from '@/lib/brokerDownstream';
 import { sendDemandRouterCampaign } from '@/lib/email';
 import { sendSMSToConsumer } from '@/lib/twilio';
 import { smsEnabled } from '@/lib/smsFlag';
@@ -343,13 +344,18 @@ async function runDepositSmsRescue(
         return out;
       }
 
-      // Rancher name for the copy — best-effort, generic fallback.
+      // Rancher name for the copy — best-effort, generic fallback. The SAME
+      // read settles the rail (no extra I/O), because the link below is
+      // rail-specific: /checkout/<refId>/deposit 409s `not_connect_rail` on a
+      // broker row, so a broker buyer would get an SMS to a dead end.
       let rancherName = String(r['Suggested Rancher Name'] || '').trim();
+      let smsRail: 'broker' | 'connect' = referralCarriesBrokerMarker(r) ? 'broker' : 'connect';
       try {
-        const rancherId: string = ((r['Rancher'] || []) as string[])[0] || '';
+        const rancherId: string = ((r['Rancher'] || r['Suggested Rancher'] || []) as string[])[0] || '';
         if (rancherId) {
           const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
           rancherName = String(rancher?.['Ranch Name'] || rancherName || '').trim();
+          if (railForLoadedRancher(rancher) === 'broker') smsRail = 'broker';
         }
       } catch { /* generic fallback below */ }
 
@@ -359,8 +365,9 @@ async function runDepositSmsRescue(
       // link → deposit-page hop the email leg uses. NEVER a raw Stripe URL
       // (durableDepositPayLink blanks those).
       const durable = durableDepositPayLink(r['Deposit Checkout URL']);
+      const smsDepositPath = smsRail === 'broker' ? `/checkout/${r.id}/broker` : `/checkout/${r.id}/deposit`;
       const link = durable ||
-        `${SITE_URL}/api/auth/member/verify?token=${generateMemberLoginToken(buyerId, buyerEmail)}&next=${encodeURIComponent(`/checkout/${r.id}/deposit`)}`;
+        `${SITE_URL}/api/auth/member/verify?token=${generateMemberLoginToken(buyerId, buyerEmail)}&next=${encodeURIComponent(smsDepositPath)}`;
 
       const cutRaw = String(r['Order Type'] || buyer['Order Type'] || '').trim().toLowerCase().split(/\s+/)[0];
       const body = renderDepositSmsNudge({
@@ -470,24 +477,57 @@ async function realHandler(_request: Request): Promise<CronResult> {
         };
       }
 
-      // Rancher context for the copy (name + phone). Best-effort.
+      // Rancher context for the copy (name + phone) AND the rail. Best-effort
+      // on the name; NEVER best-effort on the rail — resolveReferralRail fails
+      // closed to 'broker' on a throw, a null row, or an unlinked referral.
+      //
+      // BROKER RAIL — this rail ARMED this cron (2026-08-17). A broker match
+      // stamps 'Deposit Invite Sent At' with 'Deposit Requested At' and
+      // 'Deposit Paid At' both empty: byte-for-byte the Rail-B cohort formula.
+      // So up to 6 touches over 21 days fired on a rail nobody had checked, and
+      // each one carried the ranch's phone as an sms: link plus a CTA pointing
+      // at the CONNECT deposit page (which refuses this rail with a 409).
+      //
+      // The chase itself is RIGHT and must keep running — that deposit is 100%
+      // of BHC's revenue on this sale, so suppressing the rail would cost more
+      // than the leak. What changes is the shape: no phone, broker-correct
+      // refund promise (lib/emailMinimal), and the buyer's CTA points at the
+      // broker checkout that can actually take the money.
       let rancherName = String(r['Suggested Rancher Name'] || '').trim();
       let rancherPhone = '';
-      try {
-        const rancherId: string = ((r['Rancher'] || []) as string[])[0] || '';
-        if (rancherId) {
-          const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
-          rancherName = String(rancher?.['Ranch Name'] || rancherName || 'your rancher').trim();
-          rancherPhone = String(rancher?.['Phone'] || '').trim();
-        }
-      } catch { /* copy falls back to generic */ }
+      let loadedRancher: any = null;
+      const rail = await resolveReferralRail(r, async (rancherId) => {
+        loadedRancher = await getRecordById(TABLES.RANCHERS, rancherId);
+        return loadedRancher;
+      });
+      if (loadedRancher) {
+        rancherName = String(loadedRancher['Ranch Name'] || rancherName || 'your rancher').trim();
+        if (rail !== 'broker') rancherPhone = String(loadedRancher['Phone'] || '').trim();
+      }
+      // TWO DECISIONS, TWO EVIDENCE BARS — deliberately, because their failure
+      // modes are not symmetric:
+      //   • WITHHOLDING the phone rides `rail`, which fails CLOSED. Suppressing
+      //     a phone number on a maybe costs one sms: link.
+      //   • DIVERTING the buyer to a different checkout page rides
+      //     `confirmedBroker` — affirmative evidence only. `rail` goes 'broker'
+      //     when the rancher read THROWS, and a transient Airtable blip must
+      //     never send a CONNECT buyer to /checkout/<refId>/broker, which
+      //     refuses them outright. That would be a self-inflicted revenue block
+      //     on the bigger rail while guarding the smaller one.
+      const confirmedBroker =
+        referralCarriesBrokerMarker(r) ||
+        (!!loadedRancher && railForLoadedRancher(loadedRancher) === 'broker');
 
       const cutTier = String(r['Order Type'] || 'share').replace(/\s*cow\s*$/i, '').trim() || 'share';
       const buyerFirst = String(buyer['Full Name'] || r['Buyer Name'] || 'there').split(/\s+/)[0];
 
-      // Magic-link hop → deposit page (fresh Stripe session minted there).
+      // Magic-link hop → the deposit page FOR THIS RAIL (fresh Stripe session
+      // minted there). /checkout/<refId>/deposit is Connect-only and 409s
+      // `not_connect_rail` on a broker row — sending a broker buyer there was a
+      // revenue block, not just a cosmetic wrong link.
       const token = generateMemberLoginToken(buyerId, buyerEmail);
-      const checkoutUrl = `${SITE_URL}/api/auth/member/verify?token=${token}&next=${encodeURIComponent(`/checkout/${r.id}/deposit`)}`;
+      const depositPath = confirmedBroker ? `/checkout/${r.id}/broker` : `/checkout/${r.id}/deposit`;
+      const checkoutUrl = `${SITE_URL}/api/auth/member/verify?token=${token}&next=${encodeURIComponent(depositPath)}`;
 
       const res = await sendDepositRequestNudge({
         buyerEmail,
@@ -497,6 +537,10 @@ async function realHandler(_request: Request): Promise<CronResult> {
         checkoutUrl,
         rancherPhone: rancherPhone || undefined,
         touch,
+        // Copy rides the same affirmative bar as the URL: "confirms your
+        // animal" is only true when we KNOW this is the broker rail. (The
+        // phone is already gone by then either way — `rancherPhone` above.)
+        rail: confirmedBroker ? 'broker' : 'connect',
       });
       if ((res as any)?.success === false) suppressed++;
       else sent++;

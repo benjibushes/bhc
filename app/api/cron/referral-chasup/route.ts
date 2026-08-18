@@ -11,6 +11,7 @@ import { withCronRun } from '@/lib/cronRun';
 import { shouldDecrementOnClose } from '@/lib/refundLifecycle';
 import { isReferralOnHold } from '@/lib/referralHold';
 import { isRancherAddedReferral } from '@/lib/rancherLeads';
+import { railForLoadedRancher, referralCarriesBrokerMarker } from '@/lib/brokerDownstream';
 import { claimOnce } from '@/lib/rancherCapacity';
 import jwt from 'jsonwebtoken';
 
@@ -355,6 +356,24 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
           if (leads.length === 0) continue;
           const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
           if (!rancher) continue;
+          // BROKER RAIL — THE BIGGEST DOWNSTREAM LEAK (2026-08-17).
+          // This digest emails the linked ranch `<buyer phone> · <buyer email>`
+          // for every lead sitting in 'Intro Sent'. A broker match writes a row
+          // in exactly that state, so a represented ranch would be handed the
+          // buyer's contact details daily — they transact direct and BHC's
+          // entire fee on that sale (the deposit) is gone.
+          //
+          // The Active Status guard below could NEVER have caught it:
+          // app/api/partner/represent deliberately never writes Active Status,
+          // so a self-serve broker ranch's is BLANK and passes the list check.
+          // Hence: explicit, first, and not downstream of any admin checkbox.
+          if (
+            refs.some(referralCarriesBrokerMarker) ||
+            railForLoadedRancher(rancher) === 'broker'
+          ) {
+            skipReasons['broker-rail'] = (skipReasons['broker-rail'] || 0) + refs.length;
+            continue;
+          }
           // Same status guard as the Monday nudge path: never chase paused/
           // removed ranchers.
           const activeStatusObj: any = rancher['Active Status'];
