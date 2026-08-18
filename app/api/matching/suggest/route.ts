@@ -17,6 +17,17 @@ import { getMaxActiveReferrals, incrementCapacity, decrementCapacity, syncCapaci
 import { isActiveDealReferral } from '@/lib/capacityCount';
 import { equalStateSubCap } from '@/lib/stateSubCap';
 import { isRancherOperationalForBuyers, isRancherOnConnect } from '@/lib/rancherEligibility';
+// MONEY GUARD — a broker-rail match must be DEPOSIT-FIRST, never an intro
+// handoff. lib/brokerMatch owns that decision; this route only obeys it.
+import {
+  planMatchNotifications,
+  brokerCutForOrderType,
+  brokerMatchDestinationPath,
+  brokerMatchInviteFor,
+  buildBrokerMatchOperatorCard,
+} from '@/lib/brokerMatch';
+import { BROKER_MATCH_TYPE, CUT_LABELS } from '@/lib/brokerRail';
+import { sendBrokerMatchInvite } from '@/lib/email';
 import { isQualificationFresh } from '@/lib/qualification';
 import { requireAdmin } from '@/lib/adminAuth';
 import { MIN_TIER_PRICE } from '@/lib/pricing';
@@ -1401,6 +1412,16 @@ export async function POST(request: Request) {
     }
     topMatch = claimedRancher;
 
+    // ── RAIL DECISION — the single most important line in this route ────────
+    // Decided ONCE, from the rancher we actually claimed, and consulted at
+    // every send site below. On the BROKER rail the buyer's deposit IS 100% of
+    // BHC's fee (docs/BUSINESS-MODEL.md model 3), so the Connect ending —
+    // email the rancher a lead, hand the buyer the rancher's email + phone,
+    // text them to expect a call — hands the whole transaction off-platform and
+    // BHC earns nothing on a lead it sourced and routed. See lib/brokerMatch.
+    const notifyPlan = planMatchNotifications(topMatch);
+    const isBrokerRailMatch = notifyPlan.rail === 'broker';
+
     const referralFields: Record<string, any> = {
       'Buyer': [buyerId],
       'Status': 'Pending Approval',
@@ -1419,7 +1440,15 @@ export async function POST(request: Request) {
       'Suggested Rancher': [topMatch.id],
       'Suggested Rancher Name': topMatch['Operator Name'] || topMatch['Ranch Name'] || '',
       'Suggested Rancher State': topMatch['State'] || '',
-      'Match Type': matchType === 'direct' ? 'Direct (Rancher Page)' : matchType === 'nationwide' ? 'Nationwide' : 'Local',
+      // DEDUPE (broker rail): the row MUST carry the exact BROKER_MATCH_TYPE.
+      // lib/brokerReferral's find-or-create reuses an open referral only on a
+      // byte-exact `Match Type` match, so a routed buyer who then self-serves
+      // on the ranch's page reuses THIS row instead of spawning a duplicate
+      // (and a duplicate is what would let the same buyer be charged twice or
+      // strand the money truth on the wrong row).
+      'Match Type': isBrokerRailMatch
+        ? BROKER_MATCH_TYPE
+        : matchType === 'direct' ? 'Direct (Rancher Page)' : matchType === 'nationwide' ? 'Nationwide' : 'Local',
       // State Allocation: source state used for the per-state sub-cap math
       // on future matches. Stamped on every new referral so the activeRefs
       // grouping in subsequent calls knows which state's bucket this slot
@@ -1632,7 +1661,13 @@ export async function POST(request: Request) {
         // so a Resend outage doesn't silently strand the referral. Without
         // this: Airtable shows "Intro Sent" but the rancher's inbox is
         // empty → buyer waits for a call that never comes → ghost.
-        if (rancherEmail) {
+        // MONEY GUARD 1 of 3 — never email a REPRESENTED ranch a Connect lead.
+        // This block hands over the buyer's contact details, a 30-day
+        // quick-action JWT whose buttons post to a dashboard a represented
+        // ranch has no login for, and (below) an explicit "10% commission
+        // invoice" claim it never signed an agreement for. On the broker rail
+        // the ranch hears about the sale at SETTLEMENT, with money already in.
+        if (rancherEmail && notifyPlan.rancherLeadEmail) {
           // Operator symmetry (B2 2026-07-15): on the Operator tier the BHC
           // team runs the close (buyer reveal says "ben reaches out today";
           // commission is zero) — so this email must not urge the rancher to
@@ -1820,7 +1855,13 @@ export async function POST(request: Request) {
               `🤠 Routed to: ${rancherName}\n` +
               `📧 ${buyerEmail}${buyerPhone ? ` · 📱 ${buyerPhone}` : ''}\n` +
               `${orderType ? `🥩 ${orderType}` : ''}${budgetRange ? ` · 💰 ${budgetRange}` : ''}\n\n` +
-              `<i>Buyer explicitly confirmed ready-to-buy in 1–2 months. Both buyer + rancher just got intro emails. Watch for reply within 24h.</i>`
+              // Rail-correct tail: on the broker rail the ranch is deliberately
+              // NOT emailed (see lib/brokerMatch), so claiming "both sides got
+              // intro emails" would send Ben chasing a rancher reply that was
+              // never invited.
+              (notifyPlan.rail === 'broker'
+                ? `<i>Buyer explicitly confirmed ready-to-buy in 1–2 months. Represented ranch — the ranch was NOT emailed; the buyer got a deposit link. Watch for the deposit, not a reply.</i>`
+                : `<i>Buyer explicitly confirmed ready-to-buy in 1–2 months. Both buyer + rancher just got intro emails. Watch for reply within 24h.</i>`)
             );
           } catch (e) { console.error('Ready-to-buy Telegram alert error:', e); }
         }
@@ -1857,6 +1898,102 @@ export async function POST(request: Request) {
             const nextPath = `/checkout/${referral.id}/deposit`;
             depositMagicLinkUrl = `${SITE_URL}/api/auth/member/verify?token=${magicToken}&next=${encodeURIComponent(nextPath)}`;
           }
+
+          // ── BROKER RAIL: DEPOSIT-FIRST, NOT AN INTRODUCTION ────────────────
+          // The buyer-facing half of the money guard. Instead of the rancher's
+          // email + phone, the buyer gets ONE CTA: the existing broker deposit
+          // surface. Copy is broker-correct (deposit toward your share, balance
+          // to the ranch, any butcher bill disclosed) and NEVER reveals that
+          // the deposit is BHC's commission — the buyer's total is the ranch's
+          // own price either way, so the split is not their transaction.
+          //
+          // Destination (both are existing paths, never a raw Stripe URL):
+          //   • cut known  → /checkout/<refId>/broker?cut=<cut> behind a
+          //     member-verify magic link, so the deposit auth resolves in one
+          //     tap. Same wrapper the Connect deposit CTA above uses.
+          //   • cut unknown → the ranch's public reserve page. Its POST reuses
+          //     THIS referral (Match Type BROKER_MATCH_TYPE) rather than
+          //     duplicating it.
+          let brokerInviteSent = false;
+          let brokerReserveUrl = '';
+          if (notifyPlan.brokerReserveInvite) {
+            const brokerCut = brokerCutForOrderType(orderType);
+            const dest = brokerMatchDestinationPath({
+              slug: String(topMatch['Slug'] || ''),
+              referralId: referral.id,
+              cut: brokerCut,
+            });
+            if (dest.kind === 'deep' && buyerId && buyerEmail) {
+              const magicToken = generateMemberLoginToken(buyerId, buyerEmail);
+              brokerReserveUrl = `${SITE_URL}/api/auth/member/verify?token=${magicToken}&next=${encodeURIComponent(dest.path)}`;
+            } else {
+              brokerReserveUrl = `${SITE_URL}${dest.path}#reserve`;
+            }
+            const invite = brokerMatchInviteFor({
+              rancher: topMatch,
+              buyerFirstName,
+              reserveUrl: brokerReserveUrl,
+              requestedCutLabel: brokerCut ? CUT_LABELS[brokerCut] : undefined,
+            });
+            // null = the ranch has no cut the checkout would actually take
+            // money for. Send NOTHING rather than a link that bounces; the
+            // operator card below says so explicitly.
+            if (invite) {
+              try {
+                await sendBrokerMatchInvite({
+                  to: buyerEmail,
+                  subject: invite.subject,
+                  html: invite.html,
+                  text: invite.text,
+                });
+                brokerInviteSent = true;
+              } catch (e: any) {
+                console.error('[matching/suggest] broker match invite failed:', e?.message);
+              }
+            }
+            // The invite IS the deposit invite on this rail — stamp it so the
+            // deposit-request-nudge rail chases this buyer (same reason the
+            // Connect branch stamps it below).
+            if (brokerInviteSent) {
+              try {
+                await updateRecord(TABLES.REFERRALS, referral.id, {
+                  'Deposit Invite Sent At': new Date().toISOString(),
+                });
+              } catch (e: any) {
+                console.warn('[matching/suggest] broker deposit-invite stamp failed:', e?.message);
+              }
+            }
+          }
+
+          // Operator handoff. The ranch has no dashboard and gets no lead
+          // email, so BEN is the notification — he does the coordination on
+          // this rail. Buyer contact details stay here, operator-only.
+          if (notifyPlan.operatorHandoffAlert) {
+            try {
+              const card = buildBrokerMatchOperatorCard({
+                ranchName: String(topMatch['Ranch Name'] || topMatch['Operator Name'] || ''),
+                ranchState: String(topMatch['State'] || ''),
+                buyerName,
+                buyerState,
+                orderType: String(orderType || ''),
+                reserveUrl: brokerReserveUrl,
+                invited: brokerInviteSent,
+              });
+              await sendOperatorSignal({
+                urgency: brokerInviteSent ? 'normal' : 'loud',
+                kind: brokerInviteSent ? 'other' : 'system-error',
+                summary: card.summary,
+                detail: card.detail,
+                refs: [
+                  { type: 'rancher', id: topMatch.id, label: String(topMatch['Ranch Name'] || '') },
+                  { type: 'referral', id: referral.id },
+                ],
+                dedupeKey: `broker-match:${referral.id}`,
+              });
+            } catch (e: any) {
+              console.error('[matching/suggest] broker match operator signal failed:', e?.message);
+            }
+          }
           // Same try/catch + Telegram alert pattern as the rancher email.
           // The buyer-side intro is what actually shows them rancher contact
           // info in the dashboard email — a silent send failure here makes
@@ -1869,7 +2006,12 @@ export async function POST(request: Request) {
           // buyers always get the intro — they're handled off-platform.
           const matchedRancherPm = String(topMatch['Pricing Model'] || 'legacy').toLowerCase();
           const suppressBuyerIntro = !!body?.skipBuyerIntro && matchedRancherPm === 'tier_v2';
-          if (!suppressBuyerIntro) try {
+          // MONEY GUARD 2 of 3 — sendBuyerIntroNotification hands the buyer the
+          // ranch's EMAIL and PHONE. On the broker rail that is the whole
+          // revenue: given the number, buyer and ranch transact directly and
+          // BHC's deposit (its entire fee) is never paid. The broker invite
+          // ABOVE has already replaced this with a deposit-first CTA.
+          if (!suppressBuyerIntro && notifyPlan.buyerIntroHandoff) try {
             await sendBuyerIntroNotification({
               firstName: buyerFirstName,
               email: buyerEmail,
@@ -1959,7 +2101,10 @@ export async function POST(request: Request) {
           // the rancher contact; we simply skip the SMS rather than risk a
           // quiet-hours text. (This is a fresh real-time intro, not a deferred
           // wave, so there's no later run to pick it up — skipping is correct.)
-          if (buyerPhone && isSmsWindow(buyerState, Date.now())) {
+          // MONEY GUARD 3 of 3 — "they'll text or call you in the next 24-48h" is
+          // false on the broker rail (nobody was told to call) and invites the
+          // same direct, un-deposited deal the intro handoff would.
+          if (buyerPhone && notifyPlan.expectACallSms && isSmsWindow(buyerState, Date.now())) {
             try {
               const consumerForSms: any = await getRecordById(TABLES.CONSUMERS, buyerId);
               sendSMSToConsumer({

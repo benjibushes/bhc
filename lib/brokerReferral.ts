@@ -10,11 +10,15 @@
 //     gate requires isRancherOnConnect + Page Live + a Tier, all of which a
 //     broker rancher deliberately lacks; running it here would reject every
 //     legitimate broker link.
-//   • NO capacity hold. Capacity (`Max Active Referalls` / the Redis counter)
-//     is a PLATFORM supply-routing construct for ranchers the matching engine
-//     assigns buyers to. Ben allocates a represented rancher's shares himself
-//     on the phone, and the rancher is excluded from routing entirely, so
-//     incrementing a counter nobody reads would only pollute drift checks.
+//   • NO capacity hold HERE. The canonical rule is that a slot is claimed
+//     exactly when a referral ENTERS the held set (lib/capacityCount
+//     HELD_REFERRAL_STATUSES) and released when it leaves. A row created here
+//     is Status='Pending' — NOT held — so there is correctly nothing to claim
+//     yet. The claim happens at the transition that actually holds a slot:
+//     lib/brokerSettlement's flip to 'Awaiting Payment' (see
+//     shouldIncrementOnEnterHeld). Before that pairing existed, paid broker
+//     sales sat in a held status with no matching INCR, so the Redis seed read
+//     them as phantom load and starved the ranch's routing.
 //
 // FIND-OR-CREATE, like the campaign rail: a texted link gets re-tapped (second
 // device, forwarded, re-opened), and spawning a new referral per tap would
@@ -23,6 +27,7 @@
 import {
   TABLES,
   createRecord,
+  updateRecord,
   getAllRecords,
   getRecordById,
   escapeAirtableValue,
@@ -57,6 +62,47 @@ export function brokerReferralNotes(quote: BrokerQuote): string {
     `${formatUsdCents(quote.priceCents)}–${formatUsdCents(quote.priceMaxCents)}. ` +
     `Total Sale Amount is stamped at the range FLOOR (conservative; the deposit/commission is exact and unaffected).`
   );
+}
+
+/**
+ * The MONEY FIELDS a broker referral carries for a chosen cut. Exported and
+ * shared by BOTH the create and the reuse branch — that sharing IS the fix:
+ * the reuse branch used to stamp nothing, so a routed referral (created by
+ * matching with no cut chosen yet) could reach checkout with a blank price and
+ * a blank deposit and nothing for a human to reconcile against.
+ *
+ * WEIGHT-PRICED cuts stamp the range FLOOR as `Total Sale Amount` —
+ * conservative, never overstates — with the full range recorded in Notes. The
+ * deposit is exact in both modes.
+ */
+export function brokerReferralMoneyFields(quote: BrokerQuote): Record<string, any> {
+  return {
+    'Order Type': quote.cutLabel,
+    'Total Sale Amount': quote.priceCents / 100,
+    'Deposit Amount': quote.depositCents / 100,
+    Notes: brokerReferralNotes(quote),
+  };
+}
+
+/**
+ * May this existing referral row be REUSED as the broker deposit intent for
+ * `rancherId`? Pure, so the dedupe rule is unit-tested rather than inferred
+ * from an inline `.find()`.
+ *
+ * The `Match Type` clause is byte-exact ON PURPOSE and is load-bearing in two
+ * directions:
+ *   • reuse — the matching engine stamps this same BROKER_MATCH_TYPE constant
+ *     on a routed broker referral precisely so a buyer who then self-serves on
+ *     the ranch's page lands back on THEIR row instead of spawning a duplicate;
+ *   • refusal — never hijack a Connect deposit referral this buyer happens to
+ *     have, or the two rails cross and the wrong money model charges.
+ */
+export function isReusableBrokerReferral(row: any, rancherId: string): boolean {
+  if (!row || !rancherId) return false;
+  const links: string[] = row['Rancher'] || row['Suggested Rancher'] || [];
+  if (!Array.isArray(links) || !links.includes(rancherId)) return false;
+  if (REUSABLE_BLOCKED.has(String(row['Status'] || ''))) return false;
+  return String(row['Match Type'] || '') === BROKER_MATCH_TYPE;
 }
 
 export type BrokerReferralResult =
@@ -125,15 +171,33 @@ export async function findOrCreateBrokerReferral(args: {
         TABLES.REFERRALS,
         `LOWER(TRIM({Buyer Email})) = "${escapeAirtableValue(buyerEmail)}"`,
       );
-      const match = candidates.find((r) => {
-        const links: string[] = r['Rancher'] || r['Suggested Rancher'] || [];
-        if (!links.includes(rancherId)) return false;
-        if (REUSABLE_BLOCKED.has(String(r['Status'] || ''))) return false;
-        // Only reuse a BROKER referral — never hijack a Connect deposit
-        // referral this buyer happens to have, or the rails would cross.
-        return String(r['Match Type'] || '') === BROKER_MATCH_TYPE;
-      });
-      if (match) return { ok: true, referralId: match.id, created: false, rancher };
+      const match = candidates.find((r) => isReusableBrokerReferral(r, rancherId));
+      if (match) {
+        // MONEY TRUTH ON REUSE (repo rule #2). The create branch below stamps
+        // Total Sale Amount / Deposit Amount / Order Type; until now the reuse
+        // branch stamped NOTHING, on the assumption that any row it found had
+        // been created here and already carried them.
+        //
+        // That assumption broke when the matching engine started minting
+        // broker referrals (app/api/matching/suggest — it stamps Match Type
+        // BROKER_MATCH_TYPE precisely so this find-or-create reuses its row
+        // instead of duplicating). A matched buyer has no cut yet, so the
+        // routed row is created with blank money — and reusing it silently
+        // carried those blanks all the way to checkout, leaving a payable
+        // referral with no recorded price or deposit for anyone to reconcile
+        // against.
+        //
+        // Stamp the CHOSEN cut's money now, from the same gate the checkout
+        // will charge on. Best-effort: an Airtable blip must never block a
+        // buyer who is trying to pay, and settlement re-stamps all three
+        // authoritatively from the Stripe metadata (lib/brokerSettlement).
+        try {
+          await updateRecord(TABLES.REFERRALS, match.id, brokerReferralMoneyFields(gate.quote));
+        } catch (e: any) {
+          console.error('[brokerReferral] reuse money stamp failed:', e?.message);
+        }
+        return { ok: true, referralId: match.id, created: false, rancher };
+      }
     }
   } catch {
     // A read blip must not block a real buyer — fall through to create.
@@ -149,18 +213,13 @@ export async function findOrCreateBrokerReferral(args: {
     'Match Type': BROKER_MATCH_TYPE,
     'Buyer Name': buyerName || '',
     'Buyer Email': buyerEmail,
-    'Order Type': gate.quote.cutLabel,
     'Intent Score': 90,
     'Intent Classification': 'High',
-    Notes: brokerReferralNotes(gate.quote),
     Rancher: [rancherId],
     Buyer: [consumerId],
-    // Money truth up front, before a cent moves. WEIGHT-PRICED cuts stamp the
-    // range FLOOR as Total Sale Amount — conservative, never overstates — with
-    // the full range recorded in Notes (brokerReferralNotes above). The deposit
-    // is exact in both modes.
-    'Total Sale Amount': gate.quote.priceCents / 100,
-    'Deposit Amount': gate.quote.depositCents / 100,
+    // Money truth up front, before a cent moves — from the SAME builder the
+    // reuse branch above uses, so the two can never drift.
+    ...brokerReferralMoneyFields(gate.quote),
   };
   const phone = String(buyer['Phone'] || '').trim();
   if (phone) fields['Buyer Phone'] = phone;
@@ -174,6 +233,7 @@ export async function findOrCreateBrokerReferral(args: {
     return { ok: false, reason: 'io-error' };
   }
 
-  // NO capacity increment — see the file header.
+  // NO capacity increment — Status='Pending' is not a held slot. The claim
+  // fires when the row enters the held set at settlement (file header).
   return { ok: true, referralId: referral.id, created: true, rancher };
 }

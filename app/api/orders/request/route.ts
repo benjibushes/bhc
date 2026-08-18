@@ -12,6 +12,7 @@ import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { incrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { resolveBuyerSession } from '@/lib/buyerAuth';
 import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
+import { isBrokerRancher } from '@/lib/brokerRail';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 import { normalizeZip } from '@/lib/zipFormat';
 import { buyerZipPatch, ZIP_OUT_OF_AREA_MESSAGE } from '@/lib/buyerZip';
@@ -174,6 +175,24 @@ export async function POST(req: Request) {
   // warmup. Without it, a paused/past_due rancher's page still accepted
   // orders: referral created, capacity bumped, emails fired, rancher never
   // responds — a ghost lead the buyer interprets as BHC being broken.
+  // BROKER RAIL (2026-08-17). Today a represented ranch cannot even reach this
+  // line — getRancherBySlug still carries NOT({Broker Rail} = 1). That is a
+  // LOOKUP accident, not a rail decision, and the sibling resolver
+  // (getRancherOrProspectBySlug, which the public page uses) was already
+  // relaxed for self-serve, so the two now disagree. Make the refusal explicit
+  // and independent of which resolver a future edit reaches for: this whole
+  // path is Connect-shaped (capacity INCR, rancher intro, Connect checkout),
+  // and a represented ranch sells only through the broker deposit surface on
+  // its own page.
+  if (isBrokerRancher(rancher)) {
+    return NextResponse.json(
+      {
+        error: 'This ranch takes orders through its own reserve page. Take the 90-second quiz and we will get you set up.',
+        fallbackToMatch: true,
+      },
+      { status: 409 }
+    );
+  }
   if (!isRancherOperationalForBuyers(rancher)) {
     return NextResponse.json(
       {
