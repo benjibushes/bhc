@@ -1,5 +1,11 @@
 // BROKER RAIL guardrails — a represented rancher must be INVISIBLE to the
-// platform.
+// platform, EXCEPT for the self-serve opt-in (2026-08-17).
+//
+// The fixtures here are all PHONE-ONLY represented ranches: `Broker Rail`
+// checked, `Broker Self Serve` NOT checked. Those stay invisible everywhere,
+// and that is what these tests pin. The demand-side exception — a self-serve
+// ranch IS routable supply — is pinned in lib/brokerRoutable.test.ts, and the
+// money guard that keeps such a match deposit-first is in lib/brokerMatch.test.ts.
 //
 // One test per exclusion surface. Each fixture is built as a rancher who would
 // OTHERWISE PASS that surface's gate, so the test fails if the broker
@@ -51,14 +57,16 @@ test('GUARDRAIL routing: the fixture WOULD route if it were not broker-rail (pro
   assert.equal(isRancherOperationalForBuyers(otherwisePerfectRancher()), true);
 });
 
-test('GUARDRAIL routing: a broker rancher is NEVER operational, even with Active + signed + Live', () => {
+test('GUARDRAIL routing: a PHONE-ONLY broker rancher is never operational, even with Active + signed + Live', () => {
   const r = otherwisePerfectRancher({ 'Broker Rail': true });
   assert.equal(isRancherOperationalForBuyers(r), false);
 });
 
-test('GUARDRAIL routing: a future Active-Status flip cannot expose a broker rancher', () => {
+test('GUARDRAIL routing: a future Active-Status flip cannot expose a phone-only broker rancher', () => {
   // The scenario this exists for: someone flips Active Status on a represented
   // ranch. Blank-Active is NOT what protects them — the explicit flag is.
+  // Still true after the self-serve exception: routability is decided by
+  // isBrokerRoutable, which never reads Active Status in either direction.
   for (const active of ['Active', 'At Capacity', 'Paused', '']) {
     assert.equal(
       isRancherOperationalForBuyers(otherwisePerfectRancher({ 'Active Status': active, 'Broker Rail': true })),
@@ -73,13 +81,13 @@ test('GUARDRAIL routing: a future Active-Status flip cannot expose a broker ranc
 // above, so it needs its own exclusion (and its own test).
 // ---------------------------------------------------------------------------
 
-test('GUARDRAIL coverage: a broker rancher serves NO states', () => {
+test('GUARDRAIL coverage: a PHONE-ONLY broker rancher serves NO states', () => {
   const plain = otherwisePerfectRancher();
   assert.deepEqual(getOperationalServedStates(plain), ['MT']);
   assert.deepEqual(getOperationalServedStates({ ...plain, 'Broker Rail': true }), []);
 });
 
-test('GUARDRAIL coverage: a broker-only state reads as UNSERVED at the signup gate', () => {
+test('GUARDRAIL coverage: a PHONE-ONLY-broker state reads as UNSERVED at the signup gate', () => {
   // A buyer in MT whose only "supply" is a represented ranch must go to the
   // waitlist, not be told a rancher is available.
   const brokerOnly = [otherwisePerfectRancher({ 'Broker Rail': true })];

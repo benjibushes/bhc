@@ -3,6 +3,7 @@ import { sendEmail, sendBuyerIntroNotification } from './email';
 import { normalizeState, normalizeStates } from './states';
 import { isQualifiedForRouting } from './qualification';
 import { isRancherOperationalForBuyers, getOperationalServedStates, isRancherOnConnect } from '@/lib/rancherEligibility';
+import { isBrokerRancher } from './brokerRail';
 import { tierFor } from './tiers';
 import { closeCtaHtml } from './rancherLeadEmail';
 import jwt from 'jsonwebtoken';
@@ -77,6 +78,25 @@ export async function bulkRouteStateToRancher(opts: {
   // gate at app/api/matching/suggest/route.ts (isEligibleBase).
   if (!isRancherOperationalForBuyers(rancher)) {
     return { ok: false, error: `Rancher "${rancherName}" is not operational for buyers`, status: 400 };
+  }
+
+  // BROKER RAIL (2026-08-17). A self-serve represented ranch is now routable
+  // supply, so the gate above no longer excludes it — but this router's ending
+  // is pure Connect: it emails the RANCH a lead with the buyer's contact
+  // details, a "View in your inbox" dashboard link it has no login for, and a
+  // "10% commission on BHC referral sales" footer describing an agreement it
+  // never signed (on this rail the deposit IS the whole commission and the
+  // ranch is never invoiced). It also fans the buyer straight at the ranch,
+  // which on this rail means BHC's deposit — its entire fee — is never paid.
+  //
+  // Broker demand is routed DEPOSIT-FIRST by app/api/matching/suggest (see
+  // lib/brokerMatch). Refuse here rather than teach a second router the rail.
+  if (isBrokerRancher(rancher)) {
+    return {
+      ok: false,
+      error: `"${rancherName}" is a represented ranch — its buyers are routed deposit-first by the matching engine, not bulk-routed.`,
+      status: 400,
+    };
   }
 
   // 2. Find all consumers in the state with Status=Approved

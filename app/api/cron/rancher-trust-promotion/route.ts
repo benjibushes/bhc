@@ -3,6 +3,7 @@ import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
+import { excludeBrokerRanchers } from '@/lib/brokerRail';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 
@@ -35,7 +36,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
   {
     const now = Date.now();
 
-    const [allRanchers, allReferrals] = await Promise.all([
+    const [allRanchersRaw, allReferrals] = await Promise.all([
       getAllRecords(TABLES.RANCHERS) as Promise<any[]>,
       // Only need Closed Won referrals — but pulling all once is cheaper than
       // per-rancher filtered fetches if there are >5 ranchers.
@@ -52,6 +53,15 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
       }
     }
 
+    // BROKER RAIL (2026-08-17). isRancherOperationalForBuyers now admits a
+    // SELF-SERVE represented ranch — that opt-in is DEMAND-side only. Trust
+    // Mode is an ONBOARDING milestone: it writes a Ranchers field and unlocks
+    // warmup drain + the founder-approval bypass, all of which belong to a
+    // rancher who ran the wizard, signed the agreement, and has a dashboard to
+    // see the result. A represented ranch has none of that, and (having no
+    // `Onboarding Phase Until`) would hit the legacy-graduation branch and be
+    // promoted on the very first run. Drop them at the read boundary.
+    const allRanchers = excludeBrokerRanchers(allRanchersRaw);
     const operationalRanchers = allRanchers.filter(isRancherOperationalForBuyers);
 
     let promoted = 0;

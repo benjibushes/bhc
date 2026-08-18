@@ -147,15 +147,24 @@ export function isBrokerRancher(rancher: any): boolean {
   return false;
 }
 
-// Per-rancher SELF-SERVE opt-in (2026-08-17). Ben can flip ONE represented
-// ranch publicly promotable: with BOTH `Broker Rail` and this box checked, the
+// Per-rancher SELF-SERVE opt-in (2026-08-17). Ben can flip a represented ranch
+// publicly promotable: with BOTH `Broker Rail` and this box checked, the
 // ranch's public page renders a broker-correct reserve experience and
 // /api/checkout/broker-reserve runs the same referral+checkout flow the /r/b
-// redemption uses — no operator-minted token. Everything else about the rail's
-// invisibility (routing, matching, campaigns, the map, the sitemap) is
-// untouched: only the direct page URL becomes public.
+// redemption uses — no operator-minted token.
+//
+// ROUTABLE SUPPLY (2026-08-17, Ben's call — see isBrokerRoutable below). The
+// opt-in now also makes the ranch NORMAL SUPPLY for the matching engine: "it's
+// the same concept, I'm just accepting the money and handling the coordination
+// myself." A broker ranch WITHOUT this box stays fully invisible — token-only,
+// never routed, never campaigned, never counted as coverage.
 // Verified against the live schema 2026-08-17.
 export const BROKER_SELF_SERVE_FIELD = 'Broker Self Serve'; // checkbox, Ranchers
+
+/** Admin opt-out from every public surface. The slug-resolution formula
+ *  (lib/airtable rancherOrProspectBySlugFormula) gates on it unconditionally,
+ *  so routing must too — see isBrokerRoutable. Verified live 2026-08-17. */
+export const PUBLIC_MAP_HIDDEN_FIELD = 'Public Map Hidden'; // checkbox, Ranchers
 
 /**
  * Is this rancher a SELF-SERVE broker ranch — represented (broker rail) AND
@@ -172,6 +181,56 @@ export function isBrokerSelfServe(rancher: any): boolean {
   if (raw === true) return true;
   if (typeof raw === 'string') return raw.trim().toLowerCase() === 'true';
   return false;
+}
+
+/** Airtable singleSelect reads come back as a string OR a {name} object. */
+function readEnumOrString(v: unknown): string {
+  if (!v) return '';
+  if (typeof v === 'string') return v;
+  if (typeof v === 'object' && v !== null && 'name' in v) {
+    return String((v as { name?: unknown }).name || '');
+  }
+  return String(v);
+}
+
+/**
+ * Is this represented ranch REAL, ROUTABLE SUPPLY for the matching engine?
+ *
+ * THE DECISION (Ben, 2026-08-17): a self-serve broker ranch is normal supply —
+ * "it's the same concept, I'm just accepting the money and handling the
+ * coordination myself, there's no need for complications." Before this, AZ had
+ * zero routable ranches (Gila River is broker-flagged) so AZ buyers fell to the
+ * nationwide fallback and were handed to a MONTANA ranch. A broker ranch
+ * WITHOUT the self-serve box is phone-only and stays invisible.
+ *
+ * This is the broker ANALOGUE of the Connect gates in lib/rancherEligibility —
+ * NOT a relaxation of them. A represented ranch structurally cannot satisfy
+ * Active Status / Agreement Signed / Onboarding Status / Subscription Status /
+ * Connect-active (it signed none of that and has no dashboard), so applying
+ * those would just re-hide it. What it CAN satisfy, and must:
+ *
+ *   1. isBrokerSelfServe   — Ben's explicit publish opt-in (implies broker).
+ *   2. Verification != Removed — same closed-account belt as the Connect gate.
+ *   3. NOT Public Map Hidden — never route to a page that will not resolve:
+ *      lib/airtable rancherOrProspectBySlugFormula gates on this
+ *      unconditionally, so a hidden ranch's slug 404s.
+ *   4. a non-empty Slug — on this rail the reserve surface IS the slug page.
+ *      No slug, no way for the matched buyer to pay.
+ *   5. at least one cut passing assertBrokerEligible — priced ≥ MIN_TIER_PRICE,
+ *      an EXPLICIT per-cut deposit, deposit < price, no Connect footprint. The
+ *      exact gate the checkout runs, so a routed buyer can never meet a
+ *      refusal at pay time (the broker mirror of the tier_v2 Connect-active
+ *      gate, which exists for precisely that reason).
+ *
+ * FAIL CLOSED like everything else in this file: anything missing → not
+ * routable → the ranch keeps its old invisibility.
+ */
+export function isBrokerRoutable(rancher: any): boolean {
+  if (!isBrokerSelfServe(rancher)) return false;
+  if (readEnumOrString(rancher?.['Verification Status']) === 'Removed') return false;
+  if (rancher?.[PUBLIC_MAP_HIDDEN_FIELD]) return false;
+  if (!String(rancher?.['Slug'] || '').trim()) return false;
+  return (Object.keys(CUT_LABELS) as Cut[]).some((cut) => assertBrokerEligible(rancher, cut).ok);
 }
 
 /**
@@ -559,16 +618,29 @@ export function readBrokerMoney(pi: any): {
  * that is a data error a human resolves, never a coin flip with money.
  */
 // ---------------------------------------------------------------------------
-// Guardrails — a broker rancher is INVISIBLE to the platform
+// Guardrails — a broker rancher is INVISIBLE to the platform, with ONE
+// deliberate exception
 // ---------------------------------------------------------------------------
 //
 // A represented rancher never signed up, never agreed to onboarding, and has no
-// public page. They must not be routed buyers, listed, mapped, chased by an
-// onboarding cron, counted as supply, or emailed a broadcast.
+// dashboard. By default they must not be routed buyers, listed, mapped, chased
+// by an onboarding cron, counted as supply, or emailed a broadcast.
 //
-// `Active Status` is left EMPTY at signup, which already blocks routing — but
-// that is ONE field one careless admin flip away from exposing them. These two
-// helpers are the explicit, greppable belt.
+// THE EXCEPTION (2026-08-17): a ranch passing isBrokerRoutable — self-serve
+// opt-in + a resolvable public page + at least one sellable cut — IS routable
+// supply and IS campaignable, because Ben publishes it on purpose. See
+// isBrokerRoutable above and lib/rancherEligibility.
+//
+// The exception is DEMAND-SIDE ONLY. Everything that would touch the RANCH
+// stays off for every broker ranch, routable or not: no onboarding/Connect/
+// trust crons, no rancher lead emails, no rancher broadcasts, no dashboard
+// links. The helpers below are the explicit, greppable belt for that, and they
+// deliberately key on isBrokerRancher (ALL broker ranches) — never on
+// isBrokerRoutable — because a represented ranch that now receives buyers is
+// still a ranch with no login to send anything to.
+//
+// `Active Status` is left EMPTY at signup, so it can never be the belt: a
+// careless admin flip must not change any of this, in either direction.
 
 /** Airtable filterByFormula fragment. AND() this into any Ranchers query that
  *  feeds a public / marketplace / SEO surface. */

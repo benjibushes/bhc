@@ -7,6 +7,7 @@ import { FULFILLMENT_FIELDS } from '@/lib/fulfillmentTracking';
 import { normalizeNationwidePreference, NATIONWIDE_PREFERENCE_FIELD } from '@/lib/nationwidePreference';
 import { mintOrderStatusToken, orderStatusPath } from '@/lib/orderStatusLink';
 import { buildOrderStatusView } from '@/lib/orderStatusView';
+import { railForLoadedRancher, referralCarriesBrokerMarker, mayRevealRancherContact } from '@/lib/brokerDownstream';
 
 export const maxDuration = 60;
 
@@ -164,11 +165,31 @@ export async function GET(request: Request) {
         const rr: any = ranchersById.get(rancherId);
         rancherName = rr['Operator Name'] || rr['Ranch Name'] || rancherName;
         ranchName = rr['Ranch Name'] || '';
-        rancherEmail = rr['Email'] || '';
-        rancherPhone = rr['Phone'] || '';
         rancherSlug = rr['Slug'] || '';
-        rancherPickupAddress = String(rr['Pickup Address'] || '').trim();
-        rancherPickupInstructions = String(rr['Pickup Instructions'] || '').trim();
+        // BROKER RAIL money guard (2026-08-17 — lib/brokerDownstream).
+        //
+        // These four fields become live mailto:/tel: links in
+        // RancherContactBlock (app/member/page.tsx) for any referral whose
+        // status is not Closed Lost / Refunded / Rejected — which a broker
+        // match's 'Intro Sent' row satisfies on day one. /member is reachable
+        // by a matched broker buyer: the match email's reserve CTA is a
+        // member-verify magic link that sets a 30-day session, and the
+        // qualified-no-action cron sends broker buyers straight here.
+        //
+        // Handing that buyer the ranch's phone BEFORE the deposit is the
+        // direct-transaction leak: BHC's entire fee on this sale is the
+        // deposit they have not paid yet. AFTER it, the money is in and the
+        // buyer owes the ranch the balance directly — the broker settlement
+        // receipt (lib/brokerNotify) hands over the same details in the same
+        // breath, so the dashboard matches it. The pickup fields ride the same
+        // gate: an address is a direct channel too.
+        const rail = referralCarriesBrokerMarker(r) ? 'broker' : railForLoadedRancher(rr);
+        if (mayRevealRancherContact(r, rail)) {
+          rancherEmail = rr['Email'] || '';
+          rancherPhone = rr['Phone'] || '';
+          rancherPickupAddress = String(rr['Pickup Address'] || '').trim();
+          rancherPickupInstructions = String(rr['Pickup Instructions'] || '').trim();
+        }
       }
       return {
         id: r.id,

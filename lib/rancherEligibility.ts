@@ -12,12 +12,19 @@
 // accepted by the match engine. Buyers in those states got sent to waitlist
 // emails despite an operational rancher serving them. 48 stranded.
 //
-// The unified rule:
+// The unified rule (ONBOARDED / Connect-rail ranchers):
 //   • Active Status === 'Active'                    — admin gating
 //   • Agreement Signed === true                      — legal: must have signed
 //   • Onboarding Status === 'Live' (or '')           — onboarding finished
 //   • Subscription Status NOT in past_due|unpaid|    — Stripe collections gate
 //     canceled (active/trialing/'' all pass)
+//
+// BROKER RAIL (2026-08-17). A represented ranch is on none of the above by
+// construction, so it is answered by its OWN gate — isBrokerRoutable in
+// lib/brokerRail — and never falls through to the Connect rule. Self-serve
+// opted-in + publicly resolvable + at least one sellable cut ⇒ routable
+// supply; every other represented ranch stays invisible. See the block inside
+// isRancherOperationalForBuyers for why the two rules must stay separate.
 //
 // Page Live is NOT a routing requirement — it's a UX flag that the rancher's
 // public landing page is published. Routing happens via email; if the buyer
@@ -41,7 +48,7 @@
 import { normalizeState, normalizeStates } from './states';
 // lib/brokerRail is deliberately hermetic (imports only lib/pricing) so this
 // import cannot close a cycle back through lib/reserveDeposit.
-import { isBrokerRancher } from './brokerRail';
+import { isBrokerRancher, isBrokerRoutable } from './brokerRail';
 
 export type RancherFields = Record<string, unknown> & {
   'Active Status'?: unknown;
@@ -81,19 +88,36 @@ function readEnumOrString(v: unknown): string {
  *     active → buyer dead-ends at deposit time).
  */
 export function isRancherOperationalForBuyers(rancher: RancherFields): boolean {
-  // BROKER RAIL (2026-07-31) — a REPRESENTED rancher is never routable.
+  // BROKER RAIL — represented ranchers answer a DIFFERENT question, so they
+  // never fall through to the Connect gates below.
   //
-  // They never signed up: no Connect, no agreement, no onboarding, no public
-  // page. Ben sells their beef himself by phone and sends a broker deposit
-  // link (/api/checkout/broker). They must never enter the matching pool, be
-  // suggested to a buyer, counted as supply in a state, or reached by any
-  // buyer-facing rail.
+  // 2026-07-31: every represented rancher was non-routable. Correct then —
+  // they had no public page, and Ben sold their beef by phone.
+  // 2026-08-17 (Ben's call): a ranch that passes isBrokerRoutable — the
+  // `Broker Self Serve` opt-in, a resolvable public page, and at least one
+  // cut that the broker checkout will actually take money for — is NORMAL
+  // ROUTABLE SUPPLY. "It's the same concept, I'm just accepting the money and
+  // handling the coordination myself." Without this, AZ (whose only ranch is
+  // represented) had zero supply and its buyers were routed to MONTANA.
   //
-  // Their `Active Status` is left EMPTY at signup, which already fails the
-  // gate below — but that is ONE careless admin flip away from exposing a
-  // rancher who never agreed to be exposed. This check is FIRST and explicit
-  // so no future Active-Status change can accidentally publish them.
-  if (isBrokerRancher(rancher)) return false;
+  // A broker ranch WITHOUT the opt-in is phone-only and stays invisible:
+  // isBrokerRoutable returns false, and so do we.
+  //
+  // Why this RETURNS rather than falling through: every gate below is
+  // Connect-shaped (Active Status, Agreement Signed, Onboarding Status,
+  // Subscription Status, tier_v2 ⇒ Connect active). A represented ranch signed
+  // none of it and has no Stripe account, so running those gates would reject
+  // 100% of broker supply. isBrokerRoutable is the broker ANALOGUE — the same
+  // "can this buyer actually pay at the end?" question, asked against the
+  // rail this ranch is actually on. Everything genuinely rail-independent
+  // (Verification=Removed, price fit, exclusive ZIP, Tier Specialty, delivery
+  // radius, request-only, the Closed-Won cap, the per-state sub-cap, home-state
+  // coverage) lives in the CALLERS and still applies to broker ranches.
+  //
+  // Their `Active Status` is left EMPTY at signup and must stay irrelevant:
+  // routability is decided by the broker predicate, so no careless Active
+  // Status flip can publish a phone-only ranch — or hide a self-serve one.
+  if (isBrokerRancher(rancher)) return isBrokerRoutable(rancher);
 
   // Wave C (2026-07-14) — defense in depth for CLOSED accounts. Self-serve
   // closure sets Verification Status='Removed' + Active Status='Paused';
@@ -152,12 +176,21 @@ export function isRancherOperationalForBuyers(rancher: RancherFields): boolean {
  * the signup-time "rancher available in your state?" check stays consistent.
  */
 export function getOperationalServedStates(rancher: RancherFields): string[] {
-  // BROKER RAIL — a represented rancher serves NO states for routing purposes.
-  // This helper is the supply-coverage answer used by state counts, campaign
-  // targeting, and the reserve gate, and it deliberately does NOT call
-  // isRancherOperationalForBuyers — so the exclusion has to be repeated here or
-  // a represented ranch would silently show up as coverage in their state.
-  if (isBrokerRancher(rancher)) return [];
+  // BROKER RAIL — a PHONE-ONLY represented ranch serves NO states for routing
+  // purposes. This helper is the supply-coverage answer used by state counts,
+  // campaign targeting, and the reserve gate, and it deliberately does NOT
+  // call isRancherOperationalForBuyers — so the rule has to be repeated here
+  // or a represented ranch would silently show up as coverage in their state.
+  //
+  // 2026-08-17: a SELF-SERVE broker ranch (isBrokerRoutable) is real coverage
+  // and falls through to the normal state read — that is the whole point of
+  // making it routable. It needs NO new Airtable field: the primary `State`
+  // seeds the set below, and Routing States / States Served stay ignored
+  // unless `Admin Approved Multi-State` is ticked, exactly as for everyone
+  // else. Kept in LOCKSTEP with isRancherOperationalForBuyers above — a ranch
+  // that is operational but serves no state is invisible supply, and a ranch
+  // that serves a state but is not operational strands the buyers it attracts.
+  if (isBrokerRancher(rancher) && !isBrokerRoutable(rancher)) return [];
   const out = new Set<string>();
   const primary = normalizeState(rancher['State']);
   if (primary) out.add(primary);

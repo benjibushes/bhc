@@ -21,7 +21,13 @@
 
 import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { markDepositSucceeded } from '@/lib/contracts/payments';
-import { claimOnce } from '@/lib/rancherCapacity';
+import {
+  claimOnce,
+  incrementCapacity,
+  decrementCapacity,
+  syncCapacityToAirtable,
+} from '@/lib/rancherCapacity';
+import { shouldIncrementOnEnterHeld } from '@/lib/refundLifecycle';
 import { PermanentSettlementError } from '@/lib/stripeSettlement';
 import {
   isBrokerRancher,
@@ -112,6 +118,38 @@ export async function settleBrokerDeposit(pi: any): Promise<void> {
   // rail: money in, fulfillment outstanding. Here the outstanding balance is
   // owed to the RANCH, never to BHC.
   const nowIso = new Date().toISOString();
+
+  // ── CAPACITY CLAIM — the missing half of the held-slot invariant ─────────
+  // 'Awaiting Payment' IS in the canonical held set (lib/capacityCount), so
+  // the flip below makes this row count against the ranch's capacity. Every
+  // Connect path claims its slot at the moment it enters that set; this rail
+  // never did, because a represented ranch used to be unroutable and nobody
+  // read the counter. Now that a self-serve broker ranch IS routable, an
+  // unclaimed held row is read by liveHeldCountForRancher as phantom load —
+  // N settled sales starve the ranch off its own capacity valve.
+  //
+  // BEFORE the flip, deliberately: the first INCR for a rancher bootstraps
+  // from liveHeldCountForRancher, which would count an already-flipped row on
+  // top of the increment and double-claim one slot.
+  //
+  // Skipped when the row is ALREADY held — a matching-created broker referral
+  // sits at 'Intro Sent' and claimed its slot at routing time; claiming again
+  // here would book two slots for one buyer.
+  let capacityClaimed = false;
+  try {
+    const priorRef: any = await getRecordById(TABLES.REFERRALS, referralId);
+    if (shouldIncrementOnEnterHeld(priorRef?.['Status'], 'Awaiting Payment')) {
+      const claimed = await incrementCapacity(rancherId);
+      capacityClaimed = true;
+      await syncCapacityToAirtable(rancherId, claimed);
+    }
+  } catch (e: any) {
+    // Never block settled money on a capacity read. Skipping errs toward a
+    // missed claim, which self-heals on the next ground-truth reseed; a
+    // spurious claim would silently starve the ranch.
+    console.error('[broker settle] capacity claim skipped:', e?.message);
+  }
+
   try {
     await updateRecord(TABLES.REFERRALS, referralId, {
       'Status': 'Awaiting Payment',
@@ -127,6 +165,17 @@ export async function settleBrokerDeposit(pi: any): Promise<void> {
     // FROZEN-MONEY window — the ledger row already flipped (the anchor), so a
     // redelivery will short-circuit and nothing retries this write. Alert loud.
     console.error('[broker settle] referral stamp failed:', e?.message);
+    // The row never entered the held set, so release the slot we just claimed
+    // for it — otherwise this ranch loses a slot to a status change that never
+    // landed (same rollback matching/suggest does on a failed Intro Sent flip).
+    if (capacityClaimed) {
+      try {
+        const restored = await decrementCapacity(rancherId);
+        await syncCapacityToAirtable(rancherId, restored);
+      } catch (rollbackErr: any) {
+        console.error('[broker settle] capacity rollback failed:', rollbackErr?.message);
+      }
+    }
     try {
       const { sendOperatorSignal } = await import('@/lib/operatorSignal');
       await sendOperatorSignal({

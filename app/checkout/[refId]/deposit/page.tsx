@@ -121,6 +121,23 @@ function DepositPageContent() {
       .then((r) => r.json())
       .then((j) => {
         if (j?.error) {
+          // RAIL REDIRECT (2026-08-17) — REVENUE BLOCK, not cosmetics.
+          //
+          // When the GET hands back a `redirectUrl` the server has already
+          // resolved this referral's rail and is telling us which page can
+          // actually take the money. Today that is `not_connect_rail` on a
+          // BROKER referral (→ /checkout/<refId>/broker). Until now the page
+          // stored the code and rendered a generic error shell, so a buyer who
+          // WANTED to pay BHC could not — and BHC's entire fee on that rail is
+          // the deposit they were being stopped from paying.
+          //
+          // Fixed here, at the one choke point, rather than at each CTA: the
+          // /member "Finish reserving your share" link, the deposit-request
+          // nudge email, and every future sender all land on this page.
+          if (j.redirectUrl) {
+            window.location.href = String(j.redirectUrl);
+            return;
+          }
           setErrCode(String(j.error));
           if (j.status) setErrStatus(String(j.status));
           // GET referral_closed sends `rancher: { slug }`; other payloads use

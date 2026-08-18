@@ -78,6 +78,24 @@ export function requalifyCta(state: string, slug: string): string {
 }
 
 /**
+ * BROKER RAIL CTA (2026-08-17). A self-serve represented ranch can now own a
+ * state's wave (it passes rancherForStateTable now that it is routable supply),
+ * and the quiz CTA above would have sent its recipients into /access — the
+ * CONNECT funnel, whose deposit step that ranch has no Stripe account for.
+ *
+ * The correct destination is the ranch's OWN reserve surface: price, deposit
+ * and balance on the page, and a POST that runs the broker checkout. It is
+ * also strictly fewer steps than the quiz.
+ *
+ * The utm triple is identical to every other mode so the funnel report still
+ * splits by campaign. `#reserve` is the anchor rendered by BrokerReserve and
+ * must trail the query string to survive as a fragment.
+ */
+export function brokerReserveCta(state: string, slug: string): string {
+  return `${SITE_URL}/ranchers/${encodeURIComponent(slug)}?${requalifyUtm(state)}#reserve`;
+}
+
+/**
  * The 1-tap deposit link. `token` is a campaign-reserve JWT
  * (mintCampaignReserveToken — ~30d, outlives any send window) naming
  * {consumerId, rancherSlug, cut}. /r/d/<token> verifies it, resolves the
@@ -352,7 +370,9 @@ export function decideRequalifyCta(input: RequalifyCtaInput): RequalifyCtaDecisi
 /** The resolved CTA handed to the renderer (link already built by the caller). */
 export type RequalifyCta =
   | { mode: 'one-tap'; url: string; cutLabel: string; dueNowDollars: number }
-  | { mode: 'quiz'; url: string };
+  | { mode: 'quiz'; url: string }
+  /** Represented (broker-rail) wave owner — straight to its reserve surface. */
+  | { mode: 'broker-reserve'; url: string };
 
 const money = (dollars: number): string => `$${Math.round(dollars).toLocaleString('en-US')}`;
 
@@ -362,9 +382,16 @@ const SHELL_OPEN =
 /**
  * Render the campaign email. `cta` omitted → the original quiz body, verbatim.
  *
- * COPY RULES (both modes): no hyphens in prose (Ben), money model stays true —
- * the rancher keeps 100% of the beef price and BHC's cut rides on top of the
- * buyer's reservation, never itemized buyer-side (fee-invisible directive).
+ * COPY RULES: no hyphens in prose (Ben). Money model stays true — and it is
+ * NOT the same model in every mode:
+ *   • quiz / one-tap (CONNECT rail) — the rancher keeps 100% of the beef price
+ *     and BHC's cut rides on top of the buyer's reservation, never itemized
+ *     buyer-side (fee-invisible directive).
+ *   • broker-reserve (BROKER rail) — the buyer's total IS the ranch's own
+ *     price with nothing added on top; the deposit is "toward your share" and
+ *     the balance is "paid to the ranch". Nothing rides on top, so the
+ *     Connect sentence must never appear in that branch, and BHC keeping the
+ *     deposit is never mentioned (docs/BUSINESS-MODEL.md model 3).
  *
  * `variant` (ADAPTIVE-MARKETING-DESIGN PR 1) selects between the two
  * repo-versioned SUBJECTS in lib/campaignVariants — the body is identical
@@ -393,6 +420,19 @@ ${opener}
 <p>That changed. We now have a ranch serving ${st} — ${rancher.name}. You already told me you wanted a ${share}, so I skipped the questions and built you a link that goes straight to your reservation.</p>
 <p>Reserve your ${share} — ${money(cta.dueNowDollars)} today:<br><a href="${cta.url}">${cta.url}</a></p>
 <p>That holds the share in your name. The rest you settle straight with ${rancher.name} when your beef is ready, and every dollar of the beef price goes to them.</p>
+<p>If the timing is wrong, ignore me. You lose nothing. But the shares are a real count of what's left this round, so if a freezer full of honest beef is still the plan, it's worth a look this week.</p>
+<p>— Ben</p></div>`,
+    };
+  }
+
+  if (cta && cta.mode === 'broker-reserve') {
+    return {
+      subject,
+      html: `${SHELL_OPEN}
+${opener}
+<p>That changed. We now have a ranch serving ${st} — ${rancher.name}. Their shares are listed with the price and the deposit right there, so you can reserve one now without waiting on a call from anybody.</p>
+<p>Reserve your share:<br><a href="${cta.url}">${cta.url}</a></p>
+<p>The deposit holds the share in your name. You settle the balance straight with ${rancher.name} when your beef is ready.</p>
 <p>If the timing is wrong, ignore me. You lose nothing. But the shares are a real count of what's left this round, so if a freezer full of honest beef is still the plan, it's worth a look this week.</p>
 <p>— Ben</p></div>`,
     };

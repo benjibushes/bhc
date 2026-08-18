@@ -55,6 +55,7 @@ import { smsEnabled } from '@/lib/smsFlag';
 import { isSmsWindow } from '@/lib/sendWindow';
 import { normalizePhoneE164, formatPhonePretty, telHref } from '@/lib/phoneHygiene';
 import { tierFor } from '@/lib/tiers';
+import { isBrokerRancher } from '@/lib/brokerRail';
 
 export const maxDuration = 120;
 
@@ -148,6 +149,15 @@ async function realHandler(_request: Request): Promise<CronResult> {
     try {
       const rancher = rancherFor(ref.raw);
       if (!rancher) { skip('no-rancher-linked'); continue; }
+      // BROKER RAIL — explicit, ahead of the Active Status line. A represented
+      // ranch was only ever skipped here BY ACCIDENT: its `Active Status` is
+      // left blank at signup, so the next line caught it. That is one admin
+      // checkbox away from SMSing / emailing a ranch that "is still waiting on
+      // your first call" about a buyer it was never introduced to and cannot
+      // be — on this rail nobody calls, the buyer pays a deposit. The nudge
+      // also offers to "reroute this buyer", which no represented ranch has any
+      // standing to answer. Chased by the operator escalation instead.
+      if (isBrokerRancher(rancher)) { skip('broker-rail'); continue; }
       if (str(rancher['Active Status']) !== 'Active') { skip('rancher-inactive'); continue; }
       if (tierFor(rancher) === 'operator') { skip('operator-tier'); continue; }
 
@@ -234,6 +244,12 @@ async function realHandler(_request: Request): Promise<CronResult> {
   for (const ref of selectFirstTouchEscalations(refs, now, MAX_ESCALATIONS_PER_RUN)) {
     try {
       const rancher = rancherFor(ref.raw);
+      // BROKER RAIL — this half had NO rancher gate at all. The card it posts
+      // carries a "📞 Nudge Rancher" button whose callback emails the ranch the
+      // same wrong-rail chase the 48h half now skips. Broker deals are chased
+      // by the operator deposit escalation (lib/depositSla), not by nudging a
+      // ranch that is waiting on a deposit rather than making a call.
+      if (rancher && isBrokerRancher(rancher)) { skip('broker-rail'); continue; }
       const rancherName =
         (rancher && (str(rancher['Operator Name']) || str(rancher['Ranch Name']))) ||
         str(ref.raw['Suggested Rancher Name']) || 'unknown rancher';

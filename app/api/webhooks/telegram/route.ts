@@ -26,6 +26,7 @@ import { sendStagedReply } from '@/lib/stagedReply';
 import jwt from 'jsonwebtoken';
 
 import { JWT_SECRET, generateMemberLoginToken } from '@/lib/secrets';
+import { railForLoadedRancher, referralCarriesBrokerMarker } from '@/lib/brokerDownstream';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET || '';
 
@@ -955,6 +956,23 @@ async function processUpdate(update: any) {
           }
 
           const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
+          // BROKER RAIL — the approve_ tap fires the CONNECT double intro: the
+          // ranch gets the buyer's contact block plus "10% commission on BHC
+          // referral sales" (an agreement a represented ranch never signed),
+          // and the buyer gets the ranch's email + phone. On this rail BHC's
+          // whole fee is the deposit, so that tap costs the entire sale.
+          // Refuse at the tap — the buyer already has their deposit link from
+          // lib/brokerMatch, and Ben already has the operator handoff card.
+          if (referralCarriesBrokerMarker(referral) || railForLoadedRancher(rancher) === 'broker') {
+            await answerCallbackQuery(queryId, 'Broker rail — no intro to send. Buyer already has the deposit link.');
+            if (chatId) {
+              await sendTelegramMessage(
+                chatId,
+                `🚫 <b>Broker rail</b> — ${rancher?.['Operator Name'] || rancher?.['Ranch Name'] || 'that ranch'} is represented, so there is no rancher intro to approve.\n\nThe buyer's deposit link: <code>/checkout/${fullReferralId}/broker</code>`,
+              );
+            }
+            return NextResponse.json({ ok: true });
+          }
           // Live Redis counter — Airtable's Current Active Referrals is the
           // eventually-consistent MIRROR of the Redis counter and can lag under
           // burst. Reading the mirror could let an over-cap referral through if
@@ -5716,12 +5734,22 @@ Confirm send?`;
             }
             let fired = 0;
             let errored = 0;
+            let brokerSkipped = 0;
             for (const ref of stuck) {
               try {
                 const rancherId = ref['Rancher']?.[0] || ref['Suggested Rancher']?.[0];
                 if (!rancherId) { errored++; continue; }
                 const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
                 if (!rancher) { errored++; continue; }
+                // BROKER RAIL — /bulkfire mass-fires the CONNECT double intro
+                // over every stuck 'Pending Approval' row, which is precisely
+                // where a broker match lands if its 'Intro Sent' write threw.
+                // One command would hand every matched buyer their ranch's
+                // phone number and cost BHC every deposit in the batch.
+                if (referralCarriesBrokerMarker(ref) || railForLoadedRancher(rancher) === 'broker') {
+                  brokerSkipped++;
+                  continue;
+                }
                 const rancherEmail = rancher['Email'];
                 const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
                 const buyerName = ref['Buyer Name'] || 'Buyer';
@@ -5806,7 +5834,7 @@ Confirm send?`;
             }
             await sendTelegramMessage(
               chatId,
-              `🔥 <b>BULK FIRE COMPLETE</b>\n\nPromoted <b>${fired}</b> Pending Approval → Intro Sent\nErrors: ${errored}\n\nBuyers + ranchers both got intro emails.`,
+              `🔥 <b>BULK FIRE COMPLETE</b>\n\nPromoted <b>${fired}</b> Pending Approval → Intro Sent\nErrors: ${errored}\nBroker-rail skipped: ${brokerSkipped}\n\nBuyers + ranchers both got intro emails.`,
             );
           }
         } catch (e: any) {

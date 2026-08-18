@@ -238,15 +238,33 @@ export async function sendDepositRequestNudge(opts: {
   buyerName: string;
   rancherName: string;
   cutTier: string;
-  checkoutUrl: string; // magic-link hop to /checkout/<refId>/deposit
+  checkoutUrl: string; // magic-link hop to /checkout/<refId>/{deposit|broker}
   rancherPhone?: string;
   /** 1 = first nudge (urgency), 'mid' = middle touch, 2 = final soft touch. */
   touch: 1 | 2 | 'mid';
+  /**
+   * MONEY GUARD (2026-08-17) — which rail this referral is on. Default
+   * 'connect' keeps every existing caller byte-identical.
+   *
+   * On 'broker' two things change, and both are money, not politeness:
+   *   • the ranch's phone is NEVER rendered, even if the caller passes one.
+   *     BHC's whole fee on this rail is the deposit this very email is chasing;
+   *     an sms: link to the ranch is an invitation to close the deal without
+   *     us. Belt AND braces — the caller also stops passing it.
+   *   • "refundable until they accept your slot" describes Connect machinery a
+   *     represented ranch does not have (no dashboard, no Accept button). The
+   *     broker rail's own promise (lib/brokerNotify) is used instead.
+   */
+  rail?: 'broker' | 'connect';
 }) {
+  const isBroker = opts.rail === 'broker';
   const rancherFirst = escape(String(opts.rancherName || '').trim().split(/\s+/)[0] || 'your rancher');
-  const phoneLine = opts.rancherPhone
+  const phoneLine = opts.rancherPhone && !isBroker
     ? ` questions? text ${rancherFirst} at <a href="sms:${escape(opts.rancherPhone)}" style="color:#0E0E0E;font-weight:600;">${escape(opts.rancherPhone)}</a> or reply to this email.`
     : ` questions? just reply to this email.`;
+  const refundLine = isBroker
+    ? `fully refundable until ${rancherFirst} confirms your animal.`
+    : `fully refundable until ${rancherFirst} accepts your slot.`;
   const first = opts.touch === 1;
   const mid = opts.touch === 'mid';
   const subject = first
@@ -260,14 +278,14 @@ export async function sendDepositRequestNudge(opts: {
       <p style="margin:26px 0">
         <a href="${opts.checkoutUrl}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#FAF8F4;text-decoration:none;font-size:15px;font-weight:600">pay deposit + lock your slot →</a>
       </p>
-      <p style="font-size:14px;color:#2A2A2A;line-height:1.6">fully refundable until ${rancherFirst} accepts your slot.${phoneLine}</p>`
+      <p style="font-size:14px;color:#2A2A2A;line-height:1.6">${refundLine}${phoneLine}</p>`
     : mid
       ? `<p>hey ${escape(opts.buyerName)},</p>
       <p>quick check-in — <strong>${escape(opts.rancherName)}</strong> is still holding a <strong>${escape(opts.cutTier)}</strong> for you. no pressure either way: if you're in, the link below locks it. if the timing's off, reply and tell me and i'll stop the reminders.</p>
       <p style="margin:26px 0">
         <a href="${opts.checkoutUrl}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#FAF8F4;text-decoration:none;font-size:15px;font-weight:600">pay deposit + lock your slot →</a>
       </p>
-      <p style="font-size:14px;color:#2A2A2A;line-height:1.6">fully refundable until ${rancherFirst} accepts your slot.${phoneLine}</p>`
+      <p style="font-size:14px;color:#2A2A2A;line-height:1.6">${refundLine}${phoneLine}</p>`
       : `<p>hey ${escape(opts.buyerName)},</p>
       <p>last note from me on this one — <strong>${escape(opts.rancherName)}</strong> has been holding a <strong>${escape(opts.cutTier)}</strong> for you. if the timing's wrong, no hard feelings; if you still want it, here's your link:</p>
       <p style="margin:26px 0">

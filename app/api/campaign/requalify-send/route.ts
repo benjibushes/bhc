@@ -59,12 +59,14 @@ import {
   validateRequalifyBatch,
   decideRequalifyCta,
   requalifyCta,
+  brokerReserveCta,
   requalifyOneTapCta,
   DAILY_CAMPAIGN_BUDGET,
   type RequalifyCta,
   type RequalifyQuizReason,
 } from '@/lib/requalifyCampaign';
-import { getAllRecords, getRancherBySlug, updateRecord, escapeAirtableValue, TABLES } from '@/lib/airtable';
+import { getAllRecords, getRancherBySlug, getRancherOrProspectBySlug, updateRecord, escapeAirtableValue, TABLES } from '@/lib/airtable';
+import { isBrokerRoutable } from '@/lib/brokerRail';
 import { campaignVariant, variantMode, type CampaignVariant } from '@/lib/campaignVariants';
 import { mintCampaignReserveToken } from '@/lib/campaignReserve';
 import { getOperationalServedStates } from '@/lib/rancherEligibility';
@@ -130,6 +132,29 @@ export async function POST(request: Request) {
       { error: 'rancher lookup failed — refusing to send blind' },
       { status: 503 },
     );
+  }
+
+  // ── BROKER-RAIL WAVE OWNER (2026-08-17) ──────────────────────────────────
+  // getRancherBySlug still carries NOT({Broker Rail} = 1), so a represented
+  // ranch resolves to null above. KEEP IT THAT WAY: null is exactly what makes
+  // decideRequalifyCta refuse one-tap, and a one-tap /r/d token is the CONNECT
+  // deposit rail — minting one for a ranch with no Stripe account would ship a
+  // link that bounces at pay time.
+  //
+  // But the quiz fallback URL is /access?rancher=<slug>, the Connect funnel.
+  // Now that a self-serve represented ranch can OWN a state's wave (it is
+  // routable supply, so rancherForStateTable picks it), resolve it through the
+  // PUBLIC resolver purely to redirect the CTA at its own broker reserve
+  // surface. Fail closed: any lookup trouble leaves the quiz link, which still
+  // works (the direct pin routes deposit-first via lib/brokerMatch), just with
+  // more steps.
+  let brokerReserve = false;
+  if (!rancherRec) {
+    try {
+      brokerReserve = isBrokerRoutable(await getRancherOrProspectBySlug(rancher.slug));
+    } catch {
+      brokerReserve = false;
+    }
   }
 
   // The curated nationwide campaign pair ships without a state gate; every
@@ -213,7 +238,9 @@ export async function POST(request: Request) {
         ? variantAssigned
         : 'A'
       : null;
-    let cta: RequalifyCta = { mode: 'quiz', url: requalifyCta(r.state, rancher.slug) };
+    let cta: RequalifyCta = brokerReserve
+      ? { mode: 'broker-reserve', url: brokerReserveCta(r.state, rancher.slug) }
+      : { mode: 'quiz', url: requalifyCta(r.state, rancher.slug) };
     let reason: RequalifyQuizReason | 'mint-failed' | undefined =
       decision.mode === 'quiz' ? decision.reason : undefined;
     if (decision.mode === 'one-tap') {
@@ -252,7 +279,7 @@ export async function POST(request: Request) {
   }));
 
   if (dryRun) {
-    const sampleFor = (mode: 'one-tap' | 'quiz') => {
+    const sampleFor = (mode: RequalifyCta['mode']) => {
       const hit = planned.find((p) => p.cta.mode === mode);
       return hit
         ? renderRequalifyEmail(hit.r.name, hit.r.state, rancher, hit.cta, hit.variantSent ?? 'A')
@@ -263,8 +290,12 @@ export async function POST(request: Request) {
     // will go out before anything does.
     const oneTapPreview = sampleFor('one-tap');
     const quizPreview = sampleFor('quiz');
+    // Broker-rail wave owner — a distinct body (its own money model), so it
+    // gets its own preview rather than hiding behind the quiz sample.
+    const brokerPreview = sampleFor('broker-reserve');
     if (oneTapPreview) previews.oneTap = oneTapPreview;
     if (quizPreview) previews.quiz = quizPreview;
+    if (brokerPreview) previews.brokerReserve = brokerPreview;
     return NextResponse.json({
       dryRun: true,
       count: recipients.length,
@@ -311,7 +342,7 @@ export async function POST(request: Request) {
   const results: Array<{
     email: string;
     ok: boolean;
-    mode: 'one-tap' | 'quiz';
+    mode: RequalifyCta['mode'];
     ctaReason?: string;
     variant?: string;
     suppressed?: boolean;

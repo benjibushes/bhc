@@ -6510,6 +6510,40 @@ export async function sendBrokerBuyerReceipt(facts: BrokerOrderFacts) {
 }
 
 /**
+ * The buyer's email when the MATCHING ENGINE routes them to a represented
+ * ranch. Replaces sendBuyerIntroNotification on this rail — see lib/brokerMatch
+ * for why that one must never fire here (it hands the buyer the ranch's email
+ * and phone, and the deposit that never happens next is 100% of BHC's fee).
+ *
+ * Body built by the pure builder in lib/brokerMatch so the copy contract
+ * ("deposit toward your share", "balance to the ranch", never a word about
+ * commission, never the ranch's contact details) is unit-tested. Deliberately
+ * NOT frequency-whitelisted: it is the broker analogue of the capped
+ * sendBuyerIntroNotification, so a buyer matched repeatedly is throttled the
+ * same way.
+ */
+export async function sendBrokerMatchInvite(data: {
+  to: string;
+  subject: string;
+  html: string;
+  text: string;
+}) {
+  return guardedSend({
+    templateName: 'broker_match_invite',
+    recipientEmail: data.to,
+    subject: data.subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.to,
+      subject: data.subject,
+      headers: getUnsubscribeHeaders(data.to),
+      text: data.text,
+      html: data.html,
+    }),
+  });
+}
+
+/**
  * Signup confirmation for a rancher who has just agreed to be represented.
  * Restates the commission math in the same words the page showed before submit
  * — the agreement has to live in his inbox, not only on a page he closed.

@@ -5,6 +5,7 @@ import { sendTelegramUpdate } from '@/lib/telegram';
 import { requireAdmin } from '@/lib/adminAuth';
 import { getMaxActiveReferrals, getLiveCapacity, incrementCapacity, decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
+import { isBrokerRancher } from '@/lib/brokerRail';
 
 function esc(s: string): string {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -90,6 +91,19 @@ export async function POST(
     if (!isRancherOperationalForBuyers(newRancher)) {
       return NextResponse.json({
         error: `${newRancher['Operator Name'] || 'Target rancher'} is not operational (inactive, past-due subscription, or Stripe Connect not active) — pick another.`,
+      }, { status: 400 });
+    }
+
+    // BROKER RAIL (2026-08-17). The gate above now admits a self-serve
+    // represented ranch, but this handler's intro email is Connect-shaped: it
+    // hands the RANCH the buyer's contact block and states "You keep 100% of
+    // your price; our 10% is added on top and paid by the buyer" — flatly false
+    // on this rail, where the ranch nets price − deposit and nothing is added
+    // on top. Represented ranches take buyers only through the deposit-first
+    // match path (lib/brokerMatch).
+    if (isBrokerRancher(newRancher)) {
+      return NextResponse.json({
+        error: `${newRancher['Operator Name'] || newRancher['Ranch Name'] || 'That ranch'} is a represented (broker-rail) ranch — buyers reach it through the deposit link, not a rancher intro. Pick another.`,
       }, { status: 400 });
     }
 

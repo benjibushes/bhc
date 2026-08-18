@@ -189,3 +189,42 @@ export function shouldDecrementOnClose(prevStatus: unknown, nextStatus: unknown)
   if (!next || HELD_REFERRAL_STATUSES.has(next)) return false;
   return true;
 }
+
+/**
+ * The EXACT MIRROR of shouldDecrementOnClose — a slot is CLAIMED when the
+ * referral ENTERS the canonical held set:
+ *
+ *   prevStatus ∉ HELD  AND  nextStatus ∈ HELD  →  true (INCR)
+ *
+ * WHY THIS EXISTS (2026-08-17, broker-rail capacity starvation). Every Connect
+ * path already INCRs at its one entry point (matching/suggest claims the slot
+ * just before flipping the row to 'Intro Sent'), so the invariant "the rows
+ * countHeldReferrals counts are exactly the rows that INCR'd" held by
+ * construction — until the broker rail added a SECOND way into the held set.
+ *
+ * lib/brokerReferral creates Status='Pending' (correctly not held, correctly no
+ * INCR), and lib/brokerSettlement then flips a PAID broker sale straight to
+ * 'Awaiting Payment' — which IS held and IS counted. Nothing ever INCR'd for
+ * it. Because incrementCapacity seeds a cold Redis key from
+ * liveHeldCountForRancher, N settled broker sales inflated the seed by N with
+ * no matching claim: at the DEFAULT_MAX of 5, five paid sales bounced every
+ * subsequent buyer off the capacity valve (and manufactured permanent drift
+ * alarms). Invisible while broker ranches were unroutable; a starvation bug the
+ * moment one became real supply.
+ *
+ * Same conservative defaults as its mirror: empty/unknown prev or next → false.
+ * A missed INCR self-heals on the next ground-truth reseed; a spurious one
+ * silently starves a rancher. Never drift UP on uncertainty.
+ *
+ * ORDERING NOTE for callers: INCR **before** writing the new status. The
+ * first-ever INCR for a rancher bootstraps from liveHeldCountForRancher, so a
+ * row already flipped into the held set would be counted by the bootstrap AND
+ * by the increment — double-claiming one slot.
+ */
+export function shouldIncrementOnEnterHeld(prevStatus: unknown, nextStatus: unknown): boolean {
+  const next = String(nextStatus ?? '').trim();
+  if (!next || !HELD_REFERRAL_STATUSES.has(next)) return false;
+  const prev = String(prevStatus ?? '').trim();
+  if (!prev || HELD_REFERRAL_STATUSES.has(prev)) return false;
+  return true;
+}
