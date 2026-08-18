@@ -1,18 +1,66 @@
 // Shared AI helper — priority order:
 // 1. Ollama (local dev)  — set OLLAMA_BASE_URL=http://localhost:11434
 // 2. Groq (free tier)    — set GROQ_API_KEY at console.groq.com (free, fast)
-// 3. Anthropic (paid)    — set ANTHROPIC_API_KEY (fallback)
+// 3. Anthropic (paid)    — fallback: on a MISSING Groq key, and also on a
+//    FAILED Groq call (HTTP error / model_not_found / timeout). One
+//    fallthrough, no retries — see groqWithAnthropicFallback below.
 
-const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || '';
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.2';
-const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
+// Env is read at call time (not module load) so key rotations apply without a
+// cold start and tests can toggle providers per-case.
+const OLLAMA_BASE_URL = () => process.env.OLLAMA_BASE_URL || '';
+const OLLAMA_MODEL = () => process.env.OLLAMA_MODEL || 'llama3.2';
+const GROQ_API_KEY = () => process.env.GROQ_API_KEY || '';
+const ANTHROPIC_API_KEY = () => process.env.ANTHROPIC_API_KEY || '';
 
-// Groq model mapping — free equivalents for each quality tier
-const GROQ_MODELS: Record<string, string> = {
-  'claude-sonnet-4-6': 'llama-3.3-70b-versatile',    // high quality
-  'claude-haiku-4-5-20251001': 'llama-3.1-8b-instant', // fast/cheap
+// Groq model mapping — free equivalents for each quality tier.
+// IDs live-verified 2026-08-18 against GET https://api.groq.com/openai/v1/models
+// (200; each ID answered a chat completion). Groq DECOMMISSIONS models without
+// warning — the previous llama 70b/8b pair died this way and every AI lane
+// went dark. If Groq errors with model_not_found, re-verify against the live
+// /models list and update this map + this comment's date (lib/ai.test.ts pins
+// both, and pins that no decommissioned ID lingers anywhere in this file).
+export const GROQ_MODELS: Record<string, string> = {
+  'claude-sonnet-4-6': 'openai/gpt-oss-120b',        // high quality, 131k ctx
+  'claude-haiku-4-5-20251001': 'openai/gpt-oss-20b', // fast/cheap, 131k ctx
 };
+const GROQ_DEFAULT_MODEL = GROQ_MODELS['claude-sonnet-4-6'];
+
+// A hung Groq request must become a catchable failure so the Anthropic
+// fallthrough can fire — without this a Groq stall eats the whole cron budget.
+const GROQ_TIMEOUT_MS = 60_000;
+
+// One bounded fallthrough: try Groq, and on ANY failure (HTTP error,
+// model_not_found, network error, timeout) make exactly one Anthropic attempt.
+// No retry of Groq, no retry of Anthropic. The warn makes degradation visible
+// in Vercel logs / Cron Runs. If Anthropic is unset or also fails, the thrown
+// error names every provider tried (callers keep their own fallbacks, #642).
+async function groqWithAnthropicFallback<T>(opts: {
+  groqModel: string;
+  groqCall: () => Promise<T>;
+  anthropicCall: () => Promise<T>;
+}): Promise<T> {
+  try {
+    return await opts.groqCall();
+  } catch (groqErr) {
+    const groqReason = groqErr instanceof Error ? groqErr.message : String(groqErr);
+    console.warn(
+      `[ai-failover] groq (${opts.groqModel}) failed: ${groqReason} — falling back to anthropic`
+    );
+    if (!ANTHROPIC_API_KEY()) {
+      throw new Error(
+        `All AI providers failed. Tried groq (${opts.groqModel}): ${groqReason}; anthropic: ANTHROPIC_API_KEY unset.`
+      );
+    }
+    try {
+      return await opts.anthropicCall();
+    } catch (anthErr) {
+      const anthReason = anthErr instanceof Error ? anthErr.message : String(anthErr);
+      throw new Error(
+        `All AI providers failed. Tried groq (${opts.groqModel}): ${groqReason}; anthropic: ${anthReason}`
+      );
+    }
+  }
+}
 
 export async function callClaude(params: {
   model?: 'claude-sonnet-4-6' | 'claude-haiku-4-5-20251001';
@@ -21,8 +69,14 @@ export async function callClaude(params: {
   maxTokens?: number;
 }): Promise<string> {
   const withModel = { ...params, model: params.model || 'claude-sonnet-4-6' as const };
-  if (OLLAMA_BASE_URL) return callOllama(withModel);
-  if (GROQ_API_KEY) return callGroq(withModel);
+  if (OLLAMA_BASE_URL()) return callOllama(withModel);
+  if (GROQ_API_KEY()) {
+    return groqWithAnthropicFallback({
+      groqModel: GROQ_MODELS[withModel.model] || GROQ_DEFAULT_MODEL,
+      groqCall: () => callGroq(withModel),
+      anthropicCall: () => callAnthropic(withModel),
+    });
+  }
   return callAnthropic(withModel);
 }
 
@@ -31,11 +85,11 @@ async function callOllama(params: {
   user: string;
   maxTokens?: number;
 }): Promise<string> {
-  const response = await fetch(`${OLLAMA_BASE_URL}/v1/chat/completions`, {
+  const response = await fetch(`${OLLAMA_BASE_URL()}/v1/chat/completions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: OLLAMA_MODEL,
+      model: OLLAMA_MODEL(),
       messages: [
         { role: 'system', content: params.system },
         { role: 'user', content: params.user },
@@ -56,14 +110,15 @@ async function callGroq(params: {
   user: string;
   maxTokens?: number;
 }): Promise<string> {
-  const model = GROQ_MODELS[params.model] || 'llama-3.3-70b-versatile';
+  const model = GROQ_MODELS[params.model] || GROQ_DEFAULT_MODEL;
 
   const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${GROQ_API_KEY}`,
+      'Authorization': `Bearer ${GROQ_API_KEY()}`,
     },
+    signal: AbortSignal.timeout(GROQ_TIMEOUT_MS),
     body: JSON.stringify({
       model,
       messages: [
@@ -85,7 +140,7 @@ async function callAnthropic(params: {
   user: string;
   maxTokens?: number;
 }): Promise<string> {
-  if (!ANTHROPIC_API_KEY) {
+  if (!ANTHROPIC_API_KEY()) {
     throw new Error('No AI configured. Set GROQ_API_KEY (free) or ANTHROPIC_API_KEY in env vars.');
   }
 
@@ -104,7 +159,7 @@ async function callAnthropic(params: {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-api-key': ANTHROPIC_API_KEY,
+      'x-api-key': ANTHROPIC_API_KEY(),
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
@@ -165,21 +220,29 @@ export async function callClaudeWithTools(params: {
   }
   const systemWithMemory = params.system + memoryBlock;
 
-  // Explicit pin wins.
+  // Explicit pin wins — a pinned provider never silently switches, even on
+  // failure (forceProvider=anthropic exists precisely to dodge Groq quirks).
   if (params.forceProvider === 'anthropic') {
-    if (!ANTHROPIC_API_KEY) throw new Error('forceProvider=anthropic but ANTHROPIC_API_KEY unset');
+    if (!ANTHROPIC_API_KEY()) throw new Error('forceProvider=anthropic but ANTHROPIC_API_KEY unset');
     return callAnthropicWithTools({ ...params, system: systemWithMemory });
   }
   if (params.forceProvider === 'groq') {
-    if (!GROQ_API_KEY) throw new Error('forceProvider=groq but GROQ_API_KEY unset');
+    if (!GROQ_API_KEY()) throw new Error('forceProvider=groq but GROQ_API_KEY unset');
     return callGroqWithTools({ ...params, system: systemWithMemory });
   }
 
-  // Default: Groq (free) first, then Anthropic. Falls through on missing keys.
-  if (GROQ_API_KEY) {
-    return callGroqWithTools({ ...params, system: systemWithMemory });
+  // Default: Groq (free) first, then Anthropic — on a missing Groq key AND on
+  // a failed Groq call (one bounded fallthrough). Note: if Groq dies mid-loop
+  // after executing some tools, the Anthropic pass restarts the conversation
+  // from scratch (tools re-run; they are reads/idempotent writes).
+  if (GROQ_API_KEY()) {
+    return groqWithAnthropicFallback({
+      groqModel: GROQ_MODELS[params.model || 'claude-sonnet-4-6'] || GROQ_DEFAULT_MODEL,
+      groqCall: () => callGroqWithTools({ ...params, system: systemWithMemory }),
+      anthropicCall: () => callAnthropicWithTools({ ...params, system: systemWithMemory }),
+    });
   }
-  if (ANTHROPIC_API_KEY) {
+  if (ANTHROPIC_API_KEY()) {
     return callAnthropicWithTools({ ...params, system: systemWithMemory });
   }
   throw new Error('No AI provider configured for tool use. Set GROQ_API_KEY (free) or ANTHROPIC_API_KEY.');
@@ -193,7 +256,7 @@ async function callGroqWithTools(params: {
   maxTokens?: number;
   maxIterations?: number;
 }): Promise<{ text: string; toolCalls: { name: string; input: any; output: any }[] }> {
-  const model = GROQ_MODELS[params.model || 'claude-sonnet-4-6'] || 'llama-3.3-70b-versatile';
+  const model = GROQ_MODELS[params.model || 'claude-sonnet-4-6'] || GROQ_DEFAULT_MODEL;
   const maxIterations = params.maxIterations || 6;
   const toolCalls: { name: string; input: any; output: any }[] = [];
   const openAITools = toOpenAITools(REGISTERED_TOOLS);
@@ -208,8 +271,9 @@ async function callGroqWithTools(params: {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${GROQ_API_KEY}`,
+        'Authorization': `Bearer ${GROQ_API_KEY()}`,
       },
+      signal: AbortSignal.timeout(GROQ_TIMEOUT_MS),
       body: JSON.stringify({
         model,
         max_tokens: params.maxTokens || 2048,
@@ -295,7 +359,7 @@ async function callAnthropicWithTools(params: {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': ANTHROPIC_API_KEY,
+        'x-api-key': ANTHROPIC_API_KEY(),
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
