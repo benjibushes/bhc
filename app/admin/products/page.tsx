@@ -4,8 +4,19 @@
 // buyer, get a Stripe checkout link to text a share-balker. The fastest-money
 // surface: turns the 826 Closed Lost + cold leads into a nationwide push
 // channel. Money flows through the verified /api/checkout/product rail.
+//
+// SEND, NOT JUST MINT (2026-08-17): the same server-side delivery the sell
+// console got. TWO LINKS, deliberately different:
+//   • the Stripe checkout URL below — for Ben to read out or paste on a live
+//     call. Fastest path to paid, and it expires in about a day.
+//   • /shop/<id>, the durable product page — what the PLATFORM emails. Repo
+//     hard rule: never email a raw Stripe checkout URL, because a buyer who
+//     opens the mail tomorrow hits Stripe's expired-session page.
+// The send endpoint enforces that itself (lib/operatorSend.resolveSendTarget
+// refuses a Stripe host outright), so this is belt and suspenders, not trust.
 
 import { useState, useEffect } from 'react';
+import SendItButton from '../components/SendItButton';
 
 interface Product {
   id: string;
@@ -163,6 +174,24 @@ export default function AdminProductsPage() {
               <div className="break-all text-xs font-mono bg-bone border border-dust p-2.5">
                 {result.url}
               </div>
+
+              {/* Server-side delivery. Sends the DURABLE product page, never
+                  the expiring Stripe session shown above. The copy / text-it
+                  fallbacks below stay exactly where they were. */}
+              {selected && (
+                <SendItButton
+                  sendUrl={`${window.location.origin}/shop/${selected.id}`}
+                  buyerEmail={buyerEmail}
+                  buyerName={buyerName}
+                  itemLabel={selected.name}
+                  sellerName={selected.rancher}
+                  amount={selected.displayPrice}
+                  depositStyle={selected.depositStyle === true}
+                  priceRange={selected.priceRange || ''}
+                  resetKey={result.url}
+                />
+              )}
+
               <div className="flex gap-2 flex-wrap">
                 <button onClick={copyLink} className="px-4 py-2.5 border border-charcoal bg-transparent text-[13px] cursor-pointer transition-base hover:bg-charcoal hover:text-bone">
                   {copied ? 'copied ✓' : 'copy link'}
@@ -173,6 +202,10 @@ export default function AdminProductsPage() {
               </div>
               <p className="text-xs text-saddle m-0">
                 Buyer completes checkout on Stripe → you get a “SOLD” alert, the order lands in the rancher's queue, the buyer gets a receipt.
+              </p>
+              <p className="text-xs text-saddle m-0">
+                The link above is a Stripe checkout and expires in about a day, so it is for this
+                call. <strong>send it</strong> mails the durable product page instead.
               </p>
             </div>
           )}
