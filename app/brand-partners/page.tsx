@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Container from '../components/Container';
 import Pill from '../components/Pill';
 import BrandTierCTA, { BrandPartnersViewTracker } from './BrandTierCTA';
+import { STATS_FALLBACK } from '@/lib/statsFallback';
 
 // Tiered brand partner offer. Brands pay to be featured in the BuyHalfCow
 // network — logo placement, posts on the IG / founder list, pinned in
@@ -54,9 +55,11 @@ const foundingCalendly =
 
 // Live count pulled from /api/stats/public (computed from Airtable Brands
 // where Payment Status = 'Paid', subtracted from FOUNDING_BRAND_PARTNER_CAP).
-// Fallback value matches the API's catch-path fallback so the scarcity
-// counter degrades gracefully if Airtable is unreachable.
-const FOUNDING_SPOTS_REMAINING_FALLBACK = 5;
+// Fallback comes from the shared dated module (lib/statsFallback) — the same
+// value the API's own catch path serves — so the scarcity counter degrades
+// gracefully AND honestly if Airtable is unreachable. (The old hardcoded "5
+// spots left" here manufactured scarcity that never existed.)
+const FOUNDING_SPOTS_REMAINING_FALLBACK = STATS_FALLBACK.brandPartnersRemaining;
 
 async function getFoundingSpotsRemaining(): Promise<number> {
   try {

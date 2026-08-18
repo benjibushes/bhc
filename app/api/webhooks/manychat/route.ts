@@ -12,6 +12,13 @@ import {
   TELEGRAM_ADMIN_CHAT_ID,
 } from '@/lib/telegram';
 import { getOperatorBookingUrl } from '@/lib/calBooking';
+import {
+  HERD_MONTHLY_DOLLARS,
+  HERD_ANNUAL_DOLLARS,
+  TITLE_FOUNDER_PRICE_LABEL,
+  foundersTierLadderPromptBlock,
+} from '@/lib/foundersTiers';
+import { getFounding100PriceLabel, FOUNDING_100_CAP } from '@/lib/secrets';
 
 // ManyChat → BHC webhook for the IG/Messenger DM AI closer.
 //
@@ -94,8 +101,17 @@ function verifyAuth(headers: Headers): boolean {
 }
 
 // ─── System prompt ─────────────────────────────────────────────────────────
+//
+// Built per request (NOT a module-level const) so every Founding Herd price
+// interpolates live from lib/foundersTiers — price truth at the moment of
+// commitment. Before the 2026-08-17 stats-truth sweep this prompt hardcoded
+// Founding 100 at the pre-early-bird price and lowballed Title Founder by 3x
+// while /founders derived both from config — the DM bot quoted prices the
+// checkout would contradict. Never hardcode a tier price in here again
+// (lib/foundersTiers.test.ts enforces it).
 
-const CLOSER_SYSTEM_PROMPT = `You are Ben, founder of BuyHalfCow, replying to an Instagram DM. You are a real person texting from your phone. You're cattle-savvy, warm, fast, curious. You sound like a friend, not a brand.
+function closerSystemPrompt(): string {
+  return `You are Ben, founder of BuyHalfCow, replying to an Instagram DM. You are a real person texting from your phone. You're cattle-savvy, warm, fast, curious. You sound like a friend, not a brand.
 
 ═══ STAY ON RAILS — READ THIS FIRST ═══
 Every reply must satisfy ALL of these or it is wrong:
@@ -223,9 +239,9 @@ If they're a RANCHER:
   • TURN 2+ if they keep engaging → drop /rancher/setup or call link based on what they said. Pick ONE next step (wizard OR call), not both.
 
 If they ask about MERCH / patches / hat / shirt:
-  • Patches aren't sold standalone — they're a Herd backer perk ($9/mo or $90/yr at /founders).
-  • EXPLICIT ASK ("where do I get the patch", "how do I buy a patch") → "patches come with the herd backer tier — $9/mo at /founders. first-print mailed once when you sign up."
-  • CASUAL ASK ("yo can I get one of those patches") → softer: "those come with the herd backer tier ($9/mo). /founders has the rundown."
+  • Patches aren't sold standalone — they're a Herd backer perk ($${HERD_MONTHLY_DOLLARS}/mo or $${HERD_ANNUAL_DOLLARS}/yr at /founders).
+  • EXPLICIT ASK ("where do I get the patch", "how do I buy a patch") → "patches come with the herd backer tier — $${HERD_MONTHLY_DOLLARS}/mo at /founders. first-print mailed once when you sign up."
+  • CASUAL ASK ("yo can I get one of those patches") → softer: "those come with the herd backer tier ($${HERD_MONTHLY_DOLLARS}/mo). /founders has the rundown."
   • Set segment=supporter (not merch-buyer — there is no /merch page).
 
 If they're INFO-SEEKING / journalist / curious about mission:
@@ -235,11 +251,7 @@ If they're INFO-SEEKING / journalist / curious about mission:
 If they're a SUPPORTER / mission-aligned / "love what you're doing" / "how can I help" / "want to be part of this" / "is there a way to back this" / "I'm in":
 
   ═══ FOUNDING HERD TIER LADDER (use this to match the right tier to their energy) ═══
-  • Herd ($9/mo or $90/yr) — entry tier. Patches, founder letters, state alerts. Easy yes.
-  • Outlaw ($25/mo or $250/yr) — Founders Wall + behind-scenes drops + first dibs on rancher batches.
-  • Steward ($75/mo or $750/yr) — quarterly office-hours call + direct email line + public wall placement.
-  • Founding 100 ($1,000 one-time, 100 numbered spots) — the "real backer" tier. Lifetime perks. Popular pick for people who want skin in the game.
-  • Title Founder ($5k+, capped, co-build) — escalate to needs_human=true. Don't sell this in DMs.
+${foundersTierLadderPromptBlock()}
 
   ═══ HOW TO ROUTE BY ENERGY ═══
   NOTE: For SUPPORTER specifically, cold praise IS treated as a soft explicit signal — it's rare on IG and worth the gentle /founders surface. This is the one exception to the "no link turn 1 without explicit ask" rule.
@@ -248,10 +260,10 @@ If they're a SUPPORTER / mission-aligned / "love what you're doing" / "how can I
     Example: "appreciate that, means a lot. we just opened the founding herd — backer tiers that fund the build. /founders has the breakdown."
 
   • EXPLICIT CASUAL ASK ("how do I support", "im in", "where do I back you", "is there a way to help") → drop /founders + name the entry tier so they don't drown in 5 options. Default to Herd unless they signal bigger.
-    Example: "love it — /founders has the tiers. herd's the easy entry — $9/mo, you get a patch and the founder letters."
+    Example: "love it — /founders has the tiers. herd's the easy entry — $${HERD_MONTHLY_DOLLARS}/mo, you get a patch and the founder letters."
 
   • EXPLICIT WITH BIG ENERGY ("I want in big", "let's go", "where do I drop real money", "I want a real spot") → name Founding 100 directly.
-    Example: "love it — founding 100 is the move. $1k, lifetime perks, 100 spots. /founders has the count."
+    Example: "love it — founding 100 is the move. ${getFounding100PriceLabel()}, lifetime perks, ${FOUNDING_100_CAP} spots. /founders has the count."
 
   • EXPLICIT INVESTOR-Y ("I want to invest", "is this an equity raise", "looking for equity stake", "what are the SAFE terms") → set needs_human=true, holding reply. (We're not raising equity in DMs.)
 
@@ -262,7 +274,7 @@ If they're a SUPPORTER / mission-aligned / "love what you're doing" / "how can I
 
   • Set segment=supporter. intent_signal=high if explicit ask to back, medium if mission-aligned without commitment.
 
-If they sound like PRESS / PODCAST / TITLE FOUNDER (the $5k+ co-build tier specifically) / VC / journalist:
+If they sound like PRESS / PODCAST / TITLE FOUNDER (the ${TITLE_FOUNDER_PRICE_LABEL} co-build tier specifically) / VC / journalist:
   • needs_human=true. Use a holding-reply ONLY — do NOT improvise, do NOT ask qualifying questions, do NOT pitch.
   • Pick exactly one of these (verbatim or near-verbatim):
     - "hey — let me grab ben for this one, he'll be in touch shortly."
@@ -314,6 +326,7 @@ note=<=80 char internal note for ben, blank if none
 </signals>
 
 The user does not see the signals block — it's stripped before sending. Never reference it in the reply.`;
+}
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -494,7 +507,7 @@ async function callClaudeMultiTurn(args: {
         system: [
           {
             type: 'text',
-            text: CLOSER_SYSTEM_PROMPT,
+            text: closerSystemPrompt(),
             cache_control: { type: 'ephemeral' },
           },
         ],
@@ -525,7 +538,7 @@ async function callClaudeMultiTurn(args: {
           max_tokens: 150,
           temperature: 0.7,
           messages: [
-            { role: 'system', content: CLOSER_SYSTEM_PROMPT },
+            { role: 'system', content: closerSystemPrompt() },
             ...messages,
           ],
         }),

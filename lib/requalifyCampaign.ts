@@ -1,7 +1,9 @@
 // Pure half of the requalification campaign sender (route:
 // app/api/campaign/requalify-send). Template is the Ben-approved copy from
-// docs/marketing/email-quiz-resume.md — quiz-incomplete variant, pinned to
-// Champion Valley. Body validation is strict: recipients carry ONLY
+// docs/marketing/email-quiz-resume.md — quiz-incomplete variant, generalized
+// in #504 to ANY campaign rancher (callers pass a CampaignRancher
+// {name, slug}; the original version was hardwired to Champion Valley).
+// Body validation is strict: recipients carry ONLY
 // email/name/state, so the endpoint can never be used to send arbitrary
 // content. The CAN-SPAM footer + unsubscribe link are appended downstream by
 // the guarded rail — do not add them here (double-footer).

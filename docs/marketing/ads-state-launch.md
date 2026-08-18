@@ -178,33 +178,38 @@ Age 28–65. All genders. Exclude nothing else — the state geo is the real fil
 - **Destination:** `https://www.buyhalfcow.com/ranchers/foodstead` + UTM (`{st}=mt`)
 - **Geo:** Montana statewide, **plus Idaho and Washington** — page hero states
   "Ships to MT, ID, WA." Separate ad sets per state.
-- **Page truth (2026-07-28):** Whole $6,500 · Half $3,299 · Quarter $1,650, prices
-  include processing. **19 shares left** (lowest of the five — real). **6 deals
-  closed on BHC** (most of the five). **Next processing August 1, 2026** — a real,
-  page-stated date, 4 days out at time of writing. 100% grass-fed and
-  grass-finished, regenerative (rotational grazing, cover crops, bale grazing),
-  never confined, no hormones or antibiotics. Run by Beckie.
-- **Honest urgency:** this is the one page where date urgency is TRUE. Use the
-  Aug 1 processing date while it holds, then re-verify — pull the page before
-  launch and swap in whatever date it shows. If no date shows, drop the date ads.
-- **Priority:** highest-proof page (6 closes, real date, real low share count).
+- **Page truth (re-pulled 2026-08-17):** Whole $6,300 · Half $3,150 · Quarter
+  $1,568, prices include processing. **28 shares left**. **8 deals closed on
+  BHC** (most of the five). **Next processing October 31, 2026** — page-stated
+  as of the 2026-08-17 pull. 100% grass-fed and grass-finished, regenerative
+  (rotational grazing, cover crops, bale grazing), never confined, no hormones
+  or antibiotics. Run by Beckie. _(The 2026-07-28 numbers — $6,500/$3,299/$1,650,
+  19 shares, Aug 1 processing — are all stale; prices dropped and the round
+  turned over. Proof this doc rots fast: re-pull the page the day ads go live,
+  per the header rule.)_
+- **Honest urgency:** this is the one page where date urgency is TRUE — but only
+  while the page-stated date holds. **[CONFIRM with Foodstead before send]**:
+  pull the page the day of launch and swap in whatever date it shows. If no
+  date shows, drop the date ads entirely. Never run a processing date that
+  didn't come off the live page that day.
+- **Priority:** highest-proof page (8 closes, real date, real share count).
   Recommend MT gets the first dollar — see `launch-runbook.md`.
 
 **Ad 1 (a1 — the real-date angle)**
-- Primary: `Foodstead processes August 1. 19 shares left this round. 100% grass fed and finished on regenerative Montana pasture.` *(117 chars)*
+- Primary: `Foodstead processes October 31. 28 shares left this round. 100% grass fed and finished on regenerative Montana pasture.` *(119 chars — date [CONFIRM with Foodstead before send])*
   - Continuation: `Reserve with a deposit — fully refundable until Beckie accepts your slot. Ships to MT, ID, WA.`
-- Headline: `Processing Aug 1. 19 shares left.` *(33)*
+- Headline: `Processing Oct 31. 28 shares left.` *(34 — date [CONFIRM with Foodstead before send])*
 - Description: `Refundable deposit holds it.` *(28)*
 
 **Ad 2 (a2 — the proof angle)**
-- Primary: `6 families have bought Foodstead beef through BuyHalfCow. Quarters from $1,650, processing included, shipped MT, ID, WA.` *(120 chars)*
-- Headline: `Montana quarters from $1,650` *(28)*
-- Description: `6 deals closed on BHC.` *(22)*
+- Primary: `8 families have bought Foodstead beef through BuyHalfCow. Quarters from $1,568, processing included, shipped MT, ID, WA.` *(120 chars)*
+- Headline: `Montana quarters from $1,568` *(28)*
+- Description: `8 deals closed on BHC.` *(22)*
 
 **Ad 3 (a3 — the soil angle)**
 - Primary: `Better soil grows better forage. Better forage raises better beef. That's the whole Foodstead model, on Montana pasture.` *(120 chars)*
 - Headline: `Regenerative Montana beef` *(25)*
-- Description: `19 shares left this round.` *(26)*
+- Description: `28 shares left this round.` *(26)*
 
 ---
 

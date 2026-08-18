@@ -11,6 +11,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import WholesaleForm from './WholesaleForm';
 import { getActiveRancherPages } from '@/lib/airtable';
+import { STATS_FALLBACK, requireLiveStats } from '@/lib/statsFallback';
 
 export const metadata: Metadata = {
   title: 'Wholesale · Direct from verified ranchers',
@@ -44,12 +45,13 @@ interface PublicStats {
 // Consumed by hero JSX (`{stats.ranchersActive}` etc.) which renders the raw
 // number — no em-dash fallback layer for 0. So if we hardcoded zeros here,
 // /api/stats/public failure would lie with "0 verified ranchers" rather than
-// degrade to a placeholder. Real, conservative numbers are safer than fake-low
-// zeros. Verified against prod 2026-05-27 — re-verify monthly.
-const STATS_FALLBACK: PublicStats = {
-  ranchersActive: 17,
-  familiesMatched: 1533,
-  totalClosedWon: 11,
+// degrade to a placeholder. Numbers come from the shared dated module
+// (lib/statsFallback, single-sourced with the API's own catch path) — refresh
+// there, never here.
+const WHOLESALE_STATS_FALLBACK: PublicStats = {
+  ranchersActive: STATS_FALLBACK.ranchersActive,
+  familiesMatched: STATS_FALLBACK.familiesMatched,
+  totalClosedWon: STATS_FALLBACK.totalClosedWon,
 };
 
 async function fetchStats(): Promise<PublicStats> {
@@ -60,13 +62,16 @@ async function fetchStats(): Promise<PublicStats> {
     });
     if (!res.ok) throw new Error(`stats fetch returned ${res.status}`);
     const data = await res.json();
-    return {
-      ranchersActive: Number(data?.ranchersActive ?? STATS_FALLBACK.ranchersActive),
-      familiesMatched: Number(data?.familiesMatched ?? STATS_FALLBACK.familiesMatched),
-      totalClosedWon: Number(data?.totalClosedWon ?? STATS_FALLBACK.totalClosedWon),
-    };
+    // Partial payload = failed fetch (throw → fallback). A real low number —
+    // even 0 — renders as-is; fallbacks are for outages, not for replacing
+    // true answers.
+    return requireLiveStats(data, [
+      'ranchersActive',
+      'familiesMatched',
+      'totalClosedWon',
+    ]);
   } catch {
-    return STATS_FALLBACK;
+    return WHOLESALE_STATS_FALLBACK;
   }
 }
 

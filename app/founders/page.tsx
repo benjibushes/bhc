@@ -35,7 +35,21 @@ import {
   getFounding100PriceCents,
   getFounding100PriceLabel,
   FOUNDING_100_EARLY_BIRD_END,
+  FOUNDING_100_POST_EARLY_BIRD_CENTS,
 } from '@/lib/secrets';
+import {
+  HERD_MONTHLY_DOLLARS,
+  HERD_ANNUAL_DOLLARS,
+  OUTLAW_MONTHLY_DOLLARS,
+  OUTLAW_ANNUAL_DOLLARS,
+  STEWARD_MONTHLY_DOLLARS,
+  STEWARD_ANNUAL_DOLLARS,
+  TITLE_FOUNDER_DOLLARS,
+  TITLE_FOUNDER_PRICE_LABEL,
+  FOUNDING_100_POST_EARLY_BIRD_LABEL,
+  subscriptionPriceLine,
+} from '@/lib/foundersTiers';
+import { STATS_FALLBACK, requireLiveStats } from '@/lib/statsFallback';
 import FoundersWall from './components/FoundersWall';
 import FounderCheckoutButton from './components/FounderCheckoutButton';
 import {
@@ -43,14 +57,18 @@ import {
   TierLinkButton,
 } from './components/FoundersAnalytics';
 
+// Tier dollar figures interpolate from lib/foundersTiers so metadata can
+// never disagree with the tier cards below (or the IG DM closer).
+const METADATA_TIERS_LINE = `100 spots. Tiers from $${HERD_MONTHLY_DOLLARS}/month. $${TITLE_FOUNDER_DOLLARS / 1000}k locks lifetime founder #1-10 status.`;
+
 export const metadata: Metadata = {
   title: 'The Founding Herd',
   description:
-    'Five tiers, real backing. The Founding Herd is the people who paid in before BuyHalfCow was easy to bet on. 100 numbered spots, tiers from $9/month.',
+    `Five tiers, real backing. The Founding Herd is the people who paid in before BuyHalfCow was easy to bet on. 100 numbered spots, tiers from $${HERD_MONTHLY_DOLLARS}/month.`,
   openGraph: {
     title: 'The Founding Herd · back BuyHalfCow',
     description:
-      '100 spots. Tiers from $9/month. $15k locks lifetime founder #1-10 status. The people who paid in before this was easy to bet on.',
+      `${METADATA_TIERS_LINE} The people who paid in before this was easy to bet on.`,
     type: 'website',
     url: 'https://www.buyhalfcow.com/founders',
     images: [{ url: '/og-image.png', width: 1200, height: 630, alt: 'The Founding Herd — back BuyHalfCow' }],
@@ -58,8 +76,7 @@ export const metadata: Metadata = {
   twitter: {
     card: 'summary_large_image',
     title: 'The Founding Herd · back BuyHalfCow',
-    description:
-      '100 spots. Tiers from $9/month. $15k locks lifetime founder #1-10 status.',
+    description: METADATA_TIERS_LINE,
     images: ['/og-image.png'],
   },
 };
@@ -86,22 +103,36 @@ async function fetchPublicStats(): Promise<PublicStats> {
     const res = await fetch(`${SITE_URL}/api/stats/public`, { next: { revalidate: 300 } });
     if (!res.ok) throw new Error(`stats fetch returned ${res.status}`);
     const json = await res.json();
-    // Coerce the two fields this page renders as prose so a partial payload
-    // can never print "undefined buyers" on a capital-raise page.
+    // A payload missing any field this page renders is treated as a FAILED
+    // fetch (throw → full fallback below), so a partial payload can never
+    // print "undefined buyers" on a capital-raise page. A REAL low number
+    // from the API — even 0 — renders as-is: the old coercion floors here
+    // replaced true low answers with invented spring-2026 numbers. Killed in
+    // the 2026-08-17 stats-truth sweep (lib/statsFallback.test.ts enforces).
     return {
       ...json,
-      familiesMatched: Number(json?.familiesMatched) > 0 ? Number(json.familiesMatched) : 1533,
-      states: Number(json?.states) > 0 ? Number(json.states) : 5,
-    };
+      ...requireLiveStats(json, [
+        'ranchersActive',
+        'familiesMatched',
+        'foundersBacked',
+        'foundersCap',
+        'totalClosedWon',
+        'thisMonthClosedWon',
+        'states',
+      ]),
+    } as PublicStats;
   } catch {
+    // /api/stats/public itself failed — last-ditch numbers from the shared
+    // dated fallback module (lib/statsFallback), the same source the API's
+    // own catch path uses. Refresh there, never here.
     return {
-      ranchersActive: 17,
-      familiesMatched: 1533,
+      ranchersActive: STATS_FALLBACK.ranchersActive,
+      familiesMatched: STATS_FALLBACK.familiesMatched,
       foundersBacked: 0,
-      foundersCap: 100,
-      totalClosedWon: 11,
+      foundersCap: FOUNDING_100_CAP,
+      totalClosedWon: STATS_FALLBACK.totalClosedWon,
       thisMonthClosedWon: 0,
-      states: 5, // matches /api/stats/public's own catch-path fallback
+      states: STATS_FALLBACK.states,
     };
   }
 }
@@ -225,14 +256,15 @@ export default async function FoundersPage({
 
   const founding100PriceLabel = getFounding100PriceLabel();
   const founding100Cents = getFounding100PriceCents();
-  const earlyBirdActive = founding100Cents <= 100000;
+  // Early-bird = the live price is still below the post-flip price.
+  const earlyBirdActive = founding100Cents < FOUNDING_100_POST_EARLY_BIRD_CENTS;
   const earlyBirdLabel = earlyBirdActive
     ? `${founding100PriceLabel} early bird`
     : `${founding100PriceLabel} (early bird ended)`;
 
   const earlyBirdSubline =
     FOUNDING_100_EARLY_BIRD_END && earlyBirdActive
-      ? `Price flips to $1,500 on ${new Date(
+      ? `Price flips to ${FOUNDING_100_POST_EARLY_BIRD_LABEL} on ${new Date(
           FOUNDING_100_EARLY_BIRD_END
         ).toLocaleDateString('en-US', {
           month: 'short',
@@ -261,7 +293,7 @@ export default async function FoundersPage({
       {
         '@type': 'Offer',
         name: 'Title Founder',
-        price: '15000',
+        price: String(TITLE_FOUNDER_DOLLARS),
         priceCurrency: 'USD',
         availability: titleFounderSoldOut
           ? 'https://schema.org/SoldOut'
@@ -281,21 +313,21 @@ export default async function FoundersPage({
       {
         '@type': 'Offer',
         name: 'Steward (monthly)',
-        price: '75',
+        price: String(STEWARD_MONTHLY_DOLLARS),
         priceCurrency: 'USD',
         url: 'https://www.buyhalfcow.com/founders#tiers',
       },
       {
         '@type': 'Offer',
         name: 'Outlaw (monthly)',
-        price: '25',
+        price: String(OUTLAW_MONTHLY_DOLLARS),
         priceCurrency: 'USD',
         url: 'https://www.buyhalfcow.com/founders#tiers',
       },
       {
         '@type': 'Offer',
         name: 'Herd (monthly)',
-        price: '9',
+        price: String(HERD_MONTHLY_DOLLARS),
         priceCurrency: 'USD',
         url: 'https://www.buyhalfcow.com/founders#tiers',
       },
@@ -528,7 +560,7 @@ export default async function FoundersPage({
               <TierCard
                 label="Title Founder · 10 spots"
                 tagline="Title Founder"
-                priceLine="$15,000 one-time"
+                priceLine={`${TITLE_FOUNDER_PRICE_LABEL} one-time`}
                 remaining={`${titleFounderCount} of ${TITLE_FOUNDER_CAP} claimed`}
                 emphasis
                 bullets={[
@@ -583,7 +615,7 @@ export default async function FoundersPage({
               <TierCard
                 label="Steward · subscription"
                 tagline="Steward"
-                priceLine="$75 / mo or $750 / yr"
+                priceLine={subscriptionPriceLine(STEWARD_MONTHLY_DOLLARS, STEWARD_ANNUAL_DOLLARS)}
                 bullets={[
                   'Outlaw + Herd benefits',
                   'Quarterly office-hours video call (small group)',
@@ -595,13 +627,13 @@ export default async function FoundersPage({
                     kind: 'link',
                     tier: 'steward-monthly',
                     href: STRIPE_PAYMENT_LINK_STEWARD_MONTHLY,
-                    label: 'Steward · $75 / month',
+                    label: `Steward · $${STEWARD_MONTHLY_DOLLARS} / month`,
                   },
                   {
                     kind: 'link',
                     tier: 'steward-annual',
                     href: STRIPE_PAYMENT_LINK_STEWARD_ANNUAL,
-                    label: 'Steward · $750 / year',
+                    label: `Steward · $${STEWARD_ANNUAL_DOLLARS} / year`,
                   },
                 ]}
               />
@@ -610,7 +642,7 @@ export default async function FoundersPage({
               <TierCard
                 label="Outlaw · subscription"
                 tagline="Outlaw"
-                priceLine="$25 / mo or $250 / yr"
+                priceLine={subscriptionPriceLine(OUTLAW_MONTHLY_DOLLARS, OUTLAW_ANNUAL_DOLLARS)}
                 bullets={[
                   'Herd benefits',
                   'Name on the Founders Wall',
@@ -622,13 +654,13 @@ export default async function FoundersPage({
                     kind: 'link',
                     tier: 'outlaw-monthly',
                     href: STRIPE_PAYMENT_LINK_OUTLAW_MONTHLY,
-                    label: 'Outlaw · $25 / month',
+                    label: `Outlaw · $${OUTLAW_MONTHLY_DOLLARS} / month`,
                   },
                   {
                     kind: 'link',
                     tier: 'outlaw-annual',
                     href: STRIPE_PAYMENT_LINK_OUTLAW_ANNUAL,
-                    label: 'Outlaw · $250 / year',
+                    label: `Outlaw · $${OUTLAW_ANNUAL_DOLLARS} / year`,
                   },
                 ]}
               />
@@ -637,7 +669,7 @@ export default async function FoundersPage({
               <TierCard
                 label="Herd · subscription"
                 tagline="Herd"
-                priceLine="$9 / mo or $90 / yr"
+                priceLine={subscriptionPriceLine(HERD_MONTHLY_DOLLARS, HERD_ANNUAL_DOLLARS)}
                 bullets={[
                   'Monthly founder letter from the road',
                   'Early heads-up when a rancher goes live in your state',
@@ -649,13 +681,13 @@ export default async function FoundersPage({
                     kind: 'link',
                     tier: 'herd-monthly',
                     href: STRIPE_PAYMENT_LINK_HERD_MONTHLY,
-                    label: 'Herd · $9 / month',
+                    label: `Herd · $${HERD_MONTHLY_DOLLARS} / month`,
                   },
                   {
                     kind: 'link',
                     tier: 'herd-annual',
                     href: STRIPE_PAYMENT_LINK_HERD_ANNUAL,
-                    label: 'Herd · $90 / year',
+                    label: `Herd · $${HERD_ANNUAL_DOLLARS} / year`,
                   },
                 ]}
               />
@@ -726,7 +758,7 @@ export default async function FoundersPage({
                 },
                 {
                   q: 'Why only 100 Founding 100 spots?',
-                  a: "Because once it's claimed, it's claimed. The number on the patch is real. After 100, the price flips to $1,500 and there's no more numbered placement at the early-bird price.",
+                  a: `Because once it's claimed, it's claimed. The number on the patch is real. After 100, the price flips to ${FOUNDING_100_POST_EARLY_BIRD_LABEL} and there's no more numbered placement at the early-bird price.`,
                 },
                 {
                   q: 'How does the Wall work?',
