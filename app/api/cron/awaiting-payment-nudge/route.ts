@@ -11,7 +11,7 @@ import { requireCron } from '@/lib/cronAuth';
 // and the rancher confirms via dashboard, or it falls through and the
 // rancher marks Closed Lost. Either way the state needs to move.
 //
-// Why this exists: born from the 2026-05-20 Ashcraft/Eric Turner pattern.
+// Why this exists: born from the 2026-05-20 Ashcraft $1-placeholder pattern.
 // Awaiting Payment was added as a sane state for "we closed but haven't
 // collected yet"; without a nudge, those rows rot.
 //

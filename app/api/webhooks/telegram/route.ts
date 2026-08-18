@@ -3059,7 +3059,7 @@ Output ONLY the email body. First line should be the subject line prefixed with 
               // Closed Won with no sale amount captured. Ben routinely never
               // followed through on the "reply with $ amount" prompt; deals
               // sat as Closed Won with no Sale Amount + later got patched
-              // manually with placeholder values (Ashcraft/Eric Turner: $1
+              // manually with placeholder values (Ashcraft: $1
               // placeholder, $95 manually-edited commission → $95 invoice
               // fired on $1 sale = 9500% ratio).
               //

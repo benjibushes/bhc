@@ -1,6 +1,6 @@
 # BHC Commission Flow
 
-Canonical state machine for buyer-rancher referrals + commission capture. Born from the 2026-05-20 Ashcraft / Eric Turner incident — codify the model so it doesn't drift.
+Canonical state machine for buyer-rancher referrals + commission capture. Born from the 2026-05-20 Ashcraft $1-placeholder incident — codify the model so it doesn't drift.
 
 > **⚠️ 2026-06-15 scope note.** This doc describes the **legacy post-close commission model** (rancher runs the sale, BHC invoices a % afterward via `createCommissionInvoice`). That model is still live **for legacy ranchers**, but it is no longer the primary money path. **tier_v2 is now LIVE** (launched 2026-06-15): commission is collected **upfront** as a Stripe Connect `application_fee_amount` on the buyer's **deposit**, and the final invoice is fee-free. For the tier_v2 deposit mechanics and the full revenue map, see [`MONEY-FUNNELS.md`](MONEY-FUNNELS.md) and [`BHC-PLATFORM-MAP.md`](BHC-PLATFORM-MAP.md). The `commission-invoices` cron (this doc's flow) now **skips tier_v2 ranchers** so commission is never taken twice.
 
@@ -149,5 +149,5 @@ For a specific deal, run `bhc-flow-debug`:
 
 ## History
 
-- **2026-05-20**: Ashcraft / Eric Turner incident — `clcheck_won` Telegram path bypassed every saleAmount gate. Triggered this bulletproofing. See `docs/archive/superpowers/plans/2026-05-20-bulletproof-invoice-capture.md`.
+- **2026-05-20**: Ashcraft $1-placeholder incident — `clcheck_won` Telegram path bypassed every saleAmount gate. Triggered this bulletproofing. See `docs/archive/superpowers/plans/2026-05-20-bulletproof-invoice-capture.md`.
 - **PR #30**: dashboard PATCH gained the saleAmount > 0 hard gate (predecessor of T3).
