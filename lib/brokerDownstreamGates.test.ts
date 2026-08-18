@@ -864,3 +864,64 @@ test('GATE markpaid render: the Mark Paid button hides when the close did not ri
   const route = telegramRouteSrc();
   assert.match(route, /postCloseInvoiceRail: !skipLegacyInvoice,/);
 });
+
+// ---------------------------------------------------------------------------
+// 11. BROKER DEPOSIT CHASE LANE (Wave 1 F5, 2026-08-18) — the third selector
+//     in deposit-request-nudge. Rail A never matches a broker row (Status
+//     stays 'Intro Sent'), and rail B ejects the highest-intent ones the
+//     moment /api/checkout/broker stamps 'Deposit Requested At' at session
+//     mint — so the buyer who abandoned AT STRIPE was the only one never
+//     chased, on the rail where the deposit is 100% of BHC's fee. Pure-
+//     selector behavior lives in lib/brokerDepositChase.test.ts; these pins
+//     hold the route wiring.
+// ---------------------------------------------------------------------------
+
+test('BROKER LANE deposit-request-nudge: the cohort formula interpolates the ONE canonical match-type constant', () => {
+  const src = read('../app/api/cron/deposit-request-nudge/route.ts');
+  // Never a new string literal — the marker string has exactly one home
+  // (lib/brokerRail.BROKER_MATCH_TYPE) and the pure selector re-checks every
+  // row through lib/brokerDownstream's predicate anyway.
+  assert.match(src, /import \{ BROKER_MATCH_TYPE \} from '@\/lib\/brokerRail';/);
+  assert.match(
+    src,
+    /const BROKER_CHASE_FORMULA =\n\s*`AND\(\{Match Type\}="\$\{BROKER_MATCH_TYPE\}", \{Status\}="Intro Sent", NOT\(\{Deposit Invite Sent At\}=""\), \{Deposit Paid At\}=""\)`;/,
+  );
+  assert.doesNotMatch(src, /"Broker — Deposit"/, 'the match-type string must never be re-typed inline');
+});
+
+test('BROKER LANE deposit-request-nudge: the lane is selected and merged into the ONE capped loop', () => {
+  const src = read('../app/api/cron/deposit-request-nudge/route.ts');
+  assert.match(src, /const brokerLane = selectBrokerDepositChase\(brokerCandidates, \{ nowMs, batchCap: 25 \}\);/);
+  // Same loop = same claim-before-send, same suppressed-sentinel write, same
+  // broker CTA/copy/no-phone handling the rails already have.
+  assert.match(src, /const selected = \[\.\.\.railA, \.\.\.railB, \.\.\.brokerLane\]\.filter\(\(r\) => \{/);
+  // Best-effort read: a broker-lane read failure must not sink the Connect rails.
+  assert.match(src, /broker-chase read failed \(non-fatal\)/);
+});
+
+test('BROKER-WAIT PARITY deposit-request-nudge: the rails loop waits BEFORE the claim, like rail C and qualified-no-action', () => {
+  const src = read('../app/api/cron/deposit-request-nudge/route.ts');
+  // The wait gate exists, counted, never silent…
+  assert.match(src, /if \(confirmedBroker && !loadedRancher\) \{\n\s*brokerWaits\+\+;\n\s*continue;\n\s*\}/);
+  assert.match(src, /brokerWaits=\$\{brokerWaits\}/, 'the wait must be reported in the notes');
+  // …and the ORDER is the whole fix: rail resolution → wait gate → claim.
+  // (Before this, the loop claimed FIRST, so a marker row with a failed
+  // rancher read burned one of its lifetime-capped touches on a CTA into the
+  // broker checkout's fail-closed refusal.)
+  const loopIdx = src.indexOf('for (const r of selected) {');
+  const railIdx = src.indexOf('const rail = await resolveReferralRail(r', loopIdx);
+  const waitIdx = src.indexOf('if (confirmedBroker && !loadedRancher) {', loopIdx);
+  const claimIdx = src.indexOf("'Deposit Nudge Count': priorCount + 1,", loopIdx);
+  assert.ok(loopIdx > -1 && railIdx > loopIdx, 'the rancher read must live in the loop');
+  assert.ok(waitIdx > railIdx, 'the wait gate must follow rail resolution');
+  assert.ok(claimIdx > waitIdx, 'the claim stamp must follow the wait gate — no burned touches');
+});
+
+test('BROKER LANE touch honesty: the copy tier rides the planner for BOTH planner rails, not the requested-at accident', () => {
+  const src = read('../app/api/cron/deposit-request-nudge/route.ts');
+  // A checkout-minted broker row has 'Deposit Requested At' stamped, so the
+  // old `isRailB` mapping called every touch ≥2 the "last note" — a lie six
+  // touches long. The plan (rail B's or the broker lane's) owns the tier.
+  assert.match(src, /const plan = depositAbandonPlan\(r, nowMs\) \?\? brokerDepositChasePlan\(r, nowMs\);/);
+  assert.match(src, /else if \(plan\) touch = plan\.tier === 'decay' \? 2 : 'mid';/);
+});

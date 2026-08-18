@@ -263,6 +263,40 @@ test('no invite signals at all → nudge proceeds', () => {
   );
 });
 
+// ── broker rail × the now-honest invite stamp (post-#639 send-truth) ────────
+// On the broker rail 'Deposit Invite Sent At' is stamped ONLY when the deposit
+// invite actually delivered (matching/suggest gates the write on the send
+// succeeding). That makes the same-day mute exactly right in both directions,
+// and these two tests pin the interaction so a future "stamp at mint" change
+// can't silently re-silence the only ask window a failed-invite buyer has.
+
+test('BROKER delivered ask (stamp present, in-window) mutes the nudge — rail B owns the chase from day 1', () => {
+  assert.equal(
+    hasSameDayQuizInvite({
+      depositInviteSentAt: new Date(NOW - 2 * HOUR).toISOString(), // intro + invite land together
+      email: 'broker-buyer@example.com',
+      recentInviteEmails: new Set<string>(),
+      nowMs: NOW,
+    }),
+    true,
+  );
+});
+
+test('BROKER failed ask (#639 left the stamp blank on purpose) does NOT mute — this nudge is the only ask', () => {
+  // The failed send logs to Email Sends with a non-"sent" status, so the
+  // recipient set (built from {Status}="sent") never contains the buyer
+  // either — both mute signals stay silent and the 30min-4h chase fires.
+  assert.equal(
+    hasSameDayQuizInvite({
+      depositInviteSentAt: '', // send-truth: no delivery, no stamp
+      email: 'broker-buyer@example.com',
+      recentInviteEmails: new Set<string>(),
+      nowMs: NOW,
+    }),
+    false,
+  );
+});
+
 test('recent-invite formula targets both quiz-complete templates, sent-only, windowed', () => {
   const since = new Date(NOW - SAME_DAY_INVITE_SUPPRESS_MS).toISOString();
   const f: string = buildRecentQuizInviteFormula(since);

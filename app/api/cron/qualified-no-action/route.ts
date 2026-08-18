@@ -41,7 +41,7 @@ import {
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { isRancherOnConnect } from '@/lib/rancherEligibility';
 import { railForLoadedRancher, referralCarriesBrokerMarker } from '@/lib/brokerDownstream';
-import { sendEmail } from '@/lib/email';
+import { sendEmail, getSuppressionList, didSuppressionListBuildFail } from '@/lib/email';
 import { sendSMSToConsumer } from '@/lib/twilio';
 import { isSmsWindow } from '@/lib/sendWindow';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
@@ -143,6 +143,23 @@ async function realHandler(_request: Request): Promise<CronResult> {
 
   if (candidateRefs.length === 0) {
     return { status: 'success', recordsTouched: 0, notes: 'no intro-sent-no-deposit referrals in window' };
+  }
+
+  // FAIL CLOSED on suppression (F24 slice, 2026-08-18): the per-send check
+  // inside the email wrapper fails OPEN when the suppression list can't be
+  // built — during an Airtable suppression-list outage this loop would email
+  // (and text) unsubscribed buyers, and the claim stamp below means they'd
+  // never even get a clean retry. Pre-warm once per run and ABORT the batch —
+  // the documented didSuppressionListBuildFail contract send-scheduled
+  // honors. Nothing is stamped yet, and the 30min-4h window spans several
+  // hourly ticks, so the retry loses nothing.
+  await getSuppressionList();
+  if (didSuppressionListBuildFail()) {
+    return {
+      status: 'partial',
+      recordsTouched: 0,
+      notes: 'suppression-list build FAILED — nudge run aborted (fail closed), will retry next tick',
+    };
   }
 
   // Day-0 stack fix (email-hygiene 2026-08-02): ONE Email Sends read per run —

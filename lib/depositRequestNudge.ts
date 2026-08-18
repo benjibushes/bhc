@@ -27,6 +27,7 @@
 // suppression list — belt and braces.
 
 import { sprintPlanFor, type SprintPlan } from './intentWindows';
+import { referralCarriesBrokerMarker } from './brokerDownstream';
 
 export const DEPOSIT_NUDGE_LIFETIME_CAP = 2;
 export const DEPOSIT_NUDGE_MIN_AGE_MS = 24 * 60 * 60 * 1000; // 24h after request
@@ -202,6 +203,94 @@ export function selectDepositAbandonNudges<T extends DepositNudgeReferralLike>(
   if (!Array.isArray(referrals) || referrals.length === 0 || cap <= 0) return [];
   return referrals
     .filter((r) => isDepositAbandonEligible(r, opts.nowMs))
+    .sort((a, b) => (parseMs(a['Deposit Invite Sent At']) ?? 0) - (parseMs(b['Deposit Invite Sent At']) ?? 0))
+    .slice(0, cap);
+}
+
+// ── BROKER DEPOSIT CHASE LANE (Wave 1 F5, 2026-08-18) ───────────────────────
+// On the broker rail the deposit IS 100% of BHC's revenue on the sale — and
+// both deposit-chase rails above structurally exclude broker rows:
+//
+//   • rail A keys on Status='Awaiting Payment', Connect request machinery a
+//     broker row never enters (broker rows are 'Intro Sent' / 'Pending');
+//   • rail B ejects on a non-empty 'Deposit Requested At' — but
+//     app/api/checkout/broker stamps that field at SESSION MINT ("we asked
+//     for this money on this rail"), so the highest-intent broker buyer —
+//     one who opened the checkout and abandoned at Stripe — left rail B the
+//     moment the session was created. Silence forever after qualified-no-
+//     action's 30min-4h window.
+//
+// Cohort: broker marker (the shared lib/brokerDownstream predicate — never a
+// new string match) + Status 'Intro Sent' + no 'Deposit Paid At' + 'Deposit
+// Invite Sent At' stamped. The invite stamp is the DELIVERED-ASK bar: since
+// #639 (broker invite send-truth) matching/suggest only stamps it when the
+// invite actually sent, so this lane never chases an ask that never landed
+// (an unstamped row belongs to qualified-no-action + the loud operator
+// signal, by design). Self-serve 'Pending' rows (no delivered ask email) stay
+// with rail C.
+//
+// Cadence + stamps: identical to rail B — lib/intentWindows 'deposit-invite'
+// policy over the SAME 'Deposit Nudge Count' / 'Deposit Nudge Last Sent At'
+// stamps. A requested-empty broker row is visible to BOTH selectors; that is
+// deliberate and safe: same planner + same stamps = one consistent arc, and
+// the cron dedupes by id per run. The suppressed sentinel (99) exceeds the
+// planner's lifetime bound, retiring the row here exactly like everywhere
+// else. Fail-closed on every corrupt stamp — silence, never a storm.
+
+/**
+ * The tiered-window plan for a broker deposit-chase row, or null when the row
+ * isn't in this lane's cohort at all (or its stamps are corrupt).
+ */
+export function brokerDepositChasePlan(
+  r: DepositNudgeReferralLike,
+  nowMs: number,
+): SprintPlan | null {
+  // Broker marker — conclusive positive, shared predicate (money guard).
+  if (!referralCarriesBrokerMarker(r)) return null;
+  // Post-match state only: 'Pending' (self-serve, no ask email) is rail C's;
+  // Slot Locked / Closed * are past the ask; 'Awaiting Payment' is Connect.
+  if (statusName(r['Status']) !== 'Intro Sent') return null;
+  // Unpaid — a stamped 'Deposit Paid At' means BHC's whole fee already landed.
+  if (String(r['Deposit Paid At'] || '').trim()) return null;
+  // Delivered ask (#639 send-truth): no stamp, no chase.
+  const invitedMs = parseMs(r['Deposit Invite Sent At']);
+  if (invitedMs === null) return null;
+  // NOTE: deliberately NO 'Deposit Requested At' guard — on this rail that
+  // stamp means "buyer minted a checkout session", the strongest chase signal
+  // there is, not a competing rail's claim.
+
+  // Corrupt last-sent stamp => fail closed (planner also fails closed on a
+  // count>0/no-anchor mismatch).
+  const lastRaw = String(r['Deposit Nudge Last Sent At'] || '').trim();
+  let lastMs: number | null = null;
+  if (lastRaw) {
+    const t = Date.parse(lastRaw);
+    if (!Number.isFinite(t)) return null;
+    lastMs = t;
+  }
+
+  return sprintPlanFor('deposit-invite', invitedMs, nudgeCount(r), nowMs, {
+    lastTouchAt: lastMs,
+  });
+}
+
+/** Pure per-row predicate for the broker lane. */
+export function isBrokerDepositChaseEligible(
+  r: DepositNudgeReferralLike,
+  nowMs: number,
+): boolean {
+  return brokerDepositChasePlan(r, nowMs)?.due === true;
+}
+
+/** Select broker chase rows this run — oldest delivered ask first, capped. */
+export function selectBrokerDepositChase<T extends DepositNudgeReferralLike>(
+  referrals: T[],
+  opts: { nowMs: number; batchCap?: number },
+): T[] {
+  const cap = Math.floor(opts.batchCap ?? 25);
+  if (!Array.isArray(referrals) || referrals.length === 0 || cap <= 0) return [];
+  return referrals
+    .filter((r) => isBrokerDepositChaseEligible(r, opts.nowMs))
     .sort((a, b) => (parseMs(a['Deposit Invite Sent At']) ?? 0) - (parseMs(b['Deposit Invite Sent At']) ?? 0))
     .slice(0, cap);
 }
