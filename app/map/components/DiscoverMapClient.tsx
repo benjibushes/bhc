@@ -40,12 +40,16 @@ const DiscoverMap = dynamic(() => import('./DiscoverMap'), {
 
 export default function DiscoverMapClient({
   pins,
-  verifiedCount,
+  shippingTodayCount,
   statesCovered,
   listSlot,
 }: {
   pins: MapPin[];
-  verifiedCount: number;
+  // verified + represented — everyone a buyer can put a deposit down with
+  // TODAY. Deliberately NOT named "verified": represented (broker self-serve)
+  // ranches count here, and no label this number feeds ever claims
+  // "verified" — they all say "shipping today" / "taking reservations".
+  shippingTodayCount: number;
   statesCovered: number;
   listSlot?: ReactNode;
 }) {
@@ -62,9 +66,9 @@ export default function DiscoverMapClient({
       <header className="absolute inset-x-0 top-0 z-[1100] flex h-14 items-center gap-3 border-b border-dust/70 bg-bone/90 px-4 backdrop-blur-sm md:h-16 md:px-6">
         <div className="min-w-0 flex-1">
           <h1 className="truncate font-serif text-base leading-tight lowercase md:text-xl">
-            {verifiedCount > 0 ? (
+            {shippingTodayCount > 0 ? (
               <>
-                {verifiedCount} rancher{verifiedCount === 1 ? '' : 's'} shipping beef today
+                {shippingTodayCount} rancher{shippingTodayCount === 1 ? '' : 's'} shipping beef today
               </>
             ) : (
               <>every direct-to-consumer rancher in america</>

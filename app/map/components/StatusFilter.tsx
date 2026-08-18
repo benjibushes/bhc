@@ -2,19 +2,23 @@
 
 import type { MapPin } from '../page';
 
-// Status filter — lets a prospect narrow to "shipping today" (verified) instead
-// of wading through cold prospects. Default (set in DiscoverMap) is
-// verified+onboarding so the map leads with who you can actually reach.
+// Status filter — lets a prospect narrow to "shipping today" (verified +
+// represented) instead of wading through cold prospects. Default (set in
+// DiscoverMap) is 'coming' (those plus onboarding) so the map leads with who
+// you can actually reach.
 //
-// Options map to a coarse availability axis rather than the raw 4-way status:
-//   available → verified (shipping today, routable)
-//   coming    → verified + onboarding (shipping today or being onboarded)
+// Options map to a coarse availability axis rather than the raw 5-way status:
+//   available → verified + represented (a deposit can go down TODAY on both —
+//               "Shipping today" would be a lie for AZ if it hid the
+//               represented ranch that IS the state's live supply, #630)
+//   coming    → available + onboarding (shipping today or being onboarded)
 //   all       → every plotted pin (incl. self-submitted + cold prospects)
 export type StatusFilterValue = 'available' | 'coming' | 'all';
 
 export function statusMatches(value: StatusFilterValue, status: MapPin['status']): boolean {
-  if (value === 'available') return status === 'verified';
-  if (value === 'coming') return status === 'verified' || status === 'onboarding';
+  const available = status === 'verified' || status === 'represented';
+  if (value === 'available') return available;
+  if (value === 'coming') return available || status === 'onboarding';
   return true;
 }
 

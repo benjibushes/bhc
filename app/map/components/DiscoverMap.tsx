@@ -25,6 +25,8 @@ import { fromPriceLabel, locationLabel } from './priceLabel';
 // the default Leaflet raster icon — Next.js bundles assets oddly and 404s the
 // marker shadow PNG. Visual language, aligned to the onboarding pipeline:
 //   - Deep green pin + subtle ring → verified partner (taking reservations)
+//   - Deep green pin, gold center  → represented ranch (deposits open — we
+//                                    take the deposit + coordinate the deal)
 //   - Amber pin                    → in-progress onboarding
 //   - Yellow pin                   → self-submitted / community-flagged
 //   - Muted grey dot               → cold-discovered prospect (de-emphasized)
@@ -33,6 +35,16 @@ const verifiedIconSvg = `
   <path d="M14 1 C7 1 1.5 6.5 1.5 13.5 C1.5 23 14 35 14 35 C14 35 26.5 23 26.5 13.5 C26.5 6.5 21 1 14 1 Z"
         fill="#4F7A3F" stroke="#2A4A20" stroke-width="1.5"/>
   <circle cx="14" cy="13" r="4.5" fill="#F4F1EC"/>
+</svg>`;
+
+// Represented pin — same in-network green (a buyer can reserve TODAY, exactly
+// like verified) but a tallow-gold center instead of bone, and no halo ring:
+// green = reservable now, the center tells verified and represented apart.
+const representedIconSvg = `
+<svg xmlns="http://www.w3.org/2000/svg" width="28" height="36" viewBox="0 0 28 36">
+  <path d="M14 1 C7 1 1.5 6.5 1.5 13.5 C1.5 23 14 35 14 35 C14 35 26.5 23 26.5 13.5 C26.5 6.5 21 1 14 1 Z"
+        fill="#4F7A3F" stroke="#2A4A20" stroke-width="1.5"/>
+  <circle cx="14" cy="13" r="4.5" fill="#E3C381"/>
 </svg>`;
 
 // Onboarding pin — solid amber, paper-warm border. Distinct from yellow
@@ -65,6 +77,7 @@ function pinDivIcon(svg: string, opts?: { halo?: boolean }) {
 }
 
 const verifiedIcon = pinDivIcon(verifiedIconSvg, { halo: true });
+const representedIcon = pinDivIcon(representedIconSvg);
 const onboardingIcon = pinDivIcon(onboardingIconSvg);
 const selfSubmittedIcon = pinDivIcon(selfSubmittedIconSvg);
 
@@ -80,6 +93,7 @@ const prospectIcon = L.divIcon({
 
 function iconForStatus(status: MapPin['status']) {
   if (status === 'verified') return verifiedIcon;
+  if (status === 'represented') return representedIcon;
   if (status === 'onboarding') return onboardingIcon;
   if (status === 'self-submitted') return selfSubmittedIcon;
   return prospectIcon;
@@ -248,10 +262,13 @@ export default function DiscoverMap({ pins }: { pins: MapPin[] }) {
         const map = mapRef.current;
         if (!map) return;
 
-        // Nearest verified pin (the only routable, shipping-today set). If
-        // none are verified, fall back to the nearest of anyone shown.
-        const verified = pins.filter((p) => p.status === 'verified');
-        const pool = verified.length > 0 ? verified : filtered;
+        // Nearest reservable pin — verified or represented, the two statuses a
+        // buyer can put a deposit down with today. If none, fall back to the
+        // nearest of anyone shown.
+        const reservable = pins.filter(
+          (p) => p.status === 'verified' || p.status === 'represented',
+        );
+        const pool = reservable.length > 0 ? reservable : filtered;
         if (pool.length === 0) {
           map.flyTo(me, 7, { duration: 0.8 });
           setGeoMsg('No ranchers near you yet — pick your state and drop your email so we can scout your area.');
@@ -426,16 +443,19 @@ export default function DiscoverMap({ pins }: { pins: MapPin[] }) {
 // ── Rich pin card ───────────────────────────────────────────────────────────
 // Storefront-style card inside the Leaflet popup: logo, name, location,
 // "from $X/half", a status line, and a tap-friendly primary button. Only
-// DEPOSIT-READY ranchers (verified + onConnect) get the filled "Reserve" CTA;
-// everyone else gets a softer "View ranch" so we never promise checkout on a
-// rancher whose page can't actually take a deposit — that dead-ends the buyer
-// at the checkout screen. A verified-but-not-Connect rancher is still real +
+// DEPOSIT-READY ranchers (verified or represented, AND depositReady — the
+// Connect/broker checkout gates) get the filled "Reserve" CTA; everyone else
+// gets a softer "View ranch" so we never promise checkout on a rancher whose
+// page can't actually take a deposit — that dead-ends the buyer at the
+// checkout screen. A verified-but-not-Connect rancher is still real +
 // browsable; the store lets buyers contact them there. Widths live in
 // discover-map.css (.bhc-pin-card) so mobile can grow it into a big card.
 function PinCard({ pin }: { pin: MapPin }) {
-  const price = pin.status === 'verified' ? fromPriceLabel(pin) : '';
+  const price =
+    pin.status === 'verified' || pin.status === 'represented' ? fromPriceLabel(pin) : '';
   const loc = locationLabel(pin);
-  const reserve = pin.status === 'verified' && pin.onConnect;
+  const reserve =
+    (pin.status === 'verified' || pin.status === 'represented') && pin.depositReady;
 
   return (
     <div className="bhc-pin-card">
@@ -478,6 +498,9 @@ function PinCard({ pin }: { pin: MapPin }) {
       <p style={{ margin: '6px 0 0', fontSize: 12 }}>
         {pin.status === 'verified' && (
           <span style={{ color: '#4F7A3F', fontWeight: 600 }}>● Verified · taking reservations</span>
+        )}
+        {pin.status === 'represented' && (
+          <span style={{ color: '#4F7A3F', fontWeight: 600 }}>● Represented ranch · deposits open</span>
         )}
         {pin.status === 'onboarding' && (
           <span style={{ color: '#8C3D1F', fontWeight: 600 }}>
