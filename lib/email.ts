@@ -976,7 +976,9 @@ export async function sendQuizInvite(data: {
 }): Promise<{ success: boolean; error?: any }> {
   const first = data.firstName || 'there';
   const stateLabel = data.state || 'your state';
-  const subject = `${first}, here's your 60-second match quiz`;
+  // Copy-tails (2026-08-18): quiz length settles at 90 seconds everywhere —
+  // docs/BHC.md CTA library is canon ("Take the 90-second quiz").
+  const subject = `${first}, here's your 90-second match quiz`;
   return guardedSend({
     templateName: 'sendQuizInvite',
     recipientEmail: data.email,
@@ -995,8 +997,8 @@ export async function sendQuizInvite(data: {
     ✓ Apply &nbsp;·&nbsp; <strong style="color:#0E0E0E">Qualify</strong> &nbsp;·&nbsp; Match &nbsp;·&nbsp; Connect &nbsp;·&nbsp; Stock
   </div>
   <h1>You're in, ${esc(first)}.</h1>
-  <p>You applied to BuyHalfCow and you're approved. One quick step before I match you with a real rancher in ${esc(stateLabel)} - a 60-second quiz. It tells me your size, your timing, and how you'll store it, so I match you to the right rancher and the right cut breakdown.</p>
-  <div class="q">No payment. No pressure. About a minute.</div>
+  <p>You applied to BuyHalfCow and you're approved. One quick step before I match you with a real rancher in ${esc(stateLabel)} - a 90-second quiz. It tells me your size, your timing, and how you'll store it, so I match you to the right rancher and the right cut breakdown.</p>
+  <div class="q">No payment. No pressure. About 90 seconds.</div>
   <div style="text-align:center;margin:30px 0;">
     <a href="${data.quizUrl}" class="cta">Take the quiz &rarr;</a>
     <p style="font-size:13px;color:#A7A29A;margin-top:10px;">Already started it in your browser? This is the same link - finish any time.</p>
@@ -1185,15 +1187,21 @@ export async function sendFounderLetterWaiting(data: {
     ? `the ranchers I'm meeting are the real deal`
     : `month ${n} update — ${stateLabel} status`;
 
+  // Copy-tails (2026-08-18): counts render grammatical singulars at 1
+  // ("1 ranch", "1 state", "1 family") — same fix class as the Day-2 drip's
+  // "1 families … have" bug.
+  const ranchesLabel = `${rancherCount} ${rancherCount === 1 ? 'ranch' : 'ranches'}`;
+  const statesLabel = `${stateCount} ${stateCount === 1 ? 'state' : 'states'}`;
+  const waitingLabel = `${waitingInState} ${waitingInState === 1 ? 'family' : 'families'}`;
   // L1: the network line carries live counts when the caller could pull them.
   const networkToday = haveNetworkCounts
-    ? `The network today: ${rancherCount} ranches across ${stateCount} states, and my whole job is signing the next one — including yours.`
+    ? `The network today: ${ranchesLabel} across ${statesLabel}, and my whole job is signing the next one — including yours.`
     : `My whole job right now is signing the next ranch — including yours.`;
   // L3+: what's-true line — live counts, in-state waiting count only when > 0.
   const whatsTrue = haveNetworkCounts
     ? waitingInState > 0
-      ? `What's true right now: ${rancherCount} ranches live across ${stateCount} states, and ${waitingInState} families waiting alongside you in ${esc(stateLabel)}. That waiting list is exactly what I show ranchers to get them to sign — you being on it is doing work.`
-      : `What's true right now: ${rancherCount} ranches live across ${stateCount} states. The ${esc(stateLabel)} waiting list is exactly what I show ranchers to get them to sign — you being on it is doing work.`
+      ? `What's true right now: ${ranchesLabel} live across ${statesLabel}, and ${waitingLabel} waiting alongside you in ${esc(stateLabel)}. That waiting list is exactly what I show ranchers to get them to sign — you being on it is doing work.`
+      : `What's true right now: ${ranchesLabel} live across ${statesLabel}. The ${esc(stateLabel)} waiting list is exactly what I show ranchers to get them to sign — you being on it is doing work.`
     : `The ${esc(stateLabel)} waiting list is exactly what I show ranchers to get them to sign — you being on it is doing work.`;
 
   const body = n === 1 ? `
@@ -4910,7 +4918,7 @@ export async function sendAbandonedRecoveryEmail(data: {
   // rail-neutral: what actually happens after YES on every rail is pricing +
   // a reserve link by email. Subjects downcased; hyphens cleaned.
   const subject = data.stage === 1
-    ? 'you started something on buyhalfcow — finish in 60 seconds?'
+    ? 'you started something on buyhalfcow — finish in 90 seconds?'
     : data.stage === 2
       ? 'still want in? picking up where you left off'
       : 'last note — what buyhalfcow actually does';
@@ -4920,7 +4928,7 @@ export async function sendAbandonedRecoveryEmail(data: {
       <p>${greeting}</p>
       <p>You started signing up for BuyHalfCow but didn't finish. No pressure — I just wanted to leave the door open.</p>
       <p>Tell us what you're looking for (Quarter, Half, or Whole; budget; state) and I'll send a one click "ready to buy?" prompt right after — the moment you tap YES, I match you with a real ranch in your state.</p>
-      <p>Takes about 60 seconds, start to finish.</p>`
+      <p>Takes about 90 seconds, start to finish.</p>`
     : data.stage === 2
       ? `
       <p>${greeting}</p>
@@ -5046,7 +5054,13 @@ export async function sendRerouteNotification(data: {
     <p>You'll receive their full contact details and pricing in a separate email within the next few minutes.</p>`
     : `
     <p>We're working on finding you another rancher in <strong>${esc(data.state)}</strong> right now. As soon as we have a confirmed match, you'll get an introduction email with their contact info and pricing.</p>
-    <p>This usually takes 24-48 hours. If we don't have anyone available in your state yet, I'll personally reach out with options.</p>`;
+    ${''/* Copy-tails (2026-08-18): "This usually takes 24-48 hours" was
+       clock-unbacked — the stuck-referral reaper explicitly does NOT
+       auto-reassign (operator hand-reassigns from the Telegram card), and the
+       rancher-decline path waitlists the buyer when its one instant re-match
+       finds nobody. No cron re-runs matching on that clock, so the promise is
+       now clockless: match → intro email, no match → Ben personally. */}
+    <p>If we don't have anyone available in your state yet, I'll personally reach out with options.</p>`;
 
   return guardedSend({
     templateName: 'sendRerouteNotification',
@@ -5261,8 +5275,11 @@ export async function sendRancherOnboardingDripDay2(data: {
   // trust burn the moment the rancher notices (email-hygiene 2026-08-02).
   const subject = `${data.ranchName} on the map — still a yellow pin`;
   const familiesInState = data.familiesInState ?? 0;
+  // Copy-tails (2026-08-18): count 1 used to render "1 families … have".
   const demandLine = data.state && familiesInState > 0
-    ? `${familiesInState} families in ${esc(data.state)} have asked us for a beef share, and your pin can't take them until you're live.`
+    ? familiesInState === 1
+      ? `1 family in ${esc(data.state)} has asked us for a beef share, and your pin can't take them until you're live.`
+      : `${familiesInState} families in ${esc(data.state)} have asked us for a beef share, and your pin can't take them until you're live.`
     : `Families across the network are asking for a half or whole cow, and your pin can't take them until you're live.`;
   const ctaBlock = data.setupUrl
     ? `<div style="text-align:center;margin:24px 0;">

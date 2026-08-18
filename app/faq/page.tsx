@@ -32,7 +32,7 @@ const sections: Section[] = [
         a: (
           <>
             <p className="mb-3">
-              You apply for access (60 seconds). I review the application personally and approve serious buyers &mdash;
+              You apply for access (90 seconds). I review the application personally and approve serious buyers &mdash;
               usually same day, sometimes 24&ndash;48h during launch weeks. Once approved, you see the
               ranches live in your state.
             </p>

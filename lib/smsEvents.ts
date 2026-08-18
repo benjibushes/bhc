@@ -10,7 +10,7 @@
 //
 // 7 buyer-journey events with copy:
 //   1. signup            — "Welcome to BHC..."
-//   2. quiz_invite       — "Quick 60s quiz..."
+//   2. quiz_invite       — "Quick 90s quiz..."
 //   3. cal_reminder      — "Your call w/ Ben in 1h..."
 //   4. deposit_invoice   — "Deposit invoice ready..."
 //   5. slot_locked       — "Slot locked at <ranch>!"
@@ -68,7 +68,7 @@ function buildBody(type: SMSEventType, vars: SMSEventVars): string {
     case 'signup':
       return `Welcome to BuyHalfCow, ${fn}. We connect you to a ranch you trust. Watch your inbox for your next step. Reply STOP to opt out.`;
     case 'quiz_invite':
-      return `${fn}, quick 60s quiz unlocks your rancher match: ${process.env.NEXT_PUBLIC_SITE_URL || 'buyhalfcow.com'}/qualify. Reply STOP to opt out.`;
+      return `${fn}, quick 90s quiz unlocks your rancher match: ${process.env.NEXT_PUBLIC_SITE_URL || 'buyhalfcow.com'}/qualify. Reply STOP to opt out.`;
     case 'cal_reminder':
       return `${fn}, your call with Ben at BuyHalfCow starts in 1 hour. Check your email for the link. Reply STOP to opt out.`;
     case 'deposit_invoice':

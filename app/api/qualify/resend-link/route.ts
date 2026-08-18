@@ -79,7 +79,7 @@ export async function POST(req: Request) {
     const html = `<!DOCTYPE html><html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px;">
 <div style="max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A;">
   <h1 style="font-family:Georgia,serif;font-size:22px;margin:0 0 16px;">Hey ${esc(firstName)} —</h1>
-  <p>Here's a fresh link to finish your 60-second qualification quiz for ${esc(state)}:</p>
+  <p>Here's a fresh link to finish your 90-second qualification quiz for ${esc(state)}:</p>
   <div style="text-align:center;margin:24px 0;">
     <a href="${quizUrl}" style="display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:bold;font-size:13px;letter-spacing:1px;text-transform:uppercase;">Open quiz →</a>
   </div>
