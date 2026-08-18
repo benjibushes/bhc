@@ -4,7 +4,7 @@ import { normalizeState, normalizeStates } from './states';
 import { isQualifiedForRouting } from './qualification';
 import { isRancherOperationalForBuyers, getOperationalServedStates, isRancherOnConnect } from '@/lib/rancherEligibility';
 import { isBrokerRancher } from './brokerRail';
-import { tierFor } from './tiers';
+import { tierFor, commissionPercentLabelForRancher } from './tiers';
 import { closeCtaHtml } from './rancherLeadEmail';
 import jwt from 'jsonwebtoken';
 
@@ -84,7 +84,7 @@ export async function bulkRouteStateToRancher(opts: {
   // supply, so the gate above no longer excludes it — but this router's ending
   // is pure Connect: it emails the RANCH a lead with the buyer's contact
   // details, a "View in your inbox" dashboard link it has no login for, and a
-  // "10% commission on BHC referral sales" footer describing an agreement it
+  // "commission on BHC referral sales" footer describing an agreement it
   // never signed (on this rail the deposit IS the whole commission and the
   // ranch is never invoiced). It also fans the buyer straight at the ranch,
   // which on this rail means BHC's deposit — its entire fee — is never paid.
@@ -360,7 +360,7 @@ export async function bulkRouteStateToRancher(opts: {
               ${notes ? `<p><strong>Notes:</strong> ${notes}</p>` : ''}
               ${closeCtaHtml(tierFor(rancher))}
               <p><a href="${SITE_URL}/rancher/inbox">View in your inbox</a></p>
-              <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Benjamin, BuyHalfCow | 10% commission on BHC referral sales.</p>
+              <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Benjamin, BuyHalfCow | ${commissionPercentLabelForRancher(rancher)} commission on BHC referral sales.</p>
             </div>`,
           } as any);
           if (emailResult && (emailResult.suppressed || emailResult.success === false)) {

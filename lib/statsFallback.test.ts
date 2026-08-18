@@ -44,6 +44,22 @@ test('requireLiveStats treats a partial payload as a failed fetch', () => {
   assert.throws(() => requireLiveStats(null, ['states']));
 });
 
+test('requireLiveStats rejects non-number field types — Number(null)=0 must never render as a real zero', () => {
+  // #632 review hardening: a corrupted cached payload carrying null (or a
+  // boolean, or a numeric string) coerced through Number() and rendered as a
+  // live stat instead of tripping the wholesale fallback. Only a genuine
+  // finite JSON number passes.
+  assert.throws(() => requireLiveStats({ familiesMatched: null, states: 2 }, ['familiesMatched', 'states']));
+  assert.throws(() => requireLiveStats({ familiesMatched: true, states: 2 }, ['familiesMatched', 'states']));
+  assert.throws(() => requireLiveStats({ familiesMatched: '5', states: 2 }, ['familiesMatched', 'states']));
+  assert.throws(() => requireLiveStats({ familiesMatched: [3], states: 2 }, ['familiesMatched', 'states']));
+  assert.throws(() => requireLiveStats({ familiesMatched: NaN, states: 2 }, ['familiesMatched', 'states']));
+  // A real 0 from the API is a true answer and still passes untouched.
+  const out = requireLiveStats({ familiesMatched: 0, states: 2 }, ['familiesMatched', 'states']);
+  assert.equal(out.familiesMatched, 0);
+  assert.equal(out.states, 2);
+});
+
 test('fallback constants are the refreshed set, not the frozen 2026-05 numbers', () => {
   assert.notEqual(STATS_FALLBACK.ranchersActive, 17);
   assert.notEqual(STATS_FALLBACK.familiesMatched, 1533);

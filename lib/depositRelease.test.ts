@@ -24,7 +24,11 @@ import {
   DEPOSIT_RELEASE_STATUS,
   DEPOSIT_RELEASE_LOSS_REASON,
 } from './depositRelease';
-import { DEPOSIT_NUDGE_LIFETIME_CAP, isDepositNudgeEligible } from './depositRequestNudge';
+import {
+  DEPOSIT_NUDGE_LIFETIME_CAP,
+  DEPOSIT_NUDGE_SUPPRESSED_SENTINEL,
+  isDepositNudgeEligible,
+} from './depositRequestNudge';
 import { LOSS_REASON_CHOICES, isExcludingLossReason } from './lossReasons';
 import { HELD_REFERRAL_STATUSES, isActiveDealReferral } from './capacityCount';
 
@@ -286,4 +290,27 @@ test('the Notes stamp reconstructs the decision without reading any code', () =>
   const broken = releaseNoteStamp({ 'Deposit Requested At': 'x' } as any, { today: '2026-07-30', nowMs: NOW });
   assert.match(broken, /requested \?d ago/);
   assert.equal(broken.includes('NaN'), false);
+});
+
+test('SENTINEL 99: a suppression-retired row releases with the truth, never "99 nudges sent"', () => {
+  // #634 stamps 'Deposit Nudge Count' = 99 (DEPOSIT_NUDGE_SUPPRESSED_SENTINEL)
+  // on a suppressed buyer (Unsubscribed/Bounced/Complained) to retire the row
+  // from every chase selector. count>=cap means the release rail treats it as
+  // "chase exhausted" — CORRECT, the row must still free its capacity slot —
+  // but the audit note must never record the sentinel as emails actually sent.
+  const suppressed = stuck({ 'Deposit Nudge Count': DEPOSIT_NUDGE_SUPPRESSED_SENTINEL });
+  assert.equal(depositReleaseRefusal(suppressed, NOW), null, 'a suppressed row still releases');
+  const note = releaseNoteStamp(suppressed, { today: '2026-07-30', nowMs: NOW });
+  assert.match(note, /chase suppressed \(unsubscribe\/bounce\)/);
+  assert.equal(note.includes('99 nudge'), false, 'the sentinel must never read as a send count');
+  // The rest of the audit line survives intact.
+  assert.match(note, /^\[auto-released 2026-07-30: deposit requested 27d ago, never paid/);
+  assert.match(note, /silent 22d, link NEVER opened/);
+  assert.match(note, /no payment on file; buyer released back to matching\]$/);
+  // Anything at or above the sentinel is suppression debris, not a count.
+  const above = releaseNoteStamp(stuck({ 'Deposit Nudge Count': 120 }), { today: '2026-07-30', nowMs: NOW });
+  assert.match(above, /chase suppressed \(unsubscribe\/bounce\)/);
+  // A real exhausted chase still reads as a count.
+  const real = releaseNoteStamp(stuck(), { today: '2026-07-30', nowMs: NOW });
+  assert.match(real, /2 nudges sent/);
 });
