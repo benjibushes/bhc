@@ -21,6 +21,7 @@ import {
   STEWARD_MONTHLY_DOLLARS,
   STEWARD_ANNUAL_DOLLARS,
   TITLE_FOUNDER_PRICE_LABEL,
+  TITLE_FOUNDER_CENTS,
   FOUNDING_100_POST_EARLY_BIRD_LABEL,
   subscriptionPriceLine,
   foundersTierLadderPromptBlock,
@@ -81,4 +82,31 @@ test('/founders page renders tier prices from the shared config only', () => {
     PRICE_LITERAL,
     '/founders hardcodes a tier price — interpolate it from lib/foundersTiers'
   );
+});
+
+// ── Comms containment wave (2026-08-18): two more consumers join the scan ────
+
+test('Title Founder CHARGE cents derive from the same constant as the display label', () => {
+  // The charge amount must stay byte-identical to the old literal, forever.
+  assert.equal(TITLE_FOUNDER_CENTS, 1500000);
+  const src = read('../app/api/founders/checkout/route.ts');
+  assert.match(src, /from '@\/lib\/foundersTiers'/);
+  assert.match(src, /unitAmount = TITLE_FOUNDER_CENTS;/);
+  assert.doesNotMatch(src, /1500000/, 'the hardcoded cents literal must not return');
+  assert.doesNotMatch(src, PRICE_LITERAL, 'no dollar tier-price literal either');
+});
+
+test('lib/email.ts founder pitch derives the tier ladder — no hardcoded tier price in the module', () => {
+  const src = read('./email.ts');
+  assert.match(src, /from '\.\/foundersTiers'/);
+  assert.match(src, /HERD_MONTHLY_DOLLARS/);
+  assert.match(src, /OUTLAW_MONTHLY_DOLLARS/);
+  assert.match(src, /TITLE_FOUNDER_PRICE_LABEL/);
+  assert.doesNotMatch(
+    src,
+    PRICE_LITERAL,
+    'lib/email.ts hardcodes a tier price — interpolate it from lib/foundersTiers'
+  );
+  // The dead ladder specifically: Herd is $9/mo, not a $100 one-time.
+  assert.ok(!src.includes('$100 (Herd)'), 'the false "$100 (Herd)" ladder must never come back');
 });

@@ -40,6 +40,7 @@ import {
 } from '@/lib/noActionNudge';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { isRancherOnConnect } from '@/lib/rancherEligibility';
+import { railForLoadedRancher, referralCarriesBrokerMarker } from '@/lib/brokerDownstream';
 import { sendEmail } from '@/lib/email';
 import { sendSMSToConsumer } from '@/lib/twilio';
 import { isSmsWindow } from '@/lib/sendWindow';
@@ -223,16 +224,28 @@ async function realHandler(_request: Request): Promise<CronResult> {
     // money (rancher is tier_v2 + Connect active). Rancher lookup failure
     // falls back to the /member CTA — safe for every rancher type.
     let depositCapable = false;
+    let rancher: any = null;
     const rancherId: string =
       (Array.isArray(ref['Rancher']) && ref['Rancher'][0]) ||
       (Array.isArray(ref['Suggested Rancher']) && ref['Suggested Rancher'][0]) ||
       '';
     if (rancherId) {
       try {
-        const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
+        rancher = await getRecordById(TABLES.RANCHERS, rancherId);
         depositCapable = isRancherOnConnect(rancher);
       } catch {}
     }
+    // BROKER RAIL (comms containment 2026-08-18): a broker-matched buyer used
+    // to land on the /member CTA (isRancherOnConnect is structurally false on
+    // this rail) — and /member has nothing actionable for them. The ONE
+    // actionable thing is the deposit that is BHC's entire fee. AFFIRMATIVE
+    // evidence only (same bar as deposit-request-nudge): marker, or a loaded
+    // rancher the shared predicate calls broker — a failed rancher read keeps
+    // the safe /member CTA rather than bouncing a Connect buyer off the
+    // broker checkout's refusal.
+    const confirmedBroker =
+      referralCarriesBrokerMarker(ref) ||
+      (!!rancher && railForLoadedRancher(rancher) === 'broker');
 
     // Claim BEFORE sending: stamp the dedup note first so a stamp failure skips
     // + retries next run rather than re-nudging. This cron runs hourly with a
@@ -256,11 +269,14 @@ async function realHandler(_request: Request): Promise<CronResult> {
     claimed++;
 
     // One-tap deep link for THIS referral (cookie-setting magic hop):
-    // deposit page when the rail can take money, member dashboard otherwise.
-    const ctaUrl = depositCapable
-      ? buildNudgeMagicLink(buyerId, email, `/checkout/${ref.id}/deposit`)
-      : buildNudgeMagicLink(buyerId, email, '/member');
-    const ctaLabel = depositCapable ? 'Reserve your slot' : 'View your match';
+    // the deposit page for THIS RAIL when a rail can take money, member
+    // dashboard otherwise.
+    const ctaUrl = confirmedBroker
+      ? buildNudgeMagicLink(buyerId, email, `/checkout/${ref.id}/broker`)
+      : depositCapable
+        ? buildNudgeMagicLink(buyerId, email, `/checkout/${ref.id}/deposit`)
+        : buildNudgeMagicLink(buyerId, email, '/member');
+    const ctaLabel = confirmedBroker ? 'Reserve your share' : depositCapable ? 'Reserve your slot' : 'View your match';
 
     // Email
     try {
@@ -289,7 +305,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
       try {
         const ok = await sendSMSToConsumer({
           consumer: c,
-          body: depositCapable
+          body: confirmedBroker || depositCapable
             ? `Hey ${firstName} — your match with ${rancherName} is still open. Lock your slot: ${ctaUrl} — Ben @ BuyHalfCow (reply STOP to opt out)`
             : `Hey ${firstName} — your match with ${rancherName} is still open. See your match: ${ctaUrl} — Ben @ BuyHalfCow (reply STOP to opt out)`,
           reason: 'qualified-no-action-nudge',

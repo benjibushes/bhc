@@ -11,7 +11,7 @@ import { withCronRun } from '@/lib/cronRun';
 import { shouldDecrementOnClose } from '@/lib/refundLifecycle';
 import { isReferralOnHold } from '@/lib/referralHold';
 import { isRancherAddedReferral } from '@/lib/rancherLeads';
-import { railForLoadedRancher, referralCarriesBrokerMarker } from '@/lib/brokerDownstream';
+import { railForLoadedRancher, referralCarriesBrokerMarker, rancherIdForReferral } from '@/lib/brokerDownstream';
 import { claimOnce } from '@/lib/rancherCapacity';
 import jwt from 'jsonwebtoken';
 
@@ -113,11 +113,19 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
     // billed for slot they couldn't honor, BHC reputation hit. Single fetch
     // up front; lookup is in-memory below.
     const rancherStatusById = new Map<string, string>();
+    // BROKER RAIL (comms containment 2026-08-18): the same prefetch keeps the
+    // FULL record so the pool filters below can consult the shared rail
+    // predicate with zero extra I/O. A failed prefetch leaves the map empty
+    // and railForLoadedRancher(undefined) fails CLOSED to 'broker' — one
+    // run's pools skipped, recovered next run (same asymmetry the predicate
+    // module documents; the paused-check already failed the same direction).
+    const rancherRecordById = new Map<string, any>();
     try {
       const ranchers = (await getAllRecords(TABLES.RANCHERS)) as any[];
       for (const r of ranchers) {
         const status = String(r['Active Status'] || '').toLowerCase();
         rancherStatusById.set(r.id, status);
+        rancherRecordById.set(r.id, r);
       }
     } catch (e: any) {
       console.warn('[chasup] rancher status prefetch failed:', e?.message);
@@ -135,6 +143,15 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
       // skip a chase that should fire than to fire one we shouldn't.
       return status !== 'active';
     };
+
+    // BROKER RAIL — the referral-level rail test every pool in this cron
+    // consults. Marker first (conclusive positive, no read), then the
+    // prefetched Ranchers row through the ONE shared predicate. Fail-closed:
+    // an unlinked referral or a missing prefetch row reads as 'broker' and is
+    // skipped this run — recoverable, unlike the leak it prevents.
+    const isBrokerRailReferral = (referral: any): boolean =>
+      referralCarriesBrokerMarker(referral) ||
+      railForLoadedRancher(rancherRecordById.get(rancherIdForReferral(referral))) === 'broker';
 
     // Recency check — used by BOTH stale and maxed-out filters. Returns true
     // if the referral has any signal of real activity within window. The big
@@ -161,6 +178,17 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
       const buyerEmail = (r['Buyer Email'] || '').trim().toLowerCase();
       if (unsubscribedEmails.has(buyerEmail)) {
         skipReasons['bounced-or-unsub'] = (skipReasons['bounced-or-unsub'] || 0) + 1;
+        return false;
+      }
+      // BROKER RAIL (comms containment 2026-08-18): this AI chase emails the
+      // buyer "did <ranch> reach out?" — on the broker rail nobody was ever
+      // going to (the ranch never sees the buyer pre-deposit), and the reply
+      // rail would then run Connect-shaped remediation against a deposit
+      // chase already in flight. Until now the skip happened only by ACCIDENT
+      // (a represented ranch's blank Active Status reads as paused below).
+      // Explicit, counted, and independent of any admin checkbox.
+      if (isBrokerRailReferral(r)) {
+        skipReasons['broker-rail'] = (skipReasons['broker-rail'] || 0) + 1;
         return false;
       }
       // CHASUP-FIX: rancher Paused/Disabled → don't chase buyer about a
@@ -457,6 +485,17 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
       );
       const now = Date.now();
       const stalledForNudge = introSentRefs.filter(r => {
+        // BROKER RAIL (comms containment 2026-08-18): this pool feeds the
+        // Telegram "Nudge Rancher" card, whose callback emails the ranch the
+        // buyer's email + phone. A broker match sits in 'Intro Sent' BY
+        // DESIGN while its deposit chase runs, so without this filter every
+        // live broker referral becomes a nudge card ~3 days after intro.
+        // Filtered at the pool so the card never exists; the callback itself
+        // is gated in the telegram webhook as the belt.
+        if (isBrokerRailReferral(r)) {
+          skipReasons['broker-rail'] = (skipReasons['broker-rail'] || 0) + 1;
+          return false;
+        }
         const introAt = r['Intro Sent At'] || r['Approved At'];
         if (!introAt) return false;
         const daysSinceIntro = (now - new Date(introAt).getTime()) / DAY_MS;
@@ -616,6 +655,17 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
           let rancherFirstName = '';
           try {
             const r: any = await getRecordById(TABLES.RANCHERS, rancherId);
+            // BROKER RAIL (comms containment 2026-08-18): this prompt emails
+            // the RANCH a card that (a) names the buyer pre-deposit and (b)
+            // carries quick-action buttons that let the ranch FLIP the row
+            // (won/lost/pass) — rancher-side state a represented ranch must
+            // never hold. Same two-part test as the digest gate above, on the
+            // rancher row this loop already loads; the quick-action route
+            // refuses too (belt), but this email must simply never exist.
+            if (referralCarriesBrokerMarker(ref) || railForLoadedRancher(r) === 'broker') {
+              skipReasons['broker-rail'] = (skipReasons['broker-rail'] || 0) + 1;
+              continue;
+            }
             rancherEmail = r?.['Email'] || '';
             const op = (r?.['Operator Name'] || '').toString();
             rancherFirstName = op.split(' ')[0] || 'there';

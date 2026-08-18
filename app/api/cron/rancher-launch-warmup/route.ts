@@ -5,6 +5,13 @@ import { sendTelegramUpdate } from '@/lib/telegram';
 import { sendRancherLaunchWarmup, sendRancherLaunchWarmupNudge } from '@/lib/email';
 import { normalizeState, normalizeStates } from '@/lib/states';
 import { isRancherOperationalForBuyers, getOperationalServedStates } from '@/lib/rancherEligibility';
+// BROKER RAIL (comms containment 2026-08-18): a routable self-serve broker
+// ranch passes isRancherOperationalForBuyers, so this cron's pool includes it
+// — and the Connect warmup template promises "full contact info + they'll
+// reach out in 24–48h", both false on a rail where contact comes only after
+// the deposit settles. The rail of the loaded rancher row routes each send to
+// the deposit-first template variant instead.
+import { railForLoadedRancher } from '@/lib/brokerDownstream';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 import jwt from 'jsonwebtoken';
@@ -244,6 +251,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
                 ranchName,
                 buyerState: normalizeState(buyer['State']),
                 engageUrl,
+                rail: railForLoadedRancher(rancher),
               });
             } catch (sendErr: any) {
               // Best-effort rollback so next run gets another shot.
@@ -380,6 +388,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
               ranchName,
               buyerState: normalizeState(rec['State']),
               engageUrl,
+              rail: railForLoadedRancher(rancher),
             });
           } catch (sendErr: any) {
             // Best-effort rollback — clear stamp + restore Buyer Stage so next
@@ -491,7 +500,12 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
           || 'our new rancher';
 
         const engageUrl = buildEngageUrl(buyer.id);
-        await sendRancherLaunchWarmupNudge({ email, firstName: first, ranchName, engageUrl });
+        // Deposit-first copy on AFFIRMATIVE evidence only: a missing
+        // activeRancher names no ranch ("our new rancher"), so the generic
+        // Connect copy stays — never divert copy on absence of proof.
+        const nudgeRail: 'broker' | 'connect' =
+          activeRancher && railForLoadedRancher(activeRancher) === 'broker' ? 'broker' : 'connect';
+        await sendRancherLaunchWarmupNudge({ email, firstName: first, ranchName, engageUrl, rail: nudgeRail });
         await updateRecord(TABLES.CONSUMERS, buyer.id, { 'Warmup Stage': 'nudged' });
         nudgesSent++;
       } catch (e: any) {

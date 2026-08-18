@@ -45,6 +45,7 @@ import { isSmsWindow } from '@/lib/sendWindow';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
+import { railForLoadedRancher, referralCarriesBrokerMarker, rancherIdForReferral } from '@/lib/brokerDownstream';
 import { claimOnce } from '@/lib/rancherCapacity';
 import jwt from 'jsonwebtoken';
 import { JWT_SECRET } from '@/lib/secrets';
@@ -83,12 +84,27 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     const ranchersById = new Map(ranchers.map((r: any) => [r.id, r]));
 
     // Filter to ones aged into the pulse window + not already pulsed
+    let brokerSkipped = 0;
     const candidates = referrals.filter((r: any) => {
       const introAt = r['Intro Sent At'] || r['Approved At'];
       if (!introAt) return false;
       const days = (now - new Date(introAt).getTime()) / DAY_MS;
       if (days < MIN_DAYS_SINCE_INTRO) return false;
       if (r['Buyer Pulse Sent At']) return false; // already pulsed
+      // BROKER RAIL (comms containment 2026-08-18): "did your rancher reach
+      // out?" — on the broker rail nobody was ever going to (the ranch never
+      // sees the buyer pre-deposit), the question contradicts the deposit
+      // chase running on the same row, and the "ghosted" tap triggers
+      // Connect-shaped remediation. Marker first, then the already-loaded
+      // Ranchers row through the shared predicate — fail-closed (an unlinked
+      // referral or missing rancher row reads broker) to a counted skip.
+      if (
+        referralCarriesBrokerMarker(r) ||
+        railForLoadedRancher(ranchersById.get(rancherIdForReferral(r))) === 'broker'
+      ) {
+        brokerSkipped++;
+        return false;
+      }
       // CROSS-READ referral-chasup's stamp: chasup emailed this buyer within
       // the cooldown window → defer (don't stack two check-ins in one day).
       const lastChased = r['Last Chased At'];
@@ -247,7 +263,7 @@ p{margin:14px 0;color:#2A2A2A;font-size:15px}
     return {
       status: failed > 0 ? 'partial' : 'success',
       recordsTouched: sent,
-      notes: `sent=${sent} failed=${failed} candidates=${candidates.length}${skippedReasons.length ? ` warn=${skippedReasons[0].slice(0, 80)}` : ''}`,
+      notes: `sent=${sent} failed=${failed} candidates=${candidates.length} brokerSkipped=${brokerSkipped}${skippedReasons.length ? ` warn=${skippedReasons[0].slice(0, 80)}` : ''}`,
     };
   }
 }

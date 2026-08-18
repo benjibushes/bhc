@@ -9,6 +9,7 @@ import {
 import { JWT_SECRET } from '@/lib/secrets';
 import { fetchReferralRowsForRancher } from '@/lib/referralReads';
 import { calcCommission, calcCommissionForRancher, hasLockedCommissionRate, isPostCloseInvoiceRail } from '@/lib/commission';
+import { railForLoadedRancher, referralCarriesBrokerMarker } from '@/lib/brokerDownstream';
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import {
   sendTelegramMessage,
@@ -181,6 +182,38 @@ async function applyAction(
     assigned.includes(decoded.rancherId) || suggested.includes(decoded.rancherId);
   if (!isOwner) {
     return { ok: false, message: 'This action link is no longer valid for this referral.', failureKind: 'not-owner' };
+  }
+
+  // BROKER RAIL (comms containment 2026-08-18): a represented ranch has no
+  // login and is never emailed quick-action links — but the JWTs live 30
+  // days, so links minted before the chasup pool gates shipped (or by a
+  // future pool regression) can still arrive here. Every action below writes
+  // rancher-side state onto the referral ('Rancher Engaged Flag', status
+  // flips, even Closed Won with a commission invoice) — none of which may
+  // exist on a rail where the deposit IS the fee. Marker first (conclusive,
+  // no read), then the token's rancher through the shared predicate.
+  // Fail-closed: an unreadable rancher refuses — one re-click if it was a
+  // blip; silent state corruption on the money rail if it wasn't.
+  {
+    let rancherForRail: any = null;
+    if (!referralCarriesBrokerMarker(referral)) {
+      try {
+        rancherForRail = await getRecordById(TABLES.RANCHERS, decoded.rancherId);
+      } catch {
+        rancherForRail = null; // railForLoadedRancher(null) → 'broker' (fail closed)
+      }
+    }
+    if (referralCarriesBrokerMarker(referral) || railForLoadedRancher(rancherForRail) === 'broker') {
+      console.log(
+        `[quick-action] broker-rail refusal: action=${action} referral=${decoded.referralId} rancher=${decoded.rancherId}`,
+      );
+      return {
+        ok: false,
+        message:
+          'This lead is coordinated by the BuyHalfCow desk — there is nothing to update here. If you think this is a mistake, reply to the intro email.',
+        failureKind: 'locked',
+      };
+    }
   }
 
   const currentStatus = referral['Status'] || '';

@@ -191,6 +191,11 @@ test('SHARED PREDICATE: every post-match gate consults lib/brokerDownstream, not
     '../app/api/admin/referrals/[id]/resend-intro/route.ts',
     '../app/api/cron/email-sequences/route.ts',
     '../app/api/webhooks/telegram/route.ts',
+    // Comms containment wave (2026-08-18) — the rails the #628 sweep missed.
+    '../app/api/cron/buyer-pulse/route.ts',
+    '../app/api/cron/rancher-launch-warmup/route.ts',
+    '../app/api/cron/qualified-no-action/route.ts',
+    '../app/api/rancher/quick-action/route.ts',
   ];
   for (const rel of sites) {
     const src = read(rel);
@@ -202,7 +207,7 @@ test('SHARED PREDICATE: every post-match gate consults lib/brokerDownstream, not
 
 test('GATE rancher lead digest: a represented ranch is never emailed the buyer\'s phone + email', () => {
   const src = read('../app/api/cron/referral-chasup/route.ts');
-  assert.match(src, /import \{ railForLoadedRancher, referralCarriesBrokerMarker \} from '@\/lib\/brokerDownstream'/);
+  assert.match(src, /import \{ railForLoadedRancher, referralCarriesBrokerMarker, rancherIdForReferral \} from '@\/lib\/brokerDownstream'/);
   assert.match(src, /refs\.some\(referralCarriesBrokerMarker\) \|\|\n\s*railForLoadedRancher\(rancher\) === 'broker'/);
   const gateIdx = src.indexOf("skipReasons['broker-rail']");
   assert.ok(gateIdx > -1, 'the skip must be counted, not silent');
@@ -304,9 +309,10 @@ test('GATE telegram /bulkfire + approve_: neither can mass-fire a Connect intro 
   assert.match(src, /Broker-rail skipped: \$\{brokerSkipped\}/, 'the skip is reported, never silent');
   assert.match(src, /if \(referralCarriesBrokerMarker\(referral\) \|\| railForLoadedRancher\(rancher\) === 'broker'\) \{/);
   const approveIdx = src.indexOf("referralCarriesBrokerMarker(referral) || railForLoadedRancher(rancher) === 'broker'");
-  // The "10% commission on BHC referral sales" line — an agreement a
-  // represented ranch never signed — sits after the refusal.
-  assert.ok(src.indexOf('10% commission on BHC referral sales', approveIdx) > approveIdx);
+  // The commission-footer line — an agreement a represented ranch never
+  // signed — sits after the refusal. (Rate now DERIVED per rancher — see the
+  // TIER TRUTH pin in section 9.)
+  assert.ok(src.indexOf('commission on BHC referral sales', approveIdx) > approveIdx);
 });
 
 // ---------------------------------------------------------------------------
@@ -328,4 +334,227 @@ test('planMatchNotifications: an UNREADABLE rancher gets the broker plan, as doc
   // platform silently converts to the broker plan.
   assert.equal(planMatchNotifications({ id: 'recX', 'Ranch Name': 'R' }).rail, 'connect');
   assert.equal(planMatchNotifications({ id: 'recX', 'Broker Rail': true }).rail, 'broker');
+});
+
+// ---------------------------------------------------------------------------
+// 9. COMMS CONTAINMENT WAVE (2026-08-18) — the rails the #628 sweep missed.
+//    Two are timed: live broker referrals with Intro Sent 08-18 enter the
+//    stalled pool ~08-21 and the day-14 window ~09-01. Same convention as
+//    section 6: source pins, and every gate consults lib/brokerDownstream.
+// ---------------------------------------------------------------------------
+
+test('GATE chasup stalled-nudge pool: a broker row never becomes a "Nudge Rancher" card', () => {
+  const src = read('../app/api/cron/referral-chasup/route.ts');
+  // The rancher prefetch keeps FULL records so every pool can consult the
+  // shared predicate without a per-row read…
+  assert.match(src, /const rancherRecordById = new Map<string, any>\(\);/);
+  assert.match(src, /rancherRecordById\.set\(r\.id, r\);/);
+  // …through the ONE referral-level helper (marker first, then the loaded row;
+  // fail-closed — an unlinked referral or missing prefetch row reads broker).
+  assert.match(
+    src,
+    /const isBrokerRailReferral = \(referral: any\): boolean =>\n\s*referralCarriesBrokerMarker\(referral\) \|\|\n\s*railForLoadedRancher\(rancherRecordById\.get\(rancherIdForReferral\(referral\)\)\) === 'broker';/,
+  );
+  const poolIdx = src.indexOf('const stalledForNudge = introSentRefs.filter');
+  assert.ok(poolIdx > -1);
+  const gateIdx = src.indexOf('if (isBrokerRailReferral(r)) {', poolIdx);
+  const cardIdx = src.indexOf('nudgerancher_', poolIdx);
+  assert.ok(gateIdx > -1 && cardIdx > gateIdx, 'the pool gate must precede the Telegram card mint');
+});
+
+test('GATE chasup day-14 stale prompt: a represented ranch never gets the 4-button quick-action email', () => {
+  const src = read('../app/api/cron/referral-chasup/route.ts');
+  const loopIdx = src.indexOf('if (daysSince >= STALE_PROMPT_DAYS) {');
+  assert.ok(loopIdx > -1);
+  // The gate rides the rancher row this loop already loads at eligibility time.
+  const gateIdx = src.indexOf(
+    "if (referralCarriesBrokerMarker(ref) || railForLoadedRancher(r) === 'broker') {",
+    loopIdx,
+  );
+  assert.ok(gateIdx > loopIdx, 'the broker gate must sit on the loaded rancher row');
+  // The push — and with it the email whose quick-action buttons let the ranch
+  // FLIP the row — sits after the refusal.
+  assert.ok(src.indexOf('promptedRanchers.push', gateIdx) > gateIdx);
+});
+
+test('GATE chasup buyer AI chase: the broker skip is EXPLICIT, not the blank-Active-Status accident', () => {
+  const src = read('../app/api/cron/referral-chasup/route.ts');
+  const staleIdx = src.indexOf('const stale = referrals.filter');
+  assert.ok(staleIdx > -1);
+  const gateIdx = src.indexOf('if (isBrokerRailReferral(r)) {', staleIdx);
+  const pausedIdx = src.indexOf('if (isRancherPaused(r)) {', staleIdx);
+  assert.ok(
+    gateIdx > staleIdx && pausedIdx > gateIdx,
+    'the explicit broker skip must precede (and not depend on) the paused-status accident',
+  );
+});
+
+test('GATE telegram nudgerancher: the callback #628 missed refuses exactly like approve_ does', () => {
+  const src = read('../app/api/webhooks/telegram/route.ts');
+  const branchIdx = src.indexOf("else if (action === 'nudgerancher') {");
+  assert.ok(branchIdx > -1);
+  const gateIdx = src.indexOf(
+    "if (referralCarriesBrokerMarker(ref) || railForLoadedRancher(rancher) === 'broker') {",
+    branchIdx,
+  );
+  const nextBranchIdx = src.indexOf("else if (action === 'closelost')", branchIdx);
+  assert.ok(gateIdx > branchIdx && gateIdx < nextBranchIdx, 'the refusal must live inside the nudgerancher branch');
+  assert.match(src.slice(gateIdx, gateIdx + 700), /Represented ranch — send the deposit link instead\./);
+  // The buyer email+phone block it exists to stop sits after the refusal.
+  const leakIdx = src.indexOf('Buyer details:', gateIdx);
+  assert.ok(leakIdx > gateIdx && leakIdx < nextBranchIdx, 'the contact block must be downstream of the refusal');
+});
+
+test('GATE quick-action: a broker-rail link refuses before ANY write (30d tokens outlive the pool gates)', () => {
+  const src = read('../app/api/rancher/quick-action/route.ts');
+  const gateIdx = src.indexOf(
+    "if (referralCarriesBrokerMarker(referral) || railForLoadedRancher(rancherForRail) === 'broker') {",
+  );
+  assert.ok(gateIdx > -1);
+  // Fail-closed loader: an unreadable rancher refuses rather than proceeds.
+  assert.match(src, /rancherForRail = null; \/\/ railForLoadedRancher\(null\) → 'broker' \(fail closed\)/);
+  // No mutation may precede the refusal — not the money lock, not the
+  // activity stamp, nothing.
+  const firstWriteIdx = src.indexOf('await updateRecord(');
+  const moneyLockIdx = src.indexOf('isDepositLocked(referral');
+  assert.ok(moneyLockIdx > gateIdx, 'rail identity precedes state locks');
+  assert.ok(firstWriteIdx > gateIdx, 'no write may precede the refusal');
+});
+
+test('GATE buyer-pulse: "did your rancher reach out?" never goes to a broker-matched buyer', () => {
+  const src = read('../app/api/cron/buyer-pulse/route.ts');
+  assert.match(
+    src,
+    /import \{ railForLoadedRancher, referralCarriesBrokerMarker, rancherIdForReferral \} from '@\/lib\/brokerDownstream'/,
+  );
+  assert.match(
+    src,
+    /referralCarriesBrokerMarker\(r\) \|\|\n\s*railForLoadedRancher\(ranchersById\.get\(rancherIdForReferral\(r\)\)\) === 'broker'/,
+  );
+  const gateIdx = src.indexOf('brokerSkipped++;');
+  assert.ok(gateIdx > -1, 'the skip must be counted, not silent');
+  // The pulse send — and the "ghosted" tap that triggers Connect-shaped
+  // remediation — sit after the pool gate.
+  assert.ok(src.indexOf("mkToken('ghosted')", gateIdx) > gateIdx);
+  assert.ok(src.indexOf('buyer_pulse_check_in', gateIdx) > gateIdx);
+});
+
+test('GATE launch warmup: broker ranches route to the deposit-first template, never the contact-info promise', () => {
+  const route = read('../app/api/cron/rancher-launch-warmup/route.ts');
+  assert.match(route, /from '@\/lib\/brokerDownstream'/);
+  // Both Phase-1 send sites pass the rail of the rancher row they already hold.
+  assert.equal(route.split('await sendRancherLaunchWarmup({').length - 1, 2, 'both Phase-1 send sites exist');
+  assert.equal(route.split('rail: railForLoadedRancher(rancher),').length - 1, 2, 'both send sites pass the rail');
+  // Phase-2 nudge diverts copy on AFFIRMATIVE evidence only (a missing
+  // activeRancher names no ranch, so the generic Connect copy stays).
+  assert.match(route, /activeRancher && railForLoadedRancher\(activeRancher\) === 'broker' \? 'broker' : 'connect'/);
+
+  const email = read('./email.ts');
+  // The rail flags derive from the caller's rail — never a constant.
+  assert.match(email, /const isBroker = data\.rail === 'broker';/);
+  assert.match(email, /const isBrokerNudge = data\.rail === 'broker';/);
+  // Broker variant: deposit-first, pickup-after. Connect promise byte-identical.
+  assert.match(
+    email,
+    /const promiseLine = isBroker\n\s*\? `If yes, click below — I'll send you a reserve link right after\. A deposit locks your share, and pickup details follow once your animal is confirmed\.`/,
+  );
+  assert.match(
+    email,
+    /: `If yes, click below — I'll send the rancher's full info \(pricing, processing date, contact\) right after, and they'll reach out to you directly within 24–48 hours\.`/,
+  );
+  // COPY CONTRACT: buyer copy never frames the deposit as a commission or fee.
+  const warmupSlice = email.slice(
+    email.indexOf('export async function sendRancherLaunchWarmup'),
+    email.indexOf('export async function sendRancherLeadDigest'),
+  );
+  for (const forbidden of ['commission', 'our fee', 'we keep']) {
+    assert.ok(!warmupSlice.toLowerCase().includes(forbidden), `warmup copy leaked "${forbidden}"`);
+  }
+});
+
+test('GATE deposit-request-nudge rail C: the broker leg chases the deposit instead of dropping it hourly forever', () => {
+  const src = read('../app/api/cron/deposit-request-nudge/route.ts');
+  // Same two-bar design as the rail-A/B loop, now inside resolveContext:
+  // divert on AFFIRMATIVE evidence, refuse-to-proceed when the rancher is
+  // unreadable (a marker row with no loaded rancher waits for the next run
+  // rather than mailing a link into the broker route's 503).
+  assert.match(
+    src,
+    /const confirmedBroker =\n\s*referralCarriesBrokerMarker\(r\) \|\|\n\s*\(!!rancher && railForLoadedRancher\(rancher\) === 'broker'\);/,
+  );
+  assert.match(src, /if \(confirmedBroker && !rancher\) return null;/);
+  // The Connect-only gate now applies ONLY to the connect leg…
+  assert.match(
+    src,
+    /if \(!confirmedBroker\) \{\n\s*if \(!rancher \|\| !isRancherOperationalForBuyers\(rancher\) \|\| !isRancherOnConnect\(rancher\)\) return null;\n\s*\}/,
+  );
+  // …and the CTA points at the checkout that can actually take the money.
+  assert.match(
+    src,
+    /const reservePath = confirmedBroker \? `\/checkout\/\$\{r\.id\}\/broker` : `\/checkout\/\$\{r\.id\}\/deposit`;/,
+  );
+});
+
+test('GATE deposit-request-nudge: a suppressed buyer\'s row is retired, not re-selected hourly forever', async () => {
+  const src = read('../app/api/cron/deposit-request-nudge/route.ts');
+  // Rail A/B email loop: one terminal write (sentinel count + last-sent +
+  // cross-rail SMS stamp) on the suppressed path.
+  assert.match(src, /'Deposit Nudge Count': DEPOSIT_NUDGE_SUPPRESSED_SENTINEL,/);
+  // SMS-rescue + rail C suppressed paths stamp their own one-shots too.
+  const rescueIdx = src.indexOf('async function runDepositSmsRescue');
+  const rescueSlice = src.slice(rescueIdx, src.indexOf('async function realHandler'));
+  assert.match(rescueSlice, /\[DEPOSIT_SMS_SENT_FIELD\]: new Date\(nowMs\)\.toISOString\(\)/);
+  const railCIdx = src.indexOf('async function runReserveAbandonRail');
+  const railCSlice = src.slice(railCIdx, rescueIdx);
+  assert.match(railCSlice, /\[RESERVE_RECOVERY_EMAIL_FIELD\]: suppressedStamp/);
+  assert.match(railCSlice, /\[RESERVE_RECOVERY_SMS_FIELD\]: suppressedStamp/);
+
+  // BEHAVIOR: the sentinel write retires the row from BOTH nudge rails and the
+  // SMS leg — pure selectors, no Airtable.
+  const {
+    isDepositNudgeEligible,
+    isDepositAbandonEligible,
+    isDepositSmsRescueEligible,
+    DEPOSIT_NUDGE_SUPPRESSED_SENTINEL,
+    DEPOSIT_SMS_SENT_FIELD,
+  } = await import('./depositRequestNudge');
+  assert.equal(DEPOSIT_NUDGE_SUPPRESSED_SENTINEL, 99);
+  const now = Date.now();
+  const days = (n: number) => new Date(now - n * 24 * 3600e3).toISOString();
+  const suppressedWrite = {
+    'Deposit Nudge Last Sent At': days(3),
+    'Deposit Nudge Count': DEPOSIT_NUDGE_SUPPRESSED_SENTINEL,
+    [DEPOSIT_SMS_SENT_FIELD]: days(3),
+  };
+  const railA = { 'Deposit Requested At': days(5), 'Deposit Paid At': '', Status: 'Awaiting Payment', ...suppressedWrite };
+  assert.equal(isDepositNudgeEligible(railA, now), false, 'rail A must be retired');
+  assert.equal(isDepositSmsRescueEligible(railA, now), false, 'SMS leg must be retired');
+  const railB = { 'Deposit Invite Sent At': days(5), 'Deposit Requested At': '', 'Deposit Paid At': '', Status: 'Intro Sent', ...suppressedWrite };
+  assert.equal(isDepositAbandonEligible(railB, now), false, 'rail B must be retired');
+});
+
+test('GATE qualified-no-action: a confirmed-broker buyer is sent to the broker checkout, not a dead-end /member', () => {
+  const src = read('../app/api/cron/qualified-no-action/route.ts');
+  assert.match(
+    src,
+    /const confirmedBroker =\n\s*referralCarriesBrokerMarker\(ref\) \|\|\n\s*\(!!rancher && railForLoadedRancher\(rancher\) === 'broker'\);/,
+  );
+  assert.match(src, /confirmedBroker\n\s*\? buildNudgeMagicLink\(buyerId, email, `\/checkout\/\$\{ref\.id\}\/broker`\)/);
+  assert.match(
+    src,
+    /const ctaLabel = confirmedBroker \? 'Reserve your share' : depositCapable \? 'Reserve your slot' : 'View your match';/,
+  );
+});
+
+test('TIER TRUTH: telegram rancher-email footers derive the commission rate from the loaded rancher', () => {
+  const src = read('../app/api/webhooks/telegram/route.ts');
+  // Both footers (approve_ intro + nudgerancher) derive; the tier-blind 10%
+  // literal is dead. A genuinely legacy/no-tier rancher still renders "10%"
+  // (env default) — via the derivation, never a literal.
+  assert.equal(
+    src.split('commissionPercentLabelForRancher(rancher)').length - 1,
+    2,
+    'both footers must derive from the loaded rancher',
+  );
+  assert.doesNotMatch(src, /10% commission/, 'a tier-blind 10% footer came back');
 });
