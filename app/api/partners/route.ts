@@ -6,7 +6,7 @@ import { sendPartnerConfirmation, sendAdminAlert, sendRancherApplyAutoApproved }
 import { JWT_SECRET } from '@/lib/secrets';
 import { sendTelegramPartnerAlert, sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
-import { formatPhoneInput } from '@/lib/phoneFormat';
+import { formatPhoneInput, isValidUsPhone } from '@/lib/phoneFormat';
 import { validateAffiliateRefForSignup } from '@/lib/affiliates';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 import { normalizeState } from '@/lib/states';
@@ -106,6 +106,23 @@ export async function POST(request: Request) {
 
       if (!isValidEmail(email)) {
         return NextResponse.json({ error: 'Please enter a valid email address' }, { status: 400 });
+      }
+
+      // PHONE REQUIRED (#413 parity, 2026-08-18) — server-side, so it holds
+      // regardless of client. /api/apply and the map self-submit have enforced
+      // this since Vale Creek Ranch signed up with a typo'd email and NO phone:
+      // approved, sent a setup link that could never arrive, permanently
+      // unreachable, nobody alerted. This door formatted the phone but never
+      // REQUIRED it, so a direct POST or a stale client could still create an
+      // email-only rancher. Same shared helper as /api/apply (strips a leading
+      // country code first — the old digit-count guards passed numbers the
+      // client formatter had already corrupted), same gate position: after the
+      // cheap field checks, before anything touches Airtable.
+      if (!isValidUsPhone(body?.phone)) {
+        return NextResponse.json(
+          { error: 'A phone number is required — it is how we reach you if email fails.' },
+          { status: 400 },
+        );
       }
 
       // Widened dedupe (2026-06-09): exact-email match only meant Jesse

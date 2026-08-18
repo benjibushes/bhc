@@ -16,10 +16,12 @@
 //
 // Always excluded: BROKER RAIL ranchers (represented, never onboarded — there
 //   is nothing to reactivate, and their blank Onboarding Status would otherwise
-//   read as the hottest Tier B target), tier_v2, the hardcoded EXCLUDE_RANCHER_IDS allowlist
+//   read as the hottest Tier B target), tier_v2, AGREEMENT-SIGNED ranchers
+//   (field predicate, 2026-08-18 — Ben closes those personally; see
+//   hasSignedAgreement), the hardcoded EXCLUDE_RANCHER_IDS allowlist
 //   (Wave-1 closers + manual hold-outs + active-live + Left Hand + dup
-//   Renick), suppression flags (Unsubscribed/Bounced/Complained), and the
-//   named test rows.
+//   Renick + the original signed trio as a belt), suppression flags
+//   (Unsubscribed/Bounced/Complained), and the named test rows.
 //
 // Cadence (sanity-paced, enforced here so the cron stays a thin driver):
 //   - untouched (Touch Count 0 / no Last Campaign Email Sent At) → first send
@@ -47,6 +49,12 @@ const DORMANT_AFTER_DAYS = 10;
  *   - Manual hold-outs (Ben is handling these 1:1)
  *   - Left Hand Cattle (mid-funnel — Call Scheduled)
  *   - Duplicate Renick (paused dup of Gajewski)
+ *   - The three agreement-signed ranches the list was frozen with. The
+ *     signed→skip rule itself is now the hasSignedAgreement FIELD predicate
+ *     below (2026-08-18) — a frozen id list silently stopped covering any
+ *     ranch that signed after it was written, which meant an auto cold
+ *     "come back" email mid-close the moment the rail unpauses. The three
+ *     ids STAY here as the belt for rows whose stamp never got written.
  *
  * Active+Live legacy ranchers already getting leads are excluded by the
  * tier filters (they don't match Tier A's "not live" clause or Tier B's
@@ -111,6 +119,24 @@ function parseDateMs(v: unknown): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
+/**
+ * Signed agreement → Ben closes this ranch PERSONALLY; the machine must never
+ * send them a cold "come back" email (or mark them dormant) mid-close.
+ *
+ * Field predicate, not a frozen id list (2026-08-18): checks BOTH the
+ * `Agreement Signed` checkbox (lib/goLiveGates, lib/rancherEligibility,
+ * lib/appliedChase all gate on it) and the `Agreement Signed At` stamp
+ * (lib/rancherLookup, lib/airtable read it). The two writers
+ * (app/api/ranchers/sign-agreement, app/api/rancher/activate) stamp both
+ * together, but an offline signature hand-ticked in Airtable can carry the
+ * checkbox alone — either signal alone is enough to skip.
+ */
+function hasSignedAgreement(r: any): boolean {
+  if (isTruthyFlag(r['Agreement Signed'])) return true;
+  const at = r['Agreement Signed At'];
+  return Boolean(at && String(at).trim() !== '');
+}
+
 /** A rancher who has self-served a call is out of the campaign entirely. */
 function hasBooking(r: any): boolean {
   const ms = readEnumOrString(r['Migration Status']).toLowerCase();
@@ -154,6 +180,8 @@ export interface SegmentResult {
     tierAEligible: number;
     tierBEligible: number;
     excludedById: number;
+    /** Skipped by the signed-agreement field predicate (Ben closes personally). */
+    agreementSigned: number;
     suppressed: number;
     booked: number;
     skippedTooSoon: number;
@@ -196,6 +224,7 @@ export function segmentRanchers(allRanchers: any[], now: Date = new Date()): Seg
     tierAEligible: 0,
     tierBEligible: 0,
     excludedById: 0,
+    agreementSigned: 0,
     suppressed: 0,
     booked: 0,
     skippedTooSoon: 0,
@@ -210,6 +239,17 @@ export function segmentRanchers(allRanchers: any[], now: Date = new Date()): Seg
     // ── Hard exclude: id allowlist ────────────────────────────────────
     if (EXCLUDE_RANCHER_IDS.has(id)) {
       counts.excludedById++;
+      continue;
+    }
+
+    // ── Hard exclude: agreement signed → Ben sends personally ─────────
+    // A signed ranch is mid-close. This is a FIELD predicate on purpose: the
+    // old frozen id trio above silently stopped covering anyone who signed
+    // after it was written, and the machine would have cold-emailed them the
+    // moment the rail unpauses. Excluded from EVERY bucket — first sends,
+    // reminders, and dormant marking alike.
+    if (hasSignedAgreement(r)) {
+      counts.agreementSigned++;
       continue;
     }
 

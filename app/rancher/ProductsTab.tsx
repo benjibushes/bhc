@@ -22,7 +22,9 @@ import {
   deriveProductPricing,
   MIN_PRODUCT_PRICE_CENTS,
   missingRequiredAnswers,
+  type MissingAnswer,
 } from '@/lib/rancherProductInput';
+import { askBannerAsks } from '@/lib/productAskBanner';
 import { absorptionPreview } from '@/lib/feeMath';
 import { decideSyncManagedRow } from '@/lib/syncManagedProductFence';
 // Pure + import-clean (no Airtable, no env, no next/server) — safe in a
@@ -200,6 +202,14 @@ export default function ProductsTab({
 
   const [form, setForm] = useState({ ...EMPTY_FORM });
   const [editingId, setEditingId] = useState<string | null>(null);
+  // Duplicate seeds the form from an existing product with editingId=null
+  // (the save POSTs a new row) — this flag is what still turns the ask-banner
+  // on for a copy of a legacy listing carrying pre-#524 blanks.
+  const [seededFromExisting, setSeededFromExisting] = useState(false);
+  // The `missing` set from the last 400 this form session — flips the banner
+  // on even in the blank-add flow, so any rejection self-explains with the
+  // full set on one screen instead of one prose 400 per field.
+  const [rejectedMissing, setRejectedMissing] = useState<MissingAnswer[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveErr, setSaveErr] = useState('');
@@ -340,16 +350,24 @@ export default function ProductsTab({
   // edit my products" (10 of 11 live rows were in that state).
   //
   // Now the form asks for the whole set UP FRONT, from the SAME pure helper the
-  // API validates with (so the two can never drift), and marks the fields. Only
-  // while EDITING: a blank add-form owes these too, but its `*` markers already
-  // say so and a warning banner over an empty form is just noise.
+  // API validates with (so the two can never drift), and marks the fields.
+  // Visibility (lib/productAskBanner): while editing, while the form was
+  // SEEDED from an existing product (Duplicate — same legacy blanks, but
+  // editingId is null because the save POSTs a new row), or after a 400 that
+  // named missing answers. A truly blank add-form owes these too, but its `*`
+  // markers already say so and a warning banner over an empty form is noise.
   const openAsks = missingRequiredAnswers({
     shipsNationwide: form.shipsNationwide,
     shipsInDays: form.shipsInDays.trim() === '' ? '' : Number(form.shipsInDays),
     shippingCost: form.shippingCost.trim() === '' ? '' : Number(form.shippingCost),
     shippingChoice: form.shippingChoice,
   });
-  const asking = editingId ? openAsks : [];
+  const asking = askBannerAsks({
+    editing: editingId !== null,
+    seededFromExisting,
+    rejectedMissing,
+    openAsks,
+  });
   const needsDays = asking.includes('shipsInDays');
   const needsShipping = asking.includes('shippingChoice');
   // Reused on the two inputs so a marked field is unmistakable next to its
@@ -368,6 +386,8 @@ export default function ProductsTab({
   function startAdd() {
     setForm({ ...EMPTY_FORM });
     setEditingId(null);
+    setSeededFromExisting(false);
+    setRejectedMissing([]);
     setSaveErr('');
     setSavedNote('');
     setShowForm(true);
@@ -395,6 +415,8 @@ export default function ProductsTab({
       shippingChoice: p.shippingChoice || '',
     });
     setEditingId(p.id);
+    setSeededFromExisting(false);
+    setRejectedMissing([]);
     setSaveErr('');
     setSavedNote('');
     setShowForm(true);
@@ -446,7 +468,17 @@ export default function ProductsTab({
         body: JSON.stringify(editingId ? { productId: editingId, ...payload } : payload),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || `save failed (${res.status})`);
+      if (!res.ok) {
+        // The validator's 400 names EVERY missing answer — feed it into the
+        // ask-banner state instead of dropping it, so the rejection explains
+        // the full set on one screen (not one prose 400 per field). The
+        // banner's content stays the live openAsks recompute; this only
+        // flips it visible in flows that start banner-off (blank add).
+        if (Array.isArray(data.missing) && data.missing.length > 0) {
+          setRejectedMissing(data.missing);
+        }
+        throw new Error(data?.error || `save failed (${res.status})`);
+      }
 
       if (editingId) {
         // Same blank-row guard as toggleActive.
@@ -489,6 +521,8 @@ export default function ProductsTab({
       }
       setShowForm(false);
       setEditingId(null);
+      setSeededFromExisting(false);
+      setRejectedMissing([]);
       setForm({ ...EMPTY_FORM });
     } catch (e: any) {
       setSaveErr(e?.message || 'could not save — try again');
@@ -592,6 +626,10 @@ export default function ProductsTab({
       shippingChoice: p.shippingChoice || '',
     });
     setEditingId(null); // POST, not PATCH — creates a new row
+    // The copy carries the source row's legacy blanks — the seeded flag keeps
+    // the ask-banner on even though editingId is null (#623 follow-up).
+    setSeededFromExisting(true);
+    setRejectedMissing([]);
     setSaveErr('');
     setSavedNote('');
     setShowForm(true);
@@ -654,8 +692,12 @@ export default function ProductsTab({
                   this listing needs {asking.length === 2 ? 'two answers' : 'one more answer'} before it
                   can save
                 </strong>{' '}
-                &mdash; marked in red below. everything else about it stays exactly as it is, and it
-                keeps selling while you fill them in.
+                &mdash; marked in red below.{' '}
+                {editingId
+                  ? 'everything else about it stays exactly as it is, and it keeps selling while you fill them in.'
+                  : seededFromExisting
+                    ? 'the listing you copied never captured these, so your copy has to answer them before it can go up.'
+                    : 'answer them and save again — everything else you typed is kept.'}
               </p>
               <ul className="text-[13px] text-saddle list-disc pl-5 space-y-0.5">
                 {needsDays && <li>how many days until it ships</li>}
