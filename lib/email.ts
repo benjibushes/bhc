@@ -5477,7 +5477,7 @@ export async function sendNoBudgetFounderPitch(data: {
 </head><body><div class="container">
   <h1>Beef this year isn't in the budget? I get it.</h1>
   <p>Hi ${esc(first)},</p>
-  <p>You signed up for BuyHalfCow. You care about how cattle gets raised. You're on the right side of the food fight. But buying a Quarter is $1,500–$2,000 — that's not in the budget for a lot of people this year. I won't pretend otherwise.</p>
+  <p>You signed up for BuyHalfCow. You care about how cattle gets raised. You're on the right side of the food fight. But a freezer full of beef is a real chunk of money up front — and that's not in the budget for a lot of people this year. I won't pretend otherwise.</p>
   <p>Here's another way to be part of this without the freezer commitment.</p>
   <div class="divider"></div>
   <p><strong>The Founding Herd.</strong> 100 numbered spots. Back the platform from $100 (Herd) to $1k (Outlaw+) to $15k (Title Founder). You get:</p>
@@ -6273,8 +6273,12 @@ export async function sendNurtureLongHaul(data: { firstName: string; email: stri
 // Closed Lost referral. Same house rules as the nurture drip above: lowercase
 // subjects, one CTA, reply-friendly, signed — Ben (nurtureShell footer), and
 // both ride guardedSend (suppression list + 3/7d frequency cap + Email Sends
-// audit truth). Copy honesty: quarter economics are the REAL numbers
-// (~85 lbs, $1,500–2,000) — never undersell to win the reply.
+// audit truth). Copy honesty: NEVER assert share dollar figures in these
+// templates — network quarter prices range widely by ranch (2026-08-17:
+// $740–$2,200 across live pages; the old hardcoded mid-four-figures range
+// here was talking buyers out of quarters they could afford). Quote weights;
+// the rancher's page is the only price truth. lib/staleNumbersGuard.test.ts
+// enforces this.
 
 /** "Couldn't reach buyer" → re-engage: the deal died on voicemail, not intent. */
 export async function sendLossRecoveryReengage(data: {
@@ -6321,7 +6325,7 @@ export async function sendLossRecoveryDownsell(data: {
       ? `<p>A quarter wasn't the right fit this time — that's honest, and useful to know.</p>
   <div class="highlight">The shop ships boxes from the same verified ranches starting at $13 — jerky, samplers, ground beef bundles. Real beef, no freezer commitment, and you'll know exactly whose ranch you're buying from.</div>`
       : `<p>A ${esc(data.cut)} is a big first bite — most folks don't start there.</p>
-  <div class="highlight">Most families start with a quarter (${SHARE_WEIGHTS.quarter.lbs}, $1,500–2,000) or a monthly box from the shop starting at $13. Real beef from the same ranches, smaller commitment.</div>`;
+  <div class="highlight">Most families start with a quarter (${SHARE_WEIGHTS.quarter.lbs} — your rancher's page shows their exact price) or a monthly box from the shop starting at $13. Real beef from the same ranches, smaller commitment.</div>`;
   return guardedSend({
     templateName: 'sendLossRecoveryDownsell',
     recipientEmail: data.email,

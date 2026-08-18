@@ -114,6 +114,11 @@ export const FOUNDING_100_PRICE_CENTS = parseInt(
 // when Date.now() >= this. Empty = no flip configured (early-bird forever).
 export const FOUNDING_100_EARLY_BIRD_END = process.env.FOUNDING_100_EARLY_BIRD_END || '';
 
+// What Founding 100 costs once the early-bird window closes. Named so display
+// surfaces (lib/foundersTiers) can derive the "$1,500" copy instead of
+// hardcoding it next to a checkout that charges something else.
+export const FOUNDING_100_POST_EARLY_BIRD_CENTS = 150000;
+
 // Hard caps — checked pre-checkout for Founding 100 / Title Founder
 export const FOUNDING_100_CAP = parseInt(process.env.FOUNDING_100_CAP || '100', 10);
 export const TITLE_FOUNDER_CAP = parseInt(process.env.TITLE_FOUNDER_CAP || '10', 10);
@@ -143,7 +148,9 @@ export function getFounding100PriceCents(): number {
   if (!FOUNDING_100_EARLY_BIRD_END) return FOUNDING_100_PRICE_CENTS;
   const flipAt = new Date(FOUNDING_100_EARLY_BIRD_END).getTime();
   if (isNaN(flipAt)) return FOUNDING_100_PRICE_CENTS;
-  return Date.now() < flipAt ? FOUNDING_100_PRICE_CENTS : 150000;
+  return Date.now() < flipAt
+    ? FOUNDING_100_PRICE_CENTS
+    : FOUNDING_100_POST_EARLY_BIRD_CENTS;
 }
 
 // Helper: convenient label, e.g. "$1,000" or "$1,500"
