@@ -12,6 +12,14 @@ import { isRancherOperationalForBuyers, getOperationalServedStates } from '@/lib
 // the deposit settles. The rail of the loaded rancher row routes each send to
 // the deposit-first template variant instead.
 import { railForLoadedRancher } from '@/lib/brokerDownstream';
+// REQUEST-ONLY SUPPLY (comms containment 2026-08-18, F3): a request-only
+// ranch (Rep Provisions) must NEVER be campaigned or promoted — and a
+// routable self-serve broker ranch passes isRancherOperationalForBuyers, so
+// without its own gate this cron's daily pool was mass-emailing waitlisted
+// buyers "<ranch> is now live in your state" — a first-touch campaign send,
+// the exact standing-rule violation that already happened once in prod.
+// Same shared source of truth the live matcher + campaign waves consult.
+import { isRequestOnlyRancher } from '@/lib/requestOnlyRanchers';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 import jwt from 'jsonwebtoken';
@@ -131,7 +139,18 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     // that flag was a pre-throttle one-shot signal. Throttle mode revisits
     // each rancher daily until their state's WAITING/READY queue is drained.
     const allRanchers = await getAllRecords(TABLES.RANCHERS) as any[];
+    // This filtered array is the ONLY rancher pool in the file — Phase 1
+    // (both branches) sends from it and Phase 2's nudge personalization
+    // (`activeRancher`, which puts a ranch NAME in the nudge email) reads it
+    // too, so an exclusion here holds for every send this cron makes.
     const ranchers = allRanchers.filter((r: any) => {
+      // Request-only exclusion FIRST, so the skip is counted even for a ranch
+      // that is also non-operational today — the breakdown should say WHY the
+      // pool refuses it, not whichever gate happened to run first.
+      if (isRequestOnlyRancher(r)) {
+        skipReasons['request-only-rancher'] = (skipReasons['request-only-rancher'] || 0) + 1;
+        return false;
+      }
       if (!isRancherOperationalForBuyers(r)) {
         skipReasons['rancher-not-operational'] = (skipReasons['rancher-not-operational'] || 0) + 1;
         return false;

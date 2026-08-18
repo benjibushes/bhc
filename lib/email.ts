@@ -6566,10 +6566,16 @@ export async function sendBrokerBuyerReceipt(facts: BrokerOrderFacts) {
  *
  * Body built by the pure builder in lib/brokerMatch so the copy contract
  * ("deposit toward your share", "balance to the ranch", never a word about
- * commission, never the ranch's contact details) is unit-tested. Deliberately
- * NOT frequency-whitelisted: it is the broker analogue of the capped
- * sendBuyerIntroNotification, so a buyer matched repeatedly is throttled the
- * same way.
+ * commission, never the ranch's contact details) is unit-tested.
+ *
+ * Frequency-WHITELISTED (comms containment 2026-08-18, F6): this is the
+ * deposit ask whose deposit IS 100% of BHC's fee, and a fresh funnel
+ * completer sits at the 3/week cap by construction. The earlier "broker
+ * analogue of the capped sendBuyerIntroNotification" argument rested on a
+ * false premise — sendBuyerIntroNotification is itself whitelisted. Volume is
+ * owned by the match flow (one invite per match event; re-matches reuse the
+ * referral) — see the entry in lib/emailFrequencyGuard.ts. The caller must
+ * check the returned {success} before recording the invite as sent.
  */
 export async function sendBrokerMatchInvite(data: {
   to: string;

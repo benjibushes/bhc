@@ -107,3 +107,93 @@ test('PIN: the pin block is resolved BEFORE any request-only exclusion runs', ()
     'pin resolution must precede the generic candidate filters',
   );
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// BROKER INVITE SEND-TRUTH (comms containment 2026-08-18, F6b).
+//
+// guardedSend resolves a frequency-cap/pause suppression AND a Resend API
+// error as { success:false } WITHOUT throwing. The old broker branch set
+// brokerInviteSent = true on any non-throw — so a suppressed invite was
+// recorded as sent: 'Deposit Invite Sent At' got stamped, which (a) enrolled
+// the row in the deposit-abandon chase (copy that presumes a delivered ask)
+// and (b) suppressed the qualified-no-action rail for 24h via
+// hasSameDayQuizInvite — longer than that rail's whole 30min–4h window. Net:
+// the buyer's inbox stayed empty AND every automatic chase went quiet, on the
+// one email whose deposit is 100% of BHC's fee.
+// ═════════════════════════════════════════════════════════════════════════════
+
+test('PIN: brokerInviteSent flips ONLY on a send result with success === true', () => {
+  const inviteIdx = src.indexOf('await sendBrokerMatchInvite(');
+  assert.ok(inviteIdx > -1, 'the broker invite send must still exist');
+  // The result is captured and checked — not fire-and-forget.
+  assert.match(src, /const inviteRes: any = await sendBrokerMatchInvite\(/);
+  assert.match(src, /if \(inviteRes\?\.success === true\) \{\s*\n\s*brokerInviteSent = true;/);
+  // No other site may flip the flag true.
+  const flips = src.match(/brokerInviteSent = true/g) || [];
+  assert.equal(flips.length, 1, 'exactly one site may record the invite as sent');
+});
+
+test('PIN: the Deposit Invite Sent At stamp is gated on the send actually succeeding', () => {
+  const stampGateIdx = src.indexOf('if (brokerInviteSent) {');
+  assert.ok(stampGateIdx > -1, 'the stamp gate must still exist');
+  const stampIdx = src.indexOf("'Deposit Invite Sent At': new Date().toISOString()", stampGateIdx);
+  const gateEnd = src.indexOf('// Operator handoff', stampGateIdx);
+  assert.ok(
+    stampIdx > stampGateIdx && (gateEnd === -1 || stampIdx < gateEnd),
+    'the broker stamp write must sit inside if (brokerInviteSent)',
+  );
+});
+
+test('PIN: an undelivered minted invite escalates LOUD with the real reason', () => {
+  // The failure reason is captured on both non-throw and throw paths…
+  assert.match(src, /brokerInviteFailReason = String\(inviteRes\?\.reason \|\| 'send-failed'\)/);
+  assert.match(src, /brokerInviteFailReason = e\?\.message \|\| 'send-threw'/);
+  // …and drives a loud operator signal, distinct from the no-sellable-cut card
+  // (whose copy blames missing pricing — wrong for a send failure).
+  const failSignalIdx = src.indexOf('BROKER INVITE NOT DELIVERED');
+  assert.ok(failSignalIdx > -1, 'the undelivered-invite signal must exist');
+  const failStart = src.indexOf('if (brokerInviteFailReason !== null)');
+  assert.ok(failStart > -1, 'the undelivered branch must exist');
+  const failEnd = src.indexOf('const card = buildBrokerMatchOperatorCard', failStart);
+  assert.ok(failEnd > failStart, 'the card path must follow the undelivered branch');
+  const failBlock = src.slice(failStart, failEnd);
+  assert.match(failBlock, /urgency: 'loud'/);
+  assert.match(failBlock, /kind: 'system-error'/);
+  // The signal tells the operator the row was left UNSTAMPED on purpose —
+  // the qualified-no-action chase (30min–4h) still fires for unstamped rows.
+  assert.match(failBlock, /left unstamped/i);
+});
+
+test('PIN: the no-sellable-cut operator card path is preserved for genuinely uninvitable rows', () => {
+  assert.match(src, /const card = buildBrokerMatchOperatorCard\(\{/);
+  assert.match(src, /invited: brokerInviteSent/);
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// COMMISSION-RATE TRUTH in the rancher intro email (2026-08-18, F15 tail).
+//
+// The legacy-arm Closed-Won footer hardcoded "10% commission invoice" for
+// every rancher the Connect-rail intro reaches (notifyPlan.rancherLeadEmail —
+// broker rail never sends this email). A rancher with a locked Commission
+// Rate (the mandated rate source since the Ashcraft 2026-05-20 dispute) or a
+// non-10% tier was quoted a rate the charge path would contradict. Same class
+// of bug as the #635 telegram footers — same fix: derive via
+// commissionPercentLabelForRancher.
+// ═════════════════════════════════════════════════════════════════════════════
+
+test('PIN: the Closed-Won footer derives the commission rate from lib/tiers', () => {
+  assert.match(src, /import \{ tierFor, commissionPercentLabelForRancher \} from '@\/lib\/tiers'/);
+  assert.match(
+    src,
+    /auto-generates the \$\{commissionPercentLabelForRancher\(topMatch\)\} commission invoice/,
+    'the footer must quote the rate the charge path would actually use',
+  );
+});
+
+test('PIN: no hardcoded "10% commission" literal remains in the route', () => {
+  assert.doesNotMatch(
+    src,
+    /10% commission/,
+    'commission rates in rancher-facing copy must be derived, never a literal',
+  );
+});
