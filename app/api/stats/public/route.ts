@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getAllRecords, getRecordById, TABLES } from '@/lib/airtable';
 import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
 import { FOUNDING_BRAND_PARTNER_CAP } from '@/lib/tiers';
+import { STATS_FALLBACK } from '@/lib/statsFallback';
 import { cacheGet as sharedCacheGet, cacheSet as sharedCacheSet } from '@/lib/sharedCache';
 
 export const runtime = 'nodejs';
@@ -272,28 +273,30 @@ export async function GET() {
         headers: { 'Cache-Control': 'public, max-age=60' },
       });
     }
+    // Absolute last resort — Airtable failed AND no stale copy exists
+    // anywhere. Every number comes from the dated, single-sourced
+    // lib/statsFallback module (shared with /founders, /wholesale and
+    // /brand-partners). Refresh THERE — never hand-edit a number here.
     const fallback = {
-      ranchersActive: 17,
-      familiesMatched: 1533,
+      ranchersActive: STATS_FALLBACK.ranchersActive,
+      familiesMatched: STATS_FALLBACK.familiesMatched,
       foundersBacked: 0,
       foundersCap: FOUNDERS_CAP,
-      totalClosedWon: 11,
+      totalClosedWon: STATS_FALLBACK.totalClosedWon,
       thisMonthClosedWon: 0,
       latestClose: null,
       activity24h: { closes: 0, matched: 0, signups: 0 },
-      // Conservative fallback — show 5 spots remaining (matches the
-      // pre-wired hardcode on /brand-partners) when Airtable is down.
-      brandPartnersRemaining: 5,
+      brandPartnersRemaining: STATS_FALLBACK.brandPartnersRemaining,
       // Legacy aliases for FullHomepage + LiveCounter compatibility.
-      rancherCount: 17,
-      buyerCount: 1533,
-      stateCount: 5,
-      ranchers: 17,
-      buyers: 1533,
-      states: 5,
-      verifiedRancherCount: 17,
-      beefBuyerCount: 1533,
-      verifiedStateCount: 5,
+      rancherCount: STATS_FALLBACK.ranchersActive,
+      buyerCount: STATS_FALLBACK.familiesMatched,
+      stateCount: STATS_FALLBACK.states,
+      ranchers: STATS_FALLBACK.ranchersActive,
+      buyers: STATS_FALLBACK.familiesMatched,
+      states: STATS_FALLBACK.states,
+      verifiedRancherCount: STATS_FALLBACK.ranchersActive,
+      beefBuyerCount: STATS_FALLBACK.familiesMatched,
+      verifiedStateCount: STATS_FALLBACK.states,
     };
     return NextResponse.json(fallback, {
       status: 200,
