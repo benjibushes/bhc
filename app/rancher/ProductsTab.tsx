@@ -21,8 +21,8 @@ import {
   PRODUCT_CATEGORIES,
   deriveProductPricing,
   MIN_PRODUCT_PRICE_CENTS,
-  missingRequiredAnswers,
   type MissingAnswer,
+  missingRequiredAnswers,
 } from '@/lib/rancherProductInput';
 import { askBannerAsks } from '@/lib/productAskBanner';
 import { absorptionPreview } from '@/lib/feeMath';

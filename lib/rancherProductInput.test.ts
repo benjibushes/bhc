@@ -526,7 +526,12 @@ test('the products tab asks up front from the shared validator helper', async ()
   );
   assert.match(tabSrc, /missingRequiredAnswers,?\n?\s*\} from '@\/lib\/rancherProductInput'/, 'imports the helper');
   assert.match(tabSrc, /const openAsks = missingRequiredAnswers\(\{/, 'derives the open asks from it');
-  // Scoped to edits — a blank add-form owes these too but says so with its
-  // required markers; a red banner over an empty form is noise.
-  assert.match(tabSrc, /const asking = editingId \? openAsks : \[\]/, 'banner is edit-scoped');
+  // Visibility widened (#623 follow-up, 2026-08-18): not just edits — also a
+  // form SEEDED from an existing product (Duplicate carries the same legacy
+  // blanks with editingId=null) and any 400 that named missing answers. The
+  // decision is pure in lib/productAskBanner (pinned in its own test + the
+  // ProductsTab wiring pins). A truly blank add-form still stays banner-free —
+  // its required markers cover it; that case is pinned in
+  // lib/productAskBanner.test.ts.
+  assert.match(tabSrc, /const asking = askBannerAsks\(\{/, 'banner visibility comes from the shared decision');
 });
