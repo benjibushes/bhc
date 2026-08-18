@@ -9,7 +9,6 @@ import {
   TABLES,
 } from '@/lib/airtable';
 import { sendEmail, sendBrandListingConfirmation, sendFoundingHerdWelcome } from '@/lib/email';
-import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { commissionRateForTier, TierSlug } from '@/lib/tiers';
 import { isCommissionRateFieldEmpty } from '@/lib/commission';
@@ -162,11 +161,16 @@ export async function POST(request: Request) {
               'Reservation Hold Paid At': new Date().toISOString(),
               'Reservation Hold Session Id': String(session.id || ''),
             });
-            const { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } = await import('@/lib/telegram');
-            await sendTelegramMessage(
-              TELEGRAM_ADMIN_CHAT_ID,
-              `💵 <b>Reservation hold paid</b>\n\n${session.metadata?.buyer_name || session.customer_email || consumerId} — $${((session.amount_total || 0) / 100).toFixed(0)}\n\nCal booking unlocked.`
-            ).catch(() => {});
+            // F13 (Wave 1): operatorSignal, not raw Telegram — money-path
+            // alerts must survive a Telegram outage (SMS/email failover +
+            // dedupe live in the wrapper).
+            await sendOperatorSignal({
+              urgency: 'normal',
+              kind: 'sale',
+              summary: `Reservation hold paid — ${session.metadata?.buyer_name || session.customer_email || consumerId} — $${((session.amount_total || 0) / 100).toFixed(0)}`,
+              detail: 'Cal booking unlocked.',
+              dedupeKey: `reservation-hold-paid:${session.id}`,
+            }).catch(() => {});
           }
         } catch (err: any) {
           console.error('[stripe webhook] reservation_hold handler failed:', err?.message);
@@ -423,10 +427,16 @@ export async function POST(request: Request) {
         const errMsg = pi?.last_payment_error?.message || pi?.last_payment_error?.code || 'unknown';
         const referralId = String(pi.metadata?.referralId || '?');
         const tier = String(pi.metadata?.tier || '?');
-        await sendTelegramMessage(
-          TELEGRAM_ADMIN_CHAT_ID,
-          `⚠️ DEPOSIT FAILED — ${tier} tier, ref=${referralId.slice(-6)}, reason: ${errMsg}`,
-        );
+        // F13 (Wave 1): this is a balk moment — the buyer stood at the deposit
+        // page and their card failed. Loud + failover so a Telegram outage
+        // never hides it from the operator.
+        await sendOperatorSignal({
+          urgency: 'loud',
+          kind: 'sale',
+          summary: `DEPOSIT FAILED — ${tier} tier, ref=${referralId.slice(-6)}, reason: ${errMsg}`,
+          ...(referralId !== '?' ? { refs: [{ type: 'referral' as const, id: referralId }] } : {}),
+          dedupeKey: `deposit-failed:${pi.id}`,
+        });
       } catch (e: any) {
         console.error('[stripe webhook] payment_intent.payment_failed handler:', e);
       }
@@ -471,10 +481,14 @@ export async function POST(request: Request) {
             `[stripe webhook] TODO: add 'awaiting_auth' to Payments.Status singleSelect — flip failed: ${fieldErr?.message || fieldErr}`,
           );
         }
-        await sendTelegramMessage(
-          TELEGRAM_ADMIN_CHAT_ID,
-          `⚠️ DEPOSIT NEEDS AUTH — buyer hit 3DS challenge, ref=${referralId.slice(-6)}, ${tier} tier, PI ${String(pi.id).slice(-8)}`,
-        );
+        // F13 (Wave 1): balk moment (buyer stuck on 3DS) — loud + failover.
+        await sendOperatorSignal({
+          urgency: 'loud',
+          kind: 'sale',
+          summary: `DEPOSIT NEEDS AUTH — buyer hit 3DS challenge, ref=${referralId.slice(-6)}, ${tier} tier, PI ${String(pi.id).slice(-8)}`,
+          ...(referralId !== '?' ? { refs: [{ type: 'referral' as const, id: referralId }] } : {}),
+          dedupeKey: `deposit-needs-auth:${pi.id}`,
+        });
       } catch (e: any) {
         console.error('[stripe webhook] payment_intent.requires_action handler:', e);
       }
@@ -541,11 +555,15 @@ export async function POST(request: Request) {
           }
         }
 
-        // Always fire the operator Telegram so we know an ACH failed.
-        await sendTelegramMessage(
-          TELEGRAM_ADMIN_CHAT_ID,
-          `⚠️ ACH/BANK PAYMENT FAILED — ${metaType || 'unknown type'}, ${customerEmail || '(no email)'}, $${(amountCents / 100).toFixed(2)}, session ${sessionId.slice(-8)}`,
-        );
+        // Always fire the operator alert so we know an ACH failed.
+        // F13 (Wave 1): loud + failover — an async payment failure is money
+        // that silently un-happened days after checkout.
+        await sendOperatorSignal({
+          urgency: 'loud',
+          kind: 'sale',
+          summary: `ACH/BANK PAYMENT FAILED — ${metaType || 'unknown type'}, ${customerEmail || '(no email)'}, $${(amountCents / 100).toFixed(2)}, session ${sessionId.slice(-8)}`,
+          dedupeKey: `async-payment-failed:${sessionId}`,
+        });
       } catch (e: any) {
         console.error('[stripe webhook] checkout.session.async_payment_failed handler:', e);
       }
@@ -640,10 +658,14 @@ export async function POST(request: Request) {
 
         // ── 3. No match → data-integrity Telegram alert ──
         if (!matched) {
-          await sendTelegramMessage(
-            TELEGRAM_ADMIN_CHAT_ID,
-            `⚠️ INVOICE.UPCOMING — customer ${customerId} not found in Brands or Consumers ($${amountDollars.toFixed(2)} renewing in ~${daysUntilRenewal}d). Data drift check needed.`,
-          );
+          // F13 (Wave 1): billing-integrity drift on a money path — failover-
+          // backed signal instead of raw Telegram.
+          await sendOperatorSignal({
+            urgency: 'normal',
+            kind: 'system-error',
+            summary: `INVOICE.UPCOMING — customer ${customerId} not found in Brands or Consumers ($${amountDollars.toFixed(2)} renewing in ~${daysUntilRenewal}d). Data drift check needed.`,
+            dedupeKey: `invoice-upcoming-unmatched:${customerId}`,
+          });
         }
       } catch (e: any) {
         console.error('[stripe webhook] invoice.upcoming handler:', e);
@@ -704,12 +726,16 @@ export async function POST(request: Request) {
       // would redeliver a done refund just to retry a notification).
       if (refundFlipped) {
         try {
-          await sendTelegramMessage(
-            TELEGRAM_ADMIN_CHAT_ID,
-            `↩️ Deposit refunded — PI ${piId.slice(-8)}`,
-          );
+          // F13 (Wave 1): money left the platform — loud + failover so a
+          // Telegram outage never hides a refund from the operator.
+          await sendOperatorSignal({
+            urgency: 'loud',
+            kind: 'sale',
+            summary: `Deposit refunded — PI ${piId.slice(-8)}`,
+            dedupeKey: `deposit-refunded:${piId}`,
+          });
         } catch (e: any) {
-          console.warn('[stripe webhook] charge.refunded telegram failed:', e?.message);
+          console.warn('[stripe webhook] charge.refunded operator signal failed:', e?.message);
         }
       } else {
         // ── P4-A Gap 3: founder lifetime refund ──
@@ -1005,18 +1031,23 @@ async function handleBrandPartnerTierCompleted(session: any) {
     console.error('[brand-partner-tier] welcome email failed:', e?.message);
   }
 
-  // ── 4. Telegram alert ──
+  // ── 4. Operator alert ──
+  // F13 (Wave 1): operatorSignal (failover + dedupe), not raw Telegram — this
+  // is real money landing. The old `if (TELEGRAM_ADMIN_CHAT_ID)` gate is gone:
+  // the wrapper no-ops the Telegram wire itself when unconfigured and can
+  // still reach the operator over SMS/email.
   try {
-    if (TELEGRAM_ADMIN_CHAT_ID) {
-      await sendTelegramMessage(
-        TELEGRAM_ADMIN_CHAT_ID,
-        `💰 <b>BRAND PARTNER — ${tierName}</b>\n\n` +
-          `<b>$${amountPaid.toFixed(0)}</b> from ${name || '(no name)'} (${email})\n\n` +
-          `<a href="https://dashboard.stripe.com/payments/${sessionId}">Stripe session</a>`,
-      );
-    }
+    await sendOperatorSignal({
+      urgency: 'normal',
+      kind: 'sale',
+      summary: `BRAND PARTNER — ${tierName}`,
+      detail:
+        `<b>$${amountPaid.toFixed(0)}</b> from ${name || '(no name)'} (${email})\n\n` +
+        `<a href="https://dashboard.stripe.com/payments/${sessionId}">Stripe session</a>`,
+      dedupeKey: `brand-partner-tier:${sessionId}`,
+    });
   } catch (e: any) {
-    console.warn('[brand-partner-tier] telegram alert failed:', e?.message);
+    console.warn('[brand-partner-tier] operator signal failed:', e?.message);
   }
 
   // ── 5. Funnel event for the admin dashboard conversion view ──
@@ -1532,45 +1563,48 @@ async function handleCommissionInvoicePaid(invoice: any) {
     console.error('[stripe webhook] mark commission paid failed:', airtableWriteError);
   }
 
-  // Telegram celebration — same chat that gets sale alerts. MISMATCH FIX:
-  // surface Airtable write status in the message so operator knows whether
-  // the DB actually reflects the Stripe-confirmed payment.
+  // Operator celebration — same signal rail that carries sale alerts.
+  // MISMATCH FIX: surface Airtable write status in the message so operator
+  // knows whether the DB actually reflects the Stripe-confirmed payment.
+  // F13 (Wave 1): operatorSignal, not raw Telegram. The AIRTABLE-WRITE-FAILED
+  // variant is a manual-fix order — it rides LOUD so a Telegram outage falls
+  // back to SMS/email; the clean celebration rides normal. The old
+  // `if (TELEGRAM_ADMIN_CHAT_ID)` gate is gone: the wrapper no-ops the
+  // Telegram wire itself when unconfigured and the failover still fires.
   try {
-    if (TELEGRAM_ADMIN_CHAT_ID) {
-      let rancherLine = '';
-      let buyerLine = '';
+    let rancherLine = '';
+    let buyerLine = '';
+    try {
+      const ref: any = await getRecordById(TABLES.REFERRALS, referralId);
+      if (ref) {
+        buyerLine = `\n👤 ${ref['Buyer Name'] || 'Unknown'}`;
+      }
+    } catch {
+      /* non-fatal */
+    }
+    if (rancherId) {
       try {
-        const ref: any = await getRecordById(TABLES.REFERRALS, referralId);
-        if (ref) {
-          buyerLine = `\n👤 ${ref['Buyer Name'] || 'Unknown'}`;
+        const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
+        if (rancher) {
+          rancherLine = `\n🤠 ${rancher['Operator Name'] || rancher['Ranch Name'] || ''}`;
         }
       } catch {
         /* non-fatal */
       }
-      if (rancherId) {
-        try {
-          const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
-          if (rancher) {
-            rancherLine = `\n🤠 ${rancher['Operator Name'] || rancher['Ranch Name'] || ''}`;
-          }
-        } catch {
-          /* non-fatal */
-        }
-      }
-      const statusFooter = airtableWriteOk
-        ? `<i>Stripe invoice ${invoice.id}. Referral marked Commission Paid.</i>`
-        : `⚠️ <b>AIRTABLE WRITE FAILED</b> — Stripe confirms paid but Referral row NOT updated. Fix Referral ${referralId} manually.\n<i>Error: ${airtableWriteError.slice(0, 150)}</i>`;
-      await sendTelegramMessage(
-        TELEGRAM_ADMIN_CHAT_ID,
-        `💰 <b>COMMISSION PAID</b>\n\n` +
-          `<b>$${amountPaidDollars.toFixed(2)}</b> just landed in BHC's Stripe.` +
-          rancherLine +
-          buyerLine +
-          `\n\n${statusFooter}`
-      );
     }
+    const statusFooter = airtableWriteOk
+      ? `<i>Stripe invoice ${invoice.id}. Referral marked Commission Paid.</i>`
+      : `⚠️ <b>AIRTABLE WRITE FAILED</b> — Stripe confirms paid but Referral row NOT updated. Fix Referral ${referralId} manually.\n<i>Error: ${airtableWriteError.slice(0, 150)}</i>`;
+    await sendOperatorSignal({
+      urgency: airtableWriteOk ? 'normal' : 'loud',
+      kind: airtableWriteOk ? 'sale' : 'system-error',
+      summary: `COMMISSION PAID — $${amountPaidDollars.toFixed(2)} just landed in BHC's Stripe.${airtableWriteOk ? '' : ' AIRTABLE WRITE FAILED — manual fix needed.'}`,
+      detail: `${rancherLine}${buyerLine}\n\n${statusFooter}`.trim(),
+      refs: [{ type: 'referral', id: referralId }],
+      dedupeKey: `commission-paid:${invoice.id}`,
+    });
   } catch (e: any) {
-    console.error('[stripe webhook] commission-paid telegram alert failed:', e?.message);
+    console.error('[stripe webhook] commission-paid operator signal failed:', e?.message);
   }
 }
 
@@ -1980,20 +2014,31 @@ async function handleBrandPartnerSubscriptionUpdated(sub: any): Promise<void> {
     await updateRecord(TABLES.BRANDS, brandRecordId, core);
   }
 
-  // ── Telegram alert per cause ──
+  // ── Operator alert per cause ──
+  // F13 (Wave 1): recurring-revenue state change — operatorSignal so a
+  // Telegram outage never hides churn/tier moves. Cancel rides loud
+  // (save-attempt moment, mirrors TIER SUB CANCELLED); the rest normal.
   try {
     const brandName = String(brand['Brand Name'] || brand['Contact Name'] || brandRecordId);
     let alert = '';
     if (tierChanged) {
-      alert = `🔁 <b>BRAND TIER CHANGE</b>\n${brandName}\n${previousTier || '(unknown)'} → <b>${newTierLabel}</b>\nsub ${subscriptionId.slice(-8)}`;
+      alert = `BRAND TIER CHANGE\n${brandName}\n${previousTier || '(unknown)'} → <b>${newTierLabel}</b>\nsub ${subscriptionId.slice(-8)}`;
     } else if (newStatus === 'canceled') {
-      alert = `⚠️ <b>BRAND CANCELLED</b>\n${brandName}\nprev status: ${previousStatus}\nsub ${subscriptionId.slice(-8)}`;
+      alert = `BRAND CANCELLED\n${brandName}\nprev status: ${previousStatus}\nsub ${subscriptionId.slice(-8)}`;
     } else if (statusChanged) {
-      alert = `🔔 BRAND status: ${brandName} → <b>${newStatus}</b> (was ${previousStatus || 'unknown'}) · sub ${subscriptionId.slice(-8)}`;
+      alert = `BRAND status: ${brandName} → <b>${newStatus}</b> (was ${previousStatus || 'unknown'}) · sub ${subscriptionId.slice(-8)}`;
     }
-    if (alert) await sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, alert);
+    if (alert) {
+      await sendOperatorSignal({
+        urgency: newStatus === 'canceled' ? 'loud' : 'normal',
+        kind: 'sale',
+        summary: alert.split('\n')[0],
+        detail: alert.split('\n').slice(1).join('\n') || undefined,
+        dedupeKey: `brand-sub-updated:${subscriptionId}:${newStatus}:${newTierLabel}`,
+      });
+    }
   } catch (e: any) {
-    console.warn('[brand-sub-updated] telegram alert failed:', e?.message);
+    console.warn('[brand-sub-updated] operator signal failed:', e?.message);
   }
 
   // ── Funnel event ──
@@ -2074,16 +2119,22 @@ async function handleBrandPartnerSubscriptionDeleted(sub: any): Promise<void> {
     });
   }
 
-  // ── Telegram alert ──
+  // ── Operator alert ──
+  // F13 (Wave 1): terminal churn on a paying brand — loud + failover
+  // (mirrors TIER SUB CANCELLED), 24h dedupe window.
   try {
     const brandName = String(brand['Brand Name'] || brand['Contact Name'] || brandRecordId);
     const tier = String(brand['Tier'] || '(unknown)');
-    await sendTelegramMessage(
-      TELEGRAM_ADMIN_CHAT_ID,
-      `❌ <b>BRAND CANCELLED</b>\n<b>${brandName}</b>\nTier: ${tier}\nPrev status: ${previousStatus || 'unknown'}\nsub ${subscriptionId.slice(-8)}\n\nSave attempt recommended within 48h.`,
-    );
+    await sendOperatorSignal({
+      urgency: 'loud',
+      kind: 'sale',
+      summary: `BRAND CANCELLED — ${brandName}`,
+      detail: `Tier: ${tier}\nPrev status: ${previousStatus || 'unknown'}\nsub ${subscriptionId.slice(-8)}\n\nSave attempt recommended within 48h.`,
+      dedupeKey: `brand-sub-deleted:${subscriptionId}`,
+      dedupeWindowMs: 24 * 60 * 60 * 1000,
+    });
   } catch (e: any) {
-    console.warn('[brand-sub-deleted] telegram alert failed:', e?.message);
+    console.warn('[brand-sub-deleted] operator signal failed:', e?.message);
   }
 
   try {
@@ -2167,18 +2218,27 @@ async function handleFounderSubscriptionUpdated(sub: any): Promise<void> {
     throw e;
   }
 
-  // Telegram alert
+  // Operator alert — F13 (Wave 1): recurring-revenue state change, rides
+  // operatorSignal (failover + dedupe) instead of raw Telegram.
   try {
     const name = String(consumer['Full Name'] || consumer['Email'] || consumerId);
     let alert = '';
     if (tierChanged) {
-      alert = `🔁 <b>FOUNDER TIER CHANGE</b>\n${name}\n${previousTier || '(unknown)'} → <b>${mappedNewTier}</b>\nsub ${subscriptionId.slice(-8)}`;
+      alert = `FOUNDER TIER CHANGE\n${name}\n${previousTier || '(unknown)'} → <b>${mappedNewTier}</b>\nsub ${subscriptionId.slice(-8)}`;
     } else if (statusChanged) {
-      alert = `🔔 FOUNDER status: ${name} → <b>${newStatus}</b> (was ${previousStatus || 'unknown'}) · sub ${subscriptionId.slice(-8)}`;
+      alert = `FOUNDER status: ${name} → <b>${newStatus}</b> (was ${previousStatus || 'unknown'}) · sub ${subscriptionId.slice(-8)}`;
     }
-    if (alert) await sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, alert);
+    if (alert) {
+      await sendOperatorSignal({
+        urgency: 'normal',
+        kind: 'sale',
+        summary: alert.split('\n')[0],
+        detail: alert.split('\n').slice(1).join('\n') || undefined,
+        dedupeKey: `founder-sub-updated:${subscriptionId}:${newStatus}:${mappedNewTier || previousTier}`,
+      });
+    }
   } catch (e: any) {
-    console.warn('[founder-sub-updated] telegram alert failed:', e?.message);
+    console.warn('[founder-sub-updated] operator signal failed:', e?.message);
   }
 
   try {

@@ -101,7 +101,6 @@ export function payingBuyerConsumerPatch(
   return patch;
 }
 import { sendPostPurchaseWelcome } from '@/lib/email';
-import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { markDepositSucceeded } from '@/lib/contracts/payments';
 import { claimOnce } from '@/lib/rancherCapacity';
 import { enrollClosedWonAffiliate, recordClose } from '@/lib/contracts/rancher';
@@ -465,21 +464,26 @@ export async function settleBuyerDeposit(pi: any): Promise<void> {
     }
   }
 
-  // Telegram celebration to admin chat. Shows the full deal shape:
-  // deposit to rancher / BHC commission / fulfillment balance still
-  // owed by buyer directly to rancher.
+  // Operator celebration. Shows the full deal shape: deposit to rancher /
+  // BHC commission / fulfillment balance still owed by buyer directly to
+  // rancher. F13 (Wave 1): rides sendOperatorSignal (failover + dedupe)
+  // instead of raw Telegram — this is THE money moment on the Connect rail.
   try {
     const feePart = platformFeeCents > 0 ? ` · BHC $${(platformFeeCents / 100).toFixed(2)}` : '';
     const balancePart = fulfillmentBalanceCents > 0
       ? ` · Balance at fulfillment $${(fulfillmentBalanceCents / 100).toFixed(2)}`
       : '';
-    await sendTelegramMessage(
-      TELEGRAM_ADMIN_CHAT_ID,
-      `💰 DEPOSIT PAID — Rancher $${(depositCents / 100).toFixed(2)}${feePart}${balancePart} · ${tier} tier · ref=${referralId.slice(-6)}\n\n` +
-        `<i>NRD-7: Rancher needs to tap "Accept Slot" in dashboard to lock buyer in. Refundable until then.</i>`,
-    );
+    const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+    await sendOperatorSignal({
+      urgency: 'normal',
+      kind: 'sale',
+      summary: `DEPOSIT PAID — Rancher $${(depositCents / 100).toFixed(2)}${feePart}${balancePart} · ${tier} tier · ref=${referralId.slice(-6)}`,
+      detail: `<i>NRD-7: Rancher needs to tap "Accept Slot" in dashboard to lock buyer in. Refundable until then.</i>`,
+      refs: [{ type: 'referral', id: referralId }],
+      dedupeKey: `deposit-paid:${referralId}`,
+    });
   } catch (e: any) {
-    console.warn('[stripe webhook] telegram deposit alert failed:', e?.message);
+    console.warn('[stripe webhook] deposit operator signal failed:', e?.message);
   }
 
   // ── Rancher instant-notify (email + SMS) ────────────────────────────────
@@ -718,10 +722,16 @@ export async function settleFinalInvoice(pi: any): Promise<void> {
   }
 
   try {
-    await sendTelegramMessage(
-      TELEGRAM_ADMIN_CHAT_ID,
-      `🎯 FINAL INVOICE PAID — $${finalAmount.toFixed(2)} · total sale $${closeSaleAmount.toFixed(2)} · ref=${referralId.slice(-6)} · BHC fee $0 (collected at deposit)`,
-    );
+    // F13 (Wave 1): operatorSignal (failover + dedupe), not raw Telegram —
+    // the deal fully closing is a money moment the operator must see.
+    const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+    await sendOperatorSignal({
+      urgency: 'normal',
+      kind: 'sale',
+      summary: `FINAL INVOICE PAID — $${finalAmount.toFixed(2)} · total sale $${closeSaleAmount.toFixed(2)} · ref=${referralId.slice(-6)} · BHC fee $0 (collected at deposit)`,
+      refs: [{ type: 'referral', id: referralId }],
+      dedupeKey: `final-invoice-paid:${referralId}`,
+    });
   } catch {}
 
   await logAuditEntry({

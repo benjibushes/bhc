@@ -397,12 +397,18 @@ export async function POST(request: Request) {
         // (that would redeliver a done refund just to retry a notification).
         if (refundFlipped) {
           try {
-            await sendTelegramMessage(
-              TELEGRAM_ADMIN_CHAT_ID,
-              `↩️ Deposit refunded — PI ${piId.slice(-8)}`,
-            );
+            // F13 (Wave 1): money left the platform — loud + failover so a
+            // Telegram outage never hides a refund from the operator. Same
+            // dedupe family as the platform webhook's charge.refunded: both
+            // can see the same PI, and one alert is the truth.
+            await sendOperatorSignal({
+              urgency: 'loud',
+              kind: 'sale',
+              summary: `Deposit refunded — PI ${piId.slice(-8)}`,
+              dedupeKey: `deposit-refunded:${piId}`,
+            });
           } catch (e: any) {
-            console.warn('[stripe-connect charge.refunded] telegram failed:', e?.message);
+            console.warn('[stripe-connect charge.refunded] operator signal failed:', e?.message);
           }
         }
         // H-3 audit fix: Connect-side refund mirror was silent in audit

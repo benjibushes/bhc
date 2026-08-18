@@ -245,11 +245,18 @@ export async function POST(req: Request) {
         'sessionId:', result.sessionId,
       );
       try {
-        const { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } = await import('@/lib/telegram');
-        await sendTelegramMessage(
-          TELEGRAM_ADMIN_CHAT_ID,
-          `🚨 <b>ORPHAN BROKER SESSION</b>\n\nLedger write + expire both failed.\n\nSession: <code>${result.sessionId}</code>\nReferral: ${referralId}\n\n<i>Expire it in the Stripe Dashboard NOW or the buyer can pay with no record.</i>`,
-        );
+        // F13 (Wave 1): operatorSignal, not raw Telegram — if Telegram is down
+        // this action-required alert falls back to SMS + email instead of
+        // dying silently while an orphanable session sits live in Stripe.
+        const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+        await sendOperatorSignal({
+          urgency: 'loud',
+          kind: 'system-error',
+          summary: 'ORPHAN BROKER SESSION — ledger write + expire both failed',
+          detail: `Session: <code>${result.sessionId}</code>\nReferral: ${referralId}\n\n<i>Expire it in the Stripe Dashboard NOW or the buyer can pay with no record.</i>`,
+          refs: [{ type: 'referral', id: referralId }],
+          dedupeKey: `broker-orphan-session:${result.sessionId}`,
+        });
       } catch {}
     }
     return NextResponse.json({ error: 'Could not record deposit. Please try again.' }, { status: 500 });

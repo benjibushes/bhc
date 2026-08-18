@@ -47,7 +47,6 @@ import {
   type BrokerNotifyAlert,
 } from '@/lib/brokerNotify';
 import { sendBrokerRancherOrder, sendBrokerBuyerReceipt } from '@/lib/email';
-import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { fireCapi, depositPurchaseEnabled } from '@/lib/metaCapi';
 import { buildBrokerDepositCapiEvents } from '@/lib/brokerCapi';
 
@@ -329,10 +328,21 @@ export async function settleBrokerDeposit(pi: any): Promise<void> {
   // `delivery` is threaded in so the card states the TRUE outcome. Ben reads
   // this card as ground truth; before this it asserted "Rancher emailed the
   // fulfillment sheet" unconditionally, which was a lie on every failed send.
+  // F13 (Wave 1): rides sendOperatorSignal (failover + dedupe) instead of raw
+  // Telegram — money already landed, the card must reach Ben even in a
+  // Telegram outage. The card itself is the detail, verbatim.
   try {
-    await sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, buildBrokerOperatorCard(facts, delivery));
+    const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+    await sendOperatorSignal({
+      urgency: 'normal',
+      kind: 'sale',
+      summary: `BROKER DEPOSIT PAID — ref ${referralId.slice(-6)}`,
+      detail: buildBrokerOperatorCard(facts, delivery),
+      refs: [{ type: 'referral', id: referralId }],
+      dedupeKey: `broker-operator-card-${referralId}`,
+    });
   } catch (e: any) {
-    console.error('[broker settle] telegram card failed:', e?.message);
+    console.error('[broker settle] operator card signal failed:', e?.message);
   }
 }
 
