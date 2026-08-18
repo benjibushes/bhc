@@ -73,6 +73,7 @@ import { MAX_BATCH, DAILY_CAMPAIGN_BUDGET } from './requalifyCampaign';
 import { SUNSET_SUPPRESSED_MARKER } from './marketingSunset';
 import { COMPLAINT_ALERT_THRESHOLD } from './complaintTelemetry';
 import { REQUEST_ONLY_RANCHER_SLUGS, isRequestOnlyRancher } from './requestOnlyRanchers';
+import { cooledDown } from './marketingTouch';
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -424,6 +425,7 @@ export type WaveSkipReason =
   | 'sunset-suppressed'
   | 'already-claimed'
   | 'cross-rail-7d'
+  | 'cooldown-24h'
   | 'mid-deal'
   | 'lane-national'
   | 'lane-customer'
@@ -525,6 +527,16 @@ export function selectCampaignWaves(input: SelectWavesInput): WavePlan {
     }
     if (demandRouterTouchedWithinDays(c, input.now)) {
       skip('cross-rail-7d');
+      continue;
+    }
+    // F18 (2026-08-18): the claim + 7d-belt gates only see the CAMPAIGN
+    // namespace — a buyer nurture-dripped, sequence-emailed or warmup-blasted
+    // hours ago sailed through and got a first-touch wave the same day. The
+    // shared cross-rail cooldown (lib/marketingTouch, 24h between ANY two
+    // marketing touches; chase rails exempt) closes it. Skipped buyers are
+    // untouched — they re-enter the pool on a later run.
+    if (!cooledDown(c, input.now)) {
+      skip('cooldown-24h');
       continue;
     }
     const id = String((c as any).id || '');

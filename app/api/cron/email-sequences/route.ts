@@ -28,6 +28,7 @@ import {
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { normalizeState } from '@/lib/states';
 import { isRancherOnConnect } from '@/lib/rancherEligibility';
+import { cooledDown } from '@/lib/marketingTouch';
 
 import jwt from 'jsonwebtoken';
 
@@ -318,9 +319,14 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
         }
         const daysInStage = (now - new Date(stageEnteredRaw).getTime()) / DAY_MS;
 
-        // 24h frequency gate — never two automated emails to same buyer in 1 day
-        const lastSentAt = consumer['Sequence Sent At'];
-        if (lastSentAt && (now - new Date(lastSentAt).getTime()) < DAY_MS) {
+        // 24h frequency gate — never two automated emails to same buyer in 1
+        // day. F18 (2026-08-18): CROSS-RAIL — this used to read ONLY this
+        // rail's own stamp (Sequence Sent At), so a demand-router wave /
+        // nurture touch / warmup sent hours earlier was invisible and the
+        // buyer got a second marketing email the same day. The shared
+        // lib/marketingTouch cooldown reads every rail's stamp (chase rails
+        // exempt by its field roster).
+        if (!cooledDown(consumer, now)) {
           skipReasons['cap-suppressed'] = (skipReasons['cap-suppressed'] || 0) + 1;
           continue;
         }

@@ -475,3 +475,20 @@ test('isWaveSellable: priced cut or payment link required; dead-end ranchers exc
   const table = rancherForStateTable([deadEnd] as any[]);
   assert.equal(table.size, 0);
 });
+
+// ── F18 — cross-rail marketing cooldown (Wave 1 rails hardening 2026-08-18) ─
+// A first-touch wave must never land within 24h of ANY other rail's marketing
+// touch (nurture / sequences / warmup — stamps the claim + 7d-belt gates never
+// read). Chase stamps stay exempt; the window releases after 24h.
+
+test('select F18: buyers marketing-touched by another rail within 24h are skipped (counted), released after the window', () => {
+  const HOUR = 60 * 60 * 1000;
+  const blockedNurture = consumer({ 'Nurture Touched At': new Date(NOW - 2 * HOUR).toISOString() });
+  const blockedWarmup = consumer({ 'Warmup Sent At': new Date(NOW - 12 * HOUR).toISOString() });
+  const blockedSequence = consumer({ 'Sequence Sent At': new Date(NOW - 23 * HOUR).toISOString() });
+  const cooled = consumer({ 'Nurture Touched At': new Date(NOW - 25 * HOUR).toISOString() });
+  const chased = consumer({ 'Waiting Nudge Last Sent At': new Date(NOW - 1 * HOUR).toISOString() });
+  const p = plan({ consumers: [blockedNurture, blockedWarmup, blockedSequence, cooled, chased] });
+  assert.equal(p.selected, 2, 'cooled + chase-exempt buyers still get their first touch');
+  assert.equal(p.skips['cooldown-24h'], 3, 'every blocked buyer is a COUNTED skip');
+});

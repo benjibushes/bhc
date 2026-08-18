@@ -52,7 +52,11 @@ import { NextResponse } from 'next/server';
 import { getAllRecords, getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { findPaymentsByReferral } from '@/lib/contracts/payments';
 import { isMaintenanceMode } from '@/lib/maintenance';
-import { sendDemandRouterCampaign } from '@/lib/email';
+import {
+  sendDemandRouterCampaign,
+  getSuppressionList,
+  didSuppressionListBuildFail,
+} from '@/lib/email';
 import { sendSMSToConsumer } from '@/lib/twilio';
 import { smsEnabled } from '@/lib/smsFlag';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
@@ -67,9 +71,11 @@ import {
   buildCampaignPlan,
   buildCampaignPools,
   campaignRancherForBuyer,
+  defaultPairServedStates,
   renderMessage,
   renderSmsRecovery,
   rancherPageUrl,
+  brokerReservePageUrl,
   parseCampaignRancherIds,
   activeDealBuyerKeys,
   type ActiveDealKeys,
@@ -98,6 +104,9 @@ import {
   isRancherOperationalForBuyers,
   getOperationalServedStates,
 } from '@/lib/rancherEligibility';
+import { rancherForStateTable } from '@/lib/campaignWaves';
+import { isBrokerRancher } from '@/lib/brokerRail';
+import { isRequestOnlyRancher, isRequestOnlyRancherId } from '@/lib/requestOnlyRanchers';
 import { isEmailWindow, isSmsWindow } from '@/lib/sendWindow';
 import { normalizeState } from '@/lib/states';
 import {
@@ -142,15 +151,31 @@ interface CronResult {
 /**
  * Resolve the buyer-facing {link} for a planned send.
  *
- * Personalizes the 1-tap deposit link via mintCampaignReserveToken (#122):
- * a scoped token pinning {consumerId, rancherSlug, cut} → /r/d/<token>, which
- * the /r/d route exchanges for a cut-prefilled deposit checkout (eligibility-
- * gated server-side). Falls back to the rancher's public page `/ranchers/<slug>`
- * ONLY if minting can't proceed — i.e. the buyer has no usable cut (Order Type
- * blank/"Not Sure") or mint throws (mint requires a valid cut + slug). The
- * fallback keeps the campaign honest for buyers we can't 1-tap.
+ * BROKER BRANCH FIRST (F19, 2026-08-18): a broker-rail ranch never gets a
+ * /r/d token — that redemption resolves via getRancherBySlug, whose formula
+ * excludes Broker Rail, so the token degrades to a bare page visit. Ported
+ * from the requalify-send pattern (isBrokerRoutable → broker reserve CTA):
+ * broker pools link straight to the ranch's own reserve surface.
+ * `brokerRancherIds` comes from readCapacity, which judged the actual record
+ * (isBrokerRancher) at pool-resolve time.
+ *
+ * Otherwise personalizes the 1-tap deposit link via mintCampaignReserveToken
+ * (#122): a scoped token pinning {consumerId, rancherSlug, cut} →
+ * /r/d/<token>, which the /r/d route exchanges for a cut-prefilled deposit
+ * checkout (eligibility-gated server-side). Falls back to the rancher's
+ * public page `/ranchers/<slug>` ONLY if minting can't proceed — i.e. the
+ * buyer has no usable cut (Order Type blank/"Not Sure") or mint throws (mint
+ * requires a valid cut + slug). The fallback keeps the campaign honest for
+ * buyers we can't 1-tap.
  */
-async function resolveLink(rancher: RancherTarget, send: PlannedSend): Promise<string> {
+async function resolveLink(
+  rancher: RancherTarget,
+  send: PlannedSend,
+  brokerRancherIds: ReadonlySet<string>,
+): Promise<string> {
+  if (brokerRancherIds.has(rancher.id)) {
+    return brokerReservePageUrl(SITE_URL, rancher);
+  }
   const base = SITE_URL.replace(/\/+$/, '');
   if (send.cut) {
     try {
@@ -188,6 +213,11 @@ async function readCapacity(ids: readonly string[]): Promise<{
   poolDetail: Array<{ name: string; max: number; cur: number }>;
   degraded: string[];
   skipped: string[];
+  /**
+   * Configured rancher ids whose RECORD is broker-rail (F19) — their campaign
+   * links must be the broker reserve surface, never a Connect-only /r/d token.
+   */
+  brokerRancherIds: ReadonlySet<string>;
 }> {
   // FAIL-CLOSED on a missing/failed rancher record. getMaxActiveReferrals(null)
   // returns DEFAULT_MAX=5 — a transient fetch failure would otherwise INVENT 5
@@ -197,6 +227,9 @@ async function readCapacity(ids: readonly string[]): Promise<{
   const degraded: string[] = [];
   // Operational-gate + config skips — operator-visible in the Telegram report.
   const skipped: string[] = [];
+  // F19: broker-rail configured ranchers (judged from the RECORD below) — the
+  // link resolvers route these at their own reserve surface, never /r/d.
+  const brokerRancherIds = new Set<string>();
 
   // The default pair keeps its curated display fields (and short report names,
   // byte-identical to the legacy report); any OTHER configured rancher is
@@ -225,6 +258,24 @@ async function readCapacity(ids: readonly string[]): Promise<{
     console.warn('[demand-router] Closed Won scan failed — falling back to held counter:', e?.message);
   }
 
+  // F8 (2026-08-18): STATE-AWARE DEFAULT POOLS. When a curated default
+  // rancher is configured, build the operational state-owner table (the SAME
+  // rancherForStateTable the campaign autopilot uses — one policy, one
+  // implementation) so the default pair's reach can cede every state owned by
+  // a different operational rancher (AZ→gila). Read failure degrades to the
+  // pair's OWN Routing States (still never nationwide-for-free) with an
+  // operator-visible note — conservative in the only direction that matters.
+  let stateOwners: ReadonlyMap<string, { id: string }> | null = null;
+  if (ids.some((id) => !!curatedTargetFor(id))) {
+    try {
+      const allRanchers = (await getAllRecords(TABLES.RANCHERS)) as any[];
+      stateOwners = rancherForStateTable(allRanchers as any);
+    } catch (e: any) {
+      degraded.push('state-owner table read failed — default pair limited to its own Routing States this run');
+      console.warn('[demand-router] state-owner table read failed (F8 fallback to own served states):', e?.message);
+    }
+  }
+
   async function resolveSlot(
     id: string,
     label: string,
@@ -234,54 +285,88 @@ async function readCapacity(ids: readonly string[]): Promise<{
     cur: number;
     target: RancherTarget | null;
     name: string;
-    servedStates: ReadonlySet<string> | null;
+    servedStates: ReadonlySet<string>;
   }> {
     const rec = (await getRecordById(TABLES.RANCHERS, id).catch(() => null)) as any;
     if (!rec) {
-      // For the known default pair, keep the curated target so mid-arc
-      // continuations still complete on a TRANSIENT fetch failure (pre-existing
-      // behavior — a fetch blip is not "dark"). An unknown configured id we
-      // know nothing about (no slug/name) → skip the pool entirely.
+      // For the known default pair, keep the curated target on a TRANSIENT
+      // fetch failure — but FAIL CLOSED on reach (F8, 2026-08-18): with no
+      // record we can't know its Routing States, and the old servedStates=null
+      // here meant "serve nationwide", so a fetch blip re-opened the exact
+      // AZ→Montana hole this pool model exists to close. Empty reach = even
+      // mid-arc continuations hold for one run (untouched, no stamp) — the
+      // 3-/4-day wave gaps make a one-run hold invisible. An unknown
+      // configured id we know nothing about (no slug/name) → skip entirely.
       const curated = curatedTargetFor(id);
       if (curated) {
-        degraded.push(`${displayNameFor(id, curated.name)} (${label}): rancher record unavailable → capacity forced to 0 (skipped)`);
-        return { open: 0, max: 0, cur: 0, target: curated, name: displayNameFor(id, curated.name), servedStates: null };
+        degraded.push(`${displayNameFor(id, curated.name)} (${label}): rancher record unavailable → capacity forced to 0, reach forced empty (continuations hold this run)`);
+        return { open: 0, max: 0, cur: 0, target: curated, name: displayNameFor(id, curated.name), servedStates: new Set() };
       }
       skipped.push(`${label}: configured rancher ${id} could not be read → pool disabled this run`);
       console.warn(`[demand-router] configured campaign rancher ${id} (${label}) unreadable — pool disabled this run`);
-      return { open: 0, max: 0, cur: 0, target: null, name: id, servedStates: null };
+      return { open: 0, max: 0, cur: 0, target: null, name: id, servedStates: new Set() };
     }
 
     const recName = String(rec['Ranch Name'] || rec['Operator Name'] || id).trim() || id;
     const name = displayNameFor(id, recName);
+
+    // F10 (2026-08-18): REQUEST-ONLY SUPPLY — Ben's standing rule that
+    // specialty supply (Rep Provisions) is NEVER a generic campaign target.
+    // Checked by SLUG (the shared list every engine consults) AND by REC-ID
+    // belt: this pool env is configured by record id, so a slug rename in
+    // Airtable must not slip a request-only ranch into a generic deposit
+    // campaign. Trumps everything below — an operational request-only ranch
+    // is still refused.
+    if (isRequestOnlyRancher(rec) || isRequestOnlyRancherId(id)) {
+      skipped.push(`${name} (${label}): request-only rancher — never a generic campaign target → pool disabled this run`);
+      console.warn(`[demand-router] configured campaign rancher ${name} (${id}, ${label}) is request-only — pool disabled this run`);
+      return { open: 0, max: 0, cur: 0, target: null, name, servedStates: new Set() };
+    }
 
     // THE OPERATIONAL GATE — single source: lib/rancherEligibility, the same
     // gate /api/matching/suggest applies. Fails → NEVER routed to this run.
     if (!isRancherOperationalForBuyers(rec)) {
       skipped.push(`${name} (${label}): failed the operational gate (isRancherOperationalForBuyers) → NOT routed to this run`);
       console.warn(`[demand-router] configured campaign rancher ${name} (${id}, ${label}) failed isRancherOperationalForBuyers — pool disabled this run`);
-      return { open: 0, max: 0, cur: 0, target: null, name, servedStates: null };
+      return { open: 0, max: 0, cur: 0, target: null, name, servedStates: new Set() };
     }
 
     const target = curatedTargetFor(id) ?? hydrateTarget(id, rec);
     if (!target) {
       skipped.push(`${name} (${label}): operational but has no Slug → cannot build campaign links → NOT routed to this run`);
       console.warn(`[demand-router] configured campaign rancher ${name} (${id}, ${label}) has no Slug — pool disabled this run`);
-      return { open: 0, max: 0, cur: 0, target: null, name, servedStates: null };
+      return { open: 0, max: 0, cur: 0, target: null, name, servedStates: new Set() };
     }
 
-    // ROUTING-STATES GATE (audit 2026-07-22, finding 1): a NON-default
-    // configured rancher only serves the states its record says it serves
-    // (getOperationalServedStates — home state + admin-approved Routing
-    // States, the SAME rule the real matching engine uses). The curated
-    // default pair ships nationwide BY DESIGN (the campaign's premise), so it
-    // keeps servedStates=null (serves every state — byte-identical behavior).
-    let servedStates: ReadonlySet<string> | null = null;
+    // F19 (2026-08-18): broker-ness judged from the RECORD, once, here — the
+    // link resolvers must send this pool's buyers to the broker reserve
+    // surface, never a Connect-only /r/d token (its redemption excludes
+    // Broker Rail and degrades to a bare page visit).
+    if (isBrokerRancher(rec)) brokerRancherIds.add(id);
+
+    // ROUTING-STATES GATE (audit 2026-07-22 finding 1; widened by F8
+    // 2026-08-18): EVERY pool — default or not — only serves the states its
+    // record says it serves (getOperationalServedStates — home state +
+    // admin-approved Routing States, the SAME rule the real matching engine
+    // uses). The curated default pair used to ship servedStates=null
+    // ("nationwide by design"), which pushed Montana deposit links at ~110
+    // AZ waitlist buyers whose state has its own operational rancher. Its
+    // reach is now its own Routing States MINUS any state owned by a
+    // DIFFERENT operational state-table rancher (defaultPairServedStates —
+    // those buyers belong to their state rancher's rail).
+    let servedStates: ReadonlySet<string>;
     if (!curatedTargetFor(id)) {
       servedStates = new Set(getOperationalServedStates(rec));
       if (servedStates.size === 0) {
         skipped.push(`${name} (${label}): no served states on record (blank State, no approved Routing States) → pool cannot route any buyer this run`);
         console.warn(`[demand-router] configured campaign rancher ${name} (${id}, ${label}) has no served states — pool routes nothing`);
+      }
+    } else {
+      const own = new Set(getOperationalServedStates(rec));
+      servedStates = stateOwners ? defaultPairServedStates(own, id, stateOwners) : own;
+      if (servedStates.size === 0) {
+        skipped.push(`${name} (${label}): no reachable states after the Routing-States + state-owner gates → pool cannot route any buyer this run`);
+        console.warn(`[demand-router] default campaign rancher ${name} (${id}, ${label}) has no reachable states — pool routes nothing`);
       }
     }
 
@@ -320,7 +405,7 @@ async function readCapacity(ids: readonly string[]): Promise<{
     .filter((r) => r.target)
     .map((r) => ({ name: r.name, max: r.max, cur: r.cur }));
 
-  return { pools, poolDetail, degraded, skipped };
+  return { pools, poolDetail, degraded, skipped, brokerRancherIds };
 }
 
 /** Build a RancherTarget for a non-default configured rancher from its record. */
@@ -514,6 +599,8 @@ async function executeSend(
    * delivered).
    */
   prior: { stage: string | null; lastSent: string | null; rancher: string[] | null },
+  /** F19: broker-rail pool ids — their links go to the broker reserve surface. */
+  brokerRancherIds: ReadonlySet<string>,
 ): Promise<{ emailOk: boolean; deferred: boolean }> {
   let emailOk = false;
 
@@ -547,7 +634,7 @@ async function executeSend(
   // precede the claim. Msg2/Msg3 carry the live {socialProof} line (Upgrade B).
   let msg: ReturnType<typeof renderMessage>;
   try {
-    const link = await resolveLink(send.rancher, send);
+    const link = await resolveLink(send.rancher, send, brokerRancherIds);
     msg = renderMessage(send.wave, {
       firstName: send.firstName,
       state: send.state,
@@ -691,6 +778,8 @@ async function runSmsRecovery(
   pools: CampaignPool[],
   activeDeals: ActiveDealKeys,
   failures: string[],
+  /** F19: broker-rail pool ids — their links go to the broker reserve surface. */
+  brokerRancherIds: ReadonlySet<string>,
 ): Promise<{ planned: number; sent: number; deferred: number }> {
   const nowMs = now.getTime();
   const smsRecoveryHours = Number(process.env.CAMPAIGN_SMS_RECOVERY_HOURS || DEFAULT_SMS_RECOVERY_HOURS);
@@ -752,7 +841,7 @@ async function runSmsRecovery(
     };
     let link: string;
     try {
-      link = await resolveLink(rancher, fakeSend);
+      link = await resolveLink(rancher, fakeSend, brokerRancherIds);
     } catch {
       link = rancherPageUrl(SITE_URL, rancher);
     }
@@ -881,7 +970,7 @@ async function readRecoveryReferrals(
 // for the 1-tap link + copy. Reads the linked Rancher record's Slug/Name.
 async function rancherForReferral(
   ref: RecoveryRow,
-): Promise<{ id: string; slug: string; name: string } | null> {
+): Promise<{ id: string; slug: string; name: string; broker: boolean } | null> {
   const links = (ref.Rancher || ref['Suggested Rancher']) as unknown;
   const ids = Array.isArray(links) ? links.map(String) : [];
   const id = ids[0];
@@ -892,7 +981,9 @@ async function rancherForReferral(
     const slug = String(rec['Slug'] || '').trim();
     const name = String(rec['Operator Name'] || rec['Ranch Name'] || 'your rancher').trim();
     if (!slug) return null; // no slug → can't mint a 1-tap link; skip recovery
-    return { id, slug, name };
+    // F19: broker-rail flag judged from the record — recoveryLink must send
+    // this ranch's buyers to its reserve surface, never a /r/d token.
+    return { id, slug, name, broker: isBrokerRancher(rec) };
   } catch {
     return null;
   }
@@ -907,12 +998,18 @@ function cutLabelToCut(orderType: unknown): Cut | null {
 }
 
 /** Build the 1-tap recovery link for a referral (token → /r/d/<token>), with
- * a rancher-page fallback when the buyer's cut is unknown or minting fails. */
+ * a rancher-page fallback when the buyer's cut is unknown or minting fails.
+ * BROKER BRANCH FIRST (F19): a broker ranch never gets a /r/d token — its
+ * redemption excludes Broker Rail and the link degrades to a bare page visit.
+ * Broker reserves recover at the ranch's own reserve surface instead. */
 function recoveryLink(
   consumerId: string,
-  rancher: { slug: string },
+  rancher: { slug: string; broker?: boolean },
   cut: Cut | null,
 ): string {
+  if (rancher.broker) {
+    return brokerReservePageUrl(SITE_URL, rancher);
+  }
   const base = SITE_URL.replace(/\/+$/, '');
   if (cut && consumerId) {
     try {
@@ -1218,6 +1315,29 @@ async function realHandler(_request: Request): Promise<CronResult> {
   let waitlisted = 0;
   let sunsetted = 0;
 
+  // F24 (2026-08-18): PRE-WARM THE SUPPRESSION LIST ONCE PER RUN, and abort a
+  // LIVE batch LOUDLY when it cannot be built. Every sender below rides
+  // guardedSend, whose per-send suppression check fails OPEN on a broken
+  // list — acceptable for one transactional email, not for a campaign batch:
+  // an Airtable outage would let a whole run of marketing sends bypass the
+  // unsub/bounce/complaint list (CAN-SPAM + deliverability). One warm build
+  // here serves the entire batch via the 5-minute cache.
+  if (live) {
+    await getSuppressionList();
+    if (didSuppressionListBuildFail()) {
+      const note = 'ABORTED: suppression list build failed — refusing to batch-send against an empty suppression set (fail closed; retried next run)';
+      try {
+        await sendTelegramMessage(
+          TELEGRAM_ADMIN_CHAT_ID,
+          `🐄 <b>DEMAND ROUTER</b> · 🛑 ${note}`,
+        );
+      } catch {
+        /* the abort itself must not be blocked by Telegram */
+      }
+      return { status: 'error', recordsTouched: 0, notes: note };
+    }
+  }
+
   if (live) {
     // ── EXECUTE: backfill email sends (window-gated, claim-before-send). ──
     for (const send of plan.sends) {
@@ -1232,7 +1352,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
           lastSent: pf?.['Campaign Last Sent At'] ? String(pf['Campaign Last Sent At']) : null,
           rancher: priorRancherLinks && priorRancherLinks.length > 0 ? priorRancherLinks : null,
         };
-        const result = await executeSend(send, now, proofForRancher(proof, send.rancher.id), failures, prior);
+        const result = await executeSend(send, now, proofForRancher(proof, send.rancher.id), failures, prior, cap.brokerRancherIds);
         if (result.emailOk) emailsSent++;
         if (result.deferred) emailsDeferred++;
         // Gentle pace between sends (deliverability) — the email lib also rate-
@@ -1274,7 +1394,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
   }
 
   // 4. Upgrade C — SMS recovery touch (runs in dry-run as a plan count too).
-  const smsRec = await runSmsRecovery(buyers, now, live, smsOn, proof, cap.pools, activeDeals, failures);
+  const smsRec = await runSmsRecovery(buyers, now, live, smsOn, proof, cap.pools, activeDeals, failures, cap.brokerRancherIds);
 
   // 5. Upgrade A — abandoned-reserve recovery (email then later SMS). Reuses the
   // already-read recoveryRows (scoped + age-bounded — A7) so no double read.

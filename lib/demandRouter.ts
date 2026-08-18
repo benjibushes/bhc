@@ -42,6 +42,7 @@ import { normalizeState } from './states';
 import { BEN_SALES_CAL_URL } from './salesContact';
 import { isActiveDealReferral } from './capacityCount';
 import { nationwideAllowed, NATIONWIDE_PREFERENCE_FIELD } from './nationwidePreference';
+import { cooledDown } from './marketingTouch';
 
 // ─────────────────────────────────────────────────────────────────────
 // COAST → RANCHER ROUTING
@@ -578,7 +579,20 @@ export function decideWave(
   const lastSent = lastSentRaw ? new Date(lastSentRaw as string).getTime() : 0;
   const daysSince = lastSent ? (now - lastSent) / DAY_MS : Infinity;
 
-  if (!stage || stage === '') return { send: true, wave: 'Msg1' };
+  if (!stage || stage === '') {
+    // CROSS-RAIL COOLDOWN (F9, 2026-08-18): an empty Campaign Stage is NOT
+    // proof the buyer was never touched — the autopilot/requalify first-touch
+    // claim writes Campaign Last Sent At + Campaign Rail with NO Stage, and
+    // the 7-day suppression gate deliberately excludes Campaign Last Sent At
+    // (so the arc can't stall itself). Result before this guard: a buyer the
+    // autopilot emailed THIS HOUR was immediately Msg1-eligible here. Gate
+    // the arc START on the shared marketing cooldown (24h between any two
+    // marketing touches across rails — lib/marketingTouch; chase rails
+    // exempt by that helper's field roster). Msg2/Msg3 stay governed by the
+    // 3-/4-day wave gaps below, which already exceed the cooldown.
+    if (!cooledDown(buyer, now)) return { send: false, reason: 'cooldown' };
+    return { send: true, wave: 'Msg1' };
+  }
   if (stage === 'Msg1 Sent') {
     return daysSince >= WAVE_GAP_DAYS.Msg2
       ? { send: true, wave: 'Msg2' }
@@ -1229,6 +1243,40 @@ export function buildCampaignPools(
   return pools;
 }
 
+/**
+ * F8 (Wave 1 rails hardening 2026-08-18) — STATE-AWARE DEFAULT-PAIR REACH.
+ *
+ * The curated default pair (Foodstead/Silverline) used to ship
+ * servedStates=null ("nationwide by design"), which routed ~110 AZ waitlist
+ * buyers at a MONTANA ranch the hour the rail armed — while AZ has its own
+ * operational state-table owner (gila, per lib/campaignWaves
+ * rancherForStateTable). The default pair's reach is now:
+ *
+ *     its OWN operational served states (Routing States — the same rule
+ *     every other pool already follows)
+ *   MINUS
+ *     any state OWNED by a DIFFERENT operational state-table rancher (that
+ *     state's buyers belong to their state rancher's rail, not a cross-state
+ *     deposit push).
+ *
+ * Pure. `stateOwners` is rancherForStateTable's output (structural — only
+ * `.id` is read, so no import cycle with lib/campaignWaves). States the
+ * rancher owns ITSELF stay in reach.
+ */
+export function defaultPairServedStates(
+  ownServed: ReadonlySet<string>,
+  selfId: string,
+  stateOwners: ReadonlyMap<string, { id: string }>,
+): Set<string> {
+  const reach = new Set<string>();
+  for (const st of ownServed) {
+    const owner = stateOwners.get(st);
+    if (owner && owner.id !== selfId) continue; // owned by its state rancher
+    reach.add(st);
+  }
+  return reach;
+}
+
 /** The buyer's stamped Campaign Rancher link id ('' when unstamped). */
 export function stampedCampaignRancherId(fields: Record<string, unknown>): string {
   const links = fields['Campaign Rancher'];
@@ -1801,6 +1849,26 @@ export function renderMessage(wave: Wave, ctx: RenderCtx): RenderedMessage {
 export function rancherPageUrl(siteUrl: string, rancher: RancherTarget): string {
   const base = siteUrl.replace(/\/+$/, '');
   return `${base}/ranchers/${rancher.slug}`;
+}
+
+/**
+ * F19 (Wave 1 rails hardening 2026-08-18) — the campaign link for a BROKER
+ * ranch: its OWN reserve surface (price, deposit and balance on the page,
+ * POST runs the broker checkout), anchored at the BrokerReserve block.
+ *
+ * A broker ranch must NEVER get a Connect-only /r/d token: the /r/d
+ * redemption resolves via getRancherBySlug, whose formula excludes Broker
+ * Rail, so the token 404s into a bare page visit ('rancher-not-found').
+ * Ported from the requalify-send broker-reserve CTA branch
+ * (lib/requalifyCampaign.brokerReserveCta — same destination, campaign-
+ * agnostic). Pure.
+ */
+export function brokerReservePageUrl(
+  siteUrl: string,
+  rancher: Pick<RancherTarget, 'slug'>,
+): string {
+  const base = siteUrl.replace(/\/+$/, '');
+  return `${base}/ranchers/${encodeURIComponent(rancher.slug)}#reserve`;
 }
 
 // Template names for the email frequency-guard whitelist (the campaign engine
