@@ -10,7 +10,13 @@ import ImageUploader from '../components/ImageUploader';
 import Link from 'next/link';
 import { deriveLadder, deriveDeposit, checkWholePrice, MIN_TIER_PRICE } from '@/lib/pricing';
 import { FULFILLMENT_STATUSES, FULFILLMENT_STATUS_LABELS } from '@/lib/fulfillmentTracking';
-import { netEarningsFor, referralRail } from '@/lib/commission';
+import {
+  referralRail,
+  isBrokerReferralRow,
+  brokerFeeDollars,
+  referralNetDollars,
+  netsFullSaleOnEveryClosedWon,
+} from '@/lib/commission';
 import { formatUSD } from '@/lib/formatUSD';
 import { stripeFeeEstimateCents } from '@/lib/feeMath';
 import { gradeLead, gradeSortWeight } from '@/lib/leadGrade';
@@ -222,6 +228,11 @@ interface Referral {
   // from the routed Deals lists and use the {stage} PATCH rail, never the
   // legacy status buttons.
   referral_source?: string;
+  // Money-truth reads (2026-08-18): the BROKER-rail discriminator
+  // ('Broker — Deposit', stamped at referral creation). Lets the client money
+  // surfaces classify broker-era rows exactly like the server stats do —
+  // isBrokerReferralRow reads this shaped form.
+  match_type?: string;
 }
 
 // Wave 1A (2026-08-01): the fee a row ACTUALLY carried, in dollars — client
@@ -235,6 +246,15 @@ function referralFeeShownDollars(ref: Referral): number {
   const feeCents = Number(ref.bhc_fee_cents);
   if (Number.isFinite(feeCents) && feeCents > 0) return Math.round(feeCents) / 100;
   return Number(ref.commission_due) || 0;
+}
+
+// Money-truth reads (2026-08-18): broker-aware fee display. A BROKER row's
+// fee is the deposit BHC actually kept (brokerFeeDollars) — NEVER the
+// Commission Due fallback above, which on an unpaid hand-closed broker deal
+// is a phantom receivable (the represented rancher is never invoiced; an
+// unpaid deposit means BHC earned nothing). Non-broker rows are unchanged.
+function rowFeeShownDollars(ref: Referral): number {
+  return isBrokerReferralRow(ref) ? brokerFeeDollars(ref) : referralFeeShownDollars(ref);
 }
 
 // Cockpit (Wave A, 2026-06-22): 'home' is the new triage default. The spine
@@ -3986,7 +4006,7 @@ export default function RancherDashboardPage() {
                                 {/* Wave 1A follow-up: commission_due is the legacy
                                     receivable and reads $0 on the Connect rail —
                                     show the fee the row actually carried. */}
-                                <p className="text-xs text-muted tabular-nums">Fee: {formatUSD(referralFeeShownDollars(ref))}</p>
+                                <p className="text-xs text-muted tabular-nums">Fee: {formatUSD(rowFeeShownDollars(ref))}</p>
                               </div>
                             )}
                             {isAdminImpersonating && ref.status === 'Closed Lost' && (
@@ -4183,15 +4203,38 @@ export default function RancherDashboardPage() {
                     (s, r) => s + stripeFeeEstimateCents(Math.round((r.final_paid_amount || 0) * 100)) / 100,
                     0,
                   );
+                // Money-truth reads (2026-08-18): the unqualified "You keep
+                // 100% of your price" claim is only shown when it is TRUE of
+                // every Closed Won row on this very screen. A tier_v2 rancher
+                // with off-rail legacy closes (or broker-era deals) sees Total
+                // Revenue ≠ Net Earnings two cards up — live example: revenue
+                // 6687.23 vs net 6318.40 beside "Commission Owed $0" — so the
+                // banner qualified itself into a lie. Pure-Connect history
+                // (and empty history) keeps the full-throated version: on the
+                // deposit rail the claim is exactly true (buyer-pays-on-top).
+                const keepsFullPrice = netsFullSaleOnEveryClosedWon(
+                  referrals.filter((r) => r.status === 'Closed Won'),
+                );
                 return (
                   <div className="border border-dust bg-white p-5 text-sm leading-relaxed space-y-2">
                     <p className="text-[11px] uppercase tracking-widest text-saddle">how our fee works</p>
-                    <p>
-                      <strong>You keep 100% of your price.</strong> Our{' '}
-                      {((rancherInfo.commissionRate ?? 0.10) * 100).toFixed(1).replace(/\.0$/, '')}% fee is
-                      added on top for the buyer at deposit time — they pay it, not you. And the
-                      deposit&apos;s card-processing fee is absorbed by us, so your number is your number.
-                    </p>
+                    {keepsFullPrice ? (
+                      <p>
+                        <strong>You keep 100% of your price.</strong> Our{' '}
+                        {((rancherInfo.commissionRate ?? 0.10) * 100).toFixed(1).replace(/\.0$/, '')}% fee is
+                        added on top for the buyer at deposit time — they pay it, not you. And the
+                        deposit&apos;s card-processing fee is absorbed by us, so your number is your number.
+                      </p>
+                    ) : (
+                      <p>
+                        <strong>On deals closed through a BHC deposit, you keep 100% of your price.</strong> Our{' '}
+                        {((rancherInfo.commissionRate ?? 0.10) * 100).toFixed(1).replace(/\.0$/, '')}% fee is
+                        added on top for the buyer at deposit time — they pay it, not you — and the
+                        deposit&apos;s card-processing fee is absorbed by us. Some of your completed
+                        sales below closed outside that flow, so their fee came out of the sale —
+                        that&apos;s why Total Revenue and Net Earnings differ above.
+                      </p>
+                    )}
                     <p className="text-xs text-saddle">
                       The one cost on your side: standard card processing (~2.9% + 30¢) on the
                       final-balance charge when the buyer pays it by card
@@ -4235,21 +4278,37 @@ export default function RancherDashboardPage() {
                               stamp — commission_due is the legacy receivable
                               and reads $0 on every Connect row. On the
                               Connect rail Sale − Commission ≠ Net on purpose:
-                              the buyer paid the fee ON TOP, Net = Sale. */}
-                          <td className="py-3 pr-4 text-right tabular-nums">{formatUSD(referralFeeShownDollars(ref))}</td>
+                              the buyer paid the fee ON TOP, Net = Sale.
+                              Money-truth reads (2026-08-18): broker rows show
+                              the deposit BHC kept (0 when never paid — the
+                              phantom Commission Due is not a fee). */}
+                          <td className="py-3 pr-4 text-right tabular-nums">{formatUSD(rowFeeShownDollars(ref))}</td>
                           {/* RAIL-PER-ROW (audit fix #3): net is split by what
                               THIS row rode — a deposit-paid row keeps 100% of
                               the sale (commission was skimmed at deposit); a
                               legacy/off-rail row nets the commission out. Never
-                              the rancher's current tier flag. */}
-                          <td className="py-3 pr-4 font-medium text-right tabular-nums">{formatUSD(netEarningsFor(referralRail(ref), ref.sale_amount, ref.commission_due))}</td>
+                              the rancher's current tier flag.
+                              Money-truth reads (2026-08-18): via the canonical
+                              referralNetDollars so broker rows net sale − the
+                              deposit BHC kept (paid) / full sale (hand-closed,
+                              never invoiced) — matching stats.netEarnings. */}
+                          <td className="py-3 pr-4 font-medium text-right tabular-nums">{formatUSD(referralNetDollars(ref))}</td>
                           <td className="py-3">
                             {/* Deposit-rail row: commission collected at deposit —
                                 "Collected". Legacy/off-rail row: the real Paid/
                                 Pending + "Pay now" invoice flow (an off-rail
                                 tier_v2 close now correctly shows a payable invoice
-                                instead of a false "Collected"). */}
-                            {referralRail(ref) === 'tier_v2' ? (
+                                instead of a false "Collected").
+                                BROKER row (2026-08-18): paid → "Collected" (the
+                                deposit was the whole fee); unpaid hand-close →
+                                "No invoice" — a represented rancher is NEVER
+                                invoiced, so the legacy Pending/"Pay now" flow
+                                would be a lie on this row. */}
+                            {isBrokerReferralRow(ref) ? (
+                              <span className={`px-2 py-0.5 text-xs ${brokerFeeDollars(ref) > 0 ? 'bg-sage/15 text-sage-dark' : 'bg-bone-warm text-saddle'}`}>
+                                {brokerFeeDollars(ref) > 0 ? 'Collected' : 'No invoice'}
+                              </span>
+                            ) : referralRail(ref) === 'tier_v2' ? (
                               <span className="px-2 py-0.5 text-xs bg-sage/15 text-sage-dark">
                                 Collected
                               </span>

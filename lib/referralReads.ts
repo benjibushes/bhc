@@ -87,6 +87,16 @@ export const REFERRAL_DASHBOARD_FIELDS = [
   // ones the public page hides, so the rancher can fix the cause. The
   // projection breaker degrades gracefully if the fields are ever renamed.
   'Buyer Rating', 'Buyer Review', 'Review Submitted At',
+  // Money-truth reads (2026-08-18) — the BROKER-rail discriminator, stamped
+  // at referral creation (Match Type = 'Broker — Deposit', lib/brokerReferral).
+  // isBrokerReferralRow reads ONLY this field; stripping it here made every
+  // broker-aware branch on dashboard/customers/CSV reads structurally dead:
+  // a PAID broker row read as tier_v2 (net shown as the FULL sale — overstated
+  // by the deposit BHC kept) and an UNPAID hand-closed broker Closed Won read
+  // as legacy (phantom "Commission Owed — Invoice pending" contradicting the
+  // represented rancher's deposit-is-the-fee, never-invoiced agreement).
+  // Pinned by lib/referralReads.test.ts.
+  'Match Type',
 ];
 
 const READ_PATH_BREAKER_MS = 5 * 60 * 1000;

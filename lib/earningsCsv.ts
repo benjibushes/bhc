@@ -9,7 +9,7 @@
 // CSV escaping (commas, quotes, newlines in buyer names) + date-range filtering
 // so a malformed cell can never corrupt the rancher's bookkeeping file.
 
-import { netEarningsFor, referralRail } from './commission';
+import { netEarningsFor, referralRail, isBrokerReferralRow, brokerFeeDollars } from './commission';
 
 export interface EarningsRow {
   /** Referral record id — stable key, useful for de-duping in a sheet. */
@@ -39,6 +39,23 @@ export interface EarningsRow {
    *  undefined ⇒ no final settlement recorded ⇒ the CSV cell stays BLANK
    *  (0.00 would read as a real $0 payment in a tax file). */
   finalPaidAmount?: number;
+  /** Money-truth reads (2026-08-18): 'Match Type' — the BROKER-rail
+   *  discriminator ('Broker — Deposit', stamped at referral creation). On the
+   *  broker rail the deposit goes 100% to BHC and IS the entire fee; the
+   *  ranch collects price − deposit at pickup; no commission invoice ever.
+   *  Broker rows must NOT ride the depositPaidAt tier_v2/legacy split:
+   *  paid-deposit reads tier_v2 → net overstated by the deposit BHC kept;
+   *  hand-closed unpaid reads legacy → net understated by a phantom
+   *  Commission Due. Optional so older callers still compile. */
+  matchType?: string;
+  /** Money-truth reads (2026-08-18): 'BHC Fee Cents' — the captured fee stamp
+   *  (on broker rows, the whole deposit, stamped at settle). Feeds
+   *  brokerFeeDollars for the broker net. */
+  bhcFeeCents?: number;
+  /** Money-truth reads (2026-08-18): 'Deposit Amount' — brokerFeeDollars
+   *  fallback for a paid broker row whose fee stamp was lost to a partial
+   *  hand-fix (deposit ≡ fee on that rail). */
+  depositAmount?: number;
 }
 
 /**
@@ -138,12 +155,22 @@ export function buildEarningsCsv(rows: EarningsRow[], fallbackRail: string = 'le
   for (const r of rows) {
     // Wave C: a known payout (product rows) wins outright — product orders
     // never rode a referral rail, their net is the settlement-stamped payout.
+    // BROKER rows next (money-truth reads 2026-08-18): the deposit BHC kept
+    // IS the whole fee — net = sale − brokerFeeDollars (paid ⇒ sale − deposit;
+    // hand-closed unpaid ⇒ full sale, the phantom Commission Due is scrubbed
+    // because the represented rancher is never invoiced). The Commission
+    // column shows that same fee so Sale − Commission = Net keeps holding.
     // RAIL-PER-ROW "Net to You" otherwise: a deposit-paid row nets 100% of the
     // sale (commission skimmed at deposit); a legacy/off-rail row nets it out.
     // Row rail wins over the caller's fallback whenever depositPaidAt is known.
     let net: number;
+    let commissionShown = Number(r.commissionDue) || 0;
     if (typeof r.netOverride === 'number' && isFinite(r.netOverride)) {
       net = r.netOverride;
+    } else if (isBrokerReferralRow(r)) {
+      const fee = brokerFeeDollars(r);
+      net = netEarningsFor('broker', Number(r.saleAmount) || 0, fee);
+      commissionShown = fee;
     } else {
       const rowRail =
         r.depositPaidAt !== undefined
@@ -157,7 +184,7 @@ export function buildEarningsCsv(rows: EarningsRow[], fallbackRail: string = 'le
       csvEscape(csvNeutralizeFormula(r.buyerName)),
       csvEscape(csvNeutralizeFormula(r.orderType)),
       csvEscape(money(r.saleAmount)),
-      csvEscape(money(r.commissionDue)),
+      csvEscape(money(commissionShown)),
       csvEscape(money(net)),
       csvEscape(dateOnly(r.introSentAt)),
       csvEscape(dateOnly(r.closedAt)),

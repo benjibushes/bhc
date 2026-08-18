@@ -80,6 +80,16 @@ export async function GET(request: Request) {
         // RAIL-PER-ROW (audit fix #3): lets buildEarningsCsv decide net per
         // row so a migrated rancher's legacy/off-rail history isn't overstated.
         depositPaidAt: String(ref['Deposit Paid At'] || ''),
+        // Money-truth reads (2026-08-18): broker-rail discriminator + fee
+        // stamps. A broker row (Match Type 'Broker — Deposit') must net as
+        // sale − the deposit BHC kept (paid) / full sale (hand-closed, never
+        // invoiced) — NOT the tier_v2/legacy guess the depositPaidAt split
+        // makes: paid read as tier_v2 overstated "Net to You" by the deposit;
+        // unpaid hand-closed read as legacy understated it by a phantom
+        // Commission Due. Tax-adjacent file — both were lies.
+        matchType: String((ref['Match Type'] as any)?.name || ref['Match Type'] || ''),
+        bhcFeeCents: Number(ref['BHC Fee Cents'] || 0),
+        depositAmount: Number(ref['Deposit Amount'] || 0),
         // Money-truth trail (2026-07-28): settled final-invoice amount.
         // undefined (not 0) when Airtable has no value so the CSV cell stays
         // blank — see EarningsRow.finalPaidAmount.

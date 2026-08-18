@@ -10,7 +10,7 @@ import { requireRancher } from '@/lib/rancherAuth';
 
 export const maxDuration = 60;
 
-import { getRancherCommissionRate, lockedCommissionRateFor, netEarningsFor, referralRail, isBrokerReferralRow } from '@/lib/commission';
+import { getRancherCommissionRate, lockedCommissionRateFor, referralRail, isBrokerReferralRow, brokerFeeDollars, referralNetDollars } from '@/lib/commission';
 
 // Pure: total commission the rancher still owes BHC on closed-won deals.
 // tier_v2 ranchers NEVER owe a post-close invoice — BHC's cut was taken at
@@ -151,7 +151,15 @@ export async function GET(request: Request) {
     // buyer-paid Connect fee) when captured, else the legacy 'Commission Due'
     // receivable. Summing Commission Due alone read "Commission $0" to every
     // Connect rancher (that field is never written on their rail).
-    const totalCommission = closedWon.reduce((sum: number, r: any) => sum + referralFeeDollars(r), 0);
+    // Money-truth reads (2026-08-18): BROKER rows use brokerFeeDollars — the
+    // referralFeeDollars Commission-Due fallback would count a phantom
+    // receivable (pre-belt hand-close) as a fee on an unpaid broker deal
+    // where BHC collected nothing. Paid broker rows are identical either way
+    // (BHC Fee Cents = the whole deposit wins in both helpers).
+    const totalCommission = closedWon.reduce(
+      (sum: number, r: any) => sum + (isBrokerReferralRow(r) ? brokerFeeDollars(r) : referralFeeDollars(r)),
+      0,
+    );
     // tier_v2 ranchers never owe a post-close commission invoice (see
     // computeUnpaidCommission). Forced to 0 so the dashboard doesn't show a
     // phantom "Invoice pending" balance + dead "Pay now" link.
@@ -276,6 +284,12 @@ export async function GET(request: Request) {
       // Leads block (Customers tab) and keeps them out of the routed Deals
       // lists. Tolerates the Airtable {name} object read shape.
       referral_source: String((r['Referral Source'] as any)?.name || r['Referral Source'] || ''),
+      // Money-truth reads (2026-08-18): the BROKER-rail discriminator, so
+      // client money surfaces (completed-sales table, "you keep 100%" banner)
+      // can classify broker-era rows exactly like this route's own stats do
+      // (isBrokerReferralRow reads the shaped `match_type` form). Tolerates
+      // the Airtable {name} object read shape.
+      match_type: String((r['Match Type'] as any)?.name || r['Match Type'] || ''),
       };
     });
 
@@ -419,30 +433,31 @@ export async function GET(request: Request) {
         // sale − commission. Summed per referral so a migrated rancher's
         // legacy invoice history + off-rail closes are no longer overstated as
         // tier_v2 economics.
+        // RAIL-MATRIX (2026-08-04): a BROKER-era row is a THIRD economics —
+        // the rancher nets Sale Amount − the deposit BHC kept ('BHC Fee
+        // Cents'). Its Deposit Paid At stamp made referralRail read 'tier_v2'
+        // (net = full sale), overstating a migrated ex-represented rancher's
+        // earnings by the whole deposit.
+        //
+        // WEIGHT-PRICED broker rows (2026-08-05): the broker rail stamps
+        // 'Total Sale Amount' at the range FLOOR for a hanging-weight cut
+        // (the exact price doesn't exist until processing), so the sale
+        // figure feeding this read is conservative — a migrated
+        // ex-represented rancher's net can only be UNDERstated, never
+        // overstated, for those rows. The fee (the deposit) is exact.
+        //
+        // Money-truth reads (2026-08-18): per-row math moved to the canonical
+        // referralNetDollars (lib/commission) — same tier_v2/legacy branches
+        // byte-for-byte, but the broker fee now comes from brokerFeeDollars
+        // instead of referralFeeDollars: an UNPAID hand-closed broker row no
+        // longer has a phantom Commission Due (pre-belt hand-close) subtracted
+        // from its net — BHC collected nothing on it and never invoices a
+        // represented rancher, so that row nets the FULL sale. Also: this
+        // branch was structurally DEAD until 'Match Type' joined the
+        // REFERRAL_DASHBOARD_FIELDS projection (lib/referralReads) — the
+        // rows this reduce runs over never carried the discriminator field.
         netEarnings: closedWon.reduce(
-          (sum: number, r: any) =>
-            sum +
-            // RAIL-MATRIX (2026-08-04): a BROKER-era row is a THIRD economics —
-            // the rancher nets Sale Amount − the deposit BHC kept ('BHC Fee
-            // Cents', via referralFeeDollars). Its Deposit Paid At stamp made
-            // referralRail read 'tier_v2' (net = full sale), overstating a
-            // migrated ex-represented rancher's earnings by the whole deposit.
-            // netEarningsFor's non-tier_v2 branch (rev − fee) is exactly the
-            // broker truth, so route broker rows through it with the fee stamp.
-            //
-            // WEIGHT-PRICED broker rows (2026-08-05): the broker rail stamps
-            // 'Total Sale Amount' at the range FLOOR for a hanging-weight cut
-            // (the exact price doesn't exist until processing), so the sale
-            // figure feeding this read is conservative — a migrated
-            // ex-represented rancher's net can only be UNDERstated, never
-            // overstated, for those rows. The fee (the deposit) is exact.
-            (isBrokerReferralRow(r)
-              ? netEarningsFor('broker', Number(r['Sale Amount']) || 0, referralFeeDollars(r))
-              : netEarningsFor(
-                  referralRail(r),
-                  Number(r['Sale Amount']) || 0,
-                  Number(r['Commission Due']) || 0,
-                )),
+          (sum: number, r: any) => sum + referralNetDollars(r),
           0,
         ),
         // Lead Quality metrics — recent-window summary so ranchers can see
