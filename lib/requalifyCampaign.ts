@@ -372,7 +372,16 @@ export function decideRequalifyCta(input: RequalifyCtaInput): RequalifyCtaDecisi
 /** The resolved CTA handed to the renderer (link already built by the caller). */
 export type RequalifyCta =
   | { mode: 'one-tap'; url: string; cutLabel: string; dueNowDollars: number }
-  | { mode: 'quiz'; url: string }
+  /**
+   * `started` (campaign-rewrite 2026-08-18): true only when the buyer
+   * DEMONSTRABLY began the funnel (a canonical Consumers row with an Order
+   * Type resolved — i.e. decideRequalifyCta got past 'no-consumer'/'no-cut').
+   * The autopilot pool carries no funnel-started requirement, and the quiz
+   * fallback fires precisely on the never-started cohort, so "the quiz you
+   * started" was a false claim to most recipients. Omitted/false renders the
+   * universally true line; true keeps the Zeigarnik "you started" pull.
+   */
+  | { mode: 'quiz'; url: string; started?: boolean }
   /** Represented (broker-rail) wave owner — straight to its reserve surface. */
   | { mode: 'broker-reserve'; url: string };
 
@@ -441,13 +450,21 @@ ${opener}
   }
 
   const url = cta?.url || requalifyCta(state, rancher.slug);
+  // Genuine quiz-starters keep the "you started" pull; everyone else gets the
+  // line that is true for the whole pool. /access renders no share count, so
+  // the scarcity line cites the round's real count, not "that page".
+  const started = !!(cta && cta.mode === 'quiz' && cta.started);
+  const quizLine = started
+    ? `One thing stands between you and a match: the 90 second quiz you started. Finish it and we route you to your rancher.`
+    : `One thing stands between you and a match: a 90 second quiz. Take it and we route you to your rancher.`;
+  const quizCtaLabel = started ? 'Finish the quiz' : 'Take the quiz';
   return {
     subject,
     html: `${SHELL_OPEN}
 ${opener}
-<p>That changed. We now have a ranch serving ${st} — ${rancher.name}. One thing stands between you and a match: the 90 second quiz you started. Finish it and we route you to your rancher.</p>
-<p>Finish the quiz:<br><a href="${url}">${url}</a></p>
-<p>If the timing is wrong, ignore me. You lose nothing. But the shares on that page are a real count of what's left this round, so if a freezer full of honest beef is still the plan, it's worth a look this week.</p>
+<p>That changed. We now have a ranch serving ${st} — ${rancher.name}. ${quizLine}</p>
+<p>${quizCtaLabel}:<br><a href="${url}">${url}</a></p>
+<p>If the timing is wrong, ignore me. You lose nothing. But the share count this round is real — when ${rancher.name}'s animals are spoken for, that's it until the next harvest. If a freezer full of honest beef is still the plan, it's worth a look this week.</p>
 <p>— Ben</p></div>`,
   };
 }

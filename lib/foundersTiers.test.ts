@@ -100,8 +100,10 @@ test('lib/email.ts founder pitch derives the tier ladder — no hardcoded tier p
   const src = read('./email.ts');
   assert.match(src, /from '\.\/foundersTiers'/);
   assert.match(src, /HERD_MONTHLY_DOLLARS/);
-  assert.match(src, /OUTLAW_MONTHLY_DOLLARS/);
-  assert.match(src, /TITLE_FOUNDER_PRICE_LABEL/);
+  // Campaign-rewrite v46 (2026-08-18): the pitch deliberately names ONLY the
+  // Herd tier now (a downsell email needs one easy yes; /founders shows the
+  // ladder), so Outlaw/Title constants are no longer required in the module.
+  // The load-bearing pin stays: no tier-price LITERAL may appear.
   assert.doesNotMatch(
     src,
     PRICE_LITERAL,

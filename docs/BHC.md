@@ -304,6 +304,47 @@ All in `lib/email.ts`. Don't write new ones — extend existing.
 
 ---
 
+## OUTREACH TEMPLATES
+
+Manual outbound Ben sends himself (founder-direct funnel rows above). These are
+NOT wired into any send rail — they exist so every hand-sent email starts from
+a standard instead of an improvisation.
+
+### Brand-partner outreach (founder direct, manual)
+
+Rules: every `[PULL LIVE]` stat comes from `/api/stats/public` at send time —
+never a remembered number. Tier prices live on `/brand-partners`, never in the
+template. The one-line fit sentence is written fresh per brand — one sentence,
+their product in our world. One CTA.
+
+Subject: `your [product] + the families buying half a cow`
+
+```
+[First] — Ben, founder of BuyHalfCow.
+
+We route families to ranchers who sell beef direct. Today that's
+[PULL LIVE: rancher count] ranches on the public map, [PULL LIVE: buyer count]
+families in the network, [PULL LIVE: state count] states.
+
+Here's why I'm writing you: every one of those families takes home a freezer
+full of beef at a time, and the ranchers ask us what gear to point them at.
+[One sentence — why THIS brand fits, written fresh per brand].
+
+I keep the partner list short on purpose. Fit over revenue — I've walked away
+from two sponsors already. Placement runs from logo on the network pages to
+founder letter inclusions and dedicated posts; the tiers are at
+buyhalfcow.com/brand-partners.
+
+Worth 20 minutes? Grab a slot: [cal link]
+
+Or just reply and I'll send the one page breakdown.
+
+— Ben
+Founder, BuyHalfCow.com
+```
+
+---
+
 ## SOCIAL TEMPLATES
 
 ### Twitter / X — case study post

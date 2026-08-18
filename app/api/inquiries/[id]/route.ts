@@ -157,6 +157,9 @@ export async function PATCH(
           interestType: currentInquiry['Interest Type'] || '',
           message: currentInquiry['Message'],
           inquiryId: id,
+          // F15 (2026-08-18): the loaded row, so the money-truth footer quotes
+          // THIS rancher's real commission rate instead of a hardcoded 10%.
+          rancher,
         });
         // Money-path truth (audit 2026-08-08): persist that the rancher was
         // actually told. Notes marker — no schema addition needed.

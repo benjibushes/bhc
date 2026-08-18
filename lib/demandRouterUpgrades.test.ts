@@ -200,12 +200,17 @@ test('SMS recovery works at every arc stage (Msg1/2/3 Sent)', () => {
 
 // ── SMS recovery copy: distinct angle + STOP ────────────────────────────────
 
-test('renderSmsRecovery: distinct angle (going fast), carries STOP, fills tokens', () => {
+test('renderSmsRecovery: distinct honest-scarcity angle, carries STOP, fills tokens', () => {
   const sms = renderSmsRecovery({ ...baseCtx });
-  assert.match(sms, /going fast/, 'different angle than the email arc');
+  // Campaign-rewrite (2026-08-18): the angle is the real harvest-window
+  // scarcity the capacity-gated selection can back — never the forbidden
+  // fake-urgency family ("going fast" / "miss out").
+  assert.match(sms, /spoken for, that's it until next harvest/, 'different angle than the email arc');
+  assert.doesNotMatch(sms, /going fast/);
+  assert.doesNotMatch(sms, /miss out/);
   assert.match(sms, /reply STOP to opt out/, 'TCPA STOP present');
   assert.match(sms, /Foodstead/);
-  assert.match(sms, /shipped to CA/);
+  assert.match(sms, /ships to CA/);
   assert.match(sms, /buyhalfcow\.com\/r\/d\/tok/);
 });
 

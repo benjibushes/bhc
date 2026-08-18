@@ -9,6 +9,7 @@ import {
 import { JWT_SECRET } from '@/lib/secrets';
 import { fetchReferralRowsForRancher } from '@/lib/referralReads';
 import { calcCommission, calcCommissionForRancher, hasLockedCommissionRate, isPostCloseInvoiceRail } from '@/lib/commission';
+import { commissionPercentLabelForRancher } from '@/lib/tiers';
 import { railForLoadedRancher, referralCarriesBrokerMarker } from '@/lib/brokerDownstream';
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import {
@@ -740,9 +741,22 @@ export async function GET(request: Request) {
 
   // Closed Won + Closed Lost (with reason) require a form first
   if (action === 'won') {
+    // Campaign-rewrite F15 rider (2026-08-18): the confirm page hardcoded
+    // "10% commission" for every rancher, but the invoice the POST actually
+    // creates rides calcCommissionForRancher — a tier_v2 Pasture (7%) or
+    // Ranch (3%) rancher read a rate the charge would then contradict.
+    // Derive the label from the same rate source (#639 pattern); on a read
+    // failure, say "commission invoice" with no rate rather than a wrong one.
+    let commissionLabel = '';
+    try {
+      const rancherForLabel = await getRecordById(TABLES.RANCHERS, decoded.rancherId);
+      if (rancherForLabel) {
+        commissionLabel = `${commissionPercentLabelForRancher(rancherForLabel)} `;
+      }
+    } catch {}
     return new NextResponse(
       htmlPage('Mark Closed Won', `<h1>Closed Won — confirm sale amount</h1>
-<p class="note">Submitting auto-generates a 10% commission invoice via Stripe, emailed to your account. Pay by card or ACH within 30 days. The referral marks Commission Paid only when Stripe confirms payment.</p>
+<p class="note">Submitting auto-generates a ${commissionLabel}commission invoice via Stripe, emailed to your account. Pay by card or ACH within 30 days. The referral marks Commission Paid only when Stripe confirms payment.</p>
 <form method="post" action="${url.pathname}?token=${encodeURIComponent(token)}&action=won">
   <label>Final sale amount ($)</label>
   <input type="number" name="saleAmount" step="0.01" min="0" placeholder="2500" required autofocus>

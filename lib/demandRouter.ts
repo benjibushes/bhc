@@ -1754,7 +1754,10 @@ function textToHtml(text: string, ctx: RenderCtx): string {
 }
 
 export const SUBJECTS: Record<Wave, string> = {
-  Msg1: 'your beef’s ready (ships to {state})',
+  // Campaign-rewrite (2026-08-18): the old Msg1 subject read as an
+  // order-status notification for an order that never existed — open-bait.
+  // The rewrite states the true thing: a share is open and it ships to them.
+  Msg1: 'a beef share that ships to {state} — open now',
   Msg2: 'a few shares left ({rancher})',
   Msg3: 'why we’re doing this',
 };
@@ -1768,8 +1771,8 @@ straight talk: we're building a network of local ranchers in {state}, doing it
 the right way. that takes time, and we don't cut corners.
 
 but you don't have to wait. {rancher} — a {ranchstate} family raising grass-fed
-beef the way it should be — can ship a share straight to your door. cold-chain,
-arrives frozen, raised right.
+beef the way it should be — can ship a share straight to your door. cold chain
+the whole way, arrives frozen, raised right.
 
 limited shares this round. reserve yours:
 {link}
@@ -1953,9 +1956,11 @@ export function isSmsRecoveryEligible(
 }
 
 // Distinct SMS-recovery copy — a DIFFERENT angle than any email wave (research:
-// ADD new info, don't repeat). Speaks to the limited-shares scarcity directly.
+// ADD new info, don't repeat). Speaks to the limited-shares scarcity directly,
+// with only claims the capacity-gated selection can back — never "going fast" /
+// "don't want you to miss out" (the forbidden fake-urgency family).
 // Always carries STOP (TCPA). Tokens: {first} {rancher} {state} {link}.
-const SMS_RECOVERY_BODY = `BuyHalfCow: {first}, shares from {rancher} are going fast and we don't want you to miss out — grass-fed, shipped to {state}. reserve yours: {link}
+const SMS_RECOVERY_BODY = `BuyHalfCow: {first}, still a few shares open from {rancher} this round — grass-fed, ships to {state}. when they're spoken for, that's it until next harvest. reserve: {link}
 reply STOP to opt out`;
 
 /** Render the backfill SMS-recovery body. Pure. */

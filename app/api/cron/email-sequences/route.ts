@@ -27,7 +27,7 @@ import {
 } from '@/lib/email';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { normalizeState } from '@/lib/states';
-import { isRancherOnConnect } from '@/lib/rancherEligibility';
+import { isRancherOnConnect, isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
 import { cooledDown } from '@/lib/marketingTouch';
 
 import jwt from 'jsonwebtoken';
@@ -221,6 +221,46 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
       const id = Array.isArray(buyerIds) ? buyerIds[0] : null;
       if (id && !referralsByBuyer.has(id)) referralsByBuyer.set(id, r);
     }
+
+    // ── Founder-letter live counts (campaign-rewrite 2026-08-18) ────────────
+    // sendFounderLetterWaiting now carries live network counts — the
+    // freshness signal that makes month N read differently from month N-1.
+    // Ranchers table is pulled lazily ONCE, only if a WAITING letter is
+    // actually due this run; a read failure degrades to the letters'
+    // count-free fallback lines (never blocks a send, never renders "0
+    // ranches"). Same operational-rancher + distinct-state definitions as
+    // /api/stats/public. In-state WAITING counts come free from the
+    // `approved` array already in memory.
+    let founderNetworkStatsPromise: Promise<{ rancherCount: number; stateCount: number }> | null = null;
+    const founderNetworkStats = () => {
+      if (!founderNetworkStatsPromise) {
+        founderNetworkStatsPromise = (async () => {
+          try {
+            const ranchers = (await getAllRecords(TABLES.RANCHERS)) as any[];
+            const live = ranchers.filter((r: any) => isRancherOperationalForBuyers(r));
+            const states = new Set(
+              live.map((r: any) => String(r['State'] || '').trim().toUpperCase()).filter(Boolean),
+            );
+            return { rancherCount: live.length, stateCount: states.size };
+          } catch {
+            return { rancherCount: 0, stateCount: 0 };
+          }
+        })();
+      }
+      return founderNetworkStatsPromise;
+    };
+    const waitingByState = new Map<string, number>();
+    for (const c of approved) {
+      if (String(c['Buyer Stage'] || '') !== 'WAITING') continue;
+      const st = normalizeState(c['State']);
+      if (!st) continue;
+      waitingByState.set(st, (waitingByState.get(st) || 0) + 1);
+    }
+    const founderLetterStats = async (buyerState: unknown) => {
+      const net = await founderNetworkStats();
+      const st = normalizeState(buyerState);
+      return { ...net, waitingInState: st ? waitingByState.get(st) || 0 : 0 };
+    };
 
     // hasRancherAvailable + its Ranchers fetch deleted (P1′, 2026-08-08):
     // zero call sites — the state-machine rebuild left it behind, and it was
@@ -686,7 +726,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
               'Sequence Stage': 'WAITING_L1',
               'Sequence Sent At': new Date().toISOString(),
             });
-            await sendFounderLetterWaiting({ firstName, email, state: stateLabel, letterNumber: 1 });
+            await sendFounderLetterWaiting({ firstName, email, state: stateLabel, letterNumber: 1, stats: await founderLetterStats(consumer['State']) });
             counters.waiting_l1++; fired = true;
           }
           // Letter 2 at Day 30
@@ -695,7 +735,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
               'Sequence Stage': 'WAITING_L2',
               'Sequence Sent At': new Date().toISOString(),
             });
-            await sendFounderLetterWaiting({ firstName, email, state: stateLabel, letterNumber: 2 });
+            await sendFounderLetterWaiting({ firstName, email, state: stateLabel, letterNumber: 2, stats: await founderLetterStats(consumer['State']) });
             counters.waiting_l2++; fired = true;
           }
           // Letters 3+ rolling monthly: Day 60, 90, 120, ...
@@ -707,7 +747,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
                 'Sequence Stage': `WAITING_L${lastN + 1}`,
                 'Sequence Sent At': new Date().toISOString(),
               });
-              await sendFounderLetterWaiting({ firstName, email, state: stateLabel, letterNumber: lastN + 1 });
+              await sendFounderLetterWaiting({ firstName, email, state: stateLabel, letterNumber: lastN + 1, stats: await founderLetterStats(consumer['State']) });
               counters.waiting_monthly++; fired = true;
             }
           }

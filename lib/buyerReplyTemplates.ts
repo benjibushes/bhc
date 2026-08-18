@@ -11,6 +11,8 @@
 // escalate to Ben): ready-to-buy (→ call), propose-close-won (→ close), other,
 // none, and anything with blocking sentiment.
 
+import { SHARE_WEIGHTS } from './beefWeights';
+
 export type BuyerObjection =
   | 'price'
   | 'distance'
@@ -93,9 +95,15 @@ function ctaLine(ctx: BuyerReplyContext): string {
 
 type Builder = (ctx: BuyerReplyContext) => string;
 
+// Campaign-rewrite (2026-08-18): these fire with no human review, so every
+// number is weights-only from SHARE_WEIGHTS (lib/beefWeights — the one truth
+// table) and every price defers to the ranch's own page. The old price reply
+// asserted $1,000–$1,400 halves at $7–$9/lb against live network quarters of
+// $740–$2,200 (quoting prices ranches didn't set), plus a "no middleman
+// markup" claim that collides with buyer-pays-on-top on Connect.
 const TEMPLATES: Partial<Record<BuyerObjection, Builder>> = {
   price: (ctx) =>
-    `${firstNameOf(ctx)} good question on price. a half runs most families around ${'$'}1,000 to ${'$'}1,400 depending on the animal and the cuts, which pencils out close to ${'$'}7 to ${'$'}9 a pound across steaks, roasts, and ground. you pay ${rancher(ctx)} direct, no middleman markup. ${ctaLine(ctx)}\n\n— Ben`,
+    `${firstNameOf(ctx)} good question on price. every ranch sets its own price, so I won't quote a number ${rancher(ctx)} didn't set. what I can tell you: a quarter comes back around ${SHARE_WEIGHTS.quarter.lbs} of beef and a half around ${SHARE_WEIGHTS.half.lbs}, cut the way you want it, and you buy direct from the ranch at the ranch's own price. ${ctaLine(ctx)}\n\n— Ben`,
 
   distance: (ctx) =>
     `${firstNameOf(ctx)} on distance, most folks pick up from ${rancher(ctx)} or a nearby locker, and a lot of ranchers will meet partway or help coordinate. tell me your town and I'll tell you exactly how the handoff would work. ${ctaLine(ctx)}\n\n— Ben`,
@@ -104,13 +112,13 @@ const TEMPLATES: Partial<Record<BuyerObjection, Builder>> = {
     `${firstNameOf(ctx)} totally fine to buy on your own timeline. ${rancher(ctx)} works in batches, so the sooner you reserve the sooner you lock a spot in the next one. no rush from me, just don't want you to miss the window. ${ctaLine(ctx)}\n\n— Ben`,
 
   cut: (ctx) =>
-    `${firstNameOf(ctx)} you get a say in the cuts. a half fills a normal freezer shelf and comes back as steaks, roasts, and ground, and you can tell the processor how you want it broken down (thickness, ground ratio, roasts vs steaks). ${rancher(ctx)} walks you through the cut sheet. ${ctaLine(ctx)}\n\n— Ben`,
+    `${firstNameOf(ctx)} you get a say in the cuts. a half comes back around ${SHARE_WEIGHTS.half.lbs} of steaks, roasts, and ground, and you tell the processor how to break it down (thickness, ground ratio, roasts vs steaks). ${rancher(ctx)} walks you through the cut sheet. ${ctaLine(ctx)}\n\n— Ben`,
 
   quality: (ctx) =>
     `${firstNameOf(ctx)} fair to ask. ${rancher(ctx)} is a real family ranch I work with myself, not a label on a grocery shelf. you'll know the animal and how it was raised, and you buy straight from them. that's the whole point of what we do. ${ctaLine(ctx)}\n\n— Ben`,
 
   capacity: (ctx) =>
-    `${firstNameOf(ctx)} a half is a lot of beef, so freezer space is worth checking. figure a half needs about four cubic feet, which most chest freezers handle easy, and a quarter is half that if you want to start smaller. happy to help you size it. ${ctaLine(ctx)}\n\n— Ben`,
+    `${firstNameOf(ctx)} a half is a lot of beef, so freezer space is worth checking. figure ${SHARE_WEIGHTS.half.cuFt} for a half, which is chest freezer territory, and a quarter runs ${SHARE_WEIGHTS.quarter.cuFt} if you want to start smaller. happy to help you size it. ${ctaLine(ctx)}\n\n— Ben`,
 
   scheduling: (ctx) =>
     `${firstNameOf(ctx)} let's get a time down. ${rancher(ctx)} will coordinate pickup once you reserve, and if you'd rather just talk it through with me first that works too. ${ctaLine(ctx)}\n\n— Ben`,

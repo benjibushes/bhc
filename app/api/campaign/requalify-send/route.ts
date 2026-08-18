@@ -238,9 +238,16 @@ export async function POST(request: Request) {
         ? variantAssigned
         : 'A'
       : null;
+    // `started` — true only when the buyer demonstrably began the funnel: the
+    // decision resolved a canonical consumer AND a cut (one-tap, or a quiz
+    // reason from a gate PAST 'no-consumer'/'no-cut'/'ambiguous-consumer').
+    // Renders the "quiz you started" line only for genuine starters.
+    const started =
+      decision.mode === 'one-tap' ||
+      !['no-consumer', 'ambiguous-consumer', 'no-cut'].includes(decision.reason);
     let cta: RequalifyCta = brokerReserve
       ? { mode: 'broker-reserve', url: brokerReserveCta(r.state, rancher.slug) }
-      : { mode: 'quiz', url: requalifyCta(r.state, rancher.slug) };
+      : { mode: 'quiz', url: requalifyCta(r.state, rancher.slug), started };
     let reason: RequalifyQuizReason | 'mint-failed' | undefined =
       decision.mode === 'quiz' ? decision.reason : undefined;
     if (decision.mode === 'one-tap') {
