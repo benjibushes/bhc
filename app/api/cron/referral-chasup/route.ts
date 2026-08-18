@@ -5,6 +5,7 @@ import { requireCron } from '@/lib/cronAuth';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, sendTelegramUpdate, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { callClaude } from '@/lib/ai';
+import { resolveChaseDraft, chasupRunStatus } from '@/lib/chasupDraft';
 import { sendEmail, sendRancherLeadDigest } from '@/lib/email';
 import { buildDigestLeads, digestSubject, shouldSendLeadDigest, hasLeadsNewToDigest } from '@/lib/rancherLeadDigest';
 import { withCronRun } from '@/lib/cronRun';
@@ -799,6 +800,12 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
 
     let sent = 0;
     let errors = 0;
+    // F7 (2026-08-18): count of chase drafts the LLM failed to produce
+    // (thrown call OR empty/too-short output). Each one now sends the static
+    // fallback template instead of silently skipping the buyer, and any
+    // non-zero count makes the whole run 'partial' — three days of 100%
+    // llm-draft-failed previously reported 'success' with sent=0.
+    let llmDraftFailed = 0;
 
     // Was 8/run — too low when many leads stale at once (e.g., a single
     // rancher with 40+ Rancher Contacted referrals never caught up). Bumped
@@ -844,35 +851,46 @@ Buyer: ${buyerName}, ${referral['Buyer State'] || ''}
 Rancher introduced: ${rancherName}
 Order interest: ${referral['Order Type'] || 'bulk beef'}, Budget: ${referral['Budget Range'] || 'not specified'}`;
 
-        // LLM-FAILURE FALLBACK (P1 2026-06-23): callClaude was previously
-        // unwrapped — a thrown call OR an undefined/empty draft propagated to
-        // the outer catch (errors++) AND `draft.split('\n')` threw on undefined,
-        // producing a SILENT miss (no email, no fallback). Wrap the call,
-        // guard the output, and SKIP this buyer gracefully on failure/empty —
-        // never throw, never send an email built from a bad draft.
-        let draft: string;
+        // F7 STATIC FALLBACK (2026-08-18, replaces the 2026-06-23 skip):
+        // the old catch was console.warn + continue — the buyer was silently
+        // dropped and the run stayed green. Cron Runs 08-16/17/18 then showed
+        // sent=0 with llm-draft-failed 5/5, 5/5, 6/6: the lane was 100% dark
+        // for 3 straight days while reporting 'success'. (Root cause: Groq
+        // decommissioned both GROQ_MODELS entries in lib/ai.ts — every call
+        // returns model_not_found, and callClaude is Groq-first with no error
+        // fallthrough to Anthropic.) A failed/empty draft now sends the
+        // static chase template from lib/chasupDraft instead — Connect-only
+        // copy, safe because broker rows never reach this pool (the
+        // broker-rail skip in `stale` above, post-#634) — the failure is
+        // counted, and chasupRunStatus reports the run 'partial'.
+        const firstName = buyerName.split(' ')[0] || 'there';
+        let rawDraft: string | null = null;
         try {
-          const raw = await callClaude({
+          rawDraft = (await callClaude({
             system: `You are Ben's AI business assistant for BuyHalfCow, a private beef brokerage. Write warm, direct emails that feel personal. Never invent prices, dates, discounts, or promises — only use facts the user gives you.`,
             user: draftPrompt,
             maxTokens: 500,
-          });
-          draft = (raw || '').toString().trim();
+          })) as string;
         } catch (llmErr: any) {
-          console.warn(`[chasup] LLM draft failed for referral ${referral.id} — skipping (no email):`, llmErr?.message);
+          console.warn(`[chasup] LLM draft failed for referral ${referral.id} — using static fallback:`, llmErr?.message);
           skipReasons['llm-draft-failed'] = (skipReasons['llm-draft-failed'] || 0) + 1;
-          continue;
+          rawDraft = null;
         }
-        if (!draft || draft.length < 20) {
-          console.warn(`[chasup] LLM returned empty/too-short draft for referral ${referral.id} — skipping (no email).`);
+        const resolved = resolveChaseDraft(rawDraft, {
+          buyerFirstName: firstName,
+          rancherName,
+          chaseCount,
+          maxChases: MAX_CHASE_UPS,
+          daysStale,
+        });
+        if (resolved.usedFallback && rawDraft !== null) {
+          console.warn(`[chasup] LLM returned empty/too-short draft for referral ${referral.id} — using static fallback.`);
           skipReasons['llm-draft-empty'] = (skipReasons['llm-draft-empty'] || 0) + 1;
-          continue;
         }
-        // Defensive length cap (maxTokens bounds tokens, not chars).
-        if (draft.length > 4000) draft = draft.slice(0, 4000);
+        if (resolved.usedFallback) llmDraftFailed++;
+        const draft = resolved.body;
 
         // Send immediately (no Telegram approval needed)
-        const firstName = buyerName.split(' ')[0] || 'there';
         const subject = chaseCount === 1
           ? `Quick check-in — ${rancherName} on BuyHalfCow`
           : chaseCount === MAX_CHASE_UPS
@@ -951,6 +969,12 @@ Order interest: ${referral['Order Type'] || 'bulk beef'}, Budget: ${referral['Bu
         console.error(`Chase-up error for referral ${referral.id}:`, err.message);
         errors++;
       }
+      // F7: fea7a13 raised the cap 8→25 and *documented* a 350ms sleep that
+      // was never actually written — the loop ran unpaced against Airtable's
+      // 5 req/s ceiling. Make the comment true. (This does NOT fix the LLM
+      // failures — those are deterministic model_not_found errors, not rate
+      // limits — it honors the Airtable pacing contract the cap bump assumed.)
+      await new Promise((resolve) => setTimeout(resolve, 350));
     }
 
     if (sent > 0) {
@@ -1019,10 +1043,12 @@ Order interest: ${referral['Order Type'] || 'bulk beef'}, Budget: ${referral['Bu
     }
 
   const touched = sent + autoClosed + rancherDigests + stalledNudges + autoReassigned + stalePromptsFired + repeatSent;
+  // F7: llmDraftFailed > 0 forces 'partial' — a degraded AI lane (even one
+  // fully covered by the static fallback) must never read as a green run.
   return {
-    status: errors > 0 ? 'partial' : 'success',
+    status: chasupRunStatus({ errors, llmDraftFailed }),
     recordsTouched: touched,
-    notes: `stale=${stale.length} sent=${sent} closed=${autoClosed} digests=${rancherDigests} nudges=${stalledNudges} reassigned=${autoReassigned} prompts=${stalePromptsFired} repeat=${repeatSent} errors=${errors}`,
+    notes: `stale=${stale.length} sent=${sent} closed=${autoClosed} digests=${rancherDigests} nudges=${stalledNudges} reassigned=${autoReassigned} prompts=${stalePromptsFired} repeat=${repeatSent} errors=${errors} llmDraftFailed=${llmDraftFailed}${llmDraftFailed > 0 ? ' (static fallback sent in place of AI drafts)' : ''}`,
     skipReasonBreakdown: Object.keys(skipReasons).length ? skipReasons : undefined,
   };
 }

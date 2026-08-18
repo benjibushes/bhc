@@ -421,3 +421,261 @@ test('kind priority: confirm before invoice before schedule', () => {
     ['confirm', 'invoice', 'schedule'],
   );
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// F12 (2026-08-18): BROKER-rail fulfillment chase — 'broker-pickup' kind.
+//
+// The route's old formula required {Rancher Accepted At}, which is empty
+// FOREVER on a broker row (lib/depositSla.ts:14 — a represented ranch has no
+// dashboard, no login, no Accept button). After the one 72h deposit-accept
+// escalation, nobody ever verified a broker buyer got their beef.
+//
+// Cohort: broker marker (Match Type 'Broker — Deposit', stamped at referral
+// CREATION — lib/brokerReferral) + Deposit Paid At + fulfillment-sheet
+// DELIVERED. The delivery stamp is 'Intro Sent At': deliverBrokerRancherSheet
+// (lib/brokerSettlement.ts:410) writes it ONLY on a real delivery, with the
+// SAME nowIso that stamps 'Deposit Paid At' — so delivered ⇒
+// Intro Sent At ≥ Deposit Paid At. A matching-created broker row carries a
+// PRE-deposit Intro Sent At from routing; if the sheet send then failed, the
+// stamp stays OLDER than Deposit Paid At and the row is excluded (the
+// undelivered-sheet operator alert owns that case — never ask a buyer about a
+// pickup the ranch was never told to arrange).
+//
+// Cadence mirrors the Connect confirm lane exactly: due = Handoff Date >
+// Processing Date > delivery + fallbackDays; tiers T+2/5/8; shared stamps,
+// 48h cooldown, 3 lifetime, tier > Count ladder. The CHASE is aimed at the
+// BUYER ("did pickup happen?") — the ranch is off-platform, so the buyer is
+// the only party who can confirm.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import { buildBrokerPickupEmail } from './fulfillmentChase';
+
+// Delivered-sheet broker row: Intro Sent At === Deposit Paid At (the settle
+// path uses one nowIso for both), due = delivery + 14d, 2d past → tier 1.
+function brokerRef(overrides: Record<string, any> = {}): Record<string, any> {
+  return {
+    id: 'recBroker',
+    'Match Type': 'Broker — Deposit',
+    'Status': 'Awaiting Payment',
+    'Deposit Paid At': '2026-06-15T10:00:00.000Z',
+    'Intro Sent At': '2026-06-15T10:00:00.000Z',
+    ...overrides,
+  };
+}
+
+// ── Broker cohort gate ───────────────────────────────────────────────────────
+
+test('broker: delivered sheet + deposit paid, 2d past the 14d window → broker-pickup tier 1', () => {
+  const out = select([brokerRef()]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].kind, 'broker-pickup');
+  assert.equal(out[0].tier, 1);
+  assert.equal(out[0].referralId, 'recBroker');
+});
+
+test('broker: marker tolerates the Airtable {name} singleSelect object shape', () => {
+  const out = select([brokerRef({ 'Match Type': { name: 'Broker — Deposit' } })]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].kind, 'broker-pickup');
+});
+
+test('broker: sheet never delivered (no Intro Sent At) → excluded', () => {
+  // Undelivered sheet = the ranch was never told the order exists; the
+  // raiseBrokerSheetAlert operator rail owns it. Never ask the buyer about a
+  // pickup nobody arranged.
+  const out = select([brokerRef({ 'Intro Sent At': undefined })]);
+  assert.equal(out.length, 0);
+});
+
+test('broker: stale PRE-deposit intro stamp (matched row, sheet send failed) → excluded', () => {
+  // Matching stamps Intro Sent At at routing time; a delivered sheet
+  // re-stamps it to the settlement nowIso. Older-than-deposit ⇒ not delivered.
+  const out = select([brokerRef({ 'Intro Sent At': '2026-06-01T10:00:00.000Z' })]);
+  assert.equal(out.length, 0);
+});
+
+test('broker: no Deposit Paid At → excluded (deposit chase owns pre-money rows)', () => {
+  const out = select([brokerRef({ 'Deposit Paid At': undefined })]);
+  assert.equal(out.length, 0);
+});
+
+test('broker: fulfillment already confirmed → excluded (both confirm shapes)', () => {
+  assert.equal(select([brokerRef({ 'Fulfillment Confirmed At': '2026-06-20T10:00:00.000Z' })]).length, 0);
+  assert.equal(select([brokerRef({ 'Fulfillment Status': 'Fulfilled' })]).length, 0);
+});
+
+test('broker: closed rows are never chased', () => {
+  assert.equal(select([brokerRef({ Status: 'Closed Won' })]).length, 0);
+  assert.equal(select([brokerRef({ Status: 'Closed Lost' })]).length, 0);
+  assert.equal(select([brokerRef({ Status: 'Refunded' })]).length, 0);
+});
+
+test('broker: rancher-added CRM leads excluded (#511 — never email their own customer)', () => {
+  const out = select([brokerRef({ 'Referral Source': 'rancher-added' })]);
+  assert.equal(out.length, 0);
+});
+
+// ── Broker cadence mirrors the Connect confirm lane ──────────────────────────
+
+test('broker: 6d past due → tier 2; 9d past → tier 3', () => {
+  const t2 = select([brokerRef({ 'Deposit Paid At': '2026-06-11T10:00:00.000Z', 'Intro Sent At': '2026-06-11T10:00:00.000Z' })]);
+  assert.equal(t2[0]?.tier, 2);
+  const t3 = select([brokerRef({ 'Deposit Paid At': '2026-06-08T10:00:00.000Z', 'Intro Sent At': '2026-06-08T10:00:00.000Z' })]);
+  assert.equal(t3[0]?.tier, 3);
+});
+
+test('broker: inside the 14d window → not chased yet', () => {
+  const out = select([brokerRef({ 'Deposit Paid At': '2026-06-25T10:00:00.000Z', 'Intro Sent At': '2026-06-25T10:00:00.000Z' })]);
+  assert.equal(out.length, 0);
+});
+
+test('broker: a Handoff Date wins over the fallback window (due-source mirror)', () => {
+  const out = select([
+    brokerRef({
+      'Deposit Paid At': '2026-06-25T10:00:00.000Z',
+      'Intro Sent At': '2026-06-25T10:00:00.000Z',
+      'Handoff Date': '2026-06-28', // 3.5d past NOW → tier 1
+    }),
+  ]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].tier, 1);
+});
+
+test('broker: tier > Count ladder — no duplicate tier-1, escalation fires', () => {
+  // Count 1, still in the tier-1 window → quiet.
+  const quiet = select([brokerRef({ 'Fulfillment Chase Count': 1 })]);
+  assert.equal(quiet.length, 0);
+  // Count 1, tier-2 window → tier 2 fires.
+  const esc = select([
+    brokerRef({
+      'Deposit Paid At': '2026-06-11T10:00:00.000Z',
+      'Intro Sent At': '2026-06-11T10:00:00.000Z',
+      'Fulfillment Chase Count': 1,
+    }),
+  ]);
+  assert.equal(esc.length, 1);
+  assert.equal(esc[0].tier, 2);
+});
+
+test('broker: 48h cooldown blocks re-sends; lifetime cap of 3 holds', () => {
+  const cooled = select([brokerRef({ 'Fulfillment Chase Last Sent At': '2026-06-30T14:00:00.000Z' })]);
+  assert.equal(cooled.length, 0);
+  const capped = select([
+    brokerRef({
+      'Deposit Paid At': '2026-06-01T10:00:00.000Z',
+      'Intro Sent At': '2026-06-01T10:00:00.000Z',
+      'Fulfillment Chase Count': 3,
+    }),
+  ]);
+  assert.equal(capped.length, 0);
+});
+
+// ── Rail isolation — the leak guards ─────────────────────────────────────────
+
+test('broker: a broker row NEVER yields a Connect kind, even with Connect-shaped fields', () => {
+  // A broker row that somehow carries Rancher Accepted At + no final invoice
+  // would, in the Connect lane, produce confirm/invoice asks — emails telling
+  // an off-platform ranch to tap buttons that do not exist (the exact class
+  // deposit-accept-sla fixed 2026-08-17). It must take the broker branch only.
+  const out = select([
+    brokerRef({
+      'Rancher Accepted At': '2026-06-10T10:00:00.000Z',
+      'Deposit Paid At': '2026-06-15T10:00:00.000Z',
+      'Intro Sent At': '2026-06-15T10:00:00.000Z',
+    }),
+  ]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].kind, 'broker-pickup');
+});
+
+test('broker: an undelivered broker row with Connect-shaped fields stays fully silent', () => {
+  const out = select([
+    brokerRef({
+      'Rancher Accepted At': '2026-06-10T10:00:00.000Z',
+      'Intro Sent At': undefined,
+    }),
+  ]);
+  assert.equal(out.length, 0);
+});
+
+test('connect: a non-broker row with no Rancher Accepted At stays excluded (formula widening safety)', () => {
+  // The route formula no longer requires {Rancher Accepted At}; the JS gate
+  // is now the only thing keeping pre-accept Connect rows out of this cron
+  // (deposit-accept-sla owns them).
+  const out = select([ref({ 'Rancher Accepted At': undefined })]);
+  assert.equal(out.length, 0);
+});
+
+test('ordering: confirm still outranks broker-pickup; broker-pickup outranks invoice', () => {
+  const out = select([
+    invRef({ id: 'recInv' }),
+    brokerRef({ id: 'recBrokerOrd' }),
+    ref({ id: 'recConfirm' }),
+  ]);
+  assert.deepEqual(
+    out.map((c) => c.kind),
+    ['confirm', 'broker-pickup', 'invoice'],
+  );
+});
+
+// ── Buyer copy (pure builder the route sends) ────────────────────────────────
+
+test('broker pickup email: asks about pickup, balance-at-pickup framing, no commission words', () => {
+  for (const tier of [1, 2] as const) {
+    const { subject, html } = buildBrokerPickupEmail({
+      buyerFirstName: 'Sam',
+      ranchName: 'Champion Valley',
+      cutLabel: 'Half beef',
+      tier,
+    });
+    assert.ok(/pickup|picked up/i.test(html), 'asks whether pickup happened');
+    assert.ok(html.includes('Champion Valley'));
+    assert.ok(/balance/i.test(html), 'balance-at-pickup world stated');
+    for (const s of [subject, html]) {
+      assert.ok(!/commission|fee|invoice/i.test(s), 'no commission words in buyer copy');
+      assert.ok(!s.includes('$'), 'no amounts — copy never states prices');
+    }
+    assert.ok(/reply/i.test(html), 'gives the buyer a one-step way to answer');
+  }
+});
+
+test('broker pickup email: tier 2 reads as a second touch, not a repeat of tier 1', () => {
+  const t1 = buildBrokerPickupEmail({ buyerFirstName: 'Sam', ranchName: 'Champion Valley', tier: 1 });
+  const t2 = buildBrokerPickupEmail({ buyerFirstName: 'Sam', ranchName: 'Champion Valley', tier: 2 });
+  assert.notEqual(t1.html, t2.html);
+  assert.notEqual(t1.subject, t2.subject);
+});
+
+test('broker pickup email: HTML-escapes Airtable free text', () => {
+  const { html } = buildBrokerPickupEmail({
+    buyerFirstName: '<script>alert(1)</script>',
+    ranchName: 'A & B "Ranch"',
+    tier: 1,
+  });
+  assert.ok(!html.includes('<script>'));
+  assert.ok(html.includes('&amp;'));
+});
+
+// ── Route wiring pins (source contract — same convention as
+//    lib/brokerDownstreamGates.test.ts: route handlers can't be imported
+//    under tsx --test) ────────────────────────────────────────────────────────
+
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+const readSrc = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
+
+test('PIN fulfillment-chase route: formula no longer requires Rancher Accepted At', () => {
+  const src = readSrc('../app/api/cron/fulfillment-chase/route.ts');
+  assert.ok(!src.includes(`{Rancher Accepted At} != ''`), 'broker rows (no acceptance, ever) must reach the selector');
+  assert.ok(src.includes(`{Deposit Paid At} != ''`), 'still money-gated at the formula');
+});
+
+test('PIN fulfillment-chase route: broker-pickup goes to the BUYER, never the rancher nudge', () => {
+  const src = readSrc('../app/api/cron/fulfillment-chase/route.ts');
+  assert.match(src, /kind === 'broker-pickup'/);
+  assert.match(src, /buildBrokerPickupEmail\(/);
+  // The Connect rancher-nudge condition must exclude the broker kind — the
+  // old `kind !== 'confirm' || tier === 1 || tier === 2` shape would have
+  // emailed an off-platform ranch a dashboard CTA.
+  assert.match(src, /kind !== 'broker-pickup' && \(kind !== 'confirm' \|\| tier === 1 \|\| tier === 2\)/);
+});
