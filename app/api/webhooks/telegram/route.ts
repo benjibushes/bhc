@@ -27,6 +27,10 @@ import jwt from 'jsonwebtoken';
 
 import { JWT_SECRET, generateMemberLoginToken } from '@/lib/secrets';
 import { railForLoadedRancher, referralCarriesBrokerMarker } from '@/lib/brokerDownstream';
+// Rancher-ROW pools (mass-send) gate on the raw rail predicate directly, the
+// same way trust-promotion and first-touch-sla do — a represented ranch has a
+// BLANK Active Status, so status checks can never be the belt.
+import { isBrokerRancher } from '@/lib/brokerRail';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET || '';
 
@@ -803,6 +807,26 @@ async function processUpdate(update: any) {
             getRecordById(TABLES.RANCHERS, rancherRecId) as Promise<any>,
           ]);
 
+          // BROKER RAIL (comms containment 2026-08-18): matchfire mints a row
+          // and fires the full Connect double intro — the buyer gets the
+          // ranch's email + phone, the ranch gets a lead email for an
+          // agreement it never signed. The /match card's Active+Agreement
+          // filter is an ACCIDENTAL shield (isBrokerRoutable deliberately
+          // requires neither), so the day that filter relaxes, this tap leaks
+          // the whole deposit. Same refusal as approve_. No referral exists
+          // yet, so the rail comes from the loaded rancher alone —
+          // fail-closed: an unreadable rancher reads 'broker' and refuses.
+          if (railForLoadedRancher(rancher) === 'broker') {
+            await answerCallbackQuery(queryId, 'Represented ranch — send the deposit link instead.');
+            if (chatId) {
+              await sendTelegramMessage(
+                chatId,
+                `🚫 <b>Broker rail</b> — ${rancher?.['Operator Name'] || rancher?.['Ranch Name'] || 'that ranch'} is represented: there is no Connect intro to fire.\n\nRoute the buyer with <code>/forcematch ${buyer?.['Email'] || buyerRecId}</code> — the broker rail mints their deposit link (no intro; the ranch's contact stays held until the deposit is paid).`,
+              );
+            }
+            return NextResponse.json({ ok: true });
+          }
+
           // IDEMPOTENCY GUARD (RW-9 audit): without this, double-click
           // on the manual /match Telegram button created DUPLICATE
           // Referral rows + sent the intro email twice to both buyer
@@ -1275,6 +1299,30 @@ async function processUpdate(update: any) {
             return NextResponse.json({ ok: true });
           }
 
+          // Read the TARGET rancher BEFORE any mutation — the broker refusal
+          // below has to fire ahead of the old-rancher slot decrement, or every
+          // refused tap would leak a capacity slot the referral still holds.
+          const rancher: any = await getRecordById(TABLES.RANCHERS, newRancherId);
+
+          // BROKER RAIL (comms containment 2026-08-18): assignto re-fires the
+          // full Connect double intro (buyer gets the ranch's phone + email,
+          // ranch gets the buyer's contact block) with no rail gate at all —
+          // the reassign picker's Active+Agreement filter is the same
+          // ACCIDENTAL shield matchfire had, and stale keyboards outlive it.
+          // Marker OR rail, exactly like approve_: a referral that carries the
+          // broker marker keeps broker economics even when the tap targets a
+          // Connect rancher.
+          if (referralCarriesBrokerMarker(referral) || railForLoadedRancher(rancher) === 'broker') {
+            await answerCallbackQuery(queryId, 'Represented ranch — send the deposit link instead.');
+            if (chatId) {
+              await sendTelegramMessage(
+                chatId,
+                `🚫 <b>Broker rail</b> — ${rancher?.['Operator Name'] || rancher?.['Ranch Name'] || 'that ranch'} is represented, so there is no Connect intro to reassign onto it.\n\nThe buyer's deposit link: <code>/checkout/${refId}/broker</code>`,
+              );
+            }
+            return NextResponse.json({ ok: true });
+          }
+
           const oldRancherId = referral['Rancher']?.[0] || referral['Suggested Rancher']?.[0];
           // Atomic decrement on the OLD rancher only if the referral held one
           // of their slots. This is a slot-swap, not a close: the referral
@@ -1301,7 +1349,6 @@ async function processUpdate(update: any) {
             }
           }
 
-          const rancher: any = await getRecordById(TABLES.RANCHERS, newRancherId);
           const now = new Date().toISOString();
 
           await updateRecord(TABLES.REFERRALS, refId, {
@@ -1347,7 +1394,7 @@ async function processUpdate(update: any) {
                   <p><strong>Order:</strong> ${referral['Order Type']}</p>
                   <p><strong>Budget:</strong> ${referral['Budget Range']}</p>
                   <p>Reach out directly. Reply-all to keep me in the loop.</p>
-                  <p style="font-size: 12px; color: #A7A29A;">— Benjamin, BuyHalfCow</p>
+                  <p style="font-size: 12px; color: #A7A29A;">— Benjamin, BuyHalfCow | ${commissionPercentLabelForRancher(rancher)} commission on BHC referral sales.</p>
                 </div>
               `,
             });
@@ -1575,6 +1622,32 @@ Source: ${c['Source'] || 'organic'}`;
           if (ref['Commission Paid'] === true) {
             await answerCallbackQuery(queryId, '✓ Already marked paid');
             return new Response('OK');
+          }
+          // BROKER/DEPOSIT RAIL (comms containment 2026-08-18): "commission
+          // payment received" is a LEGACY-INVOICE-RAIL fact. On the deposit
+          // rail the fee was collected from the buyer at deposit time; on the
+          // broker rail the deposit IS the entire commission, and an unpaid
+          // broker row collected NOTHING — stamping it Commission Paid would
+          // destroy the receivable partitionUnpaidByRail exists to protect.
+          // Same predicate as the close-reply invoice skip, so the two
+          // decisions can never disagree. Refuse the whole tap: no stamp, no
+          // receipt — the monthly reconcile stamps deposit-rail rows itself.
+          const { isPostCloseInvoiceRail, isBrokerReferralRow } = await import('@/lib/commission');
+          if (!isPostCloseInvoiceRail(ref)) {
+            const isBrokerRow = isBrokerReferralRow(ref);
+            await answerCallbackQuery(queryId, 'No invoice on this rail — nothing to mark paid.');
+            if (chatId) {
+              await sendTelegramMessage(
+                chatId,
+                isBrokerRow
+                  ? `🚫 <b>Broker rail</b> — on this deal the deposit IS the commission; a represented ranch is never invoiced.\n\n` +
+                    (String(ref['Deposit Paid At'] || '').trim()
+                      ? `The deposit already settled to BHC — the fee is collected, there is nothing to mark and no receipt to send.`
+                      : `No deposit has been paid, so nothing has been collected. Not stamping Commission Paid — chase the deposit link instead: <code>/checkout/${refId}/broker</code>`)
+                  : `ℹ️ <b>Deposit rail</b> — the fee was already collected from the buyer at deposit. There is no commission invoice to mark paid and no receipt was sent; the monthly reconcile stamps this row on its own.`,
+              );
+            }
+            return NextResponse.json({ ok: true });
           }
           await updateRecord(TABLES.REFERRALS, refId, {
             'Commission Paid': true,
@@ -2229,7 +2302,15 @@ Output ONLY the email body. First line should be the subject line prefixed with 
           await answerCallbackQuery(queryId, 'Sending check-in emails...');
 
           const allRanchers = await getAllRecords(TABLES.RANCHERS) as any[];
+          // BROKER RAIL (comms containment 2026-08-18): a represented ranch
+          // signed nothing and its Active Status is BLANK, so the Suspended/
+          // Rejected line below never bites — one confirm tap would email it a
+          // Connect check-in whose "Not interested" button flips it Inactive
+          // (the #625 violation class). Excluded FIRST, counted like
+          // /bulkfire's skip.
+          let brokerSkipped = 0;
           const stalled = allRanchers.filter((r: any) => {
+            if (isBrokerRancher(r)) { brokerSkipped++; return false; }
             const status = r['Active Status'] || '';
             const email = r['Email'] || '';
             const pageLive = r['Page Live'] || false;
@@ -2268,7 +2349,7 @@ Output ONLY the email body. First line should be the subject line prefixed with 
 
           if (chatId && messageId) {
             await editTelegramMessage(chatId, messageId,
-              `✅ <b>CHECK-IN EMAILS SENT</b>\n\n📧 ${sentCount}/${stalled.length} ranchers contacted\n\nEach got 3 buttons:\n✅ "I'm still in" → notifies you\n📞 "Questions" → sends to Calendly\n🔴 "Not interested" → marks Inactive\n\nResponses will ping this chat in real time.`
+              `✅ <b>CHECK-IN EMAILS SENT</b>\n\n📧 ${sentCount}/${stalled.length} ranchers contacted\nBroker-rail skipped: ${brokerSkipped}\n\nEach got 3 buttons:\n✅ "I'm still in" → notifies you\n📞 "Questions" → sends to Calendly\n🔴 "Not interested" → marks Inactive\n\nResponses will ping this chat in real time.`
             );
           }
         } catch (e: any) {
@@ -2309,7 +2390,13 @@ Output ONLY the email body. First line should be the subject line prefixed with 
           await answerCallbackQuery(queryId, 'Sending pipeline update emails...');
 
           const allRanchers = await getAllRecords(TABLES.RANCHERS) as any[];
+          // BROKER RAIL (comms containment 2026-08-18): a represented ranch
+          // has BLANK Active/Onboarding Status, so it lands in this pool and
+          // one confirm tap emails it an agreement-signing link for the
+          // Commission Agreement it never entered. Excluded FIRST, counted.
+          let brokerSkipped = 0;
           const pipeline = allRanchers.filter((r: any) => {
+            if (isBrokerRancher(r)) { brokerSkipped++; return false; }
             const onboarding = r['Onboarding Status'] || '';
             const active = r['Active Status'] || '';
             const email = r['Email'] || '';
@@ -2370,7 +2457,7 @@ Output ONLY the email body. First line should be the subject line prefixed with 
 
           if (chatId && messageId) {
             await editTelegramMessage(chatId, messageId,
-              `🚀 <b>PIPELINE BLITZ SENT</b>\n\n📧 ${sentCount}/${pipeline.length} ranchers emailed\n\n<b>By stage:</b>\n${stageBreakdown}\n\nEach rancher got a personalized email with their specific next step and a direct action link (sign agreement / set up page / dashboard).`
+              `🚀 <b>PIPELINE BLITZ SENT</b>\n\n📧 ${sentCount}/${pipeline.length} ranchers emailed\nBroker-rail skipped: ${brokerSkipped}\n\n<b>By stage:</b>\n${stageBreakdown}\n\nEach rancher got a personalized email with their specific next step and a direct action link (sign agreement / set up page / dashboard).`
             );
           }
         } catch (e: any) {
@@ -2412,7 +2499,14 @@ Output ONLY the email body. First line should be the subject line prefixed with 
           await answerCallbackQuery(queryId, 'Sending onboarding packages...');
 
           const allRanchers = await getAllRecords(TABLES.RANCHERS) as any[];
+          // BROKER RAIL (comms containment 2026-08-18): a represented ranch
+          // has BLANK statuses and no docs stamp, so it lands in this pool —
+          // one confirm tap mails it the FULL onboarding packet (Commission
+          // Agreement + Media Agreement + signing link) for a model it never
+          // agreed to. Excluded FIRST, counted.
+          let brokerSkipped = 0;
           const eligible = allRanchers.filter((r: any) => {
+            if (isBrokerRancher(r)) { brokerSkipped++; return false; }
             const status = r['Onboarding Status'] || '';
             const active = r['Active Status'] || '';
             const email = r['Email'] || '';
@@ -2455,7 +2549,7 @@ Output ONLY the email body. First line should be the subject line prefixed with 
             }
           }
 
-          let resultMsg = `📦 <b>BULK ONBOARDING COMPLETE</b>\n\n📧 ${sentCount}/${eligible.length} ranchers received onboarding docs`;
+          let resultMsg = `📦 <b>BULK ONBOARDING COMPLETE</b>\n\n📧 ${sentCount}/${eligible.length} ranchers received onboarding docs\nBroker-rail skipped: ${brokerSkipped}`;
           if (sentCount > 0) {
             resultMsg += `\n\nEach got:\n• Commission Agreement\n• Media Agreement\n• Rancher Info Packet\n• 30-day signing link\n\nThey can sign immediately and start setting up their page.`;
           }
@@ -3867,6 +3961,10 @@ Output ONLY the email body. First line should be the subject line prefixed with 
               monthlyCommission,
               lifetimeWins,
               lifetimeCommission,
+              // Rides the same rail decision as the invoice skip above — a
+              // deposit-rail/broker close never renders a "Mark Paid" button
+              // for an invoice that will never exist.
+              postCloseInvoiceRail: !skipLegacyInvoice,
             });
           } catch (celebrErr: any) {
             console.warn('[telegram close-reply won] sale celebration failed:', celebrErr?.message);
@@ -5379,6 +5477,9 @@ Confirm send?`;
           // Find ranchers who are in the pipeline but stalled
           // (not Live, not Inactive, not Rejected, have an email)
           const stalled = allRanchers.filter((r: any) => {
+            // Broker exclusion mirrors the send pool's counted skip — the
+            // "Send to N" confirm button must promise the number that sends.
+            if (isBrokerRancher(r)) return false;
             const status = r['Active Status'] || '';
             const onboarding = r['Onboarding Status'] || '';
             const email = r['Email'] || '';
@@ -5434,6 +5535,9 @@ Confirm send?`;
         try {
           const allRanchers = await getAllRecords(TABLES.RANCHERS) as any[];
           const pipeline = allRanchers.filter((r: any) => {
+            // Broker exclusion mirrors the send pool's counted skip — the
+            // "Send to N" confirm button must promise the number that sends.
+            if (isBrokerRancher(r)) return false;
             const onboarding = r['Onboarding Status'] || '';
             const active = r['Active Status'] || '';
             const email = r['Email'] || '';
@@ -5494,6 +5598,9 @@ Confirm send?`;
         try {
           const allRanchers = await getAllRecords(TABLES.RANCHERS) as any[];
           const eligible = allRanchers.filter((r: any) => {
+            // Broker exclusion mirrors the send pool's counted skip — the
+            // "Send to N" confirm button must promise the number that sends.
+            if (isBrokerRancher(r)) return false;
             const status = r['Onboarding Status'] || '';
             const active = r['Active Status'] || '';
             const email = r['Email'] || '';
