@@ -53,7 +53,7 @@ export default function TermsPage() {
               </p>
               <p>
                 BuyHalfCow is a private membership network, not a marketplace or e-commerce platform. 
-                We facilitate connections between verified ranchers, serious buyers, and trusted partners.
+                We facilitate connections between ranchers, serious buyers, and trusted partners.
               </p>
             </section>
 

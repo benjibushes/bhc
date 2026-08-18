@@ -38,7 +38,7 @@ export default function RancherList({ pins }: { pins: MapPin[] }) {
   if (listed.length === 0) {
     return (
       <p className="text-sm text-saddle">
-        No verified ranchers listed yet — check back soon, or{' '}
+        No ranches listed yet — check back soon, or{' '}
         <a href="/access" className="underline hover:text-charcoal">
           get on the waitlist
         </a>

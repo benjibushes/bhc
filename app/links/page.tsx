@@ -20,7 +20,7 @@ import LinksButtons from './LinksButtons';
 export const metadata: Metadata = {
   title: 'BuyHalfCow — real beef, real ranchers',
   description:
-    'Reserve a whole, half, or quarter beef share from a verified family ranch — or shop ranch beef shipped to your door.',
+    'Reserve a whole, half, or quarter beef share from a real family ranch — or shop ranch beef shipped to your door.',
   robots: { index: false }, // a routing surface, not a search destination
 };
 
@@ -39,7 +39,7 @@ export default function LinksPage() {
           />
           <p className="font-serif text-[22px] leading-none">buyhalfcow</p>
           <p className="text-[14px] text-saddle leading-relaxed max-w-[36ch] mx-auto">
-            i connect families to verified ranches for real beef — a whole,
+            i connect families to real family ranches for beef — a whole,
             half, or quarter at a time.{' '}
             <span className="whitespace-nowrap">&mdash; Ben</span>
           </p>
@@ -49,7 +49,7 @@ export default function LinksPage() {
 
         {/* Trust strip — same honest three beats as the shop rail. */}
         <p className="text-center text-xs text-muted leading-relaxed">
-          verified ranches · secured by stripe · if anything shows up wrong, we make it right
+          real ranches · secured by stripe · if anything shows up wrong, we make it right
         </p>
 
         <p className="text-center text-xs text-saddle border-t border-dust pt-4">

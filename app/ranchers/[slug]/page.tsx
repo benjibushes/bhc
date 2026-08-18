@@ -639,10 +639,26 @@ export default async function RancherPage(
         <Container>
           <div className="py-24 md:py-36 max-w-4xl">
             <div className="flex flex-col gap-6">
-              {/* Verification + state pill row */}
+              {/* Verification + state pill row. WORDING RULING (2026-08-18):
+                  a represented (broker self-serve) ranch never ran
+                  verification and signed nothing — "Verified partner" on its
+                  hero was a false trust claim on an ad-bound page. It gets
+                  the honest #630 badge voice instead; the Verified pill stays
+                  exactly as-was for ranches that actually earned it. */}
               <div className="flex flex-wrap items-center gap-2">
                 {isProspect ? (
                   <Pill tone="amber" className="!bg-amber !text-charcoal !border-transparent">Unclaimed listing</Pill>
+                ) : brokerSelfServe ? (
+                  <Pill
+                    tone="positive"
+                    icon={<span aria-hidden>●</span>}
+                    /* same in-network sage as the map's represented pin —
+                       green = you can reserve today, the label tells the
+                       rails apart (lib/mapPinStatus doctrine). */
+                    className="!bg-sage !text-bone !border-transparent"
+                  >
+                    Represented ranch
+                  </Pill>
                 ) : (
                   <Pill
                     tone="positive"
@@ -868,9 +884,13 @@ export default async function RancherPage(
                   Processing Facility field just echoes the ranch name (no
                   separate plant on record), rendering it would be a circular
                   claim ("USDA inspected: <this ranch>"), so we hide it. */}
+              {/* WORDING RULING (2026-08-18): "USDA inspected" is a vetting
+                  claim — Connect verification confirms the processor, but a
+                  represented ranch never ran verification, so its facility
+                  renders under the neutral "Processed at" instead. */}
               {hasRealProcessingFacility && (
                 <span>
-                  <span className="text-saddle">USDA inspected</span>{' '}
+                  <span className="text-saddle">{brokerSelfServe ? 'Processed at' : 'USDA inspected'}</span>{' '}
                   <strong>{heroPillText(processingFacility)}</strong>
                 </span>
               )}

@@ -51,7 +51,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { name } = resolved;
   const lowerSlug = state.toLowerCase();
   const title = `Buy half-cow direct from ${name} ranchers — BuyHalfCow`;
-  const description = `Verified ${name} ranchers. 90-second match. No marketplace markup. No middleman. Direct ranch beef from real ${name} operations.`;
+  const description = `Real ${name} ranchers. 90-second match. No marketplace markup. No middleman. Direct ranch beef from real ${name} operations.`;
   const url = `https://www.buyhalfcow.com/access/${lowerSlug}`;
 
   return {
@@ -151,7 +151,7 @@ export default async function AccessStatePage({ params }: Props) {
     '@context': 'https://schema.org',
     '@type': 'WebPage',
     name: `Buy half-cow direct from ${stateNameFull} ranchers`,
-    description: `Verified ${stateNameFull} ranchers. Direct ranch beef. No middlemen.`,
+    description: `Real ${stateNameFull} ranchers. Direct ranch beef. No middlemen.`,
     url: `https://www.buyhalfcow.com/access/${lowerSlug}`,
     about: {
       '@type': 'Place',
@@ -189,7 +189,7 @@ export default async function AccessStatePage({ params }: Props) {
         {/* Hero */}
         <div className="max-w-3xl mx-auto text-center space-y-6 mb-16">
           <p className="text-sm uppercase tracking-widest text-saddle">
-            {stateNameFull} · Verified Ranchers
+            {stateNameFull} · Local Ranchers
           </p>
           <h1 className="font-[family-name:var(--font-playfair)] text-4xl md:text-5xl leading-tight">
             buy half-cow direct from {stateNameFull} ranchers
@@ -198,7 +198,7 @@ export default async function AccessStatePage({ params }: Props) {
           <p className="text-saddle text-lg leading-relaxed">
             {hasRanchers ? (
               <>
-                {ranchers.length} verified {ranchers.length === 1 ? 'rancher' : 'ranchers'} in {stateNameFull}.{' '}
+                {ranchers.length} {ranchers.length === 1 ? 'rancher' : 'ranchers'} live in {stateNameFull}.{' '}
                 {totalClosedDeals > 0
                   ? `${totalClosedDeals} ${stateNameFull} ${totalClosedDeals === 1 ? 'family' : 'families'} fed direct this year.`
                   : '90-second match — no marketplace markup, no middleman.'}
@@ -206,7 +206,7 @@ export default async function AccessStatePage({ params }: Props) {
             ) : (
               <>
                 {stateNameFull} ranchers are joining weekly. get on the list —
-                we'll route you the moment a verified rancher goes live in {stateNameFull}.
+                we'll route you the moment a rancher goes live in {stateNameFull}.
               </>
             )}
           </p>
@@ -222,10 +222,10 @@ export default async function AccessStatePage({ params }: Props) {
           <div className="max-w-5xl mx-auto">
             <div className="text-center mb-10">
               <h2 className="font-[family-name:var(--font-playfair)] text-3xl md:text-4xl">
-                verified ranchers in {stateNameFull}
+                ranchers in {stateNameFull}
               </h2>
               <p className="text-saddle mt-3 max-w-2xl mx-auto">
-                every operation below has been personally vetted by ben. tap
+                every operation below is one ben personally works with. tap
                 a card to see beef types, pricing, and how to order.
               </p>
             </div>
@@ -278,7 +278,7 @@ export default async function AccessStatePage({ params }: Props) {
           <p className="text-saddle">
             {hasRanchers
               ? `skip the grocery aisle. the 90-second match routes you to a real ${stateNameFull} rancher.`
-              : `we'll fire a routing slot the second a verified rancher comes online in ${stateNameFull}.`}
+              : `we'll fire a routing slot the second a rancher comes online in ${stateNameFull}.`}
           </p>
           <Button href={`/access?state=${stateCode}`} variant="secondary">
             {hasRanchers ? 'start the quiz →' : `join the ${stateNameFull} waitlist →`}

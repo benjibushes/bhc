@@ -263,7 +263,7 @@ export default function ShopGrid({
                 surfaces can never contradict. Hidden when 0 or unknown. */}
             {shareRanchCount > 0 && (
               <p className="text-[13.5px] text-charcoal mt-2 max-w-[54ch]">
-                want a whole, half, or quarter share instead? {shareRanchCount} verified{' '}
+                want a whole, half, or quarter share instead? {shareRanchCount}{' '}
                 {shareRanchCount === 1 ? 'ranch serves' : 'ranches serve'} {stateLabel} —{' '}
                 <Link
                   href={`/half-a-cow/${shareSlug}`}

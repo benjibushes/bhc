@@ -14,19 +14,19 @@ import { getActiveRancherPages } from '@/lib/airtable';
 import { STATS_FALLBACK, requireLiveStats } from '@/lib/statsFallback';
 
 export const metadata: Metadata = {
-  title: 'Wholesale · Direct from verified ranchers',
+  title: 'Wholesale · Direct from the ranch',
   description:
-    'restaurant or butcher? source direct from the ranch. skip the distributor. lock long-term supply with verified ranchers.',
+    'restaurant or butcher? source direct from the ranch. skip the distributor. lock long-term supply straight from the ranch.',
   openGraph: {
-    title: 'Wholesale · Direct from verified ranchers',
+    title: 'Wholesale · Direct from the ranch',
     description:
-      'restaurant or butcher? source direct from the ranch. skip the distributor. lock long-term supply with verified ranchers.',
+      'restaurant or butcher? source direct from the ranch. skip the distributor. lock long-term supply straight from the ranch.',
     type: 'website',
     url: 'https://www.buyhalfcow.com/wholesale',
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Wholesale · Direct from verified ranchers',
+    title: 'Wholesale · Direct from the ranch',
     description:
       'restaurant or butcher? source direct from the ranch. skip the distributor.',
   },
@@ -44,7 +44,7 @@ interface PublicStats {
 
 // Consumed by hero JSX (`{stats.ranchersActive}` etc.) which renders the raw
 // number — no em-dash fallback layer for 0. So if we hardcoded zeros here,
-// /api/stats/public failure would lie with "0 verified ranchers" rather than
+// /api/stats/public failure would lie with "0 ranchers live" rather than
 // degrade to a placeholder. Numbers come from the shared dated module
 // (lib/statsFallback, single-sourced with the API's own catch path) — refresh
 // there, never here.
@@ -109,8 +109,8 @@ export default async function WholesalePage() {
             restaurant or butcher? source direct from the ranch.
           </h1>
           <p className="text-saddle text-base sm:text-lg leading-relaxed">
-            skip the distributor. lock long-term supply with verified ranchers.
-            built for buyers moving 1+ head per month.
+            skip the distributor. lock long-term supply straight from the
+            ranch. built for buyers moving 1+ head per month.
           </p>
         </div>
 
@@ -121,7 +121,7 @@ export default async function WholesalePage() {
               {stats.ranchersActive}
             </div>
             <div className="text-xs sm:text-sm text-saddle mt-1">
-              verified ranchers
+              ranchers live
             </div>
           </div>
           <div className="border-l-2 border-dust pl-4">
@@ -150,7 +150,7 @@ export default async function WholesalePage() {
           </span>
           <span className="inline-flex items-center gap-1.5">
             <span className="text-charcoal font-semibold">✓</span>
-            ranchers verified + agreement-signed
+            every rancher ben works with direct
           </span>
           <span className="inline-flex items-center gap-1.5">
             <span className="text-charcoal font-semibold">✓</span>

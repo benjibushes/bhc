@@ -86,7 +86,7 @@ export default function ReviewSubmitForm({ token }: Props) {
       <div className="border border-charcoal p-5 md:p-6">
         <p className="font-serif text-lg mb-2">Thanks.</p>
         <p className="text-saddle leading-relaxed text-sm md:text-base">
-          Your review helps the next family find verified beef. We&apos;ll add your words to the wall in the next day or two.
+          Your review helps the next family find real ranch beef. We&apos;ll add your words to the wall in the next day or two.
         </p>
       </div>
     );

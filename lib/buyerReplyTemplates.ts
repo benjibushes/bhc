@@ -107,7 +107,7 @@ const TEMPLATES: Partial<Record<BuyerObjection, Builder>> = {
     `${firstNameOf(ctx)} you get a say in the cuts. a half fills a normal freezer shelf and comes back as steaks, roasts, and ground, and you can tell the processor how you want it broken down (thickness, ground ratio, roasts vs steaks). ${rancher(ctx)} walks you through the cut sheet. ${ctaLine(ctx)}\n\n— Ben`,
 
   quality: (ctx) =>
-    `${firstNameOf(ctx)} fair to ask. ${rancher(ctx)} is a real family ranch I verified myself, not a label on a grocery shelf. you'll know the animal and how it was raised, and you buy straight from them. that's the whole point of what we do. ${ctaLine(ctx)}\n\n— Ben`,
+    `${firstNameOf(ctx)} fair to ask. ${rancher(ctx)} is a real family ranch I work with myself, not a label on a grocery shelf. you'll know the animal and how it was raised, and you buy straight from them. that's the whole point of what we do. ${ctaLine(ctx)}\n\n— Ben`,
 
   capacity: (ctx) =>
     `${firstNameOf(ctx)} a half is a lot of beef, so freezer space is worth checking. figure a half needs about four cubic feet, which most chest freezers handle easy, and a quarter is half that if you want to start smaller. happy to help you size it. ${ctaLine(ctx)}\n\n— Ben`,

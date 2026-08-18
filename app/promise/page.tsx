@@ -36,7 +36,7 @@ export default function PromisePage() {
             <p>
               When you place a deposit, your rancher does real work that
               can&rsquo;t be undone: they reserve a processing slot at their
-              USDA-inspected facility, set aside cuts of meat from a specific
+              processing facility, set aside cuts of meat from a specific
               animal, and lock in pickup or delivery logistics for your share.
               That moment of commitment is when the deposit becomes
               non-refundable.

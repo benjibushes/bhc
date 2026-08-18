@@ -1581,7 +1581,7 @@ function MatchingPreferenceBlock({ initial }: { initial: string }) {
         <div>
           <h3 className="font-serif text-xl text-charcoal">Open to nationwide shipping ranchers</h3>
           <p className="mt-1 text-sm text-saddle leading-relaxed">
-            On — if no rancher is available in your state, we can match you with a vetted
+            On — if no rancher is available in your state, we can match you with a
             rancher who ships nationwide. Off — we&apos;ll only match you locally, even if
             that means waiting.
           </p>

@@ -54,7 +54,7 @@ export default function FullHomepage() {
             </h1>
 
             <p className="text-lg md:text-2xl max-w-2xl mx-auto leading-snug md:leading-relaxed text-saddle">
-              Real beef, direct from a verified ranch near you — quarter, half,
+              Real beef, direct from a real ranch near you — quarter, half,
               or whole cow, matched in 90 seconds.
               <span className="block mt-2 text-charcoal font-medium">
                 Deposit&rsquo;s fully refundable until your rancher accepts you.
@@ -90,7 +90,7 @@ export default function FullHomepage() {
               source beef directly from a real ranch
             </h2>
             <p className="text-lg text-saddle mb-10">
-              Answer a few questions and we match you with a verified rancher serving your area — or put you first in line as we bring one to your state. You talk to them direct, set your cuts, pick your processing date. You pay the rancher, not a marketplace.
+              Answer a few questions and we match you with a rancher serving your area — or put you first in line as we bring one to your state. You talk to them direct, set your cuts, pick your processing date. You pay the rancher, not a marketplace.
               {totalMembers ? ` Join ${totalMembers.toLocaleString()}+ members already sourcing direct.` : ''}
             </p>
             {/* Tri-tier intent fork. Cards are NOT links themselves (a Card
@@ -102,7 +102,7 @@ export default function FullHomepage() {
                 <p className="text-xs uppercase tracking-widest text-saddle mb-2">stock the freezer</p>
                 <h3 className="font-serif text-2xl mb-2 lowercase">a half or whole share</h3>
                 <p className="text-saddle text-sm mb-6 flex-1">
-                  a year of beef from the verified ranch nearest you — matched in
+                  a year of beef from the ranch nearest you — matched in
                   90 seconds. your deposit holds the spot, fully refundable
                   until your rancher accepts.
                 </p>
@@ -161,7 +161,7 @@ export default function FullHomepage() {
             <ol className="grid grid-cols-1 sm:grid-cols-4 gap-4 md:gap-3">
               {[
                 { n: '1', t: 'Apply', d: '90-second quiz. We capture your state, household size, timing.' },
-                { n: '2', t: 'Get routed', d: 'We match you to the verified ranch nearest you — low food miles, real local beef.' },
+                { n: '2', t: 'Get routed', d: 'We match you to the ranch nearest you — low food miles, real local beef.' },
                 { n: '3', t: 'Talk direct', d: 'Your rancher calls or texts within 24–48 hours with pricing, cuts, processing date.' },
                 { n: '4', t: 'Beef in your freezer', d: '2–4 weeks. Deposit refundable until your rancher accepts. BHC Promise on every match.' },
               ].map((step) => (
@@ -335,7 +335,7 @@ export default function FullHomepage() {
                 how we're different
               </h2>
               <p className="text-xl leading-relaxed text-saddle">
-                BuyHalfCow is the only <strong className="text-charcoal">private, approval-only</strong> network for sourcing ranch beef direct. Every rancher is verified. Every buyer is vetted. Every connection is logged.
+                BuyHalfCow is the only <strong className="text-charcoal">private, approval-only</strong> network for sourcing ranch beef direct. Every ranch is hand-picked. Every buyer is vetted. Every connection is logged.
               </p>
             </div>
 
@@ -351,9 +351,9 @@ export default function FullHomepage() {
               </div>
               <div className="text-center space-y-4">
                 <div className="text-4xl">02</div>
-                <h3 className="font-serif text-xl">Verified ranchers</h3>
+                <h3 className="font-serif text-xl">Hand-picked ranchers</h3>
                 <p className="text-sm text-saddle leading-relaxed">
-                  We verify ranchers through direct outreach + signed partnership agreements. Only real operations make the network.
+                  Every ranch joins through direct outreach — verified partners sign agreements, and represented ranches we sell for directly. Only real operations make the network.
                 </p>
               </div>
               <div className="text-center space-y-4">
@@ -405,7 +405,7 @@ export default function FullHomepage() {
                 <div className="text-center space-y-3">
                   <div className="w-12 h-12 bg-charcoal text-bone rounded-full flex items-center justify-center font-serif text-xl mx-auto">2</div>
                   <p className="font-medium">Get routed</p>
-                  <p className="text-sm text-saddle">We match you with a verified rancher serving your area within hours.</p>
+                  <p className="text-sm text-saddle">We match you with a rancher serving your area within hours.</p>
                 </div>
                 <div className="text-center space-y-3">
                   <div className="w-12 h-12 bg-charcoal text-bone rounded-full flex items-center justify-center font-serif text-xl mx-auto">3</div>
@@ -463,8 +463,8 @@ export default function FullHomepage() {
             </h2>
             <div className="grid sm:grid-cols-2 gap-6 text-left max-w-2xl mx-auto">
               <div className="space-y-2">
-                <p className="font-medium">Rancher verification</p>
-                <p className="text-sm text-saddle">Direct outreach, partnership agreement signed, USDA-processor verified for every ranch in our network.</p>
+                <p className="font-medium">Rancher vetting</p>
+                <p className="text-sm text-saddle">Direct outreach on every ranch — verified partners sign a partnership agreement and confirm their USDA processor.</p>
               </div>
               <div className="space-y-2">
                 <p className="font-medium">Buyer vetting</p>

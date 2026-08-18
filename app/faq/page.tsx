@@ -33,8 +33,8 @@ const sections: Section[] = [
           <>
             <p className="mb-3">
               You apply for access (60 seconds). I review the application personally and approve serious buyers &mdash;
-              usually same day, sometimes 24&ndash;48h during launch weeks. Once approved, you see verified
-              ranchers in your state.
+              usually same day, sometimes 24&ndash;48h during launch weeks. Once approved, you see the
+              ranches live in your state.
             </p>
             <p>
               Pick a rancher, reserve a quarter/half/whole with a deposit, and they take it from there.
@@ -165,7 +165,7 @@ const sections: Section[] = [
             </p>
             <p>
               Once certified, pre-screened buyers in your state get routed to you. You&apos;re visible
-              on the verified-rancher map and on your own landing page at <code>buyhalfcow.com/ranchers/[your-slug]</code>.
+              on the rancher map and on your own landing page at <code>buyhalfcow.com/ranchers/[your-slug]</code>.
             </p>
           </>
         ),
@@ -340,7 +340,7 @@ const sections: Section[] = [
         q: 'What states are covered?',
         a: (
           <p>
-            We have verified ranchers in multiple states and we&apos;re actively recruiting in
+            We have ranches live in multiple states and we&apos;re actively recruiting in
             every state with serious buyer demand. If your state isn&apos;t covered yet, apply
             anyway &mdash; I prioritize recruiting based on buyer demand.
           </p>
@@ -350,7 +350,7 @@ const sections: Section[] = [
         q: 'Is the network really private?',
         a: (
           <p>
-            Yes. Buyers and ranchers are both vetted. The verified-rancher map at <Link href="/map" className="underline">/map</Link>
+            Yes. Buyers are vetted and ranchers are hand-picked. The rancher map at <Link href="/map" className="underline">/map</Link>
             {' '}is the only public-facing rancher info; everything else &mdash; pricing detail, contact
             flow, the matching engine &mdash; lives behind member auth.
           </p>

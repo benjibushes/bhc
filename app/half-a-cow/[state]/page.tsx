@@ -69,7 +69,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const title = `Buy Half a Cow in ${name} — What It Costs & How It Works`;
   const description =
     `Half a cow in ${name}: typical half-beef shares run ${fmtRange(r.half)} all-in (~$8–11/lb hanging weight vs $13–17/lb boxed delivery). ` +
-    `90-second quiz, a verified local ranch, ${r.depositPercent}% refundable deposit.`;
+    `90-second quiz, a real local ranch, ${r.depositPercent}% refundable deposit.`;
 
   return {
     title,
@@ -149,9 +149,9 @@ const STEPS: { title: string; body: (name: string) => string }[] = [
       `Share size, timing, freezer space. That's it — it's how we match you instead of listing you.`,
   },
   {
-    title: 'get matched with a local verified ranch',
+    title: 'get matched with a local family ranch',
     body: (name) =>
-      `We route you to a real, vetted family operation serving ${name} — named, pictured, yours to talk to.`,
+      `We route you to a real family operation serving ${name} — named, pictured, yours to talk to.`,
   },
   {
     title: 'reserve with a refundable deposit',
@@ -244,19 +244,19 @@ export default async function HalfACowStatePage({ params }: Props) {
             <p className="text-lg md:text-xl max-w-2xl mx-auto leading-snug md:leading-relaxed text-saddle">
               {hasSupply ? (
                 <>
-                  {liveRanchers} verified {liveRanchers === 1 ? 'ranch is' : 'ranches are'} live
+                  {liveRanchers} {liveRanchers === 1 ? 'ranch is' : 'ranches are'} live
                   in {name} right now. A 90-second quiz matches you with yours — no
                   marketplace markup, no middleman.
                 </>
               ) : knownNoSupply ? (
                 <>
-                  We&rsquo;re recruiting verified family ranches in {name} right now.
+                  We&rsquo;re recruiting family ranches in {name} right now.
                   Get on the list and you&rsquo;re matched first — in the order you
                   signed up — the moment one goes live.
                 </>
               ) : (
                 <>
-                  A 90-second quiz matches you with a verified family ranch serving{' '}
+                  A 90-second quiz matches you with a real family ranch serving{' '}
                   {name} — or puts you first in line while we recruit one. No
                   marketplace markup, no middleman.
                 </>
@@ -366,7 +366,12 @@ export default async function HalfACowStatePage({ params }: Props) {
                   ? `from ranches serving ${name} — shipped frozen, or picked up at the ranch.`
                   : marketKnown && knownNoSupply
                     ? `no ranch stand in ${name} yet.`
-                    : `real beef from verified family ranches, shipped to your door.`}
+                    : // "verified" is TRUE here and stays (wording ruling
+                      // 2026-08-18): the market strip is marketplace-product
+                      // supply only, and lib/marketplaceProducts drops every
+                      // represented (broker) ranch's rows wholesale — this
+                      // set, unlike the routing pool, really is all verified.
+                      `real beef from verified family ranches, shipped to your door.`}
               </p>
             </div>
             {stripProducts.length > 0 ? (
@@ -389,7 +394,7 @@ export default async function HalfACowStatePage({ params }: Props) {
               <div className="text-center space-y-3">
                 <p className="text-[14.5px] text-saddle max-w-[54ch] mx-auto">
                   {waitlist ? `${waitlist} ` : ''}join the list and you&rsquo;re matched first
-                  the moment a verified {name} ranch goes live.
+                  the moment a {name} ranch goes live.
                 </p>
                 <Button href={accessHref} variant="secondary" size="sm">
                   join the {name} list →
@@ -452,7 +457,7 @@ export default async function HalfACowStatePage({ params }: Props) {
             <p className="text-saddle text-[15.5px] leading-relaxed pt-4">
               {hasSupply
                 ? `skip the grocery aisle. the quiz routes you to a real ${name} ranch — deposit refundable until they accept.`
-                : `${name} families who join now get matched first when a verified ranch goes live. it costs nothing to be in line.`}
+                : `${name} families who join now get matched first when a ranch goes live. it costs nothing to be in line.`}
             </p>
             <Button href={accessHref} size="lg">
               {hasSupply ? `find my ${name} ranch →` : `join the ${name} list →`}
