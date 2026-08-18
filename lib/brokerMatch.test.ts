@@ -146,7 +146,11 @@ test('ROUTE PIN (money): the rancher lead email is gated on notifyPlan.rancherLe
   const guardIdx = routeSrc.indexOf('if (rancherEmail && notifyPlan.rancherLeadEmail) {');
   assert.ok(guardIdx > -1);
   assert.ok(routeSrc.indexOf("type: 'rancher-quick-action'", guardIdx) > guardIdx);
-  assert.ok(routeSrc.indexOf('10% commission invoice', guardIdx) > guardIdx);
+  // The commission-invoice claim (rate DERIVED per rancher since 2026-08-18 —
+  // see route.pins.test.ts — never the old hardcoded "10%") stays inside it.
+  assert.ok(
+    routeSrc.indexOf('${commissionPercentLabelForRancher(topMatch)} commission invoice', guardIdx) > guardIdx,
+  );
 });
 
 test('ROUTE PIN (money): the buyer intro handoff is gated on notifyPlan.buyerIntroHandoff', () => {

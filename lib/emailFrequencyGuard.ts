@@ -462,6 +462,28 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   // the "did my payment go through?" email, on a charge with no other paper.
   'broker_rancher_order',
   'broker_buyer_receipt',
+  // BROKER MATCH INVITE (comms containment 2026-08-18, F6). The match-time
+  // deposit ask on the broker rail — the ONE email whose deposit IS 100% of
+  // BHC's fee on the sale (docs/BUSINESS-MODEL.md model 3). It is the broker
+  // twin of quiz_complete_deposit_invite (whitelisted above, same money-moment
+  // slot); its settlement siblings broker_rancher_order/broker_buyer_receipt
+  // were whitelisted from day one while the invite itself rode the cap. A
+  // fresh funnel completer trivially has welcome + quiz invite (+ intro) in
+  // the same window — i.e. sits AT the 3/week cap — so the cap was eating the
+  // fee itself: the exact pre-2026-06-02 Connect-intro suppression pattern.
+  // (The old sendBrokerMatchInvite docstring argued cap-parity with "the
+  // capped sendBuyerIntroNotification" — a false premise: that template is
+  // whitelisted at the top of this list.)
+  //
+  // Why this cannot create volume: it fires only from the broker-match block
+  // in app/api/matching/suggest — one invite per match event, on a rail where
+  // referral mint is capacity-gated and re-matches REUSE the referral row
+  // (lib/brokerReferralReuse). The route stamps 'Deposit Invite Sent At' only
+  // on a send result with success:true (F6b, same wave) and every downstream
+  // chase keys on that stamp — cadence is owned by match flow + DB state, not
+  // this guard. An undelivered invite goes LOUD to the operator instead of
+  // being silently recorded as sent.
+  'broker_match_invite',
   // Signup confirmation restating the commission agreement the rancher just
   // accepted on /partner/represent. One per signup (the route dedupes by
   // email), and it is the rancher's only written copy of the money terms.

@@ -73,6 +73,48 @@ for (const template of OPERATOR_INTERNAL_NOTICES) {
   });
 }
 
+// ── Broker rail (comms containment 2026-08-18, F6) ──────────────────────────
+// broker_match_invite is the deposit ask on the broker rail — the ONE email
+// whose deposit IS 100% of BHC's fee on the sale. Its settlement twins
+// (broker_rancher_order / broker_buyer_receipt) were whitelisted from day one
+// while the invite itself rode the 3/week cap — and a fresh funnel completer
+// (welcome + quiz invite + intro in the same window) typically sits AT the
+// cap, i.e. the exact pre-2026-06-02 Connect-intro suppression pattern.
+const BROKER_MONEY_ASKS = [
+  'broker_match_invite', // the match-time deposit ask — the fee itself
+  'broker_rancher_order', // settlement: the ranch's only copy of the order
+  'broker_buyer_receipt', // settlement: the buyer's only proof of payment
+];
+
+for (const template of BROKER_MONEY_ASKS) {
+  test(`TRANSACTIONAL_WHITELIST includes broker money ask: ${template}`, () => {
+    assert.equal(
+      TRANSACTIONAL_WHITELIST.has(template),
+      true,
+      `${template} must be transactional-whitelisted so it can never be frequency-capped`
+    );
+  });
+}
+
+// Direction 2: the whitelist is an allowlist of argued-safe templates, not a
+// blanket exemption — templates whose throttles are too weak stay capped
+// (their entries in the guard explain why). Pins the policy so a future
+// "just whitelist everything" sweep fails loudly here.
+const DELIBERATELY_CAPPED = [
+  'still_looking_reconfirm', // best-effort stamp — uncapping = daily storm risk
+  'sendPilotUpsellEmail', // marketing, removed from the whitelist in Audit 2 P1
+];
+
+for (const template of DELIBERATELY_CAPPED) {
+  test(`TRANSACTIONAL_WHITELIST still excludes deliberately-capped template: ${template}`, () => {
+    assert.equal(
+      TRANSACTIONAL_WHITELIST.has(template),
+      false,
+      `${template} is deliberately NOT whitelisted — its own throttle is too weak to uncap`
+    );
+  });
+}
+
 // ── countSendsByEmail (pure — batch cap-prime helper, scale audit 2026-07-22) ─
 // primeFrequencyCapCache replaces one Email Sends count read PER RECIPIENT
 // with a single read for the whole cron run; this is its counting core.

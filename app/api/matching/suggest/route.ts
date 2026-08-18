@@ -31,7 +31,7 @@ import { sendBrokerMatchInvite } from '@/lib/email';
 import { isQualificationFresh } from '@/lib/qualification';
 import { requireAdmin } from '@/lib/adminAuth';
 import { MIN_TIER_PRICE } from '@/lib/pricing';
-import { tierFor } from '@/lib/tiers';
+import { tierFor, commissionPercentLabelForRancher } from '@/lib/tiers';
 import {
   routingWeightForTier,
   retainerPriorityCompareWithOverride,
@@ -1664,8 +1664,8 @@ export async function POST(request: Request) {
         // MONEY GUARD 1 of 3 — never email a REPRESENTED ranch a Connect lead.
         // This block hands over the buyer's contact details, a 30-day
         // quick-action JWT whose buttons post to a dashboard a represented
-        // ranch has no login for, and (below) an explicit "10% commission
-        // invoice" claim it never signed an agreement for. On the broker rail
+        // ranch has no login for, and (below) an explicit commission-invoice
+        // claim it never signed an agreement for. On the broker rail
         // the ranch hears about the sale at SETTLEMENT, with money already in.
         if (rancherEmail && notifyPlan.rancherLeadEmail) {
           // Operator symmetry (B2 2026-07-15): on the Operator tier the BHC
@@ -1712,7 +1712,12 @@ export async function POST(request: Request) {
             <p style="font-size:12px;color:#6B4F3F;margin:0 0 18px 0;">${
               String(topMatch['Pricing Model'] || 'legacy') === 'tier_v2'
                 ? `One-click status updates — no login. Closed Won just records the sale. You keep 100% of your price — our fee is added to the buyer at deposit, so you never get an invoice from us. (Only a sale closed entirely off the deposit rail is invoiced.)`
-                : `One-click status updates — no login. Closed Won button asks for sale amount + auto-generates the 10% commission invoice via Stripe.`
+                // Rate derived, never a literal (2026-08-18, same class as the
+                // #635 telegram footers): a legacy rancher with a locked
+                // Commission Rate — the mandated rate source since the
+                // Ashcraft 2026-05-20 dispute — was being quoted "10%" here
+                // regardless of what the invoice would actually charge.
+                : `One-click status updates — no login. Closed Won button asks for sale amount + auto-generates the ${commissionPercentLabelForRancher(topMatch)} commission invoice via Stripe.`
             }</p>`;
           // sendEmail can fail two ways: (a) throw on network/Resend SDK
           // error, (b) return a result with .error set (Resend's documented
@@ -1915,6 +1920,11 @@ export async function POST(request: Request) {
           //     THIS referral (Match Type BROKER_MATCH_TYPE) rather than
           //     duplicating it.
           let brokerInviteSent = false;
+          // Non-null ⇔ an invite was MINTED but did not reach the buyer's
+          // inbox (frequency-guard suppression, Resend API error, or a
+          // throw). Kept separate from brokerInviteSent=false-with-no-invite
+          // (no sellable cut) because the two need opposite operator copy.
+          let brokerInviteFailReason: string | null = null;
           let brokerReserveUrl = '';
           if (notifyPlan.brokerReserveInvite) {
             const brokerCut = brokerCutForOrderType(orderType);
@@ -1939,21 +1949,40 @@ export async function POST(request: Request) {
             // money for. Send NOTHING rather than a link that bounces; the
             // operator card below says so explicitly.
             if (invite) {
+              // SEND TRUTH (comms containment 2026-08-18, F6b): guardedSend
+              // resolves a frequency-guard suppression AND a Resend API error
+              // as { success:false } WITHOUT throwing — the old catch-only
+              // handling recorded both as sent. On the one email whose
+              // deposit is 100% of BHC's fee, that false 'sent' stamped
+              // 'Deposit Invite Sent At' below, which (a) enrolled the row in
+              // the deposit-abandon chase with copy presuming a delivered ask
+              // and (b) muted the qualified-no-action rail for 24h via
+              // hasSameDayQuizInvite — longer than its whole 30min–4h window.
+              // Empty inbox, silent chases. Only success===true is sent.
               try {
-                await sendBrokerMatchInvite({
+                const inviteRes: any = await sendBrokerMatchInvite({
                   to: buyerEmail,
                   subject: invite.subject,
                   html: invite.html,
                   text: invite.text,
                 });
-                brokerInviteSent = true;
+                if (inviteRes?.success === true) {
+                  brokerInviteSent = true;
+                } else {
+                  brokerInviteFailReason = String(inviteRes?.reason || 'send-failed');
+                  console.error('[matching/suggest] broker match invite not delivered:', brokerInviteFailReason);
+                }
               } catch (e: any) {
+                brokerInviteFailReason = e?.message || 'send-threw';
                 console.error('[matching/suggest] broker match invite failed:', e?.message);
               }
             }
             // The invite IS the deposit invite on this rail — stamp it so the
             // deposit-request-nudge rail chases this buyer (same reason the
-            // Connect branch stamps it below).
+            // Connect branch stamps it below). Gated on the send actually
+            // succeeding: an unstamped row is deliberately left for the
+            // qualified-no-action chase (which ignores this stamp's absence)
+            // and the loud operator signal below — never marked invited.
             if (brokerInviteSent) {
               try {
                 await updateRecord(TABLES.REFERRALS, referral.id, {
@@ -1970,26 +1999,54 @@ export async function POST(request: Request) {
           // this rail. Buyer contact details stay here, operator-only.
           if (notifyPlan.operatorHandoffAlert) {
             try {
-              const card = buildBrokerMatchOperatorCard({
-                ranchName: String(topMatch['Ranch Name'] || topMatch['Operator Name'] || ''),
-                ranchState: String(topMatch['State'] || ''),
-                buyerName,
-                buyerState,
-                orderType: String(orderType || ''),
-                reserveUrl: brokerReserveUrl,
-                invited: brokerInviteSent,
-              });
-              await sendOperatorSignal({
-                urgency: brokerInviteSent ? 'normal' : 'loud',
-                kind: brokerInviteSent ? 'other' : 'system-error',
-                summary: card.summary,
-                detail: card.detail,
-                refs: [
-                  { type: 'rancher', id: topMatch.id, label: String(topMatch['Ranch Name'] || '') },
-                  { type: 'referral', id: referral.id },
-                ],
-                dedupeKey: `broker-match:${referral.id}`,
-              });
+              if (brokerInviteFailReason !== null) {
+                // An invite was MINTED for this buyer but never reached them.
+                // The no-sellable-cut card below would blame missing pricing —
+                // wrong and misleading here. Say what actually happened, loud:
+                // this is a routed buyer with an empty inbox and BHC's entire
+                // fee on the line.
+                await sendOperatorSignal({
+                  urgency: 'loud',
+                  kind: 'system-error',
+                  summary:
+                    `BROKER INVITE NOT DELIVERED: ${buyerName || 'a buyer'} (${buyerState || '?'}) was routed to ` +
+                    `${String(topMatch['Ranch Name'] || topMatch['Operator Name'] || 'a represented ranch')} but the deposit invite did not send.`,
+                  detail: [
+                    `Send outcome: ${brokerInviteFailReason}.`,
+                    `The referral was left unstamped ('Deposit Invite Sent At' blank) on purpose: ` +
+                      `the qualified-no-action chase (30min–4h post-intro, broker-aware) still fires for ` +
+                      `unstamped rows, and the deposit-abandon rail correctly stays silent about an ask ` +
+                      `that never landed.`,
+                    `This deposit is 100% of BHC's fee on the sale — resend by hand if the chase doesn't land: ${brokerReserveUrl}`,
+                  ].join('\n'),
+                  refs: [
+                    { type: 'rancher', id: topMatch.id, label: String(topMatch['Ranch Name'] || '') },
+                    { type: 'referral', id: referral.id },
+                  ],
+                  dedupeKey: `broker-match:${referral.id}`,
+                });
+              } else {
+                const card = buildBrokerMatchOperatorCard({
+                  ranchName: String(topMatch['Ranch Name'] || topMatch['Operator Name'] || ''),
+                  ranchState: String(topMatch['State'] || ''),
+                  buyerName,
+                  buyerState,
+                  orderType: String(orderType || ''),
+                  reserveUrl: brokerReserveUrl,
+                  invited: brokerInviteSent,
+                });
+                await sendOperatorSignal({
+                  urgency: brokerInviteSent ? 'normal' : 'loud',
+                  kind: brokerInviteSent ? 'other' : 'system-error',
+                  summary: card.summary,
+                  detail: card.detail,
+                  refs: [
+                    { type: 'rancher', id: topMatch.id, label: String(topMatch['Ranch Name'] || '') },
+                    { type: 'referral', id: referral.id },
+                  ],
+                  dedupeKey: `broker-match:${referral.id}`,
+                });
+              }
             } catch (e: any) {
               console.error('[matching/suggest] broker match operator signal failed:', e?.message);
             }
