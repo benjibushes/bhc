@@ -14,7 +14,11 @@ import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { createDepositCheckout, getConnectAccountStatus } from '@/lib/stripeConnect';
 import { validateDepositConsent } from '@/lib/depositConsent';
 import { recordDeposit } from '@/lib/contracts/payments';
-import { MIN_TIER_PRICE, deriveDeposit, depositDisplay } from '@/lib/pricing';
+import { MIN_TIER_PRICE } from '@/lib/pricing';
+// THE deposit resolution — one implementation, called by BOTH the POST charge
+// path and the GET render path so the displayed total and the charged total
+// cannot diverge (P0 2026-08-18; see lib/depositResolve.ts).
+import { resolveDepositMoney, CUT_PRICE_FIELD, type DepositCut } from '@/lib/depositResolve';
 import { tierFor, depositCommissionRate } from '@/lib/tiers';
 import { resolveDepositAuth } from '@/lib/buyerAuth';
 import { claimOnce } from '@/lib/rancherCapacity';
@@ -297,17 +301,8 @@ export async function POST(req: Request) {
   // requires before going to slaughter. Commission is calculated on FULL
   // Price and collected upfront — rancher collects the remaining balance
   // (Full − Deposit) directly at fulfillment.
-  const priceFieldMap: Record<string, string> = {
-    quarter: 'Quarter Price',
-    half: 'Half Price',
-    whole: 'Whole Price',
-  };
-  const depositFieldMap: Record<string, string> = {
-    quarter: 'Quarter Deposit',
-    half: 'Half Deposit',
-    whole: 'Whole Deposit',
-  };
-  const fullSaleDollars = Number(rancher[priceFieldMap[cutSize]]);
+  const cut = cutSize as DepositCut;
+  const fullSaleDollars = Number(rancher[CUT_PRICE_FIELD[cut]]);
   if (!Number.isFinite(fullSaleDollars) || fullSaleDollars <= 0) {
     return NextResponse.json(
       { error: `Rancher hasn't set a ${CUT_LABELS[cutSize]} price yet — contact rancher` },
@@ -324,35 +319,44 @@ export async function POST(req: Request) {
       { status: 409 },
     );
   }
-  // Deposit: use the rancher's set per-cut deposit when valid (0 < dep ≤ price);
-  // otherwise DERIVE the standard reserve (25% of price, lib/pricing) rather than
-  // charging the full price upfront. This keeps the charge consistent with what
-  // the deposit page DISPLAYS (the GET handler shows deriveDeposit when the field
-  // is empty) and means an un-backfilled rancher charges a true partial reserve,
-  // never 100%. deriveDeposit is always < price for any price ≥ MIN_TIER_PRICE
-  // (gated above), so the buyer always pays a partial and the balance is real.
-  // RANCHER-QUOTED AMOUNT (2026-07-14): when the rancher explicitly requested
-  // a deposit for THIS cut (request-deposit stamps Order Type + Deposit Amount
-  // + Deposit Requested At), the buyer must be charged the number the rancher
-  // quoted — not the per-cut default. Previously the durable page silently
-  // ignored the quote, so a custom ask (e.g. "$500 to hold your half") charged
-  // the saved default instead. Only honored while the request is pending
-  // (guard above ensures unpaid), only for the matching cut, and only within
-  // the same bounds as the default path (0 < quote ≤ full price).
-  const quotedDollars = Number(referral['Deposit Amount']);
-  const quotedCutMatches =
-    String(referral['Order Type'] || '').trim().toLowerCase() === cutSize &&
-    String(referral['Deposit Requested At'] || '').trim() !== '';
-  const depositDollarsRaw = Number(rancher[depositFieldMap[cutSize]]);
-  const depositDollars =
-    quotedCutMatches && Number.isFinite(quotedDollars) && quotedDollars > 0 && quotedDollars <= fullSaleDollars
-      ? quotedDollars
-      : Number.isFinite(depositDollarsRaw) && depositDollarsRaw > 0 && depositDollarsRaw <= fullSaleDollars
-        ? depositDollarsRaw
-        : deriveDeposit(fullSaleDollars);
+  // ── THE deposit + fee resolution (P0 2026-08-18) ─────────────────────────
+  // resolveDepositMoney (lib/depositResolve) is the SINGLE implementation, and
+  // the GET render path below calls the very same function with the very same
+  // arguments. Before this, the charge honored a rancher's custom quote while
+  // buildCut did not even read the referral for money — so a quoted referral
+  // rendered one number and charged another (Silverline Quarter: page $695.00,
+  // card $795.00). There is now exactly one number, by construction.
+  //
+  // Precedence (see lib/depositResolve): rancher's quote for THIS cut and ask →
+  // rancher's stored per-cut deposit → derived ~25% reserve. Every rung is
+  // bounded 0 < deposit ≤ price, so the buyer always pays a real partial and
+  // the balance at pickup stays positive.
+  //
+  // RATE SOURCE (finding 1, 2026-07-02): the rancher's LOCKED Commission Rate
+  // wins over the tier constant (depositCommissionRate — same precedence the
+  // billing page displays and the tier-subscription webhook preserves), so the
+  // charged fee, the displayed fee, and the emailed fee are all the locked
+  // rate. Resolved HERE (rather than further down, where it used to live) so
+  // one call produces the deposit AND the fee together — a split between the
+  // two resolutions is exactly the class of drift this P0 was.
+  const feeRate = depositCommissionRate(rancher, tier);
+  // BHC service fee is computed against the FULL sale price — not the deposit.
+  // Rancher collects the fulfillment balance directly outside BHC, so the
+  // commission is paid in full at deposit time, ADDED ON TOP of the rancher's
+  // deposit (rancher receives the full deposit, buyer pays deposit + fee).
+  const money = resolveDepositMoney(referral, rancher, cut, feeRate);
+  if (!money) {
+    // Unreachable — the price guards above already rejected a missing/invalid
+    // price, which is the only way resolveDepositMoney returns null. Kept as a
+    // fail-closed backstop: never fall through to a guessed amount.
+    return NextResponse.json(
+      { error: `Rancher hasn't set a ${CUT_LABELS[cutSize]} price yet — contact rancher` },
+      { status: 409 },
+    );
+  }
 
-  const fullSaleCents = Math.round(fullSaleDollars * 100);
-  const amountCents = Math.round(depositDollars * 100);
+  const fullSaleCents = money.fullCents;
+  const amountCents = money.depositCents;
 
   const buyerEmail = String(referral['Buyer Email'] || '').trim();
   if (!buyerEmail) return NextResponse.json({ error: 'Buyer email missing on referral' }, { status: 409 });
@@ -368,26 +372,17 @@ export async function POST(req: Request) {
       : (tier.charAt(0).toUpperCase() + tier.slice(1))
   ) as 'Pasture' | 'Ranch' | 'Operator' | 'Legacy Connect';
 
-  // BHC service fee is computed against the FULL sale price — not the
-  // deposit. Rancher collects the fulfillment balance directly outside BHC,
-  // so commission is paid in full at deposit time. ADDED ON TOP of the
-  // rancher's deposit (rancher receives full deposit, buyer pays
-  // deposit + platform fee).
-  //
-  // RATE SOURCE (finding 1, 2026-07-02): the rancher's LOCKED Commission Rate
-  // wins over the tier constant (depositCommissionRate — same precedence the
-  // billing page displays and the tier-subscription webhook preserves).
-  // Charged fee === displayed fee === locked rate. Math is unchanged beyond
-  // the rate source.
-  const feeRate = depositCommissionRate(rancher, tier);
   // NET-YOUR-NUMBER (2026-07-08): buyer total still carries the GROSS
   // commission (price unchanged), but the application fee Stripe actually
   // takes is absorbed down by the processing estimate (lib/feeMath) so the
   // rancher nets their full deposit. This mirror of createDepositCheckout's
   // math exists ONLY so recorded fee === charged fee (the #247 invariant);
-  // both sides call the same absorbStripeFee.
-  const grossPlatformFeeCents = Math.round(fullSaleCents * feeRate);
-  const totalChargedCents = amountCents + grossPlatformFeeCents;
+  // both sides call the same absorbStripeFee. Absorption moves the
+  // platform/rancher SPLIT only — totalChargedCents (what the buyer's card is
+  // hit for, and what the deposit page renders as dueNowCents) is built from
+  // the GROSS fee and is untouched by it.
+  const grossPlatformFeeCents = money.feeCents;
+  const totalChargedCents = money.dueNowCents;
   const { feeCents: platformFeeCents } = absorbStripeFee({
     grossFeeCents: grossPlatformFeeCents,
     totalChargeCents: totalChargedCents,
@@ -808,27 +803,37 @@ export async function GET(req: Request) {
 
   const pricingModel = String(rancher['Pricing Model'] || 'legacy');
 
-  // Per-cut money breakdown for the buyer deposit page, via the shared
-  // depositDisplay helper (lib/pricing.ts) — same deposit resolution + fee
-  // rounding order as the POST charge path, so dueNowCents is EXACTLY what
-  // the card is charged (no surprises at Stripe). Rate resolved via
-  // depositCommissionRate exactly like POST (locked Commission Rate wins,
-  // else the tier constant, else the legacy default when tier is unset).
+  // Per-cut money breakdown for the buyer deposit page, via resolveDepositMoney
+  // (lib/depositResolve) — literally the SAME function, the SAME referral, the
+  // SAME rancher, and the SAME rate the POST charge path above calls, so
+  // dueNowCents is EXACTLY what the card is charged (no surprises at Stripe).
+  //
+  // P0 (2026-08-18) — WHY THE REFERRAL IS PASSED HERE: this used to call
+  // depositDisplay(price, rancher's stored per-cut deposit, rate) and never
+  // read the referral for money at all. The charge path DID honor a rancher's
+  // custom quote (`Deposit Amount` + matching `Order Type` + `Deposit Requested
+  // At`), so every custom ask rendered the per-cut DEFAULT and charged the
+  // quote — Silverline Quarter showed $695.00 and hit the card for $795.00,
+  // with five live payable referrals in that state and an hourly nudge cron
+  // driving buyers at the page. The referral is money input on this surface;
+  // dropping it is what made the last screen before the card lie.
+  //
+  // Rate resolved via depositCommissionRate exactly like POST (locked
+  // Commission Rate wins, else the tier constant, else the legacy default when
+  // tier is unset).
   //
   // FEE-INVISIBLE (founder directive 2026-07-01): the buyer UI renders ONLY
   // dueNowCents. depositCents/feeCents stay on the payload for API-shape
   // compat (and internal tooling) but are never displayed buyer-side.
   const tier = tierFor(rancher);
   const commissionRate = depositCommissionRate(rancher, tier);
-  const depositFieldByCut: Record<string, string> = {
-    quarter: 'Quarter Deposit',
-    half: 'Half Deposit',
-    whole: 'Whole Deposit',
-  };
-  const buildCut = (slug: 'quarter' | 'half' | 'whole', label: string, priceField: string, lbsField: string) => {
-    const price = Number(rancher[priceField]) || null;
+  // The price comes from CUT_PRICE_FIELD, the same map resolveDepositMoney
+  // reads — one field map, so the rendered `price` and the price the deposit
+  // math is built on can never be two different numbers.
+  const buildCut = (slug: DepositCut, label: string, lbsField: string) => {
+    const price = Number(rancher[CUT_PRICE_FIELD[slug]]) || null;
     const lbs = String(rancher[lbsField] || '');
-    const d = price === null ? null : depositDisplay(price, Number(rancher[depositFieldByCut[slug]]), commissionRate);
+    const d = price === null ? null : resolveDepositMoney(referral, rancher, slug, commissionRate);
     if (price === null || price <= 0 || !d) {
       return { slug, label, price: null, lbs, depositCents: null, feeCents: null, dueNowCents: null, balanceCents: null };
     }
@@ -855,9 +860,9 @@ export async function GET(req: Request) {
     tierConnected: pricingModel === 'tier_v2' && String(rancher['Stripe Connect Status'] || '') === 'active',
     legacyRedirectUrl: pricingModel === 'legacy' ? `/ranchers/${rancher['Slug'] || ''}` : null,
     cuts: [
-      buildCut('quarter', 'Quarter Cow', 'Quarter Price', 'Quarter lbs'),
-      buildCut('half', 'Half Cow', 'Half Price', 'Half lbs'),
-      buildCut('whole', 'Whole Cow', 'Whole Price', 'Whole lbs'),
+      buildCut('quarter', 'Quarter Cow', 'Quarter lbs'),
+      buildCut('half', 'Half Cow', 'Half lbs'),
+      buildCut('whole', 'Whole Cow', 'Whole lbs'),
     ].filter((c) => c.price !== null && c.price > 0),
     fulfillment: {
       types: (rancher['Fulfillment Types'] || []).map((t: any) => typeof t === 'object' ? t.name : t),
