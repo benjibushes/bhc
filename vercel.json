@@ -210,7 +210,11 @@
     },
     {
       "path": "/api/cron/log-retention",
-      "schedule": "10 9 * * *"
+      "schedule": "10 3,9,15,21 * * *"
+    },
+    {
+      "path": "/api/cron/base-capacity",
+      "schedule": "25 4 * * *"
     },
     {
       "path": "/api/cron/weekly-scorecard",

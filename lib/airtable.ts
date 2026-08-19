@@ -1,5 +1,10 @@
 import Airtable from 'airtable';
 import { withTimeout, AirtableTimeoutError, resolveAirtableTimeoutMs } from './airtableTimeout';
+// Capacity audit 2026-08-19 — the three pieces that keep an ordinary ad burst
+// from turning into a self-sustaining base-wide stall. See each file's header.
+import { retryWithJitteredBackoff } from './airtableBackoff';
+import { singleFlight } from './singleFlight';
+import { isCacheableTable, l1TtlMs, l2TtlMs, CACHEABLE_TABLES } from './airtableCachePolicy';
 // DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
 // lib/demo/demoMode.ts. Static import is safe: the module is pure and has no
 // side effect when the flag is off (announceDemoModeOnce short-circuits). The
@@ -113,39 +118,39 @@ export function isUnknownFieldNameError(error: any): boolean {
   return /unknown field name: "/i.test(String(error.message || ''));
 }
 
-function sleep(ms: number) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
 // C3: `label` (pass the table name) is surfaced in the timeout error message
 // for debuggability. Each individual ATTEMPT gets its own timeout budget —
 // the timeout wraps the attempt, NOT the whole retry loop — so the existing
 // 429 exponential backoff is unchanged and every retry gets a fresh ~10s
 // before we declare the connection hung.
+//
+// BACKOFF REWRITE (capacity audit 2026-08-19). This used to sleep
+// 1→2→4→8→16→32s: no jitter (so every instance woke in LOCKSTEP and
+// re-stormed a base that was still locked out), no wall-clock deadline (so one
+// request could hang for 63 SECONDS), and no per-sleep ceiling. The schedule
+// now comes from lib/airtableBackoff.ts — equal jitter inside [exp/2, exp), a
+// 4s per-sleep cap, and a wall-clock budget after which we rethrow the
+// ORIGINAL error so callers fail fast instead of hanging. See that file's
+// header for the full reasoning and the deliberate trade-off.
+export function isAirtableRateLimitError(error: any): boolean {
+  // A hung connection is a transient FAILURE, not a rate limit: it must
+  // propagate as a throw so callers' existing catch/retry/5xx logic fires.
+  // Never swallow it or return empty data — an empty return would render "no
+  // ranchers" lies. The explicit instanceof check also guards against a
+  // timeout message ever matching the '429' substring test below.
+  if (error instanceof AirtableTimeoutError) return false;
+  const msg = error?.message || error?.error?.message || String(error);
+  return error?.statusCode === 429 || msg.includes('429') || msg.toLowerCase().includes('rate limit');
+}
+
 async function withRateLimitRetry<T>(fn: () => Promise<T>, label = 'Airtable'): Promise<T> {
-  const maxWait = 32000;
-  let delay = 1000;
-  while (true) {
-    try {
-      return await withTimeout(fn(), resolveAirtableTimeoutMs(), label);
-    } catch (error: any) {
-      // A hung connection is a transient FAILURE, not a rate limit: propagate
-      // as a throw so callers' existing catch/retry/5xx logic fires. Never
-      // swallow it or return empty data — an empty return would render "no
-      // ranchers" lies. (Explicit instanceof check also guards against the
-      // timeout message ever matching the '429' substring test below.)
-      if (error instanceof AirtableTimeoutError) throw error;
-      const msg = error?.message || error?.error?.message || String(error);
-      const isRateLimit = error?.statusCode === 429 || msg.includes('429') || msg.toLowerCase().includes('rate limit');
-      if (isRateLimit && delay <= maxWait) {
-        console.warn(`Airtable rate limit hit, retrying in ${delay}ms...`);
-        await sleep(delay);
-        delay *= 2;
-        continue;
-      }
-      throw error;
-    }
-  }
+  return retryWithJitteredBackoff(() => withTimeout(fn(), resolveAirtableTimeoutMs(), label), {
+    isRetryable: isAirtableRateLimitError,
+    onRetry: ({ delayMs, attempt }) =>
+      console.warn(`Airtable rate limit on ${label}, retry #${attempt + 1} in ${delayMs}ms (jittered)`),
+    onGiveUp: ({ elapsedMs, attempt, reason }) =>
+      console.warn(`Airtable rate limit on ${label}: giving up after ${attempt} retries / ${elapsedMs}ms (${reason})`),
+  });
 }
 
 // Helper function to create a record (auto-strips problematic Airtable fields)
@@ -161,7 +166,7 @@ export async function createRecord(tableName: string, fields: any) {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       const records = await withRateLimitRetry(() => base(tableName).create([{ fields: currentFields }], { typecast: true }), tableName);
-      if (_cacheKey(tableName)) invalidateAirtableCache(tableName);
+      if (_cacheKey(tableName)) await invalidateAirtableCache(tableName);
       return records[0];
     } catch (error: any) {
       const msg = error?.message || error?.error?.message || String(error);
@@ -249,14 +254,17 @@ export async function createReferral(fields: any) {
 // the Airtable 5 req/sec per-base limit, which then triggers exponential
 // backoff inside withRateLimitRetry and blows past maxDuration.
 //
-// L1 (this module's _cache): per-lambda in-process, CACHE_TTL_MS. Absorbs a
-//   burst served by a single warm instance without touching Redis.
+// L1 (this module's _cache): per-lambda in-process, l1TtlMs(table). Absorbs a
+//   burst served by a single warm instance without touching Redis. SHORT on
+//   purpose: it is what bounds how stale a NON-writing instance can be.
 // L2 (lib/sharedCache → Upstash Redis): SHARED across all serverless
-//   instances, same CACHE_TTL_MS. Under ad-driven fan-out, N cold lambdas
-//   with empty L1 share ONE Airtable read instead of each re-reading — this
-//   is scale-ladder item #2. Fail-open: if Upstash env is unset (local/dev/
-//   test) or Redis errors, L2 is a transparent no-op and behavior is EXACTLY
-//   the pre-Redis in-process path.
+//   instances, l2TtlMs(table) — deliberately LONGER. Under ad-driven fan-out,
+//   N cold lambdas with empty L1 share ONE Airtable read instead of each
+//   re-reading — this is scale-ladder item #2. Fail-open: if Upstash env is
+//   unset (local/dev/test) or Redis errors, L2 is a transparent no-op and
+//   behavior is EXACTLY the pre-Redis in-process path.
+// Plus SINGLE-FLIGHT (2026-08-19): concurrent identical reads inside ONE
+//   instance share a single fetch instead of each launching a full scan.
 //
 // Single-record reads (getRecordById) still bypass cache, so capacity bumps
 // stay live-correct. Filtered/projected selects skip cache because the
@@ -265,7 +273,6 @@ export async function createReferral(fields: any) {
 import { cacheGet as sharedCacheGet, cacheSet as sharedCacheSet, cacheDel as sharedCacheDel } from './sharedCache';
 
 type Cached = { ts: number; data: Array<Record<string, any>> };
-const CACHE_TTL_MS = 10_000;
 const _cache: Record<string, Cached> = {};
 // Tables hot enough to cache (scale audit 2026-07-07). Measured read volume:
 //   RANCHERS — matching/suggest + consumers signup, every buyer hit (#254).
@@ -274,25 +281,36 @@ const _cache: Record<string, Cached> = {};
 //   RECOMMENDED_PRODUCTS — /gear (force-dynamic) + /api/gear (client-fetched
 //     on /member + success): weekly-fresh content re-read per view.
 // NOT cacheable: Referrals/Consumers/Payments (capacity + money logic reads
-// must stay live-correct). Writes self-bust: createRecord/updateRecord call
+// must stay live-correct). Writes self-bust: createRecord/updateRecord AWAIT
 // invalidateAirtableCache(tableName) whenever _cacheKey(tableName) is set,
 // so a rancher's product edit is visible fleet-wide immediately.
-const CACHED_TABLES = new Set<string>([
-  TABLES.RANCHERS,
-  TABLES.RANCHER_PRODUCTS,
-  TABLES.RECOMMENDED_PRODUCTS,
-]);
+//
+// TTLs live in lib/airtableCachePolicy.ts (capacity audit 2026-08-19): L1 and
+// L2 now get DIFFERENT numbers per table, because L1 bounds staleness (a write
+// busts only the writing instance's L1) while L2 bounds Airtable request rate
+// (a write deletes the shared key for everyone). Read that header before
+// touching any TTL — collapsing them back into one number reopens the storm.
 function _cacheKey(tableName: string): string | null {
-  return CACHED_TABLES.has(tableName) ? `${tableName}::full` : null;
+  return isCacheableTable(tableName) ? `${tableName}::full` : null;
 }
 // Redis (L2) key for a table's full-list cache. Distinct namespace from the
 // L1 key so the shared value is self-describing across instances/services.
 function _redisCacheKey(tableName: string): string {
   return `airtable:cache:${tableName}`;
 }
-export function invalidateAirtableCache(tableName?: string): void {
-  // L1: synchronous clear (unchanged contract — callers invoke this inline
-  // after a create/update without awaiting).
+// Returns a promise for the L2 (Redis) leg. The L1 clear is still SYNCHRONOUS
+// and complete before this returns, so every existing fire-and-forget call
+// site keeps working unchanged.
+//
+// AWAIT IT ON THE WRITE PATH (capacity audit 2026-08-19). This used to be
+// `void sharedCacheDel(...)` — a floating promise. On Vercel the instance can
+// freeze the moment the response is sent, so that DELETE could simply never
+// land; and if it didn't, the next reader pulled the STALE shared value and
+// re-stamped its own L1 with a fresh timestamp, so the stale rancher survived
+// a whole TTL. That was survivable at a 10s L2 TTL and is not at 60s.
+// createRecord/updateRecord now await this.
+export function invalidateAirtableCache(tableName?: string): Promise<void> {
+  // L1: synchronous clear (unchanged contract).
   if (!tableName) {
     for (const k of Object.keys(_cache)) delete _cache[k];
   } else {
@@ -300,21 +318,18 @@ export function invalidateAirtableCache(tableName?: string): void {
       if (k.startsWith(`${tableName}::`)) delete _cache[k];
     }
   }
-  // L2: fire-and-forget delete of the shared Redis key(s) so an edit on one
-  // instance clears the cache for ALL instances immediately (otherwise a
-  // stale rancher list would linger up to CACHE_TTL_MS across the fleet after
-  // an edit). cacheDel never throws; the .catch is belt-and-suspenders so an
-  // unexpected rejection can't surface as an unhandled promise. Fire-and-
-  // forget keeps this function synchronous, preserving every existing call
-  // site (createRecord/updateRecord invoke it inline).
+  // L2: delete the shared Redis key(s) so an edit on one instance clears the
+  // cache for ALL instances immediately. cacheDel never throws; the .catch is
+  // belt-and-suspenders so an unexpected rejection can't surface as an
+  // unhandled promise.
   if (!tableName) {
     // Clear-all: clear every allowlisted table's shared key.
-    for (const t of CACHED_TABLES) {
-      void sharedCacheDel(_redisCacheKey(t)).catch(() => {});
-    }
-  } else if (_cacheKey(tableName)) {
-    void sharedCacheDel(_redisCacheKey(tableName)).catch(() => {});
+    return Promise.all(
+      [...CACHEABLE_TABLES].map((t) => sharedCacheDel(_redisCacheKey(t)).catch(() => {})),
+    ).then(() => {});
   }
+  if (_cacheKey(tableName)) return sharedCacheDel(_redisCacheKey(tableName)).catch(() => {});
+  return Promise.resolve();
 }
 
 // Helper function to get all records from a table.
@@ -327,6 +342,36 @@ export function invalidateAirtableCache(tableName?: string): void {
 // entry naming a nonexistent field errors the whole query
 // (UNKNOWN_FIELD_NAME) — callers that project must classify with
 // isUnknownFieldNameError and retry unprojected.
+// The raw Airtable read + row shaping, factored out of getAllRecords so both
+// the cached (single-flighted) and uncached paths share exactly one
+// implementation. Preserves Airtable's autogen createdTime (record metadata,
+// NOT a field): callers want "when was this row created" for cohort + recency
+// analysis (/admin/health new_signups_7d, etc). _createdTime is ISO 8601.
+async function _fetchAndShape(
+  tableName: string,
+  filterByFormula: string | undefined,
+  opts: { fields?: string[]; maxRecords?: number } | undefined,
+  projected: boolean,
+  limited: boolean,
+): Promise<Array<Record<string, any>>> {
+  const records = await withRateLimitRetry(
+    () =>
+      base(tableName)
+        .select({
+          ...(filterByFormula && { filterByFormula }),
+          ...(projected && { fields: opts!.fields }),
+          ...(limited && { maxRecords: opts!.maxRecords }),
+        })
+        .all(),
+    tableName,
+  );
+  return records.map((record) => ({
+    id: record.id,
+    _createdTime: (record as any)._rawJson?.createdTime || '',
+    ...record.fields,
+  }));
+}
+
 export async function getAllRecords(
   tableName: string,
   filterByFormula?: string,
@@ -349,9 +394,28 @@ export async function getAllRecords(
     const key = !filterByFormula && !projected && !limited ? _cacheKey(tableName) : null;
     if (key) {
       // L1: in-process. A warm lambda serving a burst answers from here and
-      // never touches Redis or Airtable.
+      // never touches Redis or Airtable. TTL is per-table now (policy module).
       const hit = _cache[key];
-      if (hit && Date.now() - hit.ts < CACHE_TTL_MS) return hit.data;
+      if (hit && Date.now() - hit.ts < l1TtlMs(tableName)) return hit.data;
+    }
+
+    // The uncached path (filtered / projected / limited reads, and every
+    // non-allowlisted table) is unchanged: straight to Airtable.
+    if (!key) return await _fetchAndShape(tableName, filterByFormula, opts, projected, limited);
+
+    // SINGLE-FLIGHT (capacity audit 2026-08-19). Everything past this point —
+    // the L2 lookup, the Airtable full scan, and the cache writes — happens
+    // ONCE per key per instance no matter how many concurrent callers arrive.
+    // Before this, N concurrent /access visitors landing on the same cache
+    // boundary each launched their own full scan of Ranchers (one request per
+    // 100 rows), which is how ~8-25 ordinary visitors could exceed Airtable's
+    // ~5 req/s ceiling and earn a 30-second lockout of the whole base.
+    return await singleFlight(key, async () => {
+      // Re-check L1 inside the flight: a caller that queued behind a fetch
+      // which has already populated the cache should just read it.
+      const warm = _cache[key];
+      if (warm && Date.now() - warm.ts < l1TtlMs(tableName)) return warm.data;
+
       // L2: shared Redis. On an L1 miss (cold instance, or L1 expired), pull
       // the value another instance already read. Populate L1 and return so
       // this instance's subsequent hits stay in-process. Fail-open: cacheGet
@@ -362,36 +426,17 @@ export async function getAllRecords(
         _cache[key] = { ts: Date.now(), data: shared };
         return shared;
       }
-    }
-    const records = await withRateLimitRetry(() =>
-      base(tableName)
-        .select({
-          ...(filterByFormula && { filterByFormula }),
-          ...(projected && { fields: opts!.fields }),
-          ...(limited && { maxRecords: opts!.maxRecords }),
-        })
-        .all(),
-      tableName
-    );
 
-    // Preserve Airtable's autogen createdTime (record metadata, NOT a field).
-    // Multiple callers want "when was this row created" for cohort + recency
-    // analysis (/admin/health new_signups_7d, etc). Without exposing it here,
-    // callers see undefined and report 0. _createdTime is ISO 8601 string.
-    const data = records.map((record) => ({
-      id: record.id,
-      _createdTime: (record as any)._rawJson?.createdTime || '',
-      ...record.fields,
-    }));
-    if (key) {
+      const data = await _fetchAndShape(tableName, filterByFormula, opts, projected, limited);
       // Write BOTH layers. L1 synchronously; L2 shared so the NEXT cold
       // instance skips Airtable. Await the L2 write (it's fail-safe internally
       // — never throws) so we don't leave a dangling promise; cost is one
       // fast REST round-trip on the miss path only, not on every read.
+      // L2 TTL is deliberately LONGER than L1 — see lib/airtableCachePolicy.ts.
       _cache[key] = { ts: Date.now(), data };
-      await sharedCacheSet(_redisCacheKey(tableName), data, CACHE_TTL_MS);
-    }
-    return data;
+      await sharedCacheSet(_redisCacheKey(tableName), data, l2TtlMs(tableName));
+      return data;
+    });
   } catch (error) {
     console.error(`Error fetching records from ${tableName}:`, error);
     throw error;
@@ -577,7 +622,7 @@ export async function updateRecord(tableName: string, recordId: string, fields: 
       // Bust the in-process cache for this table so callers don't read
       // back stale data on the next getAllRecords. Cheap; runs only on
       // tables we cache (currently just RANCHERS).
-      if (_cacheKey(tableName)) invalidateAirtableCache(tableName);
+      if (_cacheKey(tableName)) await invalidateAirtableCache(tableName);
       return {
         id: records[0].id,
         ...records[0].fields,
