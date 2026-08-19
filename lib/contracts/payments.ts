@@ -11,7 +11,7 @@ import { createRecord, updateRecord, getAllRecords, getFirstRecord, getRecordByI
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { logAuditEntry } from '@/lib/auditLog';
 import { sendTelegramUpdate } from '@/lib/telegram';
-import { refundReferralClearFields, shouldDecrementOnRefundRestore, RESTORABLE_REFUND_STATUSES } from '@/lib/refundLifecycle';
+import { refundReferralClearFields, shouldDecrementOnRefundRestore, RESTORABLE_REFUND_STATUSES, isRefundRestoreComplete } from '@/lib/refundLifecycle';
 // lib/brokerRail is hermetic (imports only lib/pricing), so this can never
 // close a cycle — same reasoning as lib/commission's import of it.
 import { BROKER_PAYMENT_TYPE } from '@/lib/brokerRail';
@@ -872,11 +872,20 @@ async function restoreReferralAfterRefund(
   }
 
   const currentStatus = String(referral['Status'] || '');
-  // Idempotency FIRST: an already-Refunded Referral is a re-run (Stripe
+  // Idempotency FIRST: an already-restored Referral is a re-run (Stripe
   // webhook redelivery) — always a silent no-op, never a restore, never an
   // operator signal.
-  if (currentStatus === 'Refunded') {
-    console.log('[restoreReferralAfterRefund] Referral already Refunded, no-op', referralId);
+  //
+  // Keyed on the `Refunded At` STAMP, not on Status. Referrals.Status has no
+  // 'Refunded' choice in the base, so selectGuard drops that key and the flip
+  // never lands; a Status-only guard never fires. The redelivery would then
+  // find the referral still at its restorable pre-refund status and re-run
+  // everything below — a duplicate rancher refund notice (whitelisted past
+  // the 3/week cap, so the cap cannot absorb it) and a second
+  // decrementCapacity, driving the held counter BELOW the true held count.
+  // Predicate is pure + pinned in lib/refundLifecycle.test.ts.
+  if (isRefundRestoreComplete(referral)) {
+    console.log('[restoreReferralAfterRefund] Referral already refunded, no-op', referralId);
     return;
   }
   // Blocker-2 widening (2026-07-01): restore from every RESTORABLE status,

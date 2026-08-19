@@ -72,7 +72,7 @@ export const SCHEMA_GUARD_ALLOWLIST: readonly AllowlistEntry[] = [
     field: 'Status',
     value: 'Refunded',
     reason:
-      'lib/refundLifecycle.ts refundReferralClearFields — the refund restore path. Referrals.Status has no "Refunded" option, so today the flip is dropped and a refunded deal keeps its pre-refund status (the money fields ARE cleared, so readers are not fully blind). lib/refundLifecycle.ts is owned by another workstream this cycle; reported, not edited here.',
+      'lib/refundLifecycle.ts refundReferralClearFields — the refund restore path. Referrals.Status has no "Refunded" option, so the flip is dropped and a refunded deal keeps its pre-refund status. The two readers that mattered are now defended and pinned: canSendFinalInvoice blocks on the cleared Deposit Paid At, and restoreReferralAfterRefund keys idempotency on the Refunded At STAMP via isRefundRestoreComplete (a Status-only guard never fired, so a redelivered charge.refunded re-ran the restore — duplicate rancher notice + a second decrementCapacity). Adding the option in Airtable retires this entry and costs nothing either way.',
     addedOn: '2026-08-18',
     expiresOn: '2026-09-30',
   },
@@ -150,43 +150,6 @@ export const SCHEMA_GUARD_ALLOWLIST: readonly AllowlistEntry[] = [
     value: 'Draft',
     reason:
       'lib/aiMemory parks its singleton memory row in the Campaigns table and wants it inert. No Draft option exists. The row is found by Campaign Name, never by Status, so the drop is cosmetic — but it is still a write the base rejects.',
-    addedOn: '2026-08-18',
-    expiresOn: '2026-09-30',
-  },
-
-  // ── Missing FIELDS ─────────────────────────────────────────────────────
-  // Airtable 422s "Unknown field name" on each of these and lib/airtable.ts
-  // strips it (loudly, with an operator signal). The data is LOST every time.
-  // Every one needs Ben to add the field; none can be fixed in code.
-  {
-    table: 'Referrals',
-    field: 'Fulfillment Escalated At',
-    reason:
-      'app/api/cron/fulfillment-chase stamps its escalation so the same stuck order is not escalated to the operator every night. Field does not exist, so the stamp is lost and re-escalation is only prevented by the chase cadence, not by a record.',
-    addedOn: '2026-08-18',
-    expiresOn: '2026-09-30',
-  },
-  {
-    table: 'Payments',
-    field: 'Rewarm Sent At',
-    reason:
-      'app/api/cron/orphan-checkout-reaper dedup stamp for the abandoned-checkout re-warm email. Field missing, so the dedup rides entirely on the row already being flipped to Status=abandoned. This is the exact site that carried the false "typecast creates it" comment.',
-    addedOn: '2026-08-18',
-    expiresOn: '2026-09-30',
-  },
-  {
-    table: 'Consumers',
-    field: 'Founder Tier Cancelled At',
-    reason:
-      'app/api/webhooks/stripe founder subscription-deleted (and the lifetime refund/dispute handler). The field does not exist, so lib/airtable.ts strips it and writes the rest — the Subscription Status flip still lands, only the timestamp is lost.',
-    addedOn: '2026-08-18',
-    expiresOn: '2026-09-30',
-  },
-  {
-    table: 'Referrals',
-    field: 'Refunded At',
-    reason:
-      'lib/refundLifecycle refundReferralClearFields. lib/contracts/payments already has an explicit fallback that deletes this key and retries, and the Payments row carries the authoritative Refunded At — so this is a known-absent field the code is already coded around. Owned by another workstream this cycle.',
     addedOn: '2026-08-18',
     expiresOn: '2026-09-30',
   },

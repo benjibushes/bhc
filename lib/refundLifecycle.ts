@@ -51,6 +51,35 @@ export function refundReferralClearFields(
 }
 
 /**
+ * Has the full-refund restore ALREADY run for this Referral?
+ *
+ * Idempotency for a Stripe webhook redelivery. This deliberately does NOT
+ * key on `Status === 'Refunded'` alone: Referrals.Status has no 'Refunded'
+ * choice in the base, so lib/schema/selectGuard drops that key before the
+ * request and the flip never lands. A guard reading only Status therefore
+ * never fires, and a redelivered `charge.refunded` re-runs the whole restore
+ * — a second rancher refund notice and a SECOND capacity decrement, pushing
+ * the held counter below the true held count (the exact drift the C4 gate
+ * was added to stop).
+ *
+ * `Refunded At` is the durable key: it is a real field, it is written by
+ * refundReferralClearFields above, and on the Referrals table NOTHING else
+ * writes it — only the full-refund restore, exactly once. (The Orders and
+ * Payments tables have their own same-named fields; those are different
+ * rows and are not read here.)
+ *
+ * Status is still honoured so the guard keeps working the moment the
+ * 'Refunded' option is added to the base.
+ */
+export function isRefundRestoreComplete(referral: {
+  'Status'?: unknown;
+  'Refunded At'?: unknown;
+}): boolean {
+  if (String(referral?.['Status'] ?? '').trim() === 'Refunded') return true;
+  return !!String(referral?.['Refunded At'] ?? '').trim();
+}
+
+/**
  * Statuses from which a FULL deposit refund restores the linked Referral
  * (lib/contracts/payments.ts restoreReferralAfterRefund).
  *
