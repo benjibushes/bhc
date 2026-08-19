@@ -421,6 +421,15 @@ export function invalidateAirtableCache(tableName?: string): Promise<void> {
 // implementation. Preserves Airtable's autogen createdTime (record metadata,
 // NOT a field): callers want "when was this row created" for cohort + recency
 // analysis (/admin/health new_signups_7d, etc). _createdTime is ISO 8601.
+/**
+ * Row counts at which a paginated read is worth shouting about. The failure
+ * point is not a row count but a WALL CLOCK: ~100 rows per request at ~160ms
+ * puts the 10s timeout near 6,500 rows. Warn at 5,000 so there is real runway
+ * between the warning and the outage.
+ */
+export const LARGE_READ_WARN_ROWS = 5_000;
+export const LARGE_READ_FAIL_ROWS = 6_500;
+
 async function _fetchAndShape(
   tableName: string,
   filterByFormula: string | undefined,
@@ -439,6 +448,28 @@ async function _fetchAndShape(
         .all(),
     tableName,
   );
+  // LARGE-READ TRIPWIRE (2026-08-19). `.all()` paginates 100 rows per request
+  // and the whole call sits inside ONE 10s timeout, so cost scales with PAGE
+  // COUNT: ~100 rows per round-trip, ~160ms each. A read crosses the timeout
+  // somewhere around 6,500 rows and then fails outright — silently, and only
+  // once the table has grown enough. That is exactly how the /admin
+  // command-center died: its Email Sends window was bounded to 30 days, send
+  // volume grew, and 30 days became 8,698 rows / 14.3s.
+  //
+  // Field projection does NOT rescue this (measured: 14.3s -> 14.0s) — the
+  // cost is the round-trips, not the payload. The only real levers are a
+  // narrower filter or a maxRecords budget.
+  //
+  // So: warn LOUDLY well before the cliff, naming the table and the count, so
+  // the next one is caught while it is still merely slow.
+  if (records.length >= LARGE_READ_WARN_ROWS) {
+    console.warn(
+      `[airtable] LARGE READ: ${tableName} returned ${records.length} rows ` +
+        `(~${Math.ceil(records.length / 100)} paginated requests) for filter ${filterByFormula || '(none)'}. ` +
+        `The 10s per-call timeout fails around ${LARGE_READ_FAIL_ROWS} rows. ` +
+        `Narrow the filter or pass opts.maxRecords before this starts timing out.`,
+    );
+  }
   return records.map((record) => ({
     id: record.id,
     _createdTime: (record as any)._rawJson?.createdTime || '',
