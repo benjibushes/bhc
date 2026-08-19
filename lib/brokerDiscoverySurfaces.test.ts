@@ -35,6 +35,7 @@ import {
   stateDiscoveryRanchersFormula,
   mapPinsFormula,
   rancherOrProspectBySlugFormula,
+  PARKED_STATUS_EXCLUSION_FORMULA,
 } from './airtable';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -106,6 +107,7 @@ test('stateDiscoveryRanchersFormula: exact string for AZ — the launch state', 
     'AND(OR({Page Live} = 1, AND({Broker Rail} = 1, {Broker Self Serve} = 1)), ' +
       'NOT({Public Map Hidden} = 1), {Verification Status} != "Removed", ' +
       'OR(NOT({Broker Rail} = 1), {Broker Self Serve} = 1), ' +
+      '{Active Status} != "Paused", {Active Status} != "Non-Compliant", ' +
       'OR(UPPER({State}) = "AZ", UPPER({State}) = "ARIZONA"))',
   );
 });
@@ -178,4 +180,53 @@ test('rancherOrProspectBySlugFormula: built from the shared fragments (mutating 
   const f = rancherOrProspectBySlugFormula('gila-river-cattle');
   assert.ok(f.includes(BROKER_SELF_SERVE_CARVE_OUT_FORMULA));
   assert.ok(f.includes(BROKER_SELF_SERVE_PAGE_LIVE_FORMULA));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PARKED SUPPLY (2026-08-18 audit, P1-2) — a Paused ranch is not live supply
+//
+// THE DEFECT: stateDiscoveryRanchersFormula had NO Active Status gate while
+// mapPinsFormula did, so the two public surfaces flatly contradicted each
+// other. /half-a-cow/colorado said "2 ranches are live in Colorado right now"
+// and published a half at $1,760–$2,600 off those two rows — both Paused,
+// neither on Connect — while /map showed zero Colorado pins. /half-a-cow/utah
+// named a Paused ranch as "the ranch currently live in Utah". Texas published
+// a $900 quarter FLOOR (the cheapest, most clickable anchor on the page)
+// sourced from a Paused ranch. Live counts at the time of the fix:
+//   CO 2→0 · UT 1→0 · TX 3→2 (floor $900→$1,990) · TN 2→1 · OK 3→2 · AZ 1→1.
+//
+// The gate now rides ONE shared fragment, so the map and the state pages
+// cannot drift apart again.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('parked fragment: exact string — the pair mapPinsFormula has always sent', () => {
+  assert.equal(
+    PARKED_STATUS_EXCLUSION_FORMULA,
+    '{Active Status} != "Paused", {Active Status} != "Non-Compliant"',
+  );
+});
+
+test('stateDiscoveryRanchersFormula: a Paused / Non-Compliant ranch is not live supply', () => {
+  const f = stateDiscoveryRanchersFormula('CO', 'Colorado');
+  assert.ok(f.includes('{Active Status} != "Paused"'), 'Paused ranches must not count as live supply');
+  assert.ok(f.includes('{Active Status} != "Non-Compliant"'));
+});
+
+test('the state pages and /map send the IDENTICAL parked gate (one fragment, no drift)', () => {
+  assert.ok(stateDiscoveryRanchersFormula('CO', 'Colorado').includes(PARKED_STATUS_EXCLUSION_FORMULA));
+  assert.ok(mapPinsFormula().includes(PARKED_STATUS_EXCLUSION_FORMULA));
+});
+
+test('stateDiscoveryRanchersFormula: the parked gate does NOT evict broker self-serve supply', () => {
+  // #630 carve-out preserved: a represented ranch's `Active Status` is left
+  // EMPTY at signup, and blank PASSES both != checks (the same documented
+  // trap mapPinsFormula relies on). The one live AZ ranch is broker
+  // self-serve — the parked gate must not have taken Arizona to zero.
+  const f = stateDiscoveryRanchersFormula('AZ', 'Arizona');
+  assert.ok(f.includes(BROKER_SELF_SERVE_CARVE_OUT_FORMULA), 'self-serve broker ranch still admitted');
+  assert.ok(f.includes(`OR({Page Live} = 1, ${BROKER_SELF_SERVE_PAGE_LIVE_FORMULA})`));
+  assert.equal(count(f, 'NOT({Broker Rail} = 1)'), 1, 'no blanket broker exclusion crept back in');
+  // And the gate is an Active Status test only — nothing that reads a broker
+  // ranch's blank field as parked.
+  assert.equal(count(f, 'Active Status'), 2, 'exactly the two parked checks, nothing else');
 });

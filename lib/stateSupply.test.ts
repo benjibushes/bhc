@@ -104,3 +104,60 @@ test('countLiveShareRanchesByState: mixed AZ pool — broker supply and Connect 
     { AZ: 2, MT: 1 },
   );
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PARKED SUPPLY (2026-08-18 audit, P1-2) — the JS mirror gets the same gate.
+//
+// This function is the JS half of stateDiscoveryRanchersFormula (it decides
+// what /shop's empty-market fallback tells a buyer about their state). When
+// the formula learned to drop Paused/Non-Compliant ranches, this mirror had
+// to learn it in the same commit or /shop would go back to contradicting
+// /half-a-cow — the exact class of bug lib/stateSupply exists to prevent.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('countLiveShareRanchesByState: a PAUSED ranch is not live supply (matches the map gate)', () => {
+  assert.deepEqual(
+    countLiveShareRanchesByState([
+      { State: 'CO', 'Page Live': true, 'Active Status': 'Paused' },
+      { State: 'CO', 'Page Live': true, 'Active Status': 'Paused' },
+    ]),
+    {},
+    'both live Colorado rows were Paused — /half-a-cow/colorado claimed "2 ranches are live"',
+  );
+});
+
+test('countLiveShareRanchesByState: a NON-COMPLIANT ranch is not live supply', () => {
+  assert.deepEqual(
+    countLiveShareRanchesByState([{ State: 'TX', 'Page Live': true, 'Active Status': 'Non-Compliant' }]),
+    {},
+  );
+});
+
+test('countLiveShareRanchesByState: Active and blank Active Status both still count', () => {
+  // Blank is the broker-rail signup state and passes the map's two != checks
+  // — the gate is an exclusion of two named statuses, never a requirement.
+  assert.deepEqual(
+    countLiveShareRanchesByState([
+      { State: 'OK', 'Page Live': true, 'Active Status': 'Active' },
+      { State: 'OK', 'Page Live': true },
+    ]),
+    { OK: 2 },
+  );
+});
+
+test('countLiveShareRanchesByState: a PAUSED broker self-serve ranch is still dropped', () => {
+  // The #630 carve-out makes represented supply VISIBLE; it does not make it
+  // immune to being parked. Blank stays visible (previous test); an explicit
+  // Paused on a represented row is still Ben saying "not right now".
+  assert.deepEqual(
+    countLiveShareRanchesByState([
+      { State: 'AZ', 'Broker Rail': true, 'Broker Self Serve': true, 'Active Status': 'Paused' },
+    ]),
+    {},
+  );
+  assert.deepEqual(
+    countLiveShareRanchesByState([{ State: 'AZ', 'Broker Rail': true, 'Broker Self Serve': true }]),
+    { AZ: 1 },
+    'the live AZ ranch (blank Active Status) must survive the parked gate',
+  );
+});

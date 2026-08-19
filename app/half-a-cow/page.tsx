@@ -23,7 +23,12 @@ export const metadata: Metadata = {
   alternates: { canonical: `${BASE_URL}/half-a-cow` },
   openGraph: {
     title: 'Buy Half a Cow Near You',
-    description: 'Direct ranch beef shares, state by state. No middlemen, no markup.',
+    // Truth sweep (2026-08-18): "no markup" was false here for the same reason
+    // it was false on the 50 /half-a-cow/[state] pages this hub fronts — on
+    // Connect the buyer is charged the platform fee ON TOP of the deposit
+    // (lib/tiers.ts). "No middlemen" is the true half and stays: the buyer is
+    // matched to a named ranch and pays the balance to that ranch direct.
+    description: 'Direct ranch beef shares, state by state. You buy from a named family ranch, no middlemen.',
     url: `${BASE_URL}/half-a-cow`,
     images: ['/og-image.png'],
   },

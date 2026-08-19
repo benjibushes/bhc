@@ -741,6 +741,28 @@ export async function deleteRecord(tableName: string, recordId: string) {
 //     ranchers never ran the wizard that sets it).
 // ---------------------------------------------------------------------------
 
+/**
+ * Ranch statuses that mean "parked — not sellable right now". Paused is Ben
+ * (or the nightly auto-pause) taking a ranch out of rotation; Non-Compliant is
+ * a ranch that broke the agreement. Neither may be published as live supply.
+ *
+ * A blank `Active Status` is NOT parked and passes both checks — that is the
+ * broker-rail signup state (a represented ranch never runs the wizard), and
+ * the #630 self-serve carve-out depends on it staying that way. Same
+ * documented trap mapPinsFormula has always relied on.
+ *
+ * ONE fragment, shared by mapPinsFormula and stateDiscoveryRanchersFormula.
+ * They used to disagree: the map gated on these two statuses and the state
+ * pages did not, so /half-a-cow/colorado advertised "2 ranches are live in
+ * Colorado right now" (with a half priced $1,760–$2,600 off those very rows)
+ * while /map plotted zero Colorado pins — both rows were Paused. Keep this
+ * shared; do not hand-copy the pair into a third formula.
+ *
+ * Mirrored in JS by lib/stateSupply.countLiveShareRanchesByState (PARKED_ACTIVE_STATUSES).
+ */
+export const PARKED_STATUS_EXCLUSION_FORMULA =
+  '{Active Status} != "Paused", {Active Status} != "Non-Compliant"';
+
 /** The getActiveRancherPages visibility gate: sitemap, /ranchers,
  *  /api/public/ranchers, /start, /wholesale + generateStaticParams. */
 export function activeRancherPagesFormula(): string {
@@ -757,6 +779,12 @@ export function activeRancherPagesFormula(): string {
  * in JS; the three surfaces must never disagree about who is public supply in
  * a state. The `{State}` field is unnormalized (some records carry the
  * 2-letter code, some the full name) — match both, case-insensitively.
+ *
+ * PARKED GATE (2026-08-18 audit, P1-2): shares PARKED_STATUS_EXCLUSION_FORMULA
+ * with mapPinsFormula. Without it these pages counted, named and PRICED
+ * Paused ranches as live supply while the map showed none — Colorado and Utah
+ * were 100% false, and Texas published a $900 quarter floor off a Paused
+ * ranch. What the page calls live and what the map plots are now the same set.
  */
 export function stateDiscoveryRanchersFormula(stateCode: string, stateName: string): string {
   const safeCode = escapeAirtableValue(String(stateCode || '').toUpperCase());
@@ -765,6 +793,7 @@ export function stateDiscoveryRanchersFormula(stateCode: string, stateName: stri
     `AND(OR({Page Live} = 1, ${BROKER_SELF_SERVE_PAGE_LIVE_FORMULA}), ` +
     `NOT({Public Map Hidden} = 1), {Verification Status} != "Removed", ` +
     `${BROKER_SELF_SERVE_CARVE_OUT_FORMULA}, ` +
+    `${PARKED_STATUS_EXCLUSION_FORMULA}, ` +
     `OR(UPPER({State}) = "${safeCode}", UPPER({State}) = "${safeName}"))`
   );
 }
@@ -780,7 +809,7 @@ export function mapPinsFormula(): string {
   return (
     `AND({Verification Status} != "Removed", NOT({Public Map Hidden} = 1), ` +
     `${BROKER_SELF_SERVE_CARVE_OUT_FORMULA}, ` +
-    `{Active Status} != "Paused", {Active Status} != "Non-Compliant", ` +
+    `${PARKED_STATUS_EXCLUSION_FORMULA}, ` +
     `{Latitude} != BLANK(), {Longitude} != BLANK())`
   );
 }

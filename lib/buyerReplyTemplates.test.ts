@@ -23,7 +23,11 @@ test('clean Ben-voice text passes', () => {
   const clean =
     'hey Sarah, good question. a half from Renick Valley runs about $1,200 all in, ' +
     'which pencils out to roughly six dollars a pound once it is cut and wrapped. ' +
-    'that covers the whole side, and you pay the ranch direct with no markup from us. ' +
+    // Truth sweep (2026-08-18): this fixture used to model "you pay the ranch
+    // direct with no markup from us" as EXEMPLARY buyer copy — the exact claim
+    // app/publicCopy.pins.test.ts exists to kill (on Connect the buyer pays the
+    // platform fee on top). A clean-copy fixture is a template; keep it true.
+    'that covers the whole side, and you deal with the ranch direct the whole way. ' +
     'happy to get you on the phone with them if you want to walk through the cuts. — Ben';
   assert.equal(violatesBuyerVoice(clean), null);
 });
