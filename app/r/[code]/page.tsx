@@ -108,7 +108,7 @@ export default async function AffiliateLandingPage({
           </h1>
           <p className="text-saddle mb-8 md:mb-12 leading-relaxed">
             Pick the path that fits. We match buyers to ranchers direct &mdash; no
-            middleman markup, no warehouse beef. {firstName}&rsquo;s referral keeps
+            middleman, no warehouse beef. {firstName}&rsquo;s referral keeps
             you on the inside track.
           </p>
 

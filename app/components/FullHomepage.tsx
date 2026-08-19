@@ -181,7 +181,7 @@ export default function FullHomepage() {
             {/* Audit fix D-1: "No marketplace" contradicted the shop card on
                 this very page. The true claim is no MIDDLEMAN — scoped copy. */}
             <p className="text-center text-xs text-saddle mt-6">
-              No middleman markup. Direct relationship with the rancher who raised your beef.
+              No middleman. Direct relationship with the rancher who raised your beef.
             </p>
           </div>
         </Container>

@@ -12,9 +12,11 @@
 // (lib/airtable stateDiscoveryRanchersFormula) that /access/[state] and
 // /half-a-cow/[state] send to Airtable: a ranch counts for its primary
 // {State} when Public Map Hidden is not set, Verification Status !=
-// "Removed", and it is page-live — {Page Live} for onboarded ranchers, the
-// `Broker Self Serve` opt-in for represented ones (Wave A, 2026-08-17; a
-// token-only broker ranch stays invisible). If you change one, change both.
+// "Removed", its Active Status is not parked (Paused / Non-Compliant — see
+// PARKED_ACTIVE_STATUSES below), and it is page-live — {Page Live} for
+// onboarded ranchers, the `Broker Self Serve` opt-in for represented ones
+// (Wave A, 2026-08-17; a token-only broker ranch stays invisible). If you
+// change one, change both.
 //
 // FAILURE CONTRACT (mirrors lib/stateWaitlist): null = unknown (Airtable
 // unreachable/timed out) → callers render nothing. A failed fetch must never
@@ -30,6 +32,21 @@ import { normalizeState } from './states';
 import { isBrokerRancher, isBrokerSelfServe } from './brokerRail';
 
 /**
+ * JS mirror of lib/airtable PARKED_STATUS_EXCLUSION_FORMULA. Declared here
+ * rather than imported as a parsed formula string so the two stay readable
+ * side by side; lib/brokerDiscoverySurfaces.test.ts pins the formula half and
+ * lib/stateSupply.test.ts pins this one.
+ */
+const PARKED_ACTIVE_STATUSES = new Set(['Paused', 'Non-Compliant']);
+
+/** Active Status reads as a plain string or a `{ name }` single-select cell. */
+function readActiveStatus(row: Record<string, any>): string {
+  const v = row?.['Active Status'];
+  if (v == null) return '';
+  return typeof v === 'object' && 'name' in v ? String((v as any).name ?? '') : String(v);
+}
+
+/**
  * Pure aggregation (exported for tests): live share-ranch count per
  * normalized primary-state code, same visibility filter as
  * /half-a-cow/[state]. 'Montana' and 'MT' both bucket to MT; blank/junk
@@ -42,6 +59,12 @@ export function countLiveShareRanchesByState(
   for (const row of rows) {
     if (row?.['Public Map Hidden']) continue;
     if (String(row?.['Verification Status'] || '') === 'Removed') continue;
+    // PARKED (2026-08-18 audit, P1-2): mirrors the JS half of
+    // PARKED_STATUS_EXCLUSION_FORMULA. A blank Active Status is NOT parked —
+    // that is the broker-rail signup state and it passes, exactly as the two
+    // `!=` checks do in Airtable. Without this, /shop's empty-market fallback
+    // went back to contradicting /half-a-cow the moment a ranch was paused.
+    if (PARKED_ACTIVE_STATUSES.has(readActiveStatus(row))) continue;
     if (isBrokerRancher(row)) {
       // BROKER RAIL (Wave A, 2026-08-17): a SELF-SERVE represented ranch has
       // a real public page (the #617 slug carve-out) and is routable supply,

@@ -75,7 +75,7 @@ export default function GuidePage() {
             <p>
               <strong>how it works here:</strong> a small refundable deposit reserves your share
               with a named family ranch. you pay the balance at final weight. no
-              warehouse, no middleman markup.
+              warehouse, no middleman.
             </p>
           </div>
 
