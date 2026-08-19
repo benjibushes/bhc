@@ -32,7 +32,6 @@ import { jsonLdSafe } from '@/lib/jsonLdSafe';
 import {
   SEO_STATES,
   stateBySlug,
-  typicalShareRanges,
   resolveShareRanges,
   stateFaqs,
   waitlistLine,
@@ -66,18 +65,22 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     return { title: 'BuyHalfCow', description: 'Direct ranch beef. No middlemen.' };
   }
   const { name, slug } = resolved;
-  const r = typicalShareRanges();
   const url = `${BASE_URL}/half-a-cow/${slug}`;
   const title = `Buy Half a Cow in ${name} — What It Costs & How It Works`;
-  // PRICE TRUTH (2026-08-18): this range is the NETWORK band, and it says so.
+  // PRICE TRUTH (2026-08-18): NO price figure here, deliberately.
   // generateMetadata is PURE by contract (no Airtable — the prerender-timeout
-  // build killer), so unlike the page body it cannot know what the ranches in
-  // THIS state charge; the old wording read as a claim about {name} and was
-  // ~60% high in Arizona. The page itself publishes the local truth.
+  // build killer), so it cannot know what the ranches in THIS state charge,
+  // while the page body underneath it prices off LIVE supply. Labelling the
+  // number as the network band was not enough: on 11 of the 50 states the
+  // snippet and the page disagreed outright (Texas advertised $3,300–$3,850
+  // and rendered $3,240–$4,300), so the buyer arrived anchored low and landed
+  // high — the exact bait-and-switch the live-supply rewrite existed to kill.
+  // A description that is true without a number: the page carries the real
+  // range, which is where it can actually be read from supply.
   const description =
-    `Half a cow in ${name}: half-beef shares run ${fmtRange(r.half)} all-in across our ranch network, ` +
-    `and every ranch sets its own price (vs $13–17/lb for boxed delivery). ` +
-    `90-second quiz, a real local ranch, refundable deposit.`;
+    `Half a cow in ${name}: what a share really costs, how much freezer space it takes, ` +
+    `and which family ranches near you have shares open right now. ` +
+    `Every ranch sets its own price. 90-second quiz, a real local ranch, refundable deposit.`;
 
   return {
     title,

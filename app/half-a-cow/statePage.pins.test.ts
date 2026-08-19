@@ -73,11 +73,29 @@ test('PIN: the page never promises the matched ranch is "pictured"', () => {
   assert.match(src, /named, and yours to talk to/);
 });
 
-test('PIN: the SERP description scopes its range to the network, not to the state', () => {
-  // generateMetadata is PURE by contract, so it cannot know local supply —
-  // then it must not word the band as a fact about this state.
-  assert.match(metadata, /across our ranch network/);
-  assert.doesNotMatch(metadata, /typical half-beef shares run/);
+test('PIN: the SERP description carries NO price figure at all', () => {
+  // generateMetadata is PURE by contract (no Airtable — the prerender-timeout
+  // build killer), so it CANNOT know what the ranches in this state charge.
+  // Labelling the band "across our ranch network" was not enough: the snippet
+  // Google shows is the first thing a buyer reads, the page body underneath it
+  // is priced off LIVE supply, and on 11 of the 50 states the two disagreed —
+  // Texas advertised $3,300–$3,850 in the snippet and rendered $3,240–$4,300 in
+  // the table, anchoring the buyer low and landing them high.
+  //
+  // The fix is not a better caveat, it is no number: a description that is true
+  // without one. Any price band belongs on the page, where live supply is
+  // readable. Do not reintroduce fmtRange or a hardcoded $ figure here.
+  // Assert on the CODE, not the prose: the comment above the description
+  // quotes the two contradicting bands on purpose, and that history is worth
+  // keeping readable.
+  const metadataCode = metadata.replace(/^\s*\/\/.*$/gm, '');
+  assert.doesNotMatch(metadataCode, /\$\d/, 'no dollar figure may appear in the description');
+  assert.doesNotMatch(metadataCode, /fmtRange/, 'no derived price range in generateMetadata');
+  assert.doesNotMatch(metadataCode, /typicalShareRanges/, 'the network band must not be reached for');
+  assert.doesNotMatch(metadataCode, /shares run/);
+  // The stripper must not be doing the work for us — the description itself
+  // has to still be in what we asserted against.
+  assert.match(metadataCode, /const description =/);
 });
 
 test('PIN: generateMetadata stays Airtable-free (the prerender build killer)', () => {

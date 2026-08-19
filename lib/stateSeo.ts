@@ -254,9 +254,20 @@ export function stateFaqs(stateName: string, resolved?: ResolvedShareRanges): Fa
         'Plan on roughly 8–10 cubic feet for a half beef — a dedicated chest freezer. A $200–$300 chest freezer typically pays for itself in the first fill. A quarter share fits in about 4–5 cubic feet.',
     },
     {
+      // NO PERCENTAGE HERE (2026-08-18). This answer used to promise "a deposit
+      // of about 25% of the share price". Under the current money model the
+      // buyer's card is charged the deposit PLUS the platform fee on the FULL
+      // price, so the real charge is closer to 35% at a 10% tier — the bare
+      // deposit percent understates what the buyer actually pays and anchors
+      // them low. The page BODY was corrected on 2026-08-13 (the price table
+      // prints "deposit to reserve → refundable until the rancher accepts");
+      // this answer was missed, so the same page rendered both versions and the
+      // false one fed the FAQPage JSON-LD. The mechanism still gets explained —
+      // refundable, balance at final weight, nothing paid up front — and the
+      // exact total is shown on the deposit page, where it is computed.
       q: 'How does the deposit work?',
       a:
-        `You reserve your share with a deposit of about ${r.depositPercent}% of the share price. It is fully refundable until the rancher accepts your reservation, and the balance is due at final weight — you never pay everything up front.`,
+        'You reserve your share with a deposit rather than the full price up front. It is fully refundable until the rancher accepts your reservation, and the balance is due at final weight. Your exact deposit total is shown before you pay.',
     },
     {
       q: `What if there's no ranch near me in ${stateName}?`,

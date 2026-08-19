@@ -149,11 +149,28 @@ test('stateFaqs pricing answer carries the derived ranges + honest comparison', 
   assert.ok(priceFaq.a.includes('hanging weight'));
 });
 
-test('stateFaqs deposit answer states refundability and the percent', () => {
+// The deposit FAQ used to promise "a deposit of about 25% of the share price".
+// Under the current money model (docs/BUSINESS-MODEL.md) the buyer's card is
+// charged the deposit PLUS the platform fee on the FULL price, so at a 10% tier
+// the real charge is ~35%, not 25%. The page BODY was corrected on 2026-08-13
+// (app/half-a-cow/[state]/page.tsx prints "deposit to reserve → refundable
+// until the rancher accepts", no percentage) but this answer was missed — so
+// one page rendered both the corrected and the uncorrected version, and the
+// false one also fed the FAQPage JSON-LD to search engines.
+//
+// The mechanism is still explained (refundable, balance at final weight); only
+// the number is gone. No percentage may reappear here without also being true
+// of the card charge.
+test('stateFaqs deposit answer explains the mechanism WITHOUT promising a percent', () => {
   const r = typicalShareRanges();
   const depositFaq = stateFaqs('Ohio')[2];
-  assert.ok(depositFaq.a.includes('refundable'));
-  assert.ok(depositFaq.a.includes(`${r.depositPercent}%`));
+  assert.ok(depositFaq.a.includes('refundable'), 'refundability is the reassurance that must survive');
+  assert.ok(depositFaq.a.includes('final weight'), 'the balance-due mechanism must survive');
+  assert.ok(
+    !depositFaq.a.includes(`${r.depositPercent}%`),
+    'the bare deposit percent understates the real card charge (deposit + fee on the full price)',
+  );
+  assert.doesNotMatch(depositFaq.a, /\d+\s*%/, 'NO percentage claim at all in the deposit answer');
 });
 
 // ─── LIVE-SUPPLY PRICING (2026-08-18) ───────────────────────────────────────
