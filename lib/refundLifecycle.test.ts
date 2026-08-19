@@ -9,6 +9,7 @@ import {
   RESTORABLE_REFUND_STATUSES,
   shouldDecrementOnRefundRestore,
   shouldDecrementOnClose,
+  isRefundRestoreComplete,
 } from './refundLifecycle';
 // Zero-dep canonical held-slot definition — safe under tsx --test.
 import { HELD_REFERRAL_STATUSES } from './capacityCount';
@@ -253,4 +254,60 @@ test('non-restorable statuses stay skipped — the restore path must alert, neve
   for (const s of ['Refunded', 'Closed Lost', 'Pending Approval', 'Intro Sent', 'Rancher Contacted', 'Negotiation', 'Deposit Paid', 'Totally Bogus', '']) {
     assert.equal(RESTORABLE_REFUND_STATUSES.has(s), false, `${s} must not auto-restore`);
   }
+});
+
+
+// ── Redelivery idempotency must NOT hinge on a select option that does not
+// exist. Referrals.Status has no 'Refunded' choice, so selectGuard drops that
+// key and the flip never lands. A Status-only guard therefore never fires and
+// a redelivered charge.refunded re-runs the whole restore: a second rancher
+// refund notice and a SECOND decrementCapacity, pushing the held counter below
+// the true held count. `Refunded At` is the durable key that actually lands. ──
+test('restore is idempotent on redelivery even though the Status flip is dropped by the base', () => {
+  // Exactly the row a redelivered webhook re-reads after run 1: the money
+  // fields were cleared and Refunded At landed, but Status is UNCHANGED
+  // because the base has no 'Refunded' option to write.
+  const afterFirstRestore = {
+    'Status': 'Awaiting Payment',
+    'Refunded At': NOW,
+  };
+  assert.equal(
+    isRefundRestoreComplete(afterFirstRestore),
+    true,
+    'a redelivery must be a no-op — otherwise capacity is decremented twice for one refund',
+  );
+  // And the status it is stuck at is genuinely one the restore would re-run
+  // from, which is what makes the missing guard dangerous rather than moot.
+  assert.equal(RESTORABLE_REFUND_STATUSES.has('Awaiting Payment'), true);
+  assert.equal(shouldDecrementOnRefundRestore('Awaiting Payment'), true);
+});
+
+test('the same holds for the other held status a refund can land on', () => {
+  assert.equal(isRefundRestoreComplete({ 'Status': 'Slot Locked', 'Refunded At': NOW }), true);
+  assert.equal(shouldDecrementOnRefundRestore('Slot Locked'), true);
+});
+
+test('Status stays honoured, so the guard keeps working once Ben adds the option', () => {
+  assert.equal(isRefundRestoreComplete({ 'Status': 'Refunded' }), true);
+  assert.equal(isRefundRestoreComplete({ 'Status': 'Refunded', 'Refunded At': NOW }), true);
+});
+
+test('a referral that has NOT been refunded still restores (guard cannot swallow the first run)', () => {
+  assert.equal(isRefundRestoreComplete({ 'Status': 'Awaiting Payment' }), false);
+  assert.equal(isRefundRestoreComplete({ 'Status': 'Closed Won' }), false);
+  assert.equal(isRefundRestoreComplete({}), false);
+  // Blank/whitespace stamps are not a refund.
+  assert.equal(isRefundRestoreComplete({ 'Refunded At': '' }), false);
+  assert.equal(isRefundRestoreComplete({ 'Refunded At': '   ' }), false);
+  assert.equal(isRefundRestoreComplete({ 'Status': '', 'Refunded At': null }), false);
+});
+
+test('the restore write itself stamps the key the guard reads (they cannot drift apart)', () => {
+  const fields = refundReferralClearFields(NOW);
+  assert.equal(fields['Refunded At'], NOW);
+  assert.equal(
+    isRefundRestoreComplete({ 'Status': 'Awaiting Payment', 'Refunded At': fields['Refunded At'] }),
+    true,
+    'whatever refundReferralClearFields stamps must satisfy the idempotency guard',
+  );
 });
