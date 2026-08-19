@@ -64,6 +64,33 @@ export function getMaxActiveReferrals(rancher: any): number {
 }
 
 /**
+ * Is a cap ACTUALLY configured on this record, under either spelling?
+ *
+ * getMaxActiveReferrals defaults to DEFAULT_MAX (5) on a blank field. That
+ * default is right for ROUTING — a cap you can't read should fail closed at a
+ * sane number, not unbounded — and catastrophic for DISPLAY. The public
+ * rancher page derived "● N shares left this round" from
+ * `getMaxActiveReferrals(r) − Current Active Referrals`, so Gila River Cattle
+ * (cap blank, 2 active) advertised "3 shares left this round" to buyers: a
+ * scarcity number nobody configured, manufactured entirely by this constant.
+ * That is exactly the fake scarcity the project forbids, and it was live.
+ *
+ * Any surface that SHOWS a capacity number to a buyer must gate on this first
+ * and render nothing when it is false. Routing keeps using
+ * getMaxActiveReferrals unchanged — this adds a question, it does not change
+ * an answer.
+ *
+ * Reads both spellings in the same order as getMaxActiveReferrals, so the
+ * 2026-06-30 field-name landmine stays a one-module concern.
+ */
+export function hasExplicitMaxActiveReferrals(rancher: any): boolean {
+  if (!rancher) return false;
+  const isSet = (v: unknown) => v !== undefined && v !== null && v !== '';
+  // eslint-disable-next-line dot-notation
+  return isSet(rancher['Max Active Referrals']) || isSet(rancher['Max Active Referalls']);
+}
+
+/**
  * Returns the field name to use when WRITING to Airtable. Currently still
  * the typo'd name, since the schema field is `Max Active Referalls`.
  *

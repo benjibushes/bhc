@@ -64,16 +64,25 @@ test('PIN: /ranchers header stat and body never assert "verified"/"vetted" over 
 
 test('PIN: rancher page hero renders "Represented ranch", never "Verified partner", for broker self-serve', () => {
   const page = src('app/ranchers/[slug]/page.tsx');
-  // The three-way pill: prospect → unclaimed; brokerSelfServe → represented;
-  // else → the earned Verified pill. Order matters: the broker arm must be
-  // checked BEFORE the Verified fallthrough.
+  // The pill row: prospect → unclaimed; represented → represented; verified →
+  // the earned Verified pill; anything else → NO pill at all. Order matters:
+  // the represented arm must be checked BEFORE the Verified one.
+  //
+  // 2026-08-18 ad-readiness audit: the branch conditions moved from inline
+  // record reads to lib/rancherAdSurface.heroTrustPill, because Verified used
+  // to be the unconditional ELSE and rendered for ranches whose Verification
+  // Status was blank or 'Not Started' (Champion Valley, DD Ranch, Thomas
+  // Cattle). heroTrustPill still resolves broker self-serve to 'represented'
+  // and never to 'verified' — this pin's ruling is unchanged, only the
+  // expression it reads.
   // Match the rendered pill bodies (not the ruling comments above them).
   const prospectIdx = page.indexOf('Unclaimed listing</Pill>');
-  const brokerArmIdx = page.indexOf(') : brokerSelfServe ? (');
+  const brokerArmIdx = page.indexOf(") : trustPill === 'represented' ? (");
+  assert.match(page, /const trustPill = heroTrustPill\(r\);/, 'the pill verdict must be derived');
   const representedIdx = page.indexOf('Represented ranch\n                  </Pill>');
   const verifiedIdx = page.indexOf('Verified partner\n                  </Pill>');
   assert.ok(prospectIdx > -1, 'prospect pill exists');
-  assert.ok(brokerArmIdx > -1, 'brokerSelfServe pill arm exists');
+  assert.ok(brokerArmIdx > -1, 'represented pill arm exists');
   assert.ok(representedIdx > -1, 'Represented ranch pill exists');
   assert.ok(verifiedIdx > -1, 'Verified partner pill survives for earned verification');
   assert.ok(
