@@ -171,7 +171,8 @@ export async function PATCH(
           if (status === 'Closed Won') {
             await updateRecord(TABLES.CONSUMERS, buyerId, {
               'Referral Status': 'Closed Won',
-              'Sequence Stage': '',
+              // null, not '' — '' mints an empty-named select choice (see selectGuard).
+                'Sequence Stage': null,
               'Buyer Health': 'Closed Won',
               'Missed Responses': 0,
               'Buyer Stage': 'CLOSED',

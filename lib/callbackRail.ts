@@ -121,7 +121,12 @@ export interface MemberCallbackDeal {
 }
 
 /** Deals that are over. A finished or dead deal earns no callback affordance. */
-const DEAD_STATUSES = new Set(['Closed Lost', 'Lost', 'Refunded', 'Rejected']);
+const DEAD_STATUSES = new Set(['Closed Lost', 'Dormant', 'Lost', 'Refunded', 'Rejected']);
+// 'Dormant' (2026-08-18): the terminal every system-initiated void writes —
+// stale-hold expiry, unpaid-deposit release, and the reserve email-failure
+// void. It was missing here, so a released row still rendered a live ladder.
+// 'Lost' is legacy residue: it was never a real Referrals.Status option, so
+// no row should carry it — kept defensively in case typecast ever minted one.
 
 const present = (v: unknown): boolean => String(v ?? '').trim().length > 0;
 

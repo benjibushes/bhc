@@ -4,11 +4,14 @@ import {
   assertReserveEligible,
   buildReserveConsumerFields,
   buildReserveReferralFields,
+  CUT_LABELS,
+  CUT_ORDER_TYPES,
   depositPathFor,
   normalizeReservePhone,
   reserveConsumerStatusPatch,
   resolveBuyerContact,
 } from './reserveDeposit';
+import { AIRTABLE_SELECT_FIELDS } from './schema/airtableSchema.generated';
 
 const activeRancher = {
   id: 'recRanch',
@@ -75,7 +78,9 @@ test('buildReserveReferralFields pins Rancher + Buyer, no lead Approval Status',
   assert.deepEqual(f.Buyer, ['recBuyer']);
   assert.equal(f.Status, 'Pending');
   assert.equal(f['Match Type'], 'Direct (Rancher Page) — Deposit');
-  assert.equal(f['Order Type'], 'Half Cow');
+  // The canonical Consumers/Referrals Order Type value, NOT the 'Half Cow'
+  // display label (2026-08-18 schema-guard sweep — see CUT_ORDER_TYPES).
+  assert.equal(f['Order Type'], 'Half');
   assert.equal(f['Approval Status'], undefined); // NOT a lead
   assert.match(String(f.Name), /jane@example\.com/);
 });
@@ -177,7 +182,8 @@ test('reserve consumer fields mirror the route field set', () => {
   });
   assert.equal(fields['Segment'], 'Beef Buyer');
   assert.equal(fields['Source'], 'rancher-page-deposit:renick-valley');
-  assert.equal(fields['Order Type'], 'Quarter Cow');
+  // Canonical select option, not the display label — see CUT_ORDER_TYPES.
+  assert.equal(fields['Order Type'], 'Quarter');
   assert.deepEqual(fields['Interests'], ['Beef']);
   assert.equal(fields['SMS Opt-In'], false);
   assert.equal('SMS Opt-In At' in fields, false);
@@ -319,5 +325,18 @@ test('no / malformed attribution never adds keys and never throws', () => {
     // …and the rest of the record is untouched.
     assert.equal(fields['Email'], 'jo@example.com');
     assert.equal(fields['Status'], 'Approved');
+  }
+});
+
+test('CUT_ORDER_TYPES writes the real Consumers.Order Type options, never the label', () => {
+  // Writing CUT_LABELS into the select is what minted 'Half Cow' and
+  // 'Quarter Cow' into Consumers.Order Type and silently dropped every
+  // whole-cow order ('Whole Cow' was never minted). The two maps must stay
+  // distinct: one is prose, one is schema.
+  assert.deepEqual(CUT_ORDER_TYPES, { quarter: 'Quarter', half: 'Half', whole: 'Whole' });
+  for (const cut of ['quarter', 'half', 'whole'] as const) {
+    assert.notEqual(CUT_ORDER_TYPES[cut], CUT_LABELS[cut]);
+    assert.equal(AIRTABLE_SELECT_FIELDS['Consumers']['Order Type'].choices.includes(CUT_ORDER_TYPES[cut]), true,
+      `${CUT_ORDER_TYPES[cut]} must be a real Consumers.Order Type option`);
   }
 });

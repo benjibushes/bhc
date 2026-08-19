@@ -781,8 +781,13 @@ export async function POST(request: Request) {
               'Onboarding Status': rancher['Onboarding Status'],
               'Call Scheduled': rancher['Call Scheduled'],
             });
+            // null, not '' (2026-08-18 schema-guard sweep): Onboarding Status is
+            // a singleSelect and '' is NOT "clear" — typecast mints a choice whose
+            // name is the empty string (Ranchers.Active Status, .Tier and
+            // .Stripe Connect Status all carry one already, from writes exactly
+            // like this). null actually empties the cell.
             await updateRecord(TABLES.RANCHERS, rancher.id, {
-              'Onboarding Status': '',
+              'Onboarding Status': null,
               'Call Scheduled': false,
             });
             await logAuditEntry({

@@ -808,7 +808,8 @@ export async function markDepositRefunded(
   // On any FULL (non-partial) refund of a buyer-deposit Payments row whose
   // Referral is in a RESTORABLE state (Closed Won / Awaiting Payment /
   // Slot Locked — Blocker-2 widening, lib/refundLifecycle.ts), revert the deal:
-  //   - Referral.Status → 'Refunded' (new option, typecast-created)
+  //   - Referral.Status → 'Refunded' (NOT a real option — see the correction
+  //     at restoreReferralAfterRefund; the flip is dropped until Ben adds it)
   //   - Clear Closed At, Sale Amount, Commission Due
   //   - Stamp Refunded At
   //   - Rancher capacity: NO decrement from Closed Won (C4 — recordClose
@@ -923,8 +924,13 @@ async function restoreReferralAfterRefund(
   // 1. Flip Referral state. Clear Closed Won-only fields PLUS the deposit/
   // accept lifecycle stamps (C2: stale Deposit Paid At let send-final-invoice
   // bill a refunded buyer; stale Rancher Accepted At blocked re-deposit).
-  // Field set is pure + unit-tested in lib/refundLifecycle.test.ts. typecast
-  // creates the 'Refunded' singleSelect option if it doesn't exist yet.
+  // Field set is pure + unit-tested in lib/refundLifecycle.test.ts.
+  // CORRECTION (2026-08-18): typecast does NOT create the 'Refunded'
+  // singleSelect option as a plan — minting an option nothing reads is the bug
+  // this repo just spent a sweep removing. Referrals.Status has no 'Refunded'
+  // choice, so lib/schema/selectGuard drops that one key before the request
+  // (parked in lib/schema/schemaGuardAllowlist.ts) while the money-field
+  // clears below still land. Ben adding the option retires the entry.
   const referralUpdates: Record<string, any> = refundReferralClearFields(now);
   await updateRecord(TABLES.REFERRALS, referralId, referralUpdates);
 

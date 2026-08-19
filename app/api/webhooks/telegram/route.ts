@@ -3837,7 +3837,8 @@ Output ONLY the email body. First line should be the subject line prefixed with 
             try {
               await updateRecord(TABLES.CONSUMERS, buyerId, {
                 'Referral Status': 'Closed Won',
-                'Sequence Stage': '',
+                // null, not '' — '' mints an empty-named select choice (see selectGuard).
+                'Sequence Stage': null,
                 'Buyer Health': 'Closed Won',
                 'Missed Responses': 0,
                 'Buyer Stage': 'CLOSED',

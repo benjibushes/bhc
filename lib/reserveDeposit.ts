@@ -8,10 +8,31 @@ import { attributionConsumerFields } from '@/lib/adAttribution';
 
 export type Cut = 'quarter' | 'half' | 'whole';
 
+/** Human-facing label. Emails, admin sell-links, the referral's display name. */
 export const CUT_LABELS: Record<Cut, string> = {
   quarter: 'Quarter Cow',
   half: 'Half Cow',
   whole: 'Whole Cow',
+};
+
+// The EXACT Consumers.Order Type singleSelect option — never CUT_LABELS.
+//
+// 2026-08-18 schema-guard sweep. This rail was writing CUT_LABELS straight
+// into the select, and the base shows exactly what that cost: Order Type now
+// carries 'Half Cow' and 'Quarter Cow' minted AFTER the three real choices, in
+// the order those two cuts first sold. 'Whole Cow' never fired, so it is still
+// absent — meaning every whole-cow reserve to date LOST its Order Type
+// outright. Two live readers also need the canonical spelling:
+//   - app/r/p/[token] pre-selects the cut only on an exact 'quarter'|'half'|
+//     'whole', so 'Half Cow' rows opened the deposit page with nothing chosen
+//   - lib/demandRouter cutForBuyer and matching/suggest's tier filter parse
+//     the first word, so they tolerated it — but nothing else did
+// Referrals.Order Type is singleLineText and cannot mint anything, but it is
+// written from this same map so /r/p behaves consistently.
+export const CUT_ORDER_TYPES: Record<Cut, 'Quarter' | 'Half' | 'Whole'> = {
+  quarter: 'Quarter',
+  half: 'Half',
+  whole: 'Whole',
 };
 
 const CUT_PRICE_FIELD: Record<Cut, string> = {
@@ -182,7 +203,7 @@ export function buildReserveConsumerFields(args: {
     'Status': 'Approved',
     'Approved At': nowIso,
     'Source': `rancher-page-deposit:${args.slug}`,
-    'Order Type': CUT_LABELS[args.cut],
+    'Order Type': CUT_ORDER_TYPES[args.cut],
     // FIX (store-reserve 500): 'Interest Beef' is a singleLineText field —
     // writing boolean `true` 422'd Airtable (typecast can't coerce bool→text),
     // the catch returned 500, and reserve aborted BEFORE the referral was
@@ -247,7 +268,7 @@ export function buildReserveReferralFields(args: {
     'Match Type': 'Direct (Rancher Page) — Deposit',
     'Buyer Name': args.buyerName || '',
     'Buyer Email': args.buyerEmail,
-    'Order Type': CUT_LABELS[args.cut],
+    'Order Type': CUT_ORDER_TYPES[args.cut],
     'Intent Score': 90,
     'Intent Classification': 'High',
     Notes: '[Source] Self-serve deposit (rancher page, no quiz)',

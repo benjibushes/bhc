@@ -255,8 +255,10 @@ export async function POST(request: Request) {
         'Phone': normalizePhoneE164(phoneQ) || phoneQ,
         'State': normalizeState(stateQ) || stateQ.toUpperCase(),
         ...(zipQ ? { 'Zip': zipQ } : {}),
-        'Order Type': tierQ,
-        'Timing': timingQ,
+        // null, not '' — see the note in lib/schema/selectGuard.ts: '' mints an
+        // empty-named choice on an Airtable select, it does not clear the cell.
+        'Order Type': tierQ || null,
+        'Timing': timingQ || null,
         'Intent Score': funnelScoreQ,
         'Intent Classification': funnelClassificationQ,
         'Segment': 'Beef Buyer',
@@ -701,8 +703,9 @@ export async function POST(request: Request) {
       'Interests': interests,
       'Status': status,
       'Segment': consumerSegment,
-      'Order Type': orderType || '',
-      'Budget': budgetRange || '',
+      // null, not '' — '' mints an empty-named select choice (see selectGuard).
+      'Order Type': orderType || null,
+      'Budget': budgetRange || null,
       // Timing prepended to Notes (no schema migration needed). Surfaces in
       // admin views + the rancher intro email for context. Used transiently
       // below to decide auto-route eligibility too.

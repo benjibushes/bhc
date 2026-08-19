@@ -49,7 +49,8 @@ export async function PATCH(request: Request) {
       'Intent Score': intentScore,
       'Intent Classification': intentClassification,
       'Order Type': orderType,
-      'Budget': budgetRange || '',
+      // null, not '' — '' mints an empty-named select choice (see selectGuard).
+      'Budget': budgetRange || null,
     });
 
     const consumer: any = await getRecordById(TABLES.CONSUMERS, memberId);
