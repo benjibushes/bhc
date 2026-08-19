@@ -6205,12 +6205,19 @@ Confirm send?`;
             ) as Promise<any[]>,
           ]);
           const cronByName: Record<string, { count: number; lastStatus: string }> = {};
+          // Cron Runs rows are rolled up one-per-cron-per-UTC-day
+          // (lib/cronRunRollup), so counting ROWS would report 1 for a cron
+          // that fired 47 times. `Run Count` carries the real number; fall
+          // back to counting rows for pre-rollup history and for a row the
+          // append fallback wrote.
           for (const c of cronRuns) {
             const n = String(c['Name'] || '?');
             cronByName[n] = cronByName[n] || { count: 0, lastStatus: '' };
-            cronByName[n].count++;
+            const runs = Number(c['Run Count']);
+            cronByName[n].count += Number.isFinite(runs) && runs > 0 ? runs : 1;
             cronByName[n].lastStatus = String(c['Status'] || '');
           }
+          const totalRuns = Object.values(cronByName).reduce((a, v) => a + v.count, 0);
           const sendsByTemplate: Record<string, number> = {};
           for (const s of sends) {
             if (s['Status'] !== 'sent') continue;
@@ -6227,7 +6234,7 @@ Confirm send?`;
           await sendTelegramMessage(
             chatId,
             `🤖 <b>WHAT FIRED</b> · ${dayStart.toISOString().slice(0, 10)}\n\n` +
-            `<b>Crons (${cronRuns.length} runs)</b>:\n${cronLines.join('\n') || 'none'}\n\n` +
+            `<b>Crons (${totalRuns} runs)</b>:\n${cronLines.join('\n') || 'none'}\n\n` +
             `<b>Emails sent (${sends.filter(s => s['Status'] === 'sent').length} total)</b>:\n${sendLines.join('\n') || 'none'}`
           );
         } catch (e: any) {

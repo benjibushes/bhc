@@ -190,7 +190,17 @@ function main(): void {
   }
   const files = sourceFiles();
   const sources = new Map<string, string>();
-  for (const file of files) sources.set(file, readFileSync(resolve(process.cwd(), file), 'utf-8'));
+  for (const file of files) {
+    // A file git still lists but that no longer exists on disk (a deletion not
+    // yet staged) must not crash the guard — skip it and keep checking the
+    // rest. Crashing here reports NO violations, which reads exactly like a
+    // clean base.
+    try {
+      sources.set(file, readFileSync(resolve(process.cwd(), file), 'utf-8'));
+    } catch (e: any) {
+      if (e?.code !== 'ENOENT') throw e;
+    }
+  }
 
   // Pass A — every exported string constant, so a table alias defined in one
   // module (`export const PAYMENTS_TABLE = TABLES.PAYMENTS`) still resolves at

@@ -1,6 +1,6 @@
 import { createRecord, getAllRecords, updateRecord, TABLES, escapeAirtableValue } from './airtable';
 import { sendOperatorSignal } from './operatorSignal';
-import { shouldWriteCronRunRow } from './cronRunPolicy';
+import { mergeCronRunRollup, heartbeatPatch, rollupDayKey } from './cronRunRollup';
 
 type CronStatus = 'success' | 'partial' | 'error' | 'maintenance-blocked' | 'paused';
 
@@ -17,13 +17,16 @@ interface CronRunResult {
    */
   skipReasonBreakdown?: Record<string, number>;
   /**
-   * Set true on PURE no-op runs (nothing in the work window, nothing touched)
-   * to suppress the Cron Runs row (capacity audit 2026-07-28: cal-reminder-1h
-   * "no bookings in window" rows were 31% of all log inflow). The wrapper
-   * still writes ONE no-op heartbeat row per UTC day (Redis claimOnce) so the
-   * daily-health-digest dead-man's switch keeps seeing the cron, and it
-   * ALWAYS writes on error/partial/paused or recordsTouched > 0 — see
-   * lib/cronRunPolicy.ts.
+   * RETIRED (capacity audit 2026-08-19) — accepted for compatibility, ignored.
+   *
+   * This suppressed the Cron Runs row on pure no-op runs because those rows
+   * were 31% of log inflow. Rows are now rolled up one-per-cron-per-UTC-day
+   * (lib/cronRunRollup), so a no-op run costs ZERO new records — it just
+   * increments `Run Count` on the day's existing row. Suppressing it now
+   * would only make that count lie about how often the cron actually fired.
+   *
+   * Handlers may keep returning it; removing it from ~55 routes is a separate
+   * mechanical sweep.
    */
   skipLog?: boolean;
 }
@@ -53,6 +56,30 @@ async function maybeAlertOperator(cron: string, status: CronStatus, notes: strin
     // an alerting failure can never mask the cron's own result.
     console.warn(`[withCronRun:${cron}] alert send failed:`, e?.message);
   }
+}
+
+/**
+ * Today's rollup row for this cron, or null when there isn't one yet.
+ *
+ * Throws on a read failure ON PURPOSE: the caller catches and falls back to a
+ * plain append, so a bad read degrades to "an extra row" and never to "no row"
+ * — a missing row is what the dead-man's switch reads as a dead cron.
+ */
+async function findDayRow(name: string, dayKey: string): Promise<any | null> {
+  const rows = (await getAllRecords(
+    TABLES.CRON_RUNS,
+    `AND({Name}="${escapeAirtableValue(name)}", {Run Day}="${escapeAirtableValue(dayKey)}")`,
+  )) as any[];
+  if (!rows || rows.length === 0) return null;
+  // Two rows for one cron-day means two executions raced the create (no
+  // cross-instance lock; same-name overlap is rare). Keep merging into the
+  // newest: counts split across the pair, but the dead-man still sees a fresh
+  // stamp and the extra row ages out with retention.
+  rows.sort(
+    (a, b) =>
+      new Date(b['Started At'] || 0).getTime() - new Date(a['Started At'] || 0).getTime(),
+  );
+  return rows[0];
 }
 
 /**
@@ -94,19 +121,37 @@ export function withCronRun<T extends CronRunResult>(
     let status: CronStatus = 'error';
     let recordsTouched = 0;
     let notes = '';
-    let skipLogRequested = false;
     let skipReasonBreakdown: Record<string, number> | undefined;
     let returnedResponse: Response | null = null;
     let heartbeatRowId: string | null = null;
     if (opts?.heartbeat) {
       try {
-        const started = await createRecord(TABLES.CRON_RUNS, {
-          Name: name,
-          'Started At': startedAt.toISOString(),
-          Status: 'started',
-          Notes: 'heartbeat — run in progress',
-        });
-        heartbeatRowId = (started as any)?.id || null;
+        // Mark the day's row in-progress. heartbeatPatch touches ONLY the
+        // freshness + status fields, so a mid-day kill leaves a row stuck at
+        // 'started' for daily-health-digest to flag (the point of heartbeat
+        // mode) without resetting the totals earlier runs accumulated.
+        const dayKey = rollupDayKey(startedAt.toISOString());
+        const existing = dayKey ? await findDayRow(name, dayKey) : null;
+        if (existing?.id) {
+          await updateRecord(
+            TABLES.CRON_RUNS,
+            existing.id,
+            heartbeatPatch(startedAt.toISOString()),
+          );
+          heartbeatRowId = existing.id;
+        } else {
+          const started = await createRecord(TABLES.CRON_RUNS, {
+            Name: name,
+            ...heartbeatPatch(startedAt.toISOString()),
+            // Zeroed so the finally-block merge counts this run as the first,
+            // rather than adding to an undefined.
+            'Records Touched': 0,
+            'Run Count': 0,
+            'Errors': 0,
+            Notes: 'heartbeat — run in progress',
+          });
+          heartbeatRowId = (started as any)?.id || null;
+        }
       } catch (hbErr: any) {
         // Best-effort: no heartbeat row just degrades to the old behavior
         // (row written only in finally).
@@ -145,7 +190,6 @@ export function withCronRun<T extends CronRunResult>(
       status = result.status;
       recordsTouched = result.recordsTouched ?? 0;
       notes = result.notes ?? '';
-      skipLogRequested = result.skipLog === true;
       skipReasonBreakdown = result.skipReasonBreakdown;
       returnedResponse = new Response(
         JSON.stringify({ ok: true, status, recordsTouched, notes }),
@@ -160,47 +204,54 @@ export function withCronRun<T extends CronRunResult>(
       );
     } finally {
       endedAt = new Date();
-      // No-op row suppression (see CronRunResult.skipLog). Decision is pure
-      // (lib/cronRunPolicy); the only I/O is the once-per-day Redis claim,
-      // which fails OPEN (claim errors / Redis absent → write like before).
-      let writeRow = true;
+      // ROLLUP (capacity audit 2026-08-19). One row per cron per UTC day
+      // instead of one per execution: Cron Runs was 11,231 rows / 73 crons /
+      // 31 days = 22% of the base's 50,000-record cap, and nothing reads a
+      // single execution — every consumer collapses to most-recent-per-name
+      // first. Merge rules + what they protect live in lib/cronRunRollup.
+      //
+      // The no-op suppression this block used to run (skipLog + a once-daily
+      // Redis claim) is retired: it existed to stop row growth, which the
+      // rollup now solves structurally, and skipping the write would only
+      // make `Run Count` under-report how often the cron fired.
+      const observation = {
+        name,
+        startedAtISO: startedAt.toISOString(),
+        endedAtISO: endedAt.toISOString(),
+        durationMs: endedAt.getTime() - startedAt.getTime(),
+        status,
+        recordsTouched,
+        notes,
+        skipReasonBreakdown,
+      };
+      let rolledUp = false;
       try {
-        if (skipLogRequested && status === 'success' && recordsTouched === 0 && !heartbeatRowId) {
-          let dailyClaim: boolean | null = null;
-          try {
-            const { claimOnce } = await import('./rancherCapacity');
-            dailyClaim = await claimOnce(
-              `cronrun:noop-heartbeat:${name}:${new Date().toISOString().slice(0, 10)}`,
-              26 * 60 * 60, // outlives the 25h dead-man window; date-keyed anyway
-            );
-          } catch {
-            dailyClaim = null; // fail open
-          }
-          writeRow = shouldWriteCronRunRow({
-            skipLogRequested,
-            status,
-            recordsTouched,
-            heartbeatRowPending: !!heartbeatRowId,
-            dailyHeartbeatClaimed: dailyClaim,
-          });
-          if (writeRow && dailyClaim === true) {
-            notes = `${notes} · daily no-op heartbeat (other no-op rows suppressed)`.slice(0, 500);
-          }
+        const dayKey = rollupDayKey(observation.startedAtISO);
+        if (dayKey) {
+          // Re-read rather than trusting heartbeatRowId's stale field values:
+          // another instance may have merged into this row since.
+          const existing = await findDayRow(name, dayKey);
+          const fields = mergeCronRunRollup(existing, observation);
+          if (existing?.id) await updateRecord(TABLES.CRON_RUNS, existing.id, fields);
+          else await createRecord(TABLES.CRON_RUNS, fields);
+          rolledUp = true;
         }
-      } catch {
-        writeRow = true; // any surprise in the skip path → old behavior
+      } catch (rollupErr: any) {
+        console.error(
+          `[withCronRun:${name}] rollup upsert failed, falling back to append:`,
+          rollupErr?.message,
+        );
       }
-      if (!writeRow) {
-        // Skip the Airtable write entirely; alerting below still runs
-        // (a no-op success has nothing to alert anyway).
-        console.info(`[withCronRun:${name}] no-op run — Cron Runs row suppressed (daily heartbeat already written)`);
-      } else {
+      if (!rolledUp) {
+        // FALLBACK: plain append, exactly the pre-rollup behaviour. A rollup
+        // failure must never cost the run its row — a missing row is what the
+        // dead-man's switch reads as a dead cron.
         try {
           const row: Record<string, unknown> = {
             Name: name,
-            'Started At': startedAt.toISOString(),
-            'Ended At': endedAt.toISOString(),
-            'Duration ms': endedAt.getTime() - startedAt.getTime(),
+            'Started At': observation.startedAtISO,
+            'Ended At': observation.endedAtISO,
+            'Duration ms': observation.durationMs,
             Status: status,
             'Records Touched': recordsTouched,
             Notes: notes,
@@ -209,8 +260,6 @@ export function withCronRun<T extends CronRunResult>(
             row['Skip Reason Breakdown'] = JSON.stringify(skipReasonBreakdown);
           }
           if (heartbeatRowId) {
-            // Complete the started-heartbeat row in place (don't write a second
-            // row — a duplicate would double cron-run counts in the digest).
             try {
               await updateRecord(TABLES.CRON_RUNS, heartbeatRowId, row);
             } catch {
