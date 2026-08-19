@@ -81,6 +81,7 @@ import { JWT_SECRET } from '@/lib/secrets';
 import { normalizeState } from '@/lib/states';
 import { isRancherOperationalForBuyers, getOperationalServedStates } from '@/lib/rancherEligibility';
 import { getServedStates } from '@/lib/routingSegment';
+import { isRequestOnlyRancher } from '@/lib/requestOnlyRanchers';
 import { activeDealReferralsFormula } from '@/lib/cronReadFilters';
 import { isActiveDealReferral } from '@/lib/capacityCount';
 import {
@@ -217,17 +218,31 @@ async function realHandler(_request: Request): Promise<CronResult> {
   // A ranchers-read failure FAILS CLOSED (no sends) — a transient Airtable
   // blip must never turn the gate off and blast the unserved-state backlog.
   // Same pass also maps state → an operational rancher's Slug for the READY
-  // chase CTA (the in-state rancher page, /map fallback).
+  // chase CTA (the covering rancher's page, /map fallback).
+  //
+  // REQUEST-ONLY BELT (P0, 2026-08-18) — BOTH the gate and the slug map are
+  // generic-supply questions, and both were unbelted. One request-only ranch
+  // (`Admin Approved Multi-State` + 48 Routing States) inflated the gate to
+  // 48 served states and won the CTA slug for 36 of them; the 16:23Z run sent
+  // 50 buyers a false coverage claim and pointed a third of the READY chases
+  // at supply that must never be generically promoted. getServedStates now
+  // carries the belt itself (lib/routingSegment); the slug map needs its own
+  // skip because it is a SECOND pass over the same array.
   let supplyStates: Set<string>;
   const rancherSlugByState = new Map<string, string>();
   try {
     const ranchers = (await getAllRecords(TABLES.RANCHERS)) as any[];
     // Coverage set from the shared P1′ helper (capacity-OUT — the exact
-    // semantics this loop always had). The slug map below is presentation
-    // (which rancher page to link), not coverage — it keeps its own pass.
+    // semantics this loop always had, now request-only-belted). The slug map
+    // below is presentation (which rancher page to link), not coverage — it
+    // keeps its own pass, and therefore its own belt.
     supplyStates = getServedStates(ranchers);
     for (const r of ranchers) {
       if (!isRancherOperationalForBuyers(r)) continue;
+      // Never hand a request-only ranch to a buyer who did not ask for them —
+      // an emailed CTA at their page is a generic promotion. Checks slug AND
+      // record id via the one shared source of truth.
+      if (isRequestOnlyRancher(r)) continue;
       const slug = String(r['Slug'] || '').trim();
       if (!slug) continue;
       for (const s of getOperationalServedStates(r)) {
@@ -444,7 +459,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
           const smsUrl = `${SITE_URL}/access${stateCode ? `?state=${stateCode}` : ''}`;
           const ok = await sendSMSToConsumer({
             consumer: c,
-            body: `You started reserving a beef share — local ranchers have open slots. Finish in 2 min: ${smsUrl} Reply STOP to opt out.`,
+            body: `You signed up with BuyHalfCow but never finished the last step. Ranchers serving your area have open slots. Finish in 2 min: ${smsUrl} Reply STOP to opt out.`,
             reason: 'waiting-activation nudge',
           });
           if (ok) smsSent++;
@@ -497,8 +512,16 @@ async function realHandler(_request: Request): Promise<CronResult> {
         break;
       }
 
-      // CTA: the in-state operational rancher's page ("a slot opened"), /map
-      // fallback — never /access (they already finished the funnel).
+      // CTA: the page of an operational rancher SERVING this state ("a slot
+      // opened") — which may cover it by multi-state routing or nationwide
+      // shipping, not by sitting in it. Never /access (they already finished
+      // the funnel).
+      //
+      // The /map fallback stays request-only-safe for a different reason than
+      // this map does: request-only pins DO render on /map (lib/mapPinStatus
+      // keeps the pin and only excludes them from aggregate shipping claims),
+      // but a buyer who picks a ranch off the map is ASKING for it — the open
+      // path by design. What the belt above prevents is this email naming one.
       const stateCode = normalizeState(state);
       const slug = stateCode ? rancherSlugByState.get(stateCode) : undefined;
       const READY_UTM = 'utm_source=email&utm_medium=drip&utm_campaign=ready-chase';

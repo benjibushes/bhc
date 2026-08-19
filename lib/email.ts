@@ -1028,6 +1028,12 @@ export async function sendWaitingActivationNudge(data: {
   // truth stretch — the WAITING pool is buyers who signed up and never
   // finished qualification; most never started any reservation. Subject
   // downcased per the lowercase rule; signature em dash unified.
+  // COVERAGE TRUTH (P0, 2026-08-18): the body said ranchers "in {state}".
+  // A rancher covers a state by multi-state routing or nationwide shipping
+  // as often as by sitting in it, so "in" is false for most covered states
+  // (docs/BHC.md anti-pattern #2 — don't claim coverage we don't have).
+  // "serving {state}" is true in every case, including the 'your area'
+  // fallback below. Pinned in app/api/cron/waiting-activation/route.pins.test.ts.
   const subject = 'your beef match is waiting — 2 minutes to finish';
   return guardedSend({
     templateName: 'sendWaitingActivationNudge',
@@ -1043,7 +1049,7 @@ export async function sendWaitingActivationNudge(data: {
 </head><body><div class="container">
   <h1>Hey ${esc(first)} —</h1>
   <p>A while back you signed up with BuyHalfCow to get matched with a rancher, but never finished the last step.</p>
-  <p>Qualified ranchers in ${stateLabel} have open slots right now. Finishing takes about two minutes — a few quick questions so I know your size, timing, and storage, and can match you with the right rancher.</p>
+  <p>Qualified ranchers serving ${stateLabel} have open slots right now. Finishing takes about two minutes — a few quick questions so I know your size, timing, and storage, and can match you with the right rancher.</p>
   <p>No payment. It just tells me what you actually want.</p>
   <div style="text-align:center;margin:30px 0;">
     <a href="${data.resumeUrl}" class="cta">Finish my match &rarr;</a>
@@ -1070,7 +1076,12 @@ export async function sendReadyChaseNudge(data: {
 }): Promise<{ success: boolean; suppressed?: boolean; reason?: string }> {
   const first = data.firstName || 'there';
   const stateLabel = data.state ? esc(data.state) : 'your area';
-  const subject = `A rancher in ${data.state || 'your area'} has open slots`;
+  // COVERAGE TRUTH + lowercase subject rule (P0, 2026-08-18): "a rancher in
+  // {state}" was false wherever the covering ranch serves the state from
+  // elsewhere — which is most of them. The BODY already said "serving"; the
+  // subject, the first thing the buyer reads, did not. docs/BHC.md: subject
+  // lines are lowercase.
+  const subject = `a rancher serving ${data.state || 'your area'} has open slots`;
   return guardedSend({
     templateName: 'sendReadyChaseNudge',
     recipientEmail: data.email,
@@ -1091,7 +1102,7 @@ export async function sendReadyChaseNudge(data: {
   </div>
   <p style="font-size:14px;color:#6B4F3F;">If the timing's off, no problem — just reply and tell me.</p>
   <div class="divider"></div>
-  <p style="font-size:12px;color:#A7A29A;">- Ben<br>BuyHalfCow</p>
+  <p style="font-size:12px;color:#A7A29A;">&mdash; Ben<br>BuyHalfCow</p>
 </div></body></html>`,
     }),
   });
