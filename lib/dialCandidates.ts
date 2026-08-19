@@ -14,6 +14,7 @@
 // caller already fetched for other purposes.
 
 import { orderTypeToCut } from './requalifyCampaign';
+import { isAcceptedInFlight } from './referralStage';
 import type { DialCandidate } from './callbackQueue';
 
 // Consumers field names, verified against the live schema (tblAbjQDnLrOtjpoE)
@@ -60,7 +61,25 @@ export function buildDialCandidates(
   // 2. opened a deposit page and never paid. Keyed on the referral's Buyer
   //    link so it merges with the same person's callback row; falls back to
   //    the referral id so a link-less row is still listed rather than dropped.
-  for (const r of depositPending) {
+  //
+  //    ACCEPTED DEALS ARE NOT IN THIS TIER (2026-08-19). Referral Status
+  //    'Awaiting Payment' is overloaded (lib/referralStage): before the accept
+  //    it means the DEPOSIT has not landed, after it the BALANCE has not,
+  //    because send-final-invoice rewrites an accepted 'Slot Locked' row. The
+  //    desk API already queries the two cohorts apart (DEPOSIT_PENDING_FORMULA
+  //    / ACCEPTED_IN_FLIGHT_FORMULA, PR #655); the cockpit derives its list in
+  //    JS off a snapshot, so the guard lives HERE too and the two surfaces
+  //    cannot drift again.
+  //
+  //    Why EXCLUDE rather than relabel: an accepted deal is not a checkout
+  //    that was walked away from, and it already has a lane with the right
+  //    script — lib/closeQueue ranks it on revenue-per-call and says "Balance
+  //    is due — collect it." Left here it never even reached this tier
+  //    ('Deposit Paid At' is set, so dialTierFor drops it to `other`, i.e.
+  //    "No fresh signal" at the cockpit's lowest priority) AND it registered
+  //    the referral id in lib/cockpitDialList's dedupe map, suppressing that
+  //    close-queue row outright.
+  for (const r of depositPending.filter((r) => !isAcceptedInFlight(r))) {
     const buyerLink = Array.isArray(r['Buyer']) ? String(r['Buyer'][0] || '') : '';
     merge(buyerLink || r.id, {
       id: buyerLink || r.id,
