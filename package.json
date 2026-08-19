@@ -11,7 +11,8 @@
     "boundaries:check": "tsx tools/check-vertical-boundaries.ts",
     "schema:check": "tsx tools/schema-guard.ts",
     "schema:snapshot": "tsx tools/snapshot-airtable-schema.ts",
-    "dev:demo": "VERCEL_ENV= NEXT_PUBLIC_VERCEL_ENV= NEXT_PUBLIC_DEMO_MODE=true next dev"
+    "dev:demo": "VERCEL_ENV= NEXT_PUBLIC_VERCEL_ENV= NEXT_PUBLIC_DEMO_MODE=true next dev",
+    "env:check": "tsx tools/env-guard.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.98.0",

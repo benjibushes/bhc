@@ -61,6 +61,15 @@ jobs:
       - name: Boundary check
         run: npm run boundaries:check
 
+      - name: Env guard
+        # Every process.env read must carry a fallback, or be declared in
+        # tools/env-guard.ts as a presence-flag (unset = feature off) or a
+        # required secret (absence must break loudly). Catches a cadence knob
+        # added without a default, where Number(undefined) is NaN and silently
+        # disables the gate. CI-safe: no network, no secrets, no Vercel CLI —
+        # `npm run env:check -- --live` adds the dead-var sweep locally.
+        run: npm run env:check
+
       - name: Schema guard
         # Every Airtable field name + select literal the code can write, checked
         # against lib/schema/airtableSchema.generated.ts (a committed snapshot of
