@@ -7,6 +7,8 @@ import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendBroadcastEmail, getSuppressionList, didSuppressionListBuildFail } from '@/lib/email';
 import { primeFrequencyCapCache } from '@/lib/emailFrequencyGuard';
 import { withCronRun } from '@/lib/cronRun';
+import { EMAIL_SENDS_RETENTION_DAYS } from '@/lib/logRetentionPlan';
+import { campaignDedupeWindow } from '@/lib/campaignDedupeWindow';
 import { requireCron } from '@/lib/cronAuth';
 
 export const maxDuration = 120;
@@ -189,11 +191,57 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     // Email Sends {Campaign, Recipient} instead: every guardedSend (sent,
     // suppressed, or failed) logs a row with the campaign name, so each
     // recipient is attempted at most once per campaign regardless of order.
+    // DEDUPE WINDOW (2026-08-19). The query used to be unbounded — every
+    // Email Sends row ever tagged with this campaign name. That made a
+    // campaign's dedupe set depend on the log never expiring, which is one of
+    // the two things blocking a shorter Email Sends retention (the table is
+    // 28.5% of the base's 50,000-record cap).
+    //
+    // A campaign's own sends all happen inside its run, so bounding the query
+    // at the campaign's start loses nothing — PROVIDED the log still reaches
+    // back that far. When it does not, the dedupe set would be silently
+    // incomplete and recipients already emailed would be emailed AGAIN, so we
+    // refuse to send rather than guess. Failing closed here matches the
+    // existing read-error behaviour directly below: for a bulk campaign, a
+    // stalled send is recoverable and a double-send is not.
+    const campaignStartRaw = String(
+      campaign['Scheduled For'] || campaign['Sent At'] || campaign['Date Sent'] || '',
+    );
+    // Pure + pinned in lib/campaignDedupeWindow.test.ts — "cannot tell"
+    // resolves to REFUSE, because a double blast cannot be recalled.
+    const dedupeWindow = campaignDedupeWindow(
+      campaignStartRaw,
+      Date.now(),
+      EMAIL_SENDS_RETENTION_DAYS,
+    );
+    if (!dedupeWindow.ok) {
+      console.error(
+        `[send-scheduled] "${campaignName}" starts ${campaignStartRaw || '(unknown)'}, at or beyond the ` +
+          `${EMAIL_SENDS_RETENTION_DAYS}d Email Sends window — its dedupe set cannot be trusted. Skipping (fail closed).`,
+      );
+      try {
+        const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+        await sendOperatorSignal({
+          urgency: 'normal',
+          kind: 'system-error',
+          summary: `Campaign "${campaignName}" skipped — dedupe window expired`,
+          detail:
+            `Its start (${campaignStartRaw || 'unknown'}) is older than the ${EMAIL_SENDS_RETENTION_DAYS}-day ` +
+            `Email Sends retention, so we cannot tell who has already been emailed. Sending would risk a ` +
+            `duplicate blast. Clone it as a new campaign to send the remainder.`,
+          dedupeKey: `campaign-dedupe-expired:${campaignName}`,
+          dedupeWindowMs: 24 * 60 * 60 * 1000,
+        });
+      } catch {}
+      continue;
+    }
+    const dedupeSinceISO = dedupeWindow.sinceISO;
+
     let attempted: Set<string>;
     try {
       const rows = await getAllRecords(
         TABLES.EMAIL_SENDS,
-        `{Campaign}="${escapeAirtableValue(campaignName)}"`,
+        `AND({Campaign}="${escapeAirtableValue(campaignName)}", {Sent At} > "${dedupeSinceISO}")`,
       ) as any[];
       attempted = new Set(
         rows

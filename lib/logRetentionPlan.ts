@@ -90,6 +90,18 @@ export interface RetentionRule {
   operatorDecision?: boolean;
 }
 
+/**
+ * The Email Sends retention window, exported so the ONE reader that depends on
+ * the log reaching back a certain distance can check it instead of assuming.
+ *
+ * app/api/cron/send-scheduled dedupes a campaign against rows tagged with that
+ * campaign. If the campaign started before this window, the dedupe set is
+ * incomplete and re-sending would double-blast the recipients already emailed,
+ * so that cron refuses to send rather than guess. Keep this in sync with the
+ * 'Email Sends' entry in RETENTION below — the test pins that they match.
+ */
+export const EMAIL_SENDS_RETENTION_DAYS = 30;
+
 export const RETENTION: readonly RetentionRule[] = [
   {
     table: 'Cron Runs',
@@ -102,18 +114,17 @@ export const RETENTION: readonly RetentionRule[] = [
   },
   {
     table: 'Email Sends',
-    days: 90,
-    operatorDecision: true,
+    days: 30,
     why:
-      'RECOMMENDED 45d, OPERATOR DECISION — not shortened here. At 399 sends/day a 90d window converges ' +
-      'to ~35,900 rows = 72% of the entire base cap on its own, so this window must come down. BUT this ' +
-      'is NOT a pure log table: app/api/cron/send-scheduled (per-campaign "already attempted" set) and ' +
-      'app/api/cron/testimonial-collection ("already asked" set) query it with NO date bound and use it ' +
-      'as a send-dedupe ledger, so shortening the window shortens that memory and can produce a ' +
-      'DUPLICATE send to a real buyer. Every DATE-BOUNDED reader is <=14d (spam-audit 7d, ' +
-      'emailFrequencyGuard 7d, campaign-autopilot 14d, marketing-scoreboard 7d, daily-health-digest ' +
-      '24h), so 45d is safe the moment those two dedupe sets are moved onto a stamp on the ' +
-      'Referral/Consumer record instead of onto the log.',
+      'SHORTENED 90d -> 30d (2026-08-19) once the two lifetime-dedupe readers stopped depending on this ' +
+      'log. At 399 sends/day, 90d converged to ~35,900 rows = 72% of the entire base cap on its own; 30d ' +
+      'is ~12,000 rows (24%). The blocker was never the window, it was that two PERMANENT facts were ' +
+      'derived by scanning an expiring log: testimonial-collection\'s "already asked" set (now ' +
+      'Consumers[Testimonial Asked At]) and send-scheduled\'s per-campaign "already attempted" set (now ' +
+      'bounded by the campaign start, and it refuses to send when that predates ' +
+      'EMAIL_SENDS_RETENTION_DAYS rather than risk a double blast). Every other reader was already ' +
+      'date-bounded at <=14d. Do not shorten below the campaign-resume horizon without revisiting ' +
+      'send-scheduled: the constant above and this number must stay equal.',
   },
   {
     table: 'Funnel Events',

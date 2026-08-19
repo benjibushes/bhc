@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getAllRecords, getRecordById, TABLES, escapeAirtableValue } from '@/lib/airtable';
+import { getAllRecords, getRecordById, updateRecord, TABLES, escapeAirtableValue } from '@/lib/airtable';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTestimonialAsk } from '@/lib/email';
 import { withCronRun } from '@/lib/cronRun';
@@ -78,22 +78,33 @@ async function realHandler(_request: Request): Promise<Result> {
     return { status: 'success', recordsTouched: 0, notes: 'no eligible referrals (7-90d window)' };
   }
 
-  // Pull all sendTestimonialAsk rows ever sent to build a "skip this
-  // recipient" set. Single Airtable read = much cheaper than N reads.
+  // LIFETIME dedupe — "never ask the same buyer twice".
+  //
+  // This used to scan EVERY sendTestimonialAsk row in Email Sends, with no
+  // date bound. That made a permanent fact depend on a delivery LOG, and it
+  // is why Email Sends could not have its retention shortened: expiring old
+  // rows would silently re-open the ask for buyers already asked months ago.
+  // Email Sends is 28.5% of the base's 50,000-record cap, so that coupling
+  // was the thing standing between us and reclaiming it.
+  //
+  // The fact now lives on the buyer: Consumers['Testimonial Asked At'],
+  // backfilled from the 24 historical recipients. The log is free to expire.
   let alreadyAsked = new Set<string>();
   try {
-    const sends = (await getAllRecords(
-      TABLES.EMAIL_SENDS,
-      `{Template Name} = "sendTestimonialAsk"`,
+    const askedRows = (await getAllRecords(
+      TABLES.CONSUMERS,
+      `{Testimonial Asked At} != ""`,
+      { fields: ['Email'] },
     )) as any[];
-    for (const s of sends) {
-      const e = (s['Recipient Email'] || '').toString().trim().toLowerCase();
+    for (const c of askedRows) {
+      const e = (c['Email'] || '').toString().trim().toLowerCase();
       if (e) alreadyAsked.add(e);
     }
   } catch (e: any) {
-    // If Email Sends read fails we still proceed (fail-open). Worst case:
-    // a buyer might get a duplicate ask. Better than dropping the cron run.
-    console.warn('[testimonial-collection] Email Sends read failed, proceeding without dedupe:', e?.message);
+    // Fail OPEN, unchanged from the previous behaviour: a duplicate ask is
+    // mildly annoying, dropping the whole run is worse. Logged loudly because
+    // it is now the only dedupe source.
+    console.warn('[testimonial-collection] dedupe read failed, proceeding WITHOUT dedupe:', e?.message);
   }
 
   let asked = 0;
@@ -149,6 +160,29 @@ async function realHandler(_request: Request): Promise<Result> {
       // Add to local set so a second matching ref for the same buyer in
       // this run doesn't double-ask.
       alreadyAsked.add(buyerEmail);
+      // Persist the lifetime fact. Stamped AFTER the send: stamping first
+      // would mean a failed send permanently marks the buyer as asked and
+      // they are never asked at all — a silent miss is worse than a repeat.
+      // A stamp failure therefore leaves the OLD failure mode (a possible
+      // duplicate ask next run), so it is surfaced as a partial run rather
+      // than swallowed.
+      const buyerId: string | undefined = (ref['Buyer'] || [])[0];
+      if (buyerId) {
+        try {
+          await updateRecord(TABLES.CONSUMERS, buyerId, {
+            'Testimonial Asked At': new Date().toISOString(),
+          });
+        } catch (stampErr: any) {
+          errors.push(`${buyerEmail}: asked but NOT stamped (${stampErr?.message || 'unknown'})`);
+          console.error(
+            '[testimonial-collection] Testimonial Asked At stamp FAILED — buyer may be asked again:',
+            buyerEmail,
+            stampErr?.message,
+          );
+        }
+      } else {
+        errors.push(`${buyerEmail}: asked but referral has no Buyer link — cannot stamp`);
+      }
     } catch (e: any) {
       errors.push(`${buyerEmail}: ${e?.message || 'unknown'}`);
       console.error('[testimonial-collection] send failed:', buyerEmail, e?.message);
