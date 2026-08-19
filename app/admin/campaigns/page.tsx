@@ -64,7 +64,9 @@ const SORT_OPTIONS = [
   { key: '-name',     label: 'Name Z → A' },
 ];
 
-const ALL_STATUSES = ['Sent', 'Sending', 'Scheduled', 'Partial', 'Aborted', 'Aborting'];
+// 'Pending' is the real not-yet-sent option; 'Scheduled' was never a choice
+// on Campaigns.Status and is kept only so legacy rows still render a badge.
+const ALL_STATUSES = ['Sent', 'Sending', 'Pending', 'Scheduled', 'Partial', 'Aborted', 'Aborting'];
 
 function statusBadge(status: string) {
   switch (status) {
@@ -72,6 +74,7 @@ function statusBadge(status: string) {
       return 'bg-sage/15 text-sage-dark border-sage';
     case 'Sending':
       return 'bg-amber/15 text-amber-dark border-amber-dark';
+    case 'Pending':
     case 'Scheduled':
       return 'bg-dust/25 text-saddle border-charcoal';
     case 'Partial':

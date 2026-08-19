@@ -79,9 +79,9 @@ interface ChannelSection {
   worst: string | null;
 }
 interface TouchpointsSection {
-  email: { configured: boolean; opens: number | null; clicks: number | null; delivered: number | null; windowDays?: number; hint: string };
-  inbound: { configured: boolean; total: number | null; last24h: number | null; hint: string };
-  calls: { configured: boolean; booked: number | null; done: number | null; hint: string };
+  email: { configured: boolean; opens: number | null; clicks: number | null; delivered: number | null; windowDays?: number; unavailable?: boolean; hint: string };
+  inbound: { configured: boolean; total: number | null; last24h: number | null; unavailable?: boolean; hint: string };
+  calls: { configured: boolean; booked: number | null; done: number | null; unavailable?: boolean; hint: string };
 }
 interface UnlockSection {
   uncoveredDemand: Array<{ state: string; qualifiedBuyers: number }>;
@@ -166,6 +166,8 @@ function Unavailable({ label }: { label: string }) {
     </p>
   );
 }
+
+import { hintFor } from '@/lib/tileHint';
 
 export default function CommandCenter() {
   const [data, setData] = useState<CommandCenterData | null>(null);
@@ -494,8 +496,11 @@ export default function CommandCenter() {
                 </>
               ) : (
                 <>
-                  <PendingMetric label="Email opens" hint={touchpoints.email.hint} />
-                  <PendingMetric label="Email clicks" hint={touchpoints.email.hint} />
+                  {/* A FAILED read must never be reported as a missing setting.
+                      That conflation is what disguised a 14s Airtable timeout
+                      as a Resend configuration problem on every load. */}
+                  <PendingMetric label="Email opens" hint={hintFor(touchpoints.email)} />
+                  <PendingMetric label="Email clicks" hint={hintFor(touchpoints.email)} />
                 </>
               )}
 
@@ -507,8 +512,8 @@ export default function CommandCenter() {
                 </>
               ) : (
                 <>
-                  <PendingMetric label="Calls booked" hint={touchpoints.calls.hint} />
-                  <PendingMetric label="Calls done" hint={touchpoints.calls.hint} />
+                  <PendingMetric label="Calls booked" hint={hintFor(touchpoints.calls)} />
+                  <PendingMetric label="Calls done" hint={hintFor(touchpoints.calls)} />
                 </>
               )}
 
@@ -525,7 +530,7 @@ export default function CommandCenter() {
                 </>
               ) : (
                 <>
-                  <PendingMetric label="Inbound replies" hint={touchpoints.inbound.hint} />
+                  <PendingMetric label="Inbound replies" hint={hintFor(touchpoints.inbound)} />
                   <div />
                 </>
               )}
