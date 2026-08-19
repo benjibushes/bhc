@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { getAllRecords, getRecordById, updateRecord, createRecord, createReferral, escapeAirtableValue } from '@/lib/airtable';
+import { CAMPAIGN_STATUS_QUEUED } from '@/lib/campaignStatus';
 import { TABLES } from '@/lib/airtable';
 import { getMaxActiveReferrals, getLiveCapacity, incrementCapacity, decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { shouldDecrementOnClose } from '@/lib/refundLifecycle';
@@ -2230,7 +2231,14 @@ Output ONLY the email body. First line should be the subject line prefixed with 
                 'Message': draft,
                 'Audience': `single:${consumerEmail}`,
                 'Scheduled For': tomorrow,
-                'Status': 'Scheduled',
+                // 'Pending', NOT 'Scheduled' (2026-08-19). Campaigns.Status has no
+          // 'Scheduled' choice — the options are Pending / Sending / Aborting /
+          // Aborted / Partial / Sent / Failed. lib/schema/selectGuard therefore
+          // DROPPED this key and the row was created with a BLANK status, and
+          // app/api/cron/send-scheduled only picks up 'scheduled' | 'sending',
+          // so a blank never matched: every campaign scheduled from here
+          // silently NEVER SENT. Found by the schema guard's parked list.
+          'Status': CAMPAIGN_STATUS_QUEUED,
               });
               await updateRecord(TABLES.CONSUMERS, consumerId, { 'AI Email Draft': '', 'AI Email Draft Subject': '' });
               await answerCallbackQuery(queryId, '⏰ Scheduled for tomorrow!');

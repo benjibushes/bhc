@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, createRecord, escapeAirtableValue } from '@/lib/airtable';
+import { CAMPAIGN_STATUS_QUEUED } from '@/lib/campaignStatus';
 import { TABLES } from '@/lib/airtable';
 import { sendBroadcastEmail } from '@/lib/email';
 import { requireAdmin } from '@/lib/adminAuth';
@@ -178,7 +179,14 @@ export async function POST(request: Request) {
             ? `state:${selectedStates?.join(',')}`
             : audienceType,
           'Scheduled For': sendAt.toISOString(),
-          'Status': 'Scheduled',
+          // 'Pending', NOT 'Scheduled' (2026-08-19). Campaigns.Status has no
+          // 'Scheduled' choice — the options are Pending / Sending / Aborting /
+          // Aborted / Partial / Sent / Failed. lib/schema/selectGuard therefore
+          // DROPPED this key and the row was created with a BLANK status, and
+          // app/api/cron/send-scheduled only picks up 'scheduled' | 'sending',
+          // so a blank never matched: every campaign scheduled from here
+          // silently NEVER SENT. Found by the schema guard's parked list.
+          'Status': CAMPAIGN_STATUS_QUEUED,
           'Recipients': recipients.length,
           'Include CTA': includeCTA || false,
           'CTA Text': ctaText || '',

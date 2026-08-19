@@ -138,15 +138,6 @@ export const SCHEMA_GUARD_ALLOWLIST: readonly AllowlistEntry[] = [
   {
     table: 'Campaigns',
     field: 'Status',
-    value: 'Scheduled',
-    reason:
-      'app/api/admin/broadcast schedules a future broadcast. Campaigns.Status has Pending/Sending/.../Failed but no Scheduled; "Scheduled For" is the field the send cron actually selects on, so the drop does not strand the broadcast.',
-    addedOn: '2026-08-18',
-    expiresOn: '2026-09-30',
-  },
-  {
-    table: 'Campaigns',
-    field: 'Status',
     value: 'Draft',
     reason:
       'lib/aiMemory parks its singleton memory row in the Campaigns table and wants it inert. No Draft option exists. The row is found by Campaign Name, never by Status, so the drop is cosmetic — but it is still a write the base rejects.',

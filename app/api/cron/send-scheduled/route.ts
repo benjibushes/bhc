@@ -9,6 +9,7 @@ import { primeFrequencyCapCache } from '@/lib/emailFrequencyGuard';
 import { withCronRun } from '@/lib/cronRun';
 import { EMAIL_SENDS_RETENTION_DAYS } from '@/lib/logRetentionPlan';
 import { campaignDedupeWindow } from '@/lib/campaignDedupeWindow';
+import { isCampaignSendable } from '@/lib/campaignStatus';
 import { requireCron } from '@/lib/cronAuth';
 
 export const maxDuration = 120;
@@ -126,10 +127,10 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
   try {
     const all = await getAllRecords(TABLES.CAMPAIGNS);
     campaigns = all.filter((c: any) => {
-      const status = (c['Status'] || c['Campaign Status'] || '').toLowerCase();
-      // 'sending' is included so a campaign whose run was killed mid-send (large
-      // audience > maxDuration) RESUMES from its cursor instead of stranding.
-      return status === 'scheduled' || status === 'sending';
+      // Contract + reasoning in lib/campaignStatus (pinned against the real
+      // field snapshot, because a write and a read in two files drifted apart
+      // and silently stranded every scheduled campaign).
+      return isCampaignSendable(c['Status'] || c['Campaign Status']);
     });
   } catch {
     return { status: 'success', recordsTouched: 0, notes: 'no campaigns table or no scheduled campaigns' };

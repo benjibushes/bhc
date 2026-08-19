@@ -472,6 +472,9 @@ export async function GET(request: Request) {
     let emailOpens: number | null = null;
     let emailClicks: number | null = null;
     let emailDelivered: number | null = null;
+    // Held outside the block so the tile can tell a FAILED read (null) apart
+    // from a configured-but-quiet one ([]). See the note at the touchpoints.
+    let sendsRead: any[] | null = null;
     if (emailEventsConfigured) {
       // Only read the table when tracking is actually on — otherwise it's all
       // zero by definition and we'd be paying for a needless full-table scan.
@@ -488,7 +491,7 @@ export async function GET(request: Request) {
       // The window is REPORTED to the client (windowDays) because the tile
       // renders a bare "N of M delivered" — silently swapping 30d for 7d would
       // change a number the operator reads without telling him.
-      const sends = await safe(
+      sendsRead = await safe(
         () => getAllRecords(
           TABLES.EMAIL_SENDS,
           `IS_AFTER(CREATED_TIME(), DATEADD(NOW(), -${EMAIL_ENGAGEMENT_WINDOW_DAYS}, 'days'))`,
@@ -496,10 +499,10 @@ export async function GET(request: Request) {
         ) as Promise<any[]>,
         'emailSends',
       );
-      if (sends) {
-        emailDelivered = sends.filter((s: any) => s['Delivered At']).length;
-        emailOpens = sends.filter((s: any) => s['Opened At']).length;
-        emailClicks = sends.filter((s: any) => s['Clicked At']).length;
+      if (sendsRead) {
+        emailDelivered = sendsRead.filter((s: any) => s['Delivered At']).length;
+        emailOpens = sendsRead.filter((s: any) => s['Opened At']).length;
+        emailClicks = sendsRead.filter((s: any) => s['Clicked At']).length;
       }
     }
 
@@ -533,6 +536,22 @@ export async function GET(request: Request) {
       }).length;
     }
 
+    // A FAILED READ IS NOT A MISSING SETTING (2026-08-19).
+    //
+    // Every one of these tiles used to answer "did the read work?" with the
+    // CONFIG hint. That is how a 14-second Airtable timeout on the Email Sends
+    // window hid: the tile rendered "enable Resend open/click tracking to
+    // populate" — a confident, plausible, wrong diagnosis — on every single
+    // dashboard load, pointing at Resend while the actual fault was a query
+    // that had outgrown its timeout.
+    //
+    // `safe()` returns null ONLY when the read threw; an empty table returns
+    // []. So null genuinely distinguishes "broken" from "nothing there", and
+    // the two must reach the operator as different words.
+    const emailReadFailed = emailEventsConfigured && sendsRead === null;
+    const inboundReadFailed = inboundConfigured && conversations === null;
+    const callsReadFailed = calConfigured && referrals === null;
+
     touchpoints = {
       email: {
         // "Configured" only when events are actually FLOWING (delivered > 0) —
@@ -544,18 +563,21 @@ export async function GET(request: Request) {
         clicks: emailClicks,
         delivered: emailDelivered,
         windowDays: EMAIL_ENGAGEMENT_WINDOW_DAYS,
+        unavailable: emailReadFailed,
         hint: 'enable Resend open/click tracking to populate',
       },
       inbound: {
         configured: inboundConfigured,
         total: inboundTotal,
         last24h: inboundLast24h,
+        unavailable: inboundReadFailed,
         hint: 'enable Resend inbound webhook to populate',
       },
       calls: {
         configured: calConfigured,
         booked: callsBooked,
         done: callsDone,
+        unavailable: callsReadFailed,
         hint: 'enable Cal sales-event webhook to populate',
       },
     };
