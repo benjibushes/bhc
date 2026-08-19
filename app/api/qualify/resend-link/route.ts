@@ -13,6 +13,8 @@ import jwt from 'jsonwebtoken';
 import { getAllRecords, TABLES } from '@/lib/airtable';
 import { sendEmail } from '@/lib/email';
 import { JWT_SECRET } from '@/lib/secrets';
+import { rateLimitStrict, getTrustedClientIp } from '@/lib/rateLimit';
+import { claimOnce } from '@/lib/rancherCapacity';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,7 +28,24 @@ function esc(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
+// Per-recipient cooldown. The per-IP cap alone does not protect the VICTIM:
+// an attacker rotating IPs could mail-bomb one real buyer and burn the sending
+// domain's reputation with it. One recovery mail per address per 10 minutes is
+// far above any honest "I lost the link" retry.
+const RESEND_COOLDOWN_SEC = 10 * 60;
+
 export async function POST(req: Request) {
+  // Unauthenticated endpoint that MINTS A 30-DAY JWT and sends mail. Strict
+  // limiter (never fails open) on the trusted client IP — getRequestIp reads a
+  // spoofable header, which makes a per-IP cap decorative.
+  const rl = await rateLimitStrict(`qualify-resend:${getTrustedClientIp(req)}`, { requests: 5 });
+  if (!rl.ok) {
+    return NextResponse.json(
+      { ok: false, error: 'Too many requests — give it a minute and try again.' },
+      { status: 429 },
+    );
+  }
+
   let email = '';
   try {
     const body = await req.json().catch(() => ({}));
@@ -54,6 +73,21 @@ export async function POST(req: Request) {
     if (consumer['Unsubscribed'] === true || consumer['Bounced'] === true) {
       return NextResponse.json({ ok: true, sent: false });
     }
+
+    // Per-recipient cooldown, checked AFTER the lookup so the response shape
+    // is identical to the not-found case. Returning a 429 here instead would
+    // re-open the email-enumeration hole this route deliberately closes: a
+    // distinguishable "you are in cooldown" answer proves the address is on
+    // file. Silently declining to send is the only answer that stays uniform.
+    // claimOnce fails OPEN (no Redis -> true), so a Redis outage degrades to
+    // the old always-send behaviour rather than blocking real recoveries.
+    let maySend = true;
+    try {
+      maySend = await claimOnce(`qualify-resend-to:${email}`, RESEND_COOLDOWN_SEC);
+    } catch {
+      maySend = true;
+    }
+    if (!maySend) return NextResponse.json({ ok: true, sent: false });
 
     const firstName = String(consumer['Full Name'] || '').split(' ')[0] || 'there';
     const state = String(consumer['State'] || 'your state');

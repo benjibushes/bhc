@@ -5,6 +5,9 @@ import { sendTelegramUpdate } from '@/lib/telegram';
 import jwt from 'jsonwebtoken';
 
 import { JWT_SECRET } from '@/lib/secrets';
+import { rateLimitStrict, getTrustedClientIp } from '@/lib/rateLimit';
+import { claimOnce } from '@/lib/rancherCapacity';
+import { requireAdmin } from '@/lib/adminAuth';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 function esc(str: string): string {
@@ -15,7 +18,22 @@ function esc(str: string): string {
 // Rancher self-serve recovery when their signing link expired, got lost,
 // or never arrived. Accepts either { email } (lookup by email — no login
 // required) or { rancherId } (admin-initiated).
+// One signing link per rancher per 10 minutes. The per-IP cap alone does not
+// protect the RANCHER: an attacker rotating IPs could mail-bomb a real
+// operator and burn the sending domain with it.
+const RESEND_COOLDOWN_SEC = 10 * 60;
+
 export async function POST(request: Request) {
+  // Unauthenticated endpoint that MINTS A 30-DAY signing JWT and sends mail.
+  // Strict limiter (never fails open) on the trusted client IP.
+  const rl = await rateLimitStrict(`resend-agreement:${getTrustedClientIp(request)}`, { requests: 5 });
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: 'Too many requests — give it a minute and try again.' },
+      { status: 429 },
+    );
+  }
+
   try {
     const body = await request.json().catch(() => ({}));
     const { email, rancherId } = body;
@@ -23,6 +41,14 @@ export async function POST(request: Request) {
     let rancher: any = null;
 
     if (rancherId) {
+      // ADMIN ONLY (2026-08-19). This branch was documented as
+      // "admin-initiated" but had no auth: anyone could POST a record id and
+      // trigger a signing-link mail, and the 404-vs-200 split made it a
+      // record-id enumeration oracle. No client has ever used it — both real
+      // callers (app/rancher/sign-agreement and app/api/rancher/activate)
+      // post { email } — so gating it breaks nothing.
+      const denied = await requireAdmin(request);
+      if (denied) return denied;
       try {
         rancher = await getRecordById(TABLES.RANCHERS, rancherId);
       } catch {
@@ -61,6 +87,27 @@ export async function POST(request: Request) {
         success: true,
         alreadySigned: true,
         message: 'Agreement already signed. Log into your dashboard at /rancher.',
+      });
+    }
+
+    // Per-rancher cooldown, checked after the already-signed branch so a
+    // legitimate "already signed" answer is never suppressed. Placed before
+    // the mint so a throttled request creates no token at all. claimOnce fails
+    // OPEN (no Redis -> true), degrading to the old always-send behaviour
+    // rather than blocking a real rancher who needs their link.
+    let maySend = true;
+    try {
+      maySend = await claimOnce(`resend-agreement-to:${rancher.id}`, RESEND_COOLDOWN_SEC);
+    } catch {
+      maySend = true;
+    }
+    if (!maySend) {
+      // Same shape as a successful send — this route already returns a
+      // uniform 200 for the not-found case to avoid account enumeration, and
+      // a distinguishable throttle reply would undo that.
+      return NextResponse.json({
+        success: true,
+        message: 'If a rancher account exists with that email, a fresh signing link is on its way.',
       });
     }
 
