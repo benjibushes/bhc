@@ -17,11 +17,19 @@ import { fileURLToPath } from 'node:url';
 // which pulls lib/email → lib/secrets. brokerSettlement re-exports the same
 // function.
 import { readBrokerMoney } from './brokerRail';
-import { deliverBrokerRancherSheet, raiseBrokerSheetAlert } from './brokerSettlement';
+import {
+  deliverBrokerRancherSheet,
+  raiseBrokerSheetAlert,
+  deliverBrokerBuyerReceipt,
+  raiseBrokerReceiptAlert,
+} from './brokerSettlement';
 import {
   classifyBrokerRancherDelivery,
+  classifyBrokerDelivery,
   buildBrokerOperatorCard,
   buildBrokerOrderFacts,
+  brokerReceiptNote,
+  buildBrokerReceiptFailureAlert,
   resolveBrokerRancherEmail,
   type BrokerOrderFacts,
 } from './brokerNotify';
@@ -641,8 +649,8 @@ test('settleBrokerDeposit: routes the rancher email through the alerting deliver
   assert.match(settleSrc, /await raiseBrokerSheetAlert\(/, 'the alert half must stay wired in');
   assert.match(
     settleSrc,
-    /buildBrokerOperatorCard\(facts, delivery\)/,
-    'the operator card must be told the real outcome',
+    /buildBrokerOperatorCard\(facts, delivery, receipt\)/,
+    'the operator card must be told the real outcome of BOTH sends',
   );
 });
 
@@ -652,17 +660,65 @@ test('settleBrokerDeposit: the PRODUCTION call sites pass NO deps — the seam i
   // emailing every represented ranch with all tests still green.
   assert.deepEqual(callArgs(settleSrc, 'await deliverBrokerRancherSheet').length, 1, 'deliver: no deps arg');
   assert.deepEqual(callArgs(settleSrc, 'await raiseBrokerSheetAlert').length, 1, 'alert: no deps arg');
+  assert.deepEqual(callArgs(settleSrc, 'await deliverBrokerBuyerReceipt').length, 1, 'receipt: no deps arg');
+  assert.deepEqual(callArgs(settleSrc, 'await raiseBrokerReceiptAlert').length, 1, 'receipt alert: no deps arg');
 });
 
-test('settleBrokerDeposit: the operator alert must NEVER precede the buyer receipt', () => {
+test('settleBrokerDeposit: NEITHER operator alert may precede EITHER customer send', () => {
   // sendOperatorSignal awaits Telegram, which sleeps up to 30s on a 429 before
-  // trying SMS + email. Ahead of the receipt that risks blowing the webhook's
-  // maxDuration; Stripe redelivers, markDepositSucceeded returns false at the
-  // anchor, and the receipt is never retried — the buyer pays and gets nothing.
-  const receiptAt = settleSrc.indexOf('sendBrokerBuyerReceipt(facts)');
-  const alertAt = settleSrc.indexOf('await raiseBrokerSheetAlert(');
-  assert.ok(receiptAt > 0 && alertAt > 0, 'both call sites must exist');
-  assert.ok(alertAt > receiptAt, 'the alert must come AFTER the buyer receipt');
+  // trying SMS + email. Ahead of a customer send that risks blowing the
+  // webhook's maxDuration; Stripe redelivers, markDepositSucceeded returns
+  // false at the anchor, and the send is never retried — the buyer pays and
+  // gets nothing. Every send goes before every alert, always.
+  const receiptAt = settleSrc.indexOf('await deliverBrokerBuyerReceipt(');
+  const sheetAt = settleSrc.indexOf('await deliverBrokerRancherSheet(');
+  const sheetAlertAt = settleSrc.indexOf('await raiseBrokerSheetAlert(');
+  const receiptAlertAt = settleSrc.indexOf('await raiseBrokerReceiptAlert(');
+  assert.ok(
+    receiptAt > 0 && sheetAt > 0 && sheetAlertAt > 0 && receiptAlertAt > 0,
+    'all four call sites must exist',
+  );
+  assert.ok(sheetAlertAt > receiptAt, 'the sheet alert must come AFTER the buyer receipt');
+  assert.ok(sheetAlertAt > sheetAt, 'the sheet alert must come AFTER the sheet');
+  assert.ok(receiptAlertAt > receiptAt, 'the receipt alert must come AFTER the buyer receipt');
+  assert.ok(receiptAlertAt > sheetAt, 'the receipt alert must come AFTER the sheet');
+});
+
+test('settleBrokerDeposit: the buyer receipt result is CAPTURED, never discarded', () => {
+  // THE P0. `await sendBrokerBuyerReceipt(facts)` in a bare try/catch threw
+  // away guardedSend's verdict, and guardedSend resolves { success:false,
+  // suppressed:true } WITHOUT throwing — so a receipt that never reached the
+  // buyer looked exactly like one that did.
+  assert.ok(
+    !/await sendBrokerBuyerReceipt\(facts\)/.test(settleSrc),
+    'the raw fire-and-forget send must not come back',
+  );
+  assert.match(settleSrc, /receipt = await deliverBrokerBuyerReceipt\(/, 'the verdict must be bound');
+  assert.match(
+    settleSrc,
+    /if \(receipt && !receipt\.delivered\)/,
+    'a non-delivered receipt must raise the operator alert',
+  );
+});
+
+test('settleBrokerDeposit: the Notes chain grows, it never clobbers', () => {
+  // Three writers touch Referrals.Notes on one settlement (receipt stamp,
+  // sheet stamp, sheet-alert stamp). Each must be handed the exact text its
+  // predecessor wrote — if two of them both start from the ORIGINAL notes, the
+  // later write silently deletes the earlier audit line.
+  assert.match(settleSrc, /const priorNotes = String\(referral\?\.\['Notes'\] \|\| ''\);/);
+  assert.match(settleSrc, /priorNotes: notesAfterReceipt/, 'the sheet continues the receipt chain');
+  assert.match(
+    settleSrc,
+    /brokerReceiptNote\(nowIso, receipt\)/,
+    'the chain is rebuilt from the SAME pure note builder the stamp used',
+  );
+  // The receipt alert must add no fourth Notes writer.
+  assert.deepEqual(
+    callArgs(settleSrc, 'await raiseBrokerReceiptAlert').length,
+    1,
+    'the receipt alert takes args only — no stamp, no Notes write',
+  );
 });
 
 test('settleBrokerDeposit: notification failure can never fail the settlement', () => {
@@ -679,5 +735,250 @@ test('settleBrokerDeposit: the sent-marker is gated on a real delivery', () => {
     settleSrc,
     /if \(delivery\.delivered\) fields\['Intro Sent At'\] = nowIso;/,
     "'Intro Sent At' must never be stamped unconditionally again",
+  );
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE BUYER RECEIPT — P0-3. The buyer just paid BuyHalfCow directly.
+//
+// This receipt is the only place they are told what they still owe the ranch,
+// to whom, and how. Before this fix the send's return value was DISCARDED, and
+// guardedSend resolves { success:false, suppressed:true } WITHOUT throwing —
+// so a suppressed, bounced, or provider-rejected receipt was byte-identical to
+// a delivered one in the logs and on the record.
+//
+// All names/addresses are SYNTHETIC — the repo is public.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const RECEIPT_ARGS = {
+  referralId: 'recREF0000000001',
+  nowIso: '2026-08-17T12:00:00.000Z',
+  priorNotes: 'existing note',
+};
+
+// ── 1. SUPPRESSED — the exact silent failure this fix exists for ───────────
+
+test('receipt SUPPRESSED: a non-throwing guardedSend suppression is NOT a delivery', async () => {
+  const h = sendHarness(async () => ({ success: false, suppressed: true, reason: 'unsubscribed' }));
+  const d = await deliverBrokerBuyerReceipt({ facts: sheetFacts(), ...RECEIPT_ARGS }, h.deps);
+
+  assert.equal(d.delivered, false, 'THE BUG: this used to be indistinguishable from a send');
+  assert.equal(d.outcome, 'suppressed');
+  assert.equal(d.reason, 'unsubscribed');
+});
+
+test('receipt SUPPRESSED: the outcome is PERSISTED on the referral, not just logged', async () => {
+  const h = sendHarness(async () => ({ success: false, suppressed: true, reason: 'frequency cap' }));
+  await deliverBrokerBuyerReceipt({ facts: sheetFacts(), ...RECEIPT_ARGS }, h.deps);
+
+  assert.equal(h.stamps.length, 1);
+  assert.equal(h.stamps[0].referralId, 'recREF0000000001');
+  const notes = String(h.stamps[0].fields.Notes);
+  assert.match(notes, /\[broker\] buyer receipt 2026-08-17T12:00:00\.000Z — NOT DELIVERED \(suppressed: frequency cap\)/);
+  assert.match(notes, /^existing note/, 'prior notes are preserved');
+});
+
+test('receipt SUPPRESSED: raises a LOUD operator alert carrying what the buyer still owes', async () => {
+  const h = alertHarness();
+  await raiseBrokerReceiptAlert(
+    {
+      facts: sheetFacts(),
+      referralId: 'recREF0000000001',
+      rancherId: 'recRANCHER000001',
+      delivery: { delivered: false, outcome: 'suppressed', reason: 'unsubscribed' },
+    },
+    h.deps,
+  );
+
+  assert.equal(h.alerts.length, 1, 'exactly one alert — silence is the bug being fixed');
+  const a = h.alerts[0];
+  assert.equal(a.urgency, 'loud', 'a buyer who paid and heard nothing is a chargeback, not a ticket');
+  assert.equal(a.kind, 'system-error');
+  assert.match(a.summary, /DID NOT REACH/);
+  assert.match(a.summary, /Jordan Blake/, 'who to contact');
+  assert.match(a.summary, /recREF0000000001/, 'referral id');
+  assert.match(a.detail, /\$400\.00/, 'what they already paid BHC');
+  assert.match(a.detail, /\$1,400\.00/, 'what they still owe the ranch');
+  assert.match(a.detail, /Cedar Draw Beef/, 'who they owe it to');
+  assert.match(a.detail, /jordan@example\.com/);
+  assert.match(a.detail, /unsubscribed/, 'the actual reason');
+  assert.equal(a.dedupeKey, 'broker-buyer-receipt-undelivered-recREF0000000001');
+  assert.deepEqual(a.refs, [
+    { type: 'referral', id: 'recREF0000000001' },
+    { type: 'rancher', id: 'recRANCHER000001' },
+  ]);
+});
+
+// ── 2. THE HAPPY PATH stays quiet ──────────────────────────────────────────
+
+test('receipt SENT: one send, DELIVERED noted, and NO alert is ever built', async () => {
+  const h = sendHarness(async () => ({ success: true }));
+  const d = await deliverBrokerBuyerReceipt({ facts: sheetFacts(), ...RECEIPT_ARGS }, h.deps);
+
+  assert.equal(h.sends.length, 1, 'exactly one send — never two receipts for one deposit');
+  assert.equal(h.sends[0].buyerEmail, 'jordan@example.com');
+  assert.deepEqual(d, { delivered: true, outcome: 'sent', reason: '' });
+  assert.match(String(h.stamps[0].fields.Notes), /buyer receipt .* — DELIVERED$/);
+  assert.equal(
+    buildBrokerReceiptFailureAlert(sheetFacts(), { referralId: 'recREF0000000001', delivery: d }),
+    null,
+    'a delivered receipt is never an alert',
+  );
+});
+
+test('receipt SENT: the alert unit refuses to raise anything for a delivered receipt', async () => {
+  const h = alertHarness();
+  const out = await raiseBrokerReceiptAlert(
+    {
+      facts: sheetFacts(),
+      referralId: 'recREF0000000001',
+      delivery: { delivered: true, outcome: 'sent', reason: '' },
+    },
+    h.deps,
+  );
+  assert.deepEqual(out, { raised: false, sent: false });
+  assert.equal(h.alerts.length, 0);
+});
+
+// ── 3. NO BUYER EMAIL — a DATA GAP, worded as one ──────────────────────────
+
+test('receipt NO EMAIL: never attempts a send, and says so distinctly', async () => {
+  const h = sendHarness(async () => ({ success: true }));
+  const d = await deliverBrokerBuyerReceipt(
+    { facts: sheetFacts({ buyerEmail: '' }), ...RECEIPT_ARGS },
+    h.deps,
+  );
+
+  assert.equal(h.sends.length, 0, 'a send with no recipient is a guaranteed provider error');
+  assert.equal(d.delivered, false);
+  assert.equal(d.outcome, 'no-email');
+  assert.match(String(h.stamps[0].fields.Notes), /NOT DELIVERED \(no-email/);
+
+  const a = buildBrokerReceiptFailureAlert(sheetFacts({ buyerEmail: '' }), {
+    referralId: 'recREF0000000001',
+    delivery: d,
+  })!;
+  assert.match(a.summary, /NO EMAIL/);
+  assert.match(a.detail, /DATA GAP/, 'a missing address is permanent — no retry can fix it');
+  assert.equal(
+    a.dedupeKey,
+    'broker-buyer-no-email-recREF0000000001',
+    'a data gap must never dedupe away a failed send, or vice versa',
+  );
+});
+
+test('receipt alert keys never collide with the RANCHER alert keys', async () => {
+  // One settlement can fail both sides. If the two alerts shared a dedupe key,
+  // the second would be swallowed and Ben would fix only half the order.
+  const delivery = { delivered: false, outcome: 'send-failed' as const, reason: 'x' };
+  const buyer = buildBrokerReceiptFailureAlert(sheetFacts(), { referralId: 'recR1', delivery })!;
+  const rancherAlerts = new Set([
+    'broker-rancher-undelivered-recR1',
+    'broker-rancher-no-email-recR1',
+  ]);
+  assert.ok(!rancherAlerts.has(buyer.dedupeKey));
+});
+
+// ── 4. FAULT TOLERANCE — settlement is never rolled back by a notification ──
+
+test('receipt THREW: a network fault is caught, classified, and never escapes', async () => {
+  const h = sendHarness(async () => { throw new Error('ECONNRESET'); });
+  const d = await deliverBrokerBuyerReceipt({ facts: sheetFacts(), ...RECEIPT_ARGS }, h.deps);
+  assert.equal(d.delivered, false);
+  assert.equal(d.outcome, 'threw');
+  assert.match(d.reason, /ECONNRESET/);
+});
+
+test('receipt: a throwing send AND a throwing stamp can never surface into the caller', async () => {
+  // The deposit is already captured. A throw here would 5xx the webhook and
+  // make Stripe redeliver a payment that already settled past the anchor.
+  const d = await deliverBrokerBuyerReceipt(
+    { facts: sheetFacts(), ...RECEIPT_ARGS },
+    {
+      send: async () => { throw new Error('resend down'); },
+      stamp: async () => { throw new Error('airtable down'); },
+    },
+  );
+  assert.equal(d.delivered, false);
+  assert.equal(d.outcome, 'threw');
+});
+
+test('receipt alert: a throwing alert can never surface into the caller', async () => {
+  const out = await raiseBrokerReceiptAlert(
+    {
+      facts: sheetFacts(),
+      referralId: 'recREF0000000001',
+      delivery: { delivered: false, outcome: 'send-failed', reason: 'boom' },
+    },
+    { alert: async () => { throw new Error('telegram down'); } },
+  );
+  assert.deepEqual(out, { raised: true, sent: false, reason: 'telegram down' });
+});
+
+test('receipt alert: an undefined return is not mistaken for a confirmed send', async () => {
+  const out = await raiseBrokerReceiptAlert(
+    {
+      facts: sheetFacts(),
+      referralId: 'recREF0000000001',
+      delivery: { delivered: false, outcome: 'send-failed', reason: 'boom' },
+    },
+    { alert: async () => undefined },
+  );
+  assert.equal(out.sent, false);
+});
+
+// ── 5. THE PURE PIECES ─────────────────────────────────────────────────────
+
+test('brokerReceiptNote: DELIVERED / NOT DELIVERED with the reason, deterministic', () => {
+  assert.equal(
+    brokerReceiptNote('2026-08-17T12:00:00.000Z', { delivered: true, outcome: 'sent', reason: '' }),
+    '[broker] buyer receipt 2026-08-17T12:00:00.000Z — DELIVERED',
+  );
+  assert.equal(
+    brokerReceiptNote('2026-08-17T12:00:00.000Z', {
+      delivered: false,
+      outcome: 'suppressed',
+      reason: 'bounced',
+    }),
+    '[broker] buyer receipt 2026-08-17T12:00:00.000Z — NOT DELIVERED (suppressed: bounced)',
+  );
+});
+
+test('classifyBrokerDelivery: the rancher-named alias is the SAME function', () => {
+  // The classifier was always recipient-neutral; only its name was not. The
+  // alias exists so the rancher call sites are untouched.
+  assert.equal(classifyBrokerDelivery, classifyBrokerRancherDelivery);
+  assert.deepEqual(classifyBrokerDelivery({ hasEmail: true, result: { success: true } }), {
+    delivered: true,
+    outcome: 'sent',
+    reason: '',
+  });
+});
+
+
+test('operator card: an undelivered BUYER RECEIPT is stated on the card too', () => {
+  // Ben reads this card as ground truth. A silently-failed receipt used to be
+  // invisible here even though the buyer had paid and heard nothing.
+  const card = buildBrokerOperatorCard(
+    sheetFacts(),
+    { delivered: true, outcome: 'sent', reason: '' },
+    { delivered: false, outcome: 'suppressed', reason: 'bounced' },
+  );
+  assert.match(card, /BUYER GOT NO RECEIPT/);
+  assert.match(card, /suppressed: bounced/);
+});
+
+test('operator card: a DELIVERED receipt earns no line, and omitting it claims nothing', () => {
+  const delivered = buildBrokerOperatorCard(
+    sheetFacts(),
+    { delivered: true, outcome: 'sent', reason: '' },
+    { delivered: true, outcome: 'sent', reason: '' },
+  );
+  assert.ok(!/BUYER GOT NO RECEIPT/.test(delivered));
+  // Byte-identical to the two-argument form every legacy caller uses.
+  assert.equal(
+    delivered,
+    buildBrokerOperatorCard(sheetFacts(), { delivered: true, outcome: 'sent', reason: '' }),
   );
 });

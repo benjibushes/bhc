@@ -255,8 +255,8 @@ test('F13: brokerSettlement operator card still tells the delivery truth', () =>
   // pin that the SIGNAL carries the card verbatim as its detail.
   const block = blockFor(SRC.brokerSettlement, 'BROKER DEPOSIT PAID', 'broker operator card');
   assert.ok(
-    block.includes('detail: buildBrokerOperatorCard(facts, delivery)'),
-    'the card must ride as the signal detail, delivery-truth intact',
+    block.includes('detail: buildBrokerOperatorCard(facts, delivery, receipt)'),
+    'the card must ride as the signal detail, delivery-truth intact for BOTH sends',
   );
 });
 

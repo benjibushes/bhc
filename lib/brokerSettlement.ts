@@ -39,10 +39,13 @@ import {
 import {
   buildBrokerOrderFacts,
   buildBrokerOperatorCard,
-  classifyBrokerRancherDelivery,
+  classifyBrokerDelivery,
   buildBrokerNotifyFailureAlert,
+  buildBrokerReceiptFailureAlert,
   brokerSheetNote,
+  brokerReceiptNote,
   type BrokerOrderFacts,
+  type BrokerDelivery,
   type BrokerRancherDelivery,
   type BrokerNotifyAlert,
 } from '@/lib/brokerNotify';
@@ -247,7 +250,9 @@ export async function settleBrokerDeposit(pi: any): Promise<void> {
         urgency: 'loud',
         kind: 'system-error',
         summary: `BROKER sale settled but the rancher record was unreadable — notify by hand (referral ${referralId})`,
-        detail: `PI ${pi.id}. Deposit $${(depositCents / 100).toFixed(2)} is BHC's. The represented rancher has NOT been told about this order.`,
+        detail:
+          `PI ${pi.id}. Deposit $${(depositCents / 100).toFixed(2)} is BHC's. The represented rancher has NOT been told ` +
+          `about this order, and NEITHER EMAIL COULD BE COMPOSED — the buyer has no receipt either. Both go by hand.`,
         refs: [{ type: 'referral', id: referralId }],
         dedupeKey: `broker-notify-blocked-${referralId}`,
       });
@@ -279,6 +284,36 @@ export async function settleBrokerDeposit(pi: any): Promise<void> {
     orderRef: `BHC-${referralId.slice(-6)}`,
   });
 
+  // ── NOTIFICATION ORDER (deliberate — do not shuffle) ─────────────────────
+  //   1. buyer receipt SEND + stamp   (fast)
+  //   2. rancher sheet SEND + stamp   (fast)
+  //   3. rancher alert                (SLOW — only on a failed sheet)
+  //   4. buyer-receipt alert          (SLOW — only on a failed receipt)
+  // Both alerts ride sendOperatorSignal, which awaits the Telegram wire and
+  // sleeps up to 30s on a 429 (lib/telegram.ts) before its SMS + email
+  // fallbacks. Everything that must actually reach a human customer therefore
+  // goes first: a timeout after the anchor is unrecoverable (Stripe redelivers,
+  // markDepositSucceeded returns false, nothing re-sends).
+  //
+  // The receipt leads because the three Notes writes below form a strictly
+  // growing chain — receipt line, then sheet line, then the sheet's
+  // operator-alert suffix. Each writer is handed the exact text its
+  // predecessor wrote, so no stamp can clobber an earlier one's audit line.
+  const priorNotes = String(referral?.['Notes'] || '');
+
+  // ── BUYER RECEIPT — the buyer just paid; silence is not acceptable ───────
+  // Never throws (see deliverBrokerBuyerReceipt); the belt is for a caller
+  // refactor that breaks that promise.
+  let receipt: BrokerDelivery | undefined;
+  try {
+    receipt = await deliverBrokerBuyerReceipt({ facts, referralId, nowIso, priorNotes });
+  } catch (e: any) {
+    console.error('[broker settle] buyer receipt unit threw:', e?.message);
+  }
+  const notesAfterReceipt = receipt
+    ? [priorNotes, brokerReceiptNote(nowIso, receipt)].filter(Boolean).join('\n').trim()
+    : priorNotes;
+
   // ── RANCHER EMAIL — the deliverable. Everything he needs, no login. ──────
   // Never throws (see deliverBrokerRancherSheet); the belt is for a caller
   // refactor that breaks that promise. The money is already captured — a
@@ -290,22 +325,10 @@ export async function settleBrokerDeposit(pi: any): Promise<void> {
       referralId,
       rancherId,
       nowIso,
-      priorNotes: String(referral?.['Notes'] || ''),
+      priorNotes: notesAfterReceipt,
     });
   } catch (e: any) {
     console.error('[broker settle] rancher notify unit threw:', e?.message);
-  }
-
-  // ── BUYER RECEIPT ───────────────────────────────────────────────────────
-  // MUST come before the operator alert below. See raiseBrokerSheetAlert: the
-  // alert can block for tens of seconds on a Telegram 429, and a timeout here
-  // would strand the receipt permanently behind the idempotency anchor.
-  if (facts.buyerEmail) {
-    try {
-      await sendBrokerBuyerReceipt(facts);
-    } catch (e: any) {
-      console.error('[broker settle] buyer receipt threw:', e?.message);
-    }
   }
 
   // ── OPERATOR ALERT — only when the ranch was NOT reached ─────────────────
@@ -316,11 +339,23 @@ export async function settleBrokerDeposit(pi: any): Promise<void> {
         referralId,
         rancherId,
         nowIso,
-        priorNotes: String(referral?.['Notes'] || ''),
+        priorNotes: notesAfterReceipt,
         delivery,
       });
     } catch (e: any) {
       console.error('[broker settle] rancher alert unit threw:', e?.message);
+    }
+  }
+
+  // ── OPERATOR ALERT — only when the BUYER was NOT reached ─────────────────
+  // Last, because it is the slowest thing left and nothing waits on it. It
+  // writes no Notes line of its own: the receipt outcome is already persisted
+  // above, and a fourth writer of the same field could only clobber the chain.
+  if (receipt && !receipt.delivered) {
+    try {
+      await raiseBrokerReceiptAlert({ facts, referralId, rancherId, delivery: receipt });
+    } catch (e: any) {
+      console.error('[broker settle] buyer receipt alert unit threw:', e?.message);
     }
   }
 
@@ -337,7 +372,7 @@ export async function settleBrokerDeposit(pi: any): Promise<void> {
       urgency: 'normal',
       kind: 'sale',
       summary: `BROKER DEPOSIT PAID — ref ${referralId.slice(-6)}`,
-      detail: buildBrokerOperatorCard(facts, delivery),
+      detail: buildBrokerOperatorCard(facts, delivery, receipt),
       refs: [{ type: 'referral', id: referralId }],
       dedupeKey: `broker-operator-card-${referralId}`,
     });
@@ -392,13 +427,13 @@ export async function deliverBrokerRancherSheet(
   let delivery: BrokerRancherDelivery;
   if (!facts.rancherEmail) {
     console.error(`[broker settle] rancher ${rancherId || '(unknown)'} has no email — cannot deliver the order`);
-    delivery = classifyBrokerRancherDelivery({ hasEmail: false });
+    delivery = classifyBrokerDelivery({ hasEmail: false });
   } else {
     try {
       const res = await send(facts);
-      delivery = classifyBrokerRancherDelivery({ hasEmail: true, result: res });
+      delivery = classifyBrokerDelivery({ hasEmail: true, result: res });
     } catch (e: any) {
-      delivery = classifyBrokerRancherDelivery({ hasEmail: true, error: e });
+      delivery = classifyBrokerDelivery({ hasEmail: true, error: e });
     }
     if (!delivery.delivered) {
       console.error(`[broker settle] fulfillment sheet not delivered (${delivery.outcome}): ${delivery.reason}`);
@@ -499,6 +534,136 @@ export async function raiseBrokerSheetAlert(
     });
   } catch (e: any) {
     console.error('[broker settle] operator-alert outcome stamp failed:', e?.message);
+  }
+
+  return { raised: true, sent, reason };
+}
+
+// ---------------------------------------------------------------------------
+// THE BUYER RECEIPT — send it and tell the truth about it
+// ---------------------------------------------------------------------------
+
+/**
+ * I/O collaborators for the buyer half, injectable so the delivery contract is
+ * behaviourally tested without Resend/Airtable/Telegram. Production passes
+ * nothing. Mirrors BrokerSheetDeps exactly.
+ */
+export interface BrokerReceiptDeps {
+  send: (facts: BrokerOrderFacts) => Promise<{ success?: boolean; suppressed?: boolean; reason?: string } | null | undefined>;
+  stamp: (referralId: string, fields: Record<string, unknown>) => Promise<unknown>;
+  alert: (input: BrokerNotifyAlert) => Promise<unknown>;
+}
+
+/**
+ * Email the buyer their receipt, persist whether it actually landed, and let
+ * the caller ring the operator when it did not.
+ *
+ * WHY THIS IS LOUD. Before this, settlement awaited the raw send inside a bare
+ * try/catch with the RESULT DISCARDED. guardedSend does not throw
+ * on a suppressed or provider-rejected send — it resolves
+ * `{ success:false, suppressed:true }` — so a receipt that never reached the
+ * buyer was byte-indistinguishable from one that did, in the logs and on the
+ * record alike. The buyer had just paid BuyHalfCow money on a page that
+ * promised a confirmation email naming what they still owe the ranch.
+ *
+ * CONTRACT: never throws, never rolls anything back. The deposit is already
+ * captured; every path here is best-effort and returns a verdict instead.
+ */
+export async function deliverBrokerBuyerReceipt(
+  args: {
+    facts: BrokerOrderFacts;
+    referralId: string;
+    nowIso: string;
+    priorNotes?: string;
+  },
+  deps: Partial<Pick<BrokerReceiptDeps, 'send' | 'stamp'>> = {},
+): Promise<BrokerDelivery> {
+  const { facts, referralId, nowIso } = args;
+  const send = deps.send || sendBrokerBuyerReceipt;
+  const stamp = deps.stamp || ((id: string, fields: Record<string, unknown>) => updateRecord(TABLES.REFERRALS, id, fields));
+
+  let delivery: BrokerDelivery;
+  if (!facts.buyerEmail) {
+    console.error(`[broker settle] referral ${referralId} has no buyer email — cannot send the receipt`);
+    delivery = classifyBrokerDelivery({ hasEmail: false });
+  } else {
+    try {
+      const res = await send(facts);
+      delivery = classifyBrokerDelivery({ hasEmail: true, result: res });
+    } catch (e: any) {
+      delivery = classifyBrokerDelivery({ hasEmail: true, error: e });
+    }
+    if (!delivery.delivered) {
+      console.error(`[broker settle] buyer receipt not delivered (${delivery.outcome}): ${delivery.reason}`);
+    }
+  }
+
+  // ── MONEY/COMMS TRUTH (repo rule #2) ────────────────────────────────────
+  // The outcome is persisted either way, so a human reading the referral can
+  // see whether the buyer was ever confirmed without opening Vercel logs.
+  // Stamped HERE, immediately after the send, rather than deferred with the
+  // alert: it must land even if the invocation is later killed.
+  try {
+    await stamp(referralId, {
+      Notes: `${String(args.priorNotes || '')}\n${brokerReceiptNote(nowIso, delivery)}`.trim(),
+    });
+  } catch (e: any) {
+    console.error('[broker settle] buyer-receipt stamp failed:', e?.message);
+  }
+
+  return delivery;
+}
+
+/**
+ * Raise the operator alert for a receipt that never reached the buyer.
+ *
+ * DELIBERATELY LAST IN THE SETTLEMENT (see the ordering note in
+ * settleBrokerDeposit): sendOperatorSignal awaits the Telegram wire, which
+ * sleeps up to 30s on a 429 before its fallbacks, and nothing downstream waits
+ * on this. It writes NO Notes line — deliverBrokerBuyerReceipt already
+ * persisted the outcome, and a fourth writer of that field could only clobber
+ * the audit chain the three earlier stamps built.
+ *
+ * CONTRACT: never throws. Returns what happened for the caller's log.
+ */
+export async function raiseBrokerReceiptAlert(
+  args: {
+    facts: BrokerOrderFacts;
+    referralId: string;
+    rancherId?: string;
+    delivery: BrokerDelivery;
+  },
+  deps: Partial<Pick<BrokerReceiptDeps, 'alert'>> = {},
+): Promise<{ raised: boolean; sent: boolean; reason?: string }> {
+  const { facts, referralId, rancherId, delivery } = args;
+  const alert =
+    deps.alert ||
+    (async (input: BrokerNotifyAlert) => {
+      const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+      return sendOperatorSignal(input);
+    });
+
+  let sent = false;
+  let reason: string | undefined;
+  try {
+    // Built INSIDE the try, same as the rancher half: a future field lookup
+    // added to the builder must not be able to skip the alert.
+    const signal = buildBrokerReceiptFailureAlert(facts, { referralId, rancherId, delivery });
+    if (!signal) return { raised: false, sent: false };
+    const res: any = await alert(signal);
+    // sendOperatorSignal returns { sent, reason }. An undefined return (an
+    // injected stub, a future refactor) is NOT a confirmed send.
+    sent = res?.sent === true;
+    reason = res?.reason;
+  } catch (e: any) {
+    reason = e?.message || 'alert threw';
+    console.error('[broker settle] buyer-receipt signal failed:', reason);
+  }
+
+  if (!sent) {
+    console.error(
+      `[broker settle] buyer-receipt alert for referral ${referralId} was NOT delivered: ${reason || 'unknown'}`,
+    );
   }
 
   return { raised: true, sent, reason };

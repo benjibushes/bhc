@@ -30,7 +30,7 @@ import { findPaymentsByReferral } from '@/lib/contracts/payments';
 import { sendBuyerFulfillmentConfirmation } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { funnelRecord } from '@/lib/funnelMetrics';
-import { referralRail } from '@/lib/commission';
+import { referralRail, isBrokerReferralRow } from '@/lib/commission';
 
 export type ConfirmFulfillmentResult =
   | { ok: true; alreadyConfirmed: boolean; fulfillmentConfirmedAt: string }
@@ -171,4 +171,209 @@ export async function confirmFulfillmentForReferral(args: {
   }
 
   return { ok: true, alreadyConfirmed: false, fulfillmentConfirmedAt: now };
+}
+
+// ---------------------------------------------------------------------------
+// THE OPERATOR PATH — how a BROKER deal reaches a terminal state at all
+// ---------------------------------------------------------------------------
+//
+// P0 (2026-08-18 fulfillment audit). `Fulfillment Confirmed At` is written in
+// exactly one place — confirmFulfillmentForReferral above — and until now it
+// was reachable only from two RANCHER-SESSION routes
+// (/api/rancher/fulfillment/confirm and /api/rancher/referrals/[id]/fulfillment).
+//
+// A represented ranch has no session. No login, no dashboard, no password: the
+// broker rail exists precisely because that rancher onboarded to nothing. So a
+// paid broker deposit parked at Status 'Awaiting Payment' FOREVER — no
+// completion path existed in the product at all, and two live AZ referrals
+// were sitting on exactly that.
+//
+// The fix is an operator-authenticated entry point (POST
+// /api/admin/referrals/[id]/confirm-fulfillment) that runs the SAME confirm
+// rail with the ownership check replaced by admin auth, plus the rail-aware
+// close below.
+
+export type AdminFulfillmentClose =
+  | { close: false; rail: 'broker' | 'connect'; reason: string }
+  | {
+      close: true;
+      rail: 'broker';
+      outcome: 'won';
+      /** Undefined when no trustworthy price exists — recordClose then leaves
+       *  'Sale Amount' untouched rather than stamping a made-up 0. */
+      saleAmount?: number;
+      /** Structurally false. The fee was collected in full at deposit. */
+      writeCommissionDue: false;
+    };
+
+/**
+ * Should confirming fulfillment ALSO close this deal, and on what terms?
+ *
+ * BROKER → YES, 'Closed Won'. The buyer's deposit already settled 100% to BHC
+ * and IS the entire fee; the ranch collects the balance direct at pickup, off
+ * platform. Fulfillment confirmed is therefore the LAST event in the deal —
+ * there is no final invoice to wait on, so nothing else will ever move the row
+ * off 'Awaiting Payment'. Commission Due is NEVER written: a represented
+ * rancher signed no agreement, is never invoiced, and a Commission Due on a
+ * broker row is a phantom every downstream reader has to defend against
+ * (see lib/commission brokerFeeDollars / partitionUnpaidByRail).
+ *
+ * CONNECT → NO. That rail's terminal close arrives with the balance: the
+ * rancher sends the final invoice, the buyer pays it, and settleFinalInvoice →
+ * recordClose closes the deal with the real sale amount and the commission
+ * machinery attached. Closing here would pre-empt all of it. Behaviour on the
+ * Connect rail is therefore exactly what the rancher-session routes already
+ * do — stamp the confirmation, change nothing else.
+ *
+ * Already-terminal rows are a no-op in both directions so a double-tap, a
+ * retry, or a re-confirm can never re-fire the close side effects.
+ *
+ * Pure — no I/O, so both branches are unit-pinned.
+ */
+export function adminFulfillmentCloseDecision(
+  referral: any,
+  opts: { saleAmountOverride?: number } = {},
+): AdminFulfillmentClose {
+  const rail: 'broker' | 'connect' = isBrokerReferralRow(referral) ? 'broker' : 'connect';
+  if (rail !== 'broker') {
+    return {
+      close: false,
+      rail,
+      reason:
+        'Connect rail — the deal closes when the buyer pays the final invoice, not at fulfillment confirm.',
+    };
+  }
+
+  const status = String(referral?.['Status'] ?? '').trim();
+  if (status === 'Closed Won' || status === 'Closed Lost' || status === 'Refunded') {
+    return { close: false, rail, reason: `Referral is already terminal (${status}).` };
+  }
+
+  // Price precedence:
+  //   1. the operator's explicit override — a WEIGHT-PRICED ranch only learns
+  //      the exact price at hanging weight, which is THIS moment;
+  //   2. an existing 'Sale Amount' (a hand-set price already agreed);
+  //   3. 'Total Sale Amount', stamped at settlement. For a weight-priced cut
+  //      that is the range FLOOR — conservative, never overstates a sale.
+  // None of them usable → leave the field alone. A stamped 0 would read as a
+  // free cow in every revenue surface.
+  const candidates = [opts.saleAmountOverride, referral?.['Sale Amount'], referral?.['Total Sale Amount']];
+  let saleAmount: number | undefined;
+  for (const c of candidates) {
+    const n = Number(c);
+    if (Number.isFinite(n) && n > 0) {
+      saleAmount = n;
+      break;
+    }
+  }
+
+  return { close: true, rail, outcome: 'won', saleAmount, writeCommissionDue: false };
+}
+
+export type AdminConfirmFulfillmentResult =
+  | {
+      ok: true;
+      alreadyConfirmed: boolean;
+      fulfillmentConfirmedAt: string;
+      rail: 'broker' | 'connect';
+      closed: boolean;
+      closeSkippedReason?: string;
+      saleAmount?: number;
+    }
+  | { ok: false; status: number; error: string; rail?: string };
+
+/**
+ * Operator confirm — the completion path a represented ranch cannot reach on
+ * its own. Auth belongs to the calling route (requireAdmin); this helper owns
+ * the rail decision so the route stays a thin shell.
+ *
+ * The rancher-SESSION gate is what is skipped, and only that. The PAYMENT gate
+ * inside confirmFulfillmentForReferral is deliberately kept: a settled broker
+ * deposit satisfies it (its Payments row is flipped to 'succeeded' by
+ * settleBrokerDeposit before anything else), so the gate costs a real broker
+ * deal nothing while still refusing to mark beef delivered on a deal nobody
+ * ever paid for.
+ */
+export async function confirmFulfillmentAsAdmin(args: {
+  referralId: string;
+  /** The already-loaded Referrals row (flattened fields). */
+  referral: Record<string, any>;
+  note?: string;
+  /** Exact price when the ranch prices on hanging weight. */
+  saleAmountOverride?: number;
+}): Promise<AdminConfirmFulfillmentResult> {
+  const { referralId, referral } = args;
+
+  const rancherLinks: string[] = (referral['Rancher'] || []) as string[];
+  const rancherId = Array.isArray(rancherLinks) ? rancherLinks[0] : '';
+  if (!rancherId) {
+    return { ok: false, status: 422, error: 'Referral has no rancher linked — cannot confirm fulfillment.' };
+  }
+
+  const confirmed = await confirmFulfillmentForReferral({
+    referralId,
+    rancherId,
+    referral,
+    rancherNote: args.note,
+  });
+  if (!confirmed.ok) return confirmed;
+
+  const decision = adminFulfillmentCloseDecision(referral, {
+    saleAmountOverride: args.saleAmountOverride,
+  });
+  if (!decision.close) {
+    return {
+      ok: true,
+      alreadyConfirmed: confirmed.alreadyConfirmed,
+      fulfillmentConfirmedAt: confirmed.fulfillmentConfirmedAt,
+      rail: decision.rail,
+      closed: false,
+      closeSkippedReason: decision.reason,
+    };
+  }
+
+  // recordClose is the single source of truth for a close: status + Closed At,
+  // the capacity DECR (gated on leaving the canonical held set — 'Awaiting
+  // Payment' IS held, so this is what finally frees the ranch's slot), the
+  // Buyer Stage flip, affiliate enrolment, and the funnel event. It writes NO
+  // 'Commission Due', which is exactly right here: nothing is owed.
+  //
+  // Dynamic import — lib/contracts/rancher pulls the affiliate + Meta CAPI
+  // stack, and the two rancher-session routes that import THIS module must not
+  // pay for it on a path they never take.
+  let closed = false;
+  try {
+    const { recordClose } = await import('@/lib/contracts/rancher');
+    const res = await recordClose({
+      referralId,
+      rancherId,
+      outcome: decision.outcome,
+      ...(typeof decision.saleAmount === 'number' ? { saleAmount: decision.saleAmount } : {}),
+      reason: 'admin fulfillment confirm (broker rail)',
+    });
+    closed = res.ok;
+  } catch (e: any) {
+    // The confirmation stamp already landed and is the money-truth write. A
+    // close failure is recoverable by re-running this endpoint, so report it
+    // rather than throwing away the confirmation the operator just made.
+    console.error('[fulfillmentConfirm/admin] broker close failed:', e?.message);
+    return {
+      ok: true,
+      alreadyConfirmed: confirmed.alreadyConfirmed,
+      fulfillmentConfirmedAt: confirmed.fulfillmentConfirmedAt,
+      rail: 'broker',
+      closed: false,
+      closeSkippedReason: `Close failed: ${e?.message || 'unknown'}. Fulfillment IS stamped — re-run to close.`,
+    };
+  }
+
+  return {
+    ok: true,
+    alreadyConfirmed: confirmed.alreadyConfirmed,
+    fulfillmentConfirmedAt: confirmed.fulfillmentConfirmedAt,
+    rail: 'broker',
+    closed,
+    ...(typeof decision.saleAmount === 'number' ? { saleAmount: decision.saleAmount } : {}),
+    ...(closed ? {} : { closeSkippedReason: 'recordClose reported no-op (referral unreadable).' }),
+  };
 }

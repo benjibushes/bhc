@@ -3769,8 +3769,18 @@ Output ONLY the email body. First line should be the subject line prefixed with 
 
           // Gate: rancher must have a locked commission rate. Refuse the close
           // until the rate is set on the rancher's record.
-          const { hasLockedCommissionRate, calcCommissionForRancher, getRancherCommissionRate, isPostCloseInvoiceRail } = await import('@/lib/commission');
-          if (!hasLockedCommissionRate(rancher)) {
+          //
+          // BROKER RAIL EXEMPTION (2026-08-18 fulfillment audit). A represented
+          // ranch has NO Commission Rate and must never have one: it signed no
+          // agreement, is never invoiced, and its buyer's deposit already went
+          // 100% to BHC as the entire fee. Applying the rate gate to a broker
+          // row refused the close outright — one more reason a paid broker deal
+          // could never reach a terminal state. Discriminator is the referral's
+          // Match Type (stamped at CREATION, so it holds before, during and
+          // after payment — see lib/commission isBrokerReferralRow).
+          const { hasLockedCommissionRate, calcCommissionForRancher, getRancherCommissionRate, isPostCloseInvoiceRail, isBrokerReferralRow, brokerFeeDollars } = await import('@/lib/commission');
+          const brokerRow = isBrokerReferralRow(ref);
+          if (!brokerRow && !hasLockedCommissionRate(rancher)) {
             await sendTelegramMessage(
               chatId,
               `🚫 <b>Refused close</b> — ${rancherName} has no Commission Rate locked.\n\n` +
@@ -3779,15 +3789,19 @@ Output ONLY the email body. First line should be the subject line prefixed with 
             return NextResponse.json({ ok: true });
           }
 
-          const commission = calcCommissionForRancher(rancher, saleAmount);
-          const rate = getRancherCommissionRate(rancher);
+          const commission = brokerRow ? 0 : calcCommissionForRancher(rancher, saleAmount);
+          const rate = brokerRow ? 0 : getRancherCommissionRate(rancher);
 
           const closedAtIso = new Date().toISOString();
           await updateRecord(TABLES.REFERRALS, refId, {
             'Status': 'Closed Won',
             'Closed At': closedAtIso,
             'Sale Amount': saleAmount,
-            'Commission Due': commission,
+            // NEVER on the broker rail. A Commission Due there is a phantom
+            // receivable against a rancher who owes nothing — every downstream
+            // money reader then has to defend against it (lib/commission
+            // brokerFeeDollars, partitionUnpaidByRail).
+            ...(brokerRow ? {} : { 'Commission Due': commission }),
             // Stamp rancher activity — extends chasup freshness window so the
             // rancher's other open referrals don't get nuked while they're
             // closing this one.
@@ -3902,7 +3916,9 @@ Output ONLY the email body. First line should be the subject line prefixed with 
           // ── Instant commission invoice email to rancher (branded) ──────────
           // Mirrors quick-action(won) behavior. Even if Stripe invoice failed,
           // the branded email keeps the rancher informed of the close.
-          if (rancher['Email']) {
+          // BROKER: never send a commission invoice email to a represented
+          // ranch. He owes nothing — the deposit already was the whole fee.
+          if (!brokerRow && rancher['Email']) {
             try {
               const { sendInstantCommissionInvoice } = await import('@/lib/email');
               await sendInstantCommissionInvoice({
@@ -3955,7 +3971,10 @@ Output ONLY the email body. First line should be the subject line prefixed with 
               buyerName,
               rancherName,
               saleAmount,
-              commission,
+              // BROKER: BHC's take is the deposit it already captured, not a
+              // rate applied to the sale. Reporting 0 here would understate
+              // the month.
+              commission: brokerRow ? brokerFeeDollars(ref) : commission,
               isFirstSaleForRancher,
               monthlyWins,
               monthlyCommission,
@@ -3974,7 +3993,11 @@ Output ONLY the email body. First line should be the subject line prefixed with 
           // we never claim success on a write that didn't land.
           const statusLines: string[] = [];
           statusLines.push(`Sale: <b>$${saleAmount.toLocaleString()}</b>`);
-          statusLines.push(`Commission (${(rate * 100).toFixed(1)}%): <b>$${commission.toLocaleString()}</b>`);
+          statusLines.push(
+            brokerRow
+              ? `BHC fee (deposit, already collected): <b>$${brokerFeeDollars(ref).toLocaleString()}</b> — represented ranch, never invoiced`
+              : `Commission (${(rate * 100).toFixed(1)}%): <b>$${commission.toLocaleString()}</b>`,
+          );
           statusLines.push(`Capacity slot: ${capacityDecremented ? '✅ freed' : (shouldDecrementOnClose(previousStatus, 'Closed Won') ? '⚠️ decrement failed' : 'already free')}`);
           if (invoiceFailed) {
             statusLines.push(`Invoice: ⚠️ failed (${invoiceErrMsg})`);
@@ -3988,7 +4011,9 @@ Output ONLY the email body. First line should be the subject line prefixed with 
             statusLines.join('\n') +
             (invoiceFailed
               ? `\n\nFix the underlying issue and use the dashboard close flow to re-fire the invoice.`
-              : `\n\nStripe will email ${rancher['Email'] || 'the rancher'} the hosted invoice. Webhook flips Commission Paid on payment.`),
+              : brokerRow
+                ? `\n\nNo invoice — the deposit WAS the fee and a represented ranch is never billed. Nothing further to collect from ${rancherName}.`
+                : `\n\nStripe will email ${rancher['Email'] || 'the rancher'} the hosted invoice. Webhook flips Commission Paid on payment.`),
           );
 
           // Funnel telemetry — bridge until full close path migrates to recordClose.
