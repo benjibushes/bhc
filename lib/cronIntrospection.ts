@@ -32,6 +32,12 @@ import { getAllRecords, TABLES, escapeAirtableValue } from './airtable';
  *    pattern as demand-router, so a missing row now means a REAL missed run.
  */
 export const EXPECTED_CRONS_24H = [
+  // Airtable 50k-record cap watch (capacity audit 2026-08-19). ON by default —
+  // the finding was "nothing watches this", so a dark-by-default gate would
+  // reproduce the bug. BASE_CAPACITY_WATCH_ENABLED=false opts out, and the
+  // watchdog SHOULD alarm if this stops running: a silent capacity sensor is
+  // indistinguishable from a healthy base right up until writes start failing.
+  'base-capacity',
   // stale capacity-hold expiry — frees dead-intro slots before the 14:30
   // stuck-buyer-recovery pass routes them (dark until STALE_HOLD_EXPIRY_ENABLED).
   'referral-stale-expiry',
