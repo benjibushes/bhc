@@ -55,7 +55,7 @@ export const REVENUE_RAIL_LABELS: Record<RevenueRail, string> = {
   connectFee: 'Connect marketplace fee (taken at deposit)',
   brokerDeposit: 'Broker deposit (kept in full)',
   shopMargin: 'Shop margin',
-  legacyCommission: 'Legacy commission (invoiced after close)',
+  legacyCommission: 'Legacy commission (invoiced after close, collected)',
   founders: 'Founding Herd backers',
   brandPartner: 'Brand partners',
 };
@@ -112,6 +112,16 @@ export interface BhcRevenue {
   unreadableRails: RevenueRail[];
   /** true iff every rail was readable. false ⇒ `total` is a floor, not a total. */
   complete: boolean;
+  /**
+   * Legacy commission BILLED but not yet paid, in the same window. NOT part of
+   * `total` — this is a receivable, money owed to BHC by a rancher. `null` when
+   * the Referrals table could not be read.
+   *
+   * Kept separate because `total` is shown to the founder as revenue: booking a
+   * billed-but-unpaid commission as earned is how a dashboard tells you that you
+   * were paid when you were not.
+   */
+  legacyReceivable: number | null;
 }
 
 /** `true` when this ISO timestamp belongs to the window being asked about. */
@@ -162,6 +172,9 @@ function sumInRange(
  */
 export function computeBhcRevenue(snap: RevenueSnapshot, inRange: InRange): BhcRevenue {
   const byRail = {} as Record<RevenueRail, number | null>;
+  // Billed legacy commission still uncollected in this window. Null when the
+  // Referrals table could not be read — unknown is not zero.
+  let legacyReceivable: number | null = null;
 
   // ── Payments: two rails off one table, split by the ledger's own marker ──
   if (snap.payments === null) {
@@ -205,8 +218,29 @@ export function computeBhcRevenue(snap: RevenueSnapshot, inRange: InRange): BhcR
     // stamped (a deposit means the fee was already skimmed at checkout), and
     // not a broker row (BHC already kept that deposit in full — counting a
     // hand-stamped Commission Due on top would bill the same sale twice).
+    //
+    // COLLECTED ONLY. `Commission Due` is what BHC BILLED; `Commission Paid`
+    // is whether the rancher actually paid it. This total is presented to the
+    // founder as revenue, so it must mean money received — summing the billed
+    // figure booked 8 uncollected deals ($1,083.62, oldest closed 2026-05-04)
+    // as earned, and legacy is ~84% of lifetime, so the headline overstated
+    // cash by a quarter. The vocabulary already existed and disagreed with the
+    // sum: lib/commissionStats::computeLegacyCommissionEarned is documented as
+    // "a receivable-book number, NOT total BHC revenue".
+    //
+    // The unpaid remainder is not dropped — it surfaces as `legacyReceivable`
+    // below, which is a collectable list, not a rounding error.
+    const legacy = legacyClosedWon(snap.referrals as any) as Array<Record<string, any>>;
     byRail.legacyCommission = sumInRange(
-      legacyClosedWon(snap.referrals as any) as Array<Record<string, any>>,
+      legacy.filter((r) => r['Commission Paid'] === true),
+      (r) => String(r['Closed At'] || ''),
+      (r) => toNum(r['Commission Due']),
+      inRange,
+    );
+    // Billed-but-unpaid, same window + same rail filter. Deliberately OUTSIDE
+    // `total` — it is money owed to BHC, not money BHC has.
+    legacyReceivable = sumInRange(
+      legacy.filter((r) => r['Commission Paid'] !== true),
       (r) => String(r['Closed At'] || ''),
       (r) => toNum(r['Commission Due']),
       inRange,
@@ -242,7 +276,7 @@ export function computeBhcRevenue(snap: RevenueSnapshot, inRange: InRange): BhcR
     REVENUE_RAILS.reduce((sum, rail) => sum + (byRail[rail] ?? 0), 0),
   );
 
-  return { byRail, total, unreadableRails, complete: unreadableRails.length === 0 };
+  return { byRail, total, unreadableRails, complete: unreadableRails.length === 0, legacyReceivable };
 }
 
 /**

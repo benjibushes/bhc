@@ -355,3 +355,89 @@ test('computeProductMargin still counts New and Shipped orders', () => {
   ];
   assert.equal(computeProductMargin(rows as any), 35);
 });
+
+// ── Billed ≠ collected ──────────────────────────────────────────────────────
+// `Commission Due` is what BHC invoiced; `Commission Paid` is whether the
+// rancher paid it. The rail total is shown to the founder as revenue, so it
+// must mean money received. On the live base the day this shipped, 8 of 25
+// Closed Won legacy deals were unpaid — $1,083.62 of $3,350.80 — and legacy is
+// ~84% of lifetime, so summing the billed figure overstated cash by ~27%.
+// Note the fixture above already said 'Commission Paid': true; the production
+// sum simply never read it.
+
+test('an UNPAID legacy close is a receivable, not revenue', () => {
+  const r = computeBhcRevenue(
+    snapshot({ referrals: [legacyClose({ 'Commission Paid': false })] }),
+    () => true,
+  );
+  assert.equal(r.byRail.legacyCommission, 0, 'billed-but-unpaid is not earned');
+  assert.equal(r.legacyReceivable, 207, 'and it is not silently dropped either');
+  assert.equal(r.total, 0, 'the headline the founder reads must exclude it');
+});
+
+test('a missing Commission Paid flag counts as unpaid (absence is not payment)', () => {
+  const noFlag = legacyClose();
+  delete (noFlag as Record<string, unknown>)['Commission Paid'];
+  const r = computeBhcRevenue(snapshot({ referrals: [noFlag] }), ALWAYS);
+  assert.equal(r.byRail.legacyCommission, 0);
+  assert.equal(r.legacyReceivable, 207);
+});
+
+test('only a strict true is payment (a truthy string is not a paid invoice)', () => {
+  for (const v of ['true', 1, 'yes']) {
+    const r = computeBhcRevenue(
+      snapshot({ referrals: [legacyClose({ 'Commission Paid': v })] }),
+      ALWAYS,
+    );
+    assert.equal(r.byRail.legacyCommission, 0, `${JSON.stringify(v)} must not read as paid`);
+    assert.equal(r.legacyReceivable, 207);
+  }
+});
+
+test('paid and unpaid closes split, and the receivable stays OUT of the total', () => {
+  const r = computeBhcRevenue(
+    snapshot({
+      referrals: [
+        legacyClose({ 'Commission Due': 300, 'Commission Paid': true }),
+        legacyClose({ 'Commission Due': 140, 'Commission Paid': false }),
+      ],
+    }),
+    ALWAYS,
+  );
+  assert.equal(r.byRail.legacyCommission, 300);
+  assert.equal(r.legacyReceivable, 140);
+  assert.equal(r.total, 300, 'total is cash in hand, never cash owed');
+});
+
+test('a BROKER close is excluded from the receivable too (never billed twice)', () => {
+  const r = computeBhcRevenue(
+    snapshot({
+      referrals: [
+        legacyClose({ 'Match Type': 'Broker — Deposit', 'Commission Due': 200, 'Commission Paid': false }),
+      ],
+    }),
+    ALWAYS,
+  );
+  assert.equal(r.byRail.legacyCommission, 0);
+  assert.equal(r.legacyReceivable, 0, 'BHC already kept that deposit in full — it is owed nothing');
+});
+
+test('an unreadable Referrals table makes the receivable unknown, NOT zero', () => {
+  const r = computeBhcRevenue(snapshot({ referrals: null }), ALWAYS);
+  assert.equal(r.byRail.legacyCommission, null);
+  assert.equal(r.legacyReceivable, null, 'zero would read as "nothing outstanding"');
+});
+
+test('the receivable honours the window, like every other figure here', () => {
+  const inAugust = (ts: string) => ts.startsWith('2026-08');
+  const r = computeBhcRevenue(
+    snapshot({
+      referrals: [
+        legacyClose({ 'Commission Due': 140, 'Commission Paid': false, 'Closed At': '2026-05-04T00:00:00.000Z' }),
+        legacyClose({ 'Commission Due': 60, 'Commission Paid': false }),
+      ],
+    }),
+    inAugust,
+  );
+  assert.equal(r.legacyReceivable, 60, 'a May receivable is not an August one');
+});

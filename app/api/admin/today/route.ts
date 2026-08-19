@@ -295,6 +295,12 @@ export async function GET(request: Request) {
         earnedCoverage: revenueCoverageNote(earnedMtd),
         earnedComplete: earnedToday.complete && earnedMtd.complete,
         earnedOmits: UNMEASURED_REVENUE_RAILS,
+        // Legacy commission BILLED but not collected. Deliberately NOT inside
+        // `earned`: that tile is cash in hand. This is cash owed to BHC by a
+        // rancher, and it is a chase list, not a rounding error.
+        legacyReceivableMtd: earnedMtd.legacyReceivable,
+        legacyReceivableCoverage:
+          'Closed Won legacy-rail referrals whose Commission Paid is not true — billed, not collected',
         // "Money asked for and not collected: unpaid Awaiting-Payment referrals
         // + open (abandoned OR pending) deposit checkouts, deduped per referral
         // to the newest attempt." lib/owedDeposits is the shared rule; /admin
