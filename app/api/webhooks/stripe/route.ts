@@ -2257,8 +2257,17 @@ async function handleFounderSubscriptionUpdated(sub: any): Promise<void> {
 //
 // Preservation choice: keep Founder Tier value (Wall placement + founder
 // number history matter for back-compat — Wall page renders from Founder Tier).
-// Instead, stamp Founder Tier Cancelled At + flip Subscription Status='canceled'.
+// Instead, stamp Founder Tier Cancelled At + flip Subscription Status='cancelled'.
 // This is the SAFE choice the prompt asks us to make explicitly.
+//
+// SPELLING (2026-08-18 schema-guard sweep): Consumers.Subscription Status is a
+// singleSelect whose only cancel option is the British 'cancelled'. This code
+// wrote the American 'canceled' — a near-duplicate that typecast mints as a
+// SECOND choice, splitting the cohort in two so a filter on either spelling
+// silently misses half the cancelled founders. (Ranchers/Brands.Subscription
+// Status really do use 'canceled'; the three fields are not the same field.)
+// The idempotency read below accepts BOTH spellings so rows already carrying
+// the minted value are still recognised as cancelled.
 //
 // CONSUMERS schema: uppercase `Stripe Subscription ID` (G-4 fix).
 // ============================================================================
@@ -2278,15 +2287,16 @@ async function handleFounderSubscriptionDeleted(sub: any): Promise<void> {
   const consumerId: string = consumer.id;
   const previousStatus: string = String(consumer['Subscription Status'] || '').trim().toLowerCase();
 
-  // ── Idempotency — already canceled, no-op ──
-  if (previousStatus === 'canceled') {
-    console.log(`[founder-sub-deleted] ${consumerId} already canceled — skipping`);
+  // ── Idempotency — already cancelled, no-op ──
+  // Both spellings: rows written before the 2026-08-18 fix carry 'canceled'.
+  if (previousStatus === 'cancelled' || previousStatus === 'canceled') {
+    console.log(`[founder-sub-deleted] ${consumerId} already cancelled — skipping`);
     return;
   }
 
   // Stamp cancellation. Preserve Founder Tier (Wall placement).
   const fields: Record<string, any> = {
-    'Subscription Status': 'canceled',
+    'Subscription Status': 'cancelled',
     'Founder Tier Cancelled At': new Date().toISOString(),
   };
   await updateRecord(TABLES.CONSUMERS, consumerId, fields);

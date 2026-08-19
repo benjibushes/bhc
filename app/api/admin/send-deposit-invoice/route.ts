@@ -154,7 +154,11 @@ export async function POST(req: Request) {
       'Buyer State': buyer['State'] || '',
       'Status': 'Awaiting Payment',
       'Order Type': cutTier,
-      'Approval Status': 'admin-approved',
+      // 'approved', not 'admin-approved' (2026-08-18 schema-guard sweep):
+      // 'admin-approved' is not an Approval Status option and nothing reads it —
+      // typecast would mint a 7th choice that every approval selector ignores.
+      // 'approved' is the real option the telegram approve buttons write.
+      'Approval Status': 'approved',
       'Match Type': 'Local',
       'Deposit Amount': depositDollars,
       'Total Sale Amount': fullSaleAmount > 0 ? fullSaleAmount : depositDollars,

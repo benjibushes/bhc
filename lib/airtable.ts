@@ -13,6 +13,10 @@ import {
   BROKER_SELF_SERVE_CARVE_OUT_FORMULA,
   BROKER_SELF_SERVE_PAGE_LIVE_FORMULA,
 } from './brokerRail';
+// TYPECAST POLICY (2026-08-18). typecast stays ON — see the long note above
+// createRecord — but the mint vector is closed in-process by this guard.
+// Pure module, no side effects at import.
+import { decideSelectGuardAction, SchemaGuardError } from './schema/selectGuard';
 
 // Re-export so callers can `instanceof AirtableTimeoutError` without a
 // separate import path.
@@ -148,6 +152,76 @@ async function withRateLimitRetry<T>(fn: () => Promise<T>, label = 'Airtable'): 
   }
 }
 
+// ── TYPECAST POLICY — read this before changing `typecast: true` ─────────
+//
+// The belief this codebase carried for months was that `typecast: true`
+// creates a missing FIELD. It does not. typecast creates missing select
+// OPTIONS, and only options. The difference is the entire bug class:
+//
+//   missing FIELD  → Airtable 422s "Unknown field name". The retry loop below
+//                    strips it and fires an operator signal. Data lost, LOUD.
+//   missing OPTION → typecast MINTS it and the write SUCCEEDS. A value no
+//                    reader recognises is now in a select, and every selector
+//                    that filters on the real options is blind to that row.
+//                    Silent, and worse than the strip.
+//   Receipts in this very base: Consumers.Order Type carries 'Half Cow' and
+//   'Quarter Cow' appended after the three real choices in the order those
+//   cuts first sold; Conversations.Direction carries both 'inbound' and
+//   'Inbound'; four select fields carry a choice whose NAME is the empty
+//   string, which only a code write of '' can produce.
+//
+// Why typecast stays ON: hundreds of writes rely on its number/date/link-by-
+// name coercion (see lib/reserveDeposit's 'Interest Beef' post-mortem), and a
+// 422 mid-settlement would lose the record of money that already moved.
+// Failing loud belongs BEFORE deploy, not inside a webhook.
+//
+// So the mint vector is closed one layer up instead: guardSelectWrites checks
+// every select value against the committed schema snapshot and removes any
+// value that is not a real option, so Airtable is never asked to create one.
+//   dev / test (strict)  → throw. A bad write can never reach a green PR.
+//   production (lenient) → drop that ONE field, keep the rest of the payload,
+//                          fire a loud operator signal. Never throw.
+// Dropping is not a downgrade: with the current API key Airtable already
+// rejects these values and the loop below strips them. This just makes the
+// outcome deterministic, loud, and independent of key permissions.
+//
+// Residual risk, stated honestly: if an option is DELETED in Airtable while
+// the snapshot still lists it, that value can still be minted back. Run
+// `npm run schema:snapshot -- --check` to catch snapshot drift.
+// Break glass with SCHEMA_GUARD_OFF=1. Full write inventory: npm run schema:check.
+async function guardSelectFields(
+  tableName: string,
+  fields: any,
+  op: 'create' | 'update',
+): Promise<any> {
+  const action = decideSelectGuardAction(tableName, fields, op);
+  if (action.violations.length === 0) return action.fields;
+
+  for (const v of action.violations) {
+    console.error(
+      `[schema-guard] dropped ${v.table}.${v.field} = ${JSON.stringify(v.value)} — not an option on that field` +
+        (v.allowlisted ? ' (parked)' : ''),
+    );
+  }
+  if (action.shouldThrow) throw new SchemaGuardError(action.violations.filter((v) => !v.allowlisted));
+
+  // Best-effort alert. Never let the alert path break the write.
+  try {
+    const { sendOperatorSignal } = await import('./operatorSignal');
+    for (const a of action.alerts) {
+      await sendOperatorSignal({
+        urgency: a.urgency,
+        kind: 'system-error',
+        summary: a.summary,
+        detail: a.detail,
+        dedupeKey: a.dedupeKey,
+        dedupeWindowMs: 24 * 60 * 60 * 1000,
+      });
+    }
+  } catch {}
+  return action.fields;
+}
+
 // Helper function to create a record (auto-strips problematic Airtable fields)
 export async function createRecord(tableName: string, fields: any) {
   // DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
@@ -155,7 +229,7 @@ export async function createRecord(tableName: string, fields: any) {
   // row PERSISTS for the session (a reserved buyer shows up in the pipeline on
   // camera). Zero external calls; resets on dev-server restart.
   if (isDemoMode()) return (require('./demo/demoStore') as typeof import('./demo/demoStore')).demoCreate(tableName, fields);
-  let currentFields = { ...fields };
+  let currentFields = await guardSelectFields(tableName, fields, 'create');
   const maxRetries = 8;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -563,7 +637,7 @@ export async function updateRecord(tableName: string, recordId: string, fields: 
   // change PERSISTS on camera — "close sale", "request deposit", capacity /
   // landing-page edits all stick for the session. Zero external calls.
   if (isDemoMode()) return (require('./demo/demoStore') as typeof import('./demo/demoStore')).demoUpdate(tableName, recordId, fields);
-  let currentFields = { ...fields };
+  let currentFields = await guardSelectFields(tableName, fields, 'update');
   const maxRetries = 8;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {

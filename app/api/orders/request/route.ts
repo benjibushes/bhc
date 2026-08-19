@@ -51,10 +51,21 @@ import { buyerZipServedBy } from '@/lib/exclusiveZip';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
+// Human-facing label — emails, Telegram, the referral's display name.
 const TIER_LABELS: Record<string, string> = {
   quarter: 'Quarter Cow',
   half: 'Half Cow',
   whole: 'Whole Cow',
+};
+
+// The EXACT Consumers.Order Type singleSelect option. Never TIER_LABELS —
+// see lib/reserveDeposit CUT_ORDER_TYPES for what writing the label cost
+// ('Half Cow' + 'Quarter Cow' minted into the select; 'Whole Cow' silently
+// dropped on every whole-cow order).
+const TIER_ORDER_TYPES: Record<string, string> = {
+  quarter: 'Quarter',
+  half: 'Half',
+  whole: 'Whole',
 };
 
 interface MemberSession {
@@ -255,7 +266,7 @@ export async function POST(req: Request) {
           'Zip': zip || '',
           'Segment': 'Beef Buyer',
           'Source': `rancher-page:${slug}`,
-          'Order Type': TIER_LABELS[tier],
+          'Order Type': TIER_ORDER_TYPES[tier],
           // FIX: same phantom 'Interest Beef' boolean bug as the reserve route.
           // Here the catch is non-fatal so the referral survived, but the
           // Consumer create 422'd → store buyers got a referral with NO Consumer
@@ -288,7 +299,7 @@ export async function POST(req: Request) {
     'Buyer Email': buyerEmail,
     'Buyer Phone': phone || '',
     'Buyer State': buyerState || '',
-    'Order Type': TIER_LABELS[tier],
+    'Order Type': TIER_ORDER_TYPES[tier],
     'Intent Score': 90,
     'Intent Classification': 'High',
     'Notes': message

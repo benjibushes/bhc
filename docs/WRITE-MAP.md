@@ -44,9 +44,18 @@ lib/deal/transitionLive.ts:67. The refund path (lib/refundLifecycle.ts:30-47, ap
 lib/contracts/payments.ts:780) is the ONLY path that NULLS money fields: Closed At, Sale
 Amount, Commission Due, Deposit Paid At, Rancher Accepted At — it does NOT clear Deposit
 Requested At / Total Sale Amount / Final Invoice fields.
-Typecast landmine: several written values are NOT in the schema's singleSelect choices
-(created via typecast): Status 'Refunded'/'Lost', Approval Status 'admin-approved',
-Match Type 'Direct (Rancher Page) — Deposit'/'Manual'.
+Typecast landmine — CORRECTED 2026-08-18: this used to read "created via typecast",
+which was wrong twice over. `typecast: true` never creates a missing FIELD (only a
+missing select OPTION), and the current API key cannot create options either — so
+those values were being **stripped**, not created. Verified read-only against the live
+base: Referrals with Status='Lost' = 0 rows, Status='Refunded' = 0 rows. 'Lost' and
+'admin-approved' are now FIXED in code ('Dormant' and 'approved', both real options);
+'Refunded' is parked in lib/schema/schemaGuardAllowlist.ts pending the option being
+added. Match Type is singleLineText and mints nothing. The mint itself is real where
+the key once had permission — Consumers.Order Type carries 'Half Cow'/'Quarter Cow'
+appended after the three canonical choices. `npm run schema:check` now fails CI on any
+new instance of either failure mode; lib/schema/selectGuard.ts blocks the mint at
+runtime.
 
 ### Status (singleSelect)
 W (by value): create 'Pending Approval' — app/api/matching/suggest/route.ts:1285, app/api/warmup/engage/route.ts:106; create 'Pending' — app/api/orders/request/route.ts:265, lib/reserveDeposit.ts:213; 'Intro Sent' — app/api/referrals/[id]/approve/route.ts:57, suggest :1425 (auto-approve, rollback :1618), lib/bulkRoute.ts:238,267, reassign :129, telegram :819-838,976,1250-1257,5740-5743, email-sequences :471; 'Rancher Contacted' — contact route :112; **'Awaiting Payment'** — request-deposit :215 (PRE-payment), send-deposit-invoice :140,155 (PRE-payment), send-final-invoice :362 (PRE-final), lib/stripeSettlement.ts:145 (POST-deposit-payment), lib/contracts/rancher.ts:63, telegram :3549; 'Slot Locked' — accept :141-153; 'Closed Won' — lib/contracts/rancher.ts:61 recordClose, rancher PATCH, telegram :3621; 'Closed Lost' — close paths + crons referral-chasup :200,618, stuck-referral-reaper :207, telegram :1102,1722,3056,3421-3425; 'Dormant' — referral-stale-expiry :139; 'Refunded' — lib/refundLifecycle.ts:36 (typecast).

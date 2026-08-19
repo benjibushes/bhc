@@ -206,8 +206,13 @@ const defaultDeps: BrokerReserveDeps = {
     });
     return result?.success === true;
   },
+  // 'Dormant', NOT 'Lost' (2026-08-18 schema-guard sweep) — see the long note
+  // at app/api/checkout/reserve/route.ts. 'Lost' is not a Referrals.Status
+  // option; typecast would MINT it and every selector would go blind to the
+  // row. 'Dormant' is the existing system-void terminal: no capacity slot, out
+  // of loss reporting, and reusable when the buyer retries.
   voidReferral: async (referralId, note) => {
-    await updateRecord(TABLES.REFERRALS, referralId, { Status: 'Lost', Notes: note });
+    await updateRecord(TABLES.REFERRALS, referralId, { Status: 'Dormant', Notes: note });
   },
 };
 

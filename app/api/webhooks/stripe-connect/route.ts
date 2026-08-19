@@ -1302,7 +1302,14 @@ async function handleConnectDeauthorized(event: any): Promise<void> {
   // an unknown field, so a schema gap costs the stamp, never the pause).
   const now = new Date().toISOString();
   const writeFields: Record<string, unknown> = {
-    'Stripe Connect Status': 'detached', // singleSelect; typecast auto-creates option
+    // CORRECTION (2026-08-18): the old comment said "typecast auto-creates
+    // option" as though that were the plan. It is the BUG — a minted option is
+    // a status no reader recognises. 'detached' is not one of this field's
+    // choices, so lib/schema/selectGuard now DROPS it before the request
+    // (parked in schemaGuardAllowlist pending the option being added). The
+    // 'Active Status': 'Paused' below IS a real option and is what actually
+    // gates routing, so the pause still lands.
+    'Stripe Connect Status': 'detached',
     'Active Status': 'Paused',
     'Connect Detached At': now,
   };

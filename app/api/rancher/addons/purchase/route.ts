@@ -31,11 +31,16 @@ export const maxDuration = 30;
 const ADDONS_TABLE = 'Add-On Purchases';
 const STRIPE_BILLABLE_SLUGS = new Set(['video', 'photo', 'founder_letter']);
 
-// Slug → Airtable singleSelect display label for the Type field.
+// Slug → the EXACT Add-On Purchases.Type singleSelect option.
+// These are option names, not prose (2026-08-18 schema-guard sweep): the old
+// values 'Custom Video Shoot' / 'Brand Photo Refresh' / 'Founder Letter
+// Campaign' matched no option at all, so every add-on row either lost its Type
+// or minted a duplicate choice alongside the real one. Verified against the
+// live schema: Video Shoot, Photo Refresh, Founder Letter, Brand Intro, PPC Mgmt.
 const TYPE_LABEL: Record<string, string> = {
-  video: 'Custom Video Shoot',
-  photo: 'Brand Photo Refresh',
-  founder_letter: 'Founder Letter Campaign',
+  video: 'Video Shoot',
+  photo: 'Photo Refresh',
+  founder_letter: 'Founder Letter',
 };
 
 export async function POST(request: Request) {
@@ -186,7 +191,11 @@ export async function POST(request: Request) {
     console.error('[addons/purchase] Stripe invoice flow failed:', e?.message);
     // Mark the Airtable row failed so the dangling pending row isn't confusing.
     try {
-      await updateRecord(ADDONS_TABLE, addOnRowId, { 'Status': 'failed', 'Notes': `Stripe error: ${e?.message || 'unknown'}` });
+      // 'canceled' is the real terminal option (pending / paid / canceled).
+      // 'failed' was not one — it minted a status the billing page's filters
+      // never matched, so a failed row stayed visible as if it were live.
+      // The Notes stamp carries the actual Stripe reason.
+      await updateRecord(ADDONS_TABLE, addOnRowId, { 'Status': 'canceled', 'Notes': `Stripe error: ${e?.message || 'unknown'}` });
     } catch {}
     // Raw Stripe detail lives in the server log + the Airtable Notes stamp
     // above; the rancher-facing message stays plain.

@@ -447,14 +447,25 @@ export async function POST(req: Request) {
     }
 
     // U3: never tell the buyer "check your inbox" when the email did NOT send.
-    // Void the hold we just created (referral → Lost), then return an honest,
+    // Void the hold we just created (referral → Dormant), then return an honest,
     // retryable error. Leaving it as-is would strand a phantom Pending lead the
     // rancher sees + a buyer waiting on an email that never comes. (No capacity
     // release needed — Pending mints no longer bump the counter, see above.)
+    //
+    // 'Dormant', NOT 'Lost' (2026-08-18 schema-guard sweep): 'Lost' is not a
+    // Referrals.Status option at all — with typecast it MINTS a status no
+    // reader in the codebase treats as terminal, producing a phantom referral
+    // invisible to every selector. 'Dormant' is the existing system-void
+    // terminal (lib/depositRelease DEPOSIT_RELEASE_STATUS, referral-stale-
+    // expiry): it holds no capacity slot, stays OUT of loss reporting and the
+    // loss-recovery "couldn't reach you" send (both filter on 'Closed Lost'),
+    // and — unlike 'Closed Lost' — is NOT in brokerReferral/campaignReferral
+    // REUSABLE_BLOCKED, so the buyer's retry reuses this row instead of
+    // stacking a second one. An email-infra failure is not a lost deal.
     if (!emailSent) {
       try {
         await updateRecord(TABLES.REFERRALS, referral.id, {
-          'Status': 'Lost',
+          'Status': 'Dormant',
           'Notes': 'Voided automatically — the reserve sign-in email failed to send; buyer was asked to retry.',
         });
       } catch (voidErr: any) {

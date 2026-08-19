@@ -459,9 +459,15 @@ async function realHandler(_request: Request): Promise<ReaperResult> {
 
                   // Stamp the dedup field IMMEDIATELY after a successful email so a
                   // crash before the (optional) SMS can't cause a re-email next run.
-                  // Best-effort: the field may not exist in older schemas — typecast
-                  // creates it; a write failure is non-fatal (the row is already
-                  // flipped to 'abandoned' so it won't be re-queried anyway).
+                  //
+                  // CORRECTION (2026-08-18): the old comment here claimed "typecast
+                  // creates it". It does not. typecast creates missing select
+                  // OPTIONS, never missing FIELDS. Payments has no 'Rewarm Sent At'
+                  // field, so Airtable 422s "Unknown field name" and lib/airtable.ts
+                  // strips it — this stamp has never persisted. Parked in
+                  // lib/schema/schemaGuardAllowlist.ts pending the field being added.
+                  // Non-fatal either way: the row is already flipped to 'abandoned'
+                  // so it won't be re-queried.
                   try {
                     await updateRecord(PAYMENTS_TABLE, paymentRowId, {
                       [REWARM_STAMP_FIELD]: new Date().toISOString(),
