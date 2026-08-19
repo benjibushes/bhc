@@ -50,8 +50,9 @@ import { BROKER_RAIL_FIELD } from './brokerRail';
  */
 function readEnumOrString(v: unknown): string {
   if (typeof v === 'string') return v.trim();
-  if (v && typeof v === 'object' && typeof (v as any).name === 'string') {
-    return (v as any).name.trim();
+  if (v && typeof v === 'object' && 'name' in v) {
+    const name = (v as { name?: unknown }).name;
+    if (typeof name === 'string') return name.trim();
   }
   return '';
 }
