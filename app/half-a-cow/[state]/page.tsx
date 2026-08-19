@@ -293,8 +293,8 @@ export default async function HalfACowStatePage({ params }: Props) {
               {hasSupply ? (
                 <>
                   {liveRanchers} {liveRanchers === 1 ? 'ranch is' : 'ranches are'} live
-                  in {name} right now. A 90-second quiz matches you with yours — no
-                  marketplace markup, no middleman.
+                  in {name} right now. A 90-second quiz matches you with yours —
+                  straight from the ranch, no middleman.
                 </>
               ) : knownNoSupply ? (
                 <>
@@ -305,8 +305,8 @@ export default async function HalfACowStatePage({ params }: Props) {
               ) : (
                 <>
                   A 90-second quiz matches you with a real family ranch serving{' '}
-                  {name} — or puts you first in line while we recruit one. No
-                  marketplace markup, no middleman.
+                  {name} — or puts you first in line while we recruit one.
+                  Straight from the ranch, no middleman.
                 </>
               )}
             </p>

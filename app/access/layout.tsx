@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
   title: 'Get matched with a real rancher',
-  description: '90-second match. Pick your state, answer 4 questions, talk direct to a real rancher. No marketplace markup. No middleman.',
+  description: '90-second match. Pick your state, answer 4 questions, talk direct to a real rancher. Straight from the ranch, no middleman.',
   openGraph: {
     title: 'Get matched with a real rancher',
     description: '90 seconds. Direct ranch beef. No middleman.',

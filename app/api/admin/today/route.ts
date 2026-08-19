@@ -36,6 +36,7 @@ import {
 } from '@/lib/commissionStats';
 import { selectSlaEligible } from '@/lib/depositSla';
 import { isAcceptedInFlight } from '@/lib/referralStage';
+import { selectOwedAbandonedPayments } from '@/lib/owedDeposits';
 import {
   selectObligations,
   summarizeObligations,
@@ -196,8 +197,15 @@ export async function GET(request: Request) {
       // OWED — money asked for but not collected:
       //   • Awaiting-Payment referrals whose deposit has NOT landed (the ones
       //     where the deposit HAS landed are not owed — they're stuck, below).
-      //   • abandoned Payments rows, minus any row whose referral is already
-      //     counted on the referral side (dedupe on Referral Id Text).
+      //   • abandoned Payments rows that are still genuinely open.
+      //
+      // The abandoned rule lives in lib/owedDeposits (unit-tested against the
+      // live rows). It used to be inline here and excluded ONLY referrals
+      // already counted on the referral side — so a referral that SINCE PAID
+      // still counted, and checkout retries counted once each. The audit found
+      // the tile 5.7x high: $2,850 across 5 rows where the truth was $500
+      // across 1 (three retries on one referral that settled 2026-07-19, one
+      // on a referral that settled 2026-08-11).
       const awaiting = (referrals as any[]).filter(
         (r) => str(r['Status']) === 'Awaiting Payment',
       );
@@ -207,10 +215,10 @@ export async function GET(request: Request) {
         (s, r) => s + toCents(num(r['Deposit Amount'])),
         0,
       );
-      const abandonedRows = (payments as any[]).filter(
-        (p) =>
-          str(p['Status']) === 'abandoned' &&
-          !awaitingUnpaidIds.has(String(p['Referral Id Text'] || '')),
+      const abandonedRows = selectOwedAbandonedPayments(
+        (payments as any[]) || [],
+        (referrals as any[]) || [],
+        awaitingUnpaidIds,
       );
       const abandonedCents = abandonedRows.reduce((s, p) => s + num(p['Amount Cents']), 0);
 

@@ -23,6 +23,7 @@ import {
   getOperationalServedStates,
   type RancherFields,
 } from './rancherEligibility';
+import { isRequestOnlyRancher } from './requestOnlyRanchers';
 import { normalizeState } from './states';
 
 export type RoutingSegment =
@@ -73,6 +74,27 @@ export interface ServedStatesOptions {
  * Callers that intentionally need capacity-IN (the classifier's intro
  * funnel) opt in via `{ excludeAtCapacity: true }`.
  *
+ * REQUEST-ONLY SUPPLY IS NOT COVERAGE (P0, 2026-08-18). This helper answers
+ * "does GENERIC supply exist in this state?" — every caller is a marketing or
+ * routing gate that hands an ordinary buyer to whatever rancher covers their
+ * state (waiting-activation + abandoned-quiz-nudge send gates, nurture-drip
+ * lane gate, state-coverage-notify's "your area opened" announcement,
+ * matching/suggest's reconfirm gate, ranch-stand-digest personalization, and
+ * classifyBuyer's stranded test). Request-only specialty supply
+ * (lib/requestOnlyRanchers) is reachable ONLY by explicit buyer request, so
+ * it can never satisfy any of them: it contributes ZERO states, always. There
+ * is deliberately NO opt-in flag — every caller audited on 2026-08-18 wants
+ * generic supply, and a "count it anyway" escape hatch is exactly how this
+ * defect would return. A caller that genuinely needs TOTAL supply (an ops
+ * count, say) should read the Ranchers pool itself rather than widen this.
+ *
+ * WHAT IT COST: gating on isRancherOperationalForBuyers alone let one
+ * request-only ranch — `Admin Approved Multi-State` + 48 Routing States —
+ * inflate the served set from 15 real states to 48. The 2026-08-18T16:23Z
+ * waiting-activation run emailed 50 buyers that ranchers served their state,
+ * false for 36 of those states, and pointed a third of the READY-chase CTAs
+ * at the one ranch that must never be generically promoted.
+ *
  * Replaces four copy-pasted loops (abandoned-quiz-nudge, waiting-activation,
  * state-coverage-notify, getCoveredStates) plus the dead hasRancherAvailable
  * in email-sequences.
@@ -85,6 +107,11 @@ export function getServedStates(
   const set = new Set<string>();
   for (const r of ranchers) {
     if (!isRancherOperationalForBuyers(r)) continue;
+    // Request-only belt — checked BEFORE anything else so no variant of this
+    // helper can leak specialty supply into a generic coverage answer.
+    // isRequestOnlyRancher consults BOTH keys of the policy (slug AND record
+    // id), so an Airtable slug rename cannot drop the protection.
+    if (isRequestOnlyRancher(r)) continue;
     if (excludeAtCapacity) {
       const current = Number((r as any)['Current Active Referrals'] || 0);
       const max = Number((r as any)['Max Active Referalls'] || 0);

@@ -51,7 +51,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { name } = resolved;
   const lowerSlug = state.toLowerCase();
   const title = `Buy half-cow direct from ${name} ranchers — BuyHalfCow`;
-  const description = `Real ${name} ranchers. 90-second match. No marketplace markup. No middleman. Direct ranch beef from real ${name} operations.`;
+  const description = `Real ${name} ranchers. 90-second match. Straight from the ranch, no middleman. Direct ranch beef from real ${name} operations.`;
   const url = `https://www.buyhalfcow.com/access/${lowerSlug}`;
 
   return {
@@ -201,7 +201,7 @@ export default async function AccessStatePage({ params }: Props) {
                 {ranchers.length} {ranchers.length === 1 ? 'rancher' : 'ranchers'} live in {stateNameFull}.{' '}
                 {totalClosedDeals > 0
                   ? `${totalClosedDeals} ${stateNameFull} ${totalClosedDeals === 1 ? 'family' : 'families'} fed direct this year.`
-                  : '90-second match — no marketplace markup, no middleman.'}
+                  : '90-second match — straight from the ranch, no middleman.'}
               </>
             ) : (
               <>

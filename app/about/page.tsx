@@ -49,7 +49,8 @@ export default function AboutPage() {
                 BuyHalfCow exists to fix both halves of that. Families get direct
                 access to real ranchers in their state. Ranchers get
                 pre-screened buyers ready to commit to a quarter, half, or whole.
-                We only earn when a deal actually closes &mdash; never a markup on your beef.
+                Ranchers keep 100% of their price, and we only earn when a deal
+                actually closes.
               </p>
             </section>
 
@@ -134,7 +135,7 @@ export default function AboutPage() {
               <ul className="space-y-3">
                 <li className="flex items-start">
                   <span className="mr-3 text-weathered" aria-hidden="true">&times;</span>
-                  <span>Not a marketplace that takes a cut of every transaction. We only earn when a deal actually closes &mdash; never a markup on your beef.</span>
+                  <span>Not a marketplace that takes a cut of every transaction. Ranchers keep 100% of their price, and we only earn when a deal actually closes.</span>
                 </li>
                 <li className="flex items-start">
                   <span className="mr-3 text-weathered" aria-hidden="true">&times;</span>
@@ -160,7 +161,7 @@ export default function AboutPage() {
               <div className="space-y-3">
                 <p><strong>Ranchers first.</strong> Without good ranchers, there&apos;s no business. They get paid back &mdash; see our <a href="/founders" className="underline">give-back commitments</a>.</p>
                 <p><strong>Quality over scale.</strong> Better to stay small and honest than big and mediocre.</p>
-                <p><strong>Real relationships.</strong> Direct rancher-to-family connection. No middleman markups, no anonymized branding.</p>
+                <p><strong>Real relationships.</strong> Direct rancher-to-family connection. No middleman, no anonymized branding.</p>
                 <p><strong>Honest about what we are.</strong> We&apos;re small, founders-funded, building this in public. You can read every commitment we&apos;ve made.</p>
               </div>
             </section>
