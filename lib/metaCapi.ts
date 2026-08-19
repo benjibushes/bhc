@@ -26,20 +26,27 @@ const TEST_CODE = process.env.META_CAPI_TEST_CODE;
 const GRAPH_API_VERSION = 'v21.0';
 
 /**
- * Opt-in switch for the attributed Closed-Won Purchase fired from recordClose().
+ * The ONE authority on whether a Closed-Won Purchase reaches Meta at all.
  *
- * OFF (default): byte-identical to prior behavior — settleFinalInvoice fires its
- * own (unattributed, system_generated) Purchase for final-invoice closes only,
- * recordClose fires nothing. No new data leaves for Meta.
+ * OFF (default): NOTHING fires at close, from anywhere. Dark.
+ * ON: recordClose() — and the two routes that close inline without it — fire
+ * exactly ONE attributed Purchase via fireClosePurchaseIfEnabled(), with a real
+ * fbc rebuilt from the buyer's stored fbclid.
  *
- * ON: recordClose() fires ONE attributed Purchase (action_source=website, real
- * fbc from the buyer's stored fbclid) for ALL close paths, and settleFinalInvoice
- * suppresses its own fire to avoid a double-count.
+ * ── Why this docstring changed (2026-08-19) ──────────────────────────────
+ * It used to describe a second, LEGACY fire inside settleFinalInvoice, gated on
+ * the NEGATION of this flag: off shipped the legacy Purchase, on shipped the
+ * attributed one. The two were correctly mutually exclusive — but the flag
+ * therefore chose WHICH Purchase shipped and never WHETHER one did, so the
+ * promise below was unenforceable: a Purchase was already leaving on every
+ * final-invoice close, carrying the full share price. The legacy site is
+ * deleted; this flag now has a real off position.
  *
  * Flip to 'true' only after (1) the privacy policy discloses Meta measurement
- * data-sharing and (2) a Test Events dry-run (META_CAPI_TEST_CODE set) confirms
- * the Purchase arrives with fbc present. fireCapi already fails open if the
- * pixel/token env is missing, so this can never block a close.
+ * data-sharing, (2) a Test Events dry-run (META_CAPI_TEST_CODE set) confirms the
+ * Purchase arrives with fbc present, and (3) you have read the VALUE PER RAIL
+ * note below and still want the close in the optimization set. fireCapi already
+ * fails open if the pixel/token env is missing, so this can never block a close.
  */
 export function closePurchaseEnabled(): boolean {
   return process.env.META_CLOSE_PURCHASE_ENABLED === 'true';
@@ -93,6 +100,43 @@ export function depositPurchaseEnabled(): boolean {
 export function productPurchaseEnabled(): boolean {
   return process.env.META_PRODUCT_PURCHASE_ENABLED === 'true';
 }
+
+// ── VALUE PER RAIL — read before enabling value-based bidding ─────────────
+// Every Purchase above lands in ONE Meta event stream, so their `value` fields
+// have to be commensurable or the algorithm will simply bid hardest wherever
+// the biggest number happens to live. Today they are not. What each reports,
+// against what BHC actually earns at that moment:
+//
+//   Connect deposit  (stripeSettlement)  value = deposit + BHC fee, i.e. the
+//     buyer's real card charge. BHC earns the fee. Ratio ~10x. DEFENSIBLE:
+//     this is the same-day money moment, and the number is a true charge.
+//   Broker deposit   (brokerCapi)        value = the deposit. On this rail the
+//     deposit IS the entire BHC commission (the balance is paid to the ranch
+//     off-platform). Ratio 1x. The best signal in the account.
+//   Product          (productSettlement) value = the full product charge; BHC
+//     keeps roughly a tenth. Ratio ~8x. DEFENSIBLE on the same "real charge"
+//     reading as the deposit rails.
+//   Founder / brand-partner (webhooks/stripe) value = the amount paid to BHC.
+//     Ratio 1x. Note these two are UNGATED — no env flag has ever existed for
+//     them — a pre-existing choice, not something this file introduced.
+//   Closed Won       (contracts/rancher)  value = the FULL share price, on a
+//     settlement where BHC incremental take is $0 (the commission already rode
+//     the deposit; the final invoice adds no fee). The largest number in the
+//     stream attached to the smallest revenue event.
+//
+// The close is therefore the one number nobody should optimize toward, and the
+// fix is SUPPRESSION rather than re-valuation — exactly the call already made
+// for the broker rail in shouldFireClosePurchase below ("reporting nothing is
+// honest; reporting the share price is not"). Re-valuing the close to BHC
+// revenue would not help: it would then be the only event in the stream on a
+// margin basis while the other four are on a charge basis, which is worse.
+//
+// RECOMMENDATION: run value-based bidding on the DEPOSIT Purchase
+// (META_DEPOSIT_PURCHASE_ENABLED). It is same-session with the ad click, its
+// value is a real charge on every rail, and shouldFireClosePurchase already
+// makes a deposit deal count exactly once. Leave META_CLOSE_PURCHASE_ENABLED
+// off unless you specifically want weeks-later close signal, and if you do turn
+// it on, expect the GMV-scale value and size ROAS targets for it.
 
 /**
  * Stable event_id for the DEPOSIT Purchase (server CAPI + client Pixel dedup).

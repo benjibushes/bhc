@@ -204,8 +204,10 @@ export async function recordClose(input: RecordCloseInput): Promise<{ ok: boolea
     // recordClose), so those routes call fireClosePurchaseIfEnabled() directly
     // too — all routed through the one gated helper (env flag + first-transition
     // guard + positive amount). Off-session, so attribution rides on the buyer's
-    // stored fbclid rebuilt into _fbc. When the flag is off, settleFinalInvoice
-    // keeps firing its legacy Purchase (no double-count). Never blocks the close.
+    // stored fbclid rebuilt into _fbc. This is now the ONLY close-Purchase path:
+    // settleFinalInvoice's legacy unattributed fire was deleted (2026-08-19) so
+    // META_CLOSE_PURCHASE_ENABLED genuinely means dark when off. Never blocks
+    // the close.
     if (!behavior.skipAffiliateAndCapi) {
       fireClosePurchaseIfEnabled({
         referralId: input.referralId,
