@@ -293,6 +293,11 @@ export async function GET(request: Request) {
         bhcRevenueCoverage: revenueCoverageNote(revenue),
         bhcRevenueComplete: revenue.complete,
         bhcRevenueOmits: UNMEASURED_REVENUE_RAILS,
+        // Legacy commission BILLED but not collected — outside the revenue
+        // total on purpose (money owed to BHC, not money BHC has).
+        legacyReceivable: revenue.legacyReceivable,
+        legacyReceivableCoverage:
+          'Closed Won legacy-rail referrals whose Commission Paid is not true — billed, not collected',
         // What the outstanding figure counts — same rule as /admin/today.
         depositsOutstandingCoverage:
           'Unpaid Awaiting-Payment referrals + open deposit checkouts (abandoned or pending), one per referral',
