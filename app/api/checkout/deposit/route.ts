@@ -14,6 +14,7 @@ import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { createDepositCheckout, getConnectAccountStatus } from '@/lib/stripeConnect';
 import { validateDepositConsent } from '@/lib/depositConsent';
 import { recordDeposit } from '@/lib/contracts/payments';
+import { depositRequestStampFields } from '@/lib/depositRequestStamp';
 import { MIN_TIER_PRICE } from '@/lib/pricing';
 // THE deposit resolution — one implementation, called by BOTH the POST charge
 // path and the GET render path so the displayed total and the charged total
@@ -518,13 +519,42 @@ export async function POST(req: Request) {
   // rejects/strips unknown fields, which the catch tolerates. When
   // STRIPE_CONSENT_COLLECTION is on, Stripe records acceptance on their side
   // as the primary evidence; this stamp is the operator-visible copy.
+  //
+  // The SAME write also marks the deal as an outstanding ask (2026-08-19).
+  // Three routes stamped 'Deposit Requested At' when a rancher or admin asked
+  // for the deposit; this one — the main self-serve rail — stamped nothing, so
+  // a buyer who minted their own session was invisible to the strong chase
+  // query AND({Status}="Awaiting Payment", NOT({Deposit Requested At}=""),
+  // {Deposit Paid At}="") and absent from owed-deposit totals. A live $900
+  // checkout sat at 'Rancher Contacted' for two days in no open-ask report.
+  //
+  // ⚠️ Status and the request stamp are INSEPARABLE — lib/depositPaidState
+  // reads a bare 'Awaiting Payment' with no request stamp as ALREADY PAID, so
+  // writing the status alone would 409 the buyer "already paid" having paid
+  // nothing (the 2026-07-14 bricked-buyer bug). lib/depositRequestStamp emits
+  // both keys or neither, and returns null when the referral is already
+  // stamped so a retry cannot push the timestamp forward and quietly reset the
+  // nudge cadence.
+  //
+  // No 'Deposit Checkout URL' is written: the only URL this route holds is
+  // Stripe's hosted one, which dies at 24h, and persisting it would hand the
+  // nudge emails a dead link. The nudge path mints its own durable /r/ link.
+  const stampNowISO = new Date().toISOString();
+  const requestStamp = depositRequestStampFields(referral, {
+    cut: cutSize,
+    depositDollars: Math.round(amountCents / 100),
+    fullSaleDollars: Math.round(fullSaleCents / 100),
+    checkoutUrl: '',
+    nowISO: stampNowISO,
+  });
   try {
     await updateRecord(TABLES.REFERRALS, referralId, {
-      'Terms Accepted At': new Date().toISOString(),
+      'Terms Accepted At': stampNowISO,
+      ...(requestStamp || {}),
     });
   } catch (stampErr: any) {
     console.warn(
-      '[checkout/deposit] Terms Accepted At stamp failed (non-blocking — add the dateTime field on Referrals if missing):',
+      '[checkout/deposit] referral stamp failed (non-blocking — Stripe session + Payments row already exist):',
       stampErr?.message,
     );
   }
