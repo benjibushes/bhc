@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, getRecordById, TABLES } from '@/lib/airtable';
-import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
+import { isRancherSellableForBuyers } from '@/lib/rancherEligibility';
 import { FOUNDING_BRAND_PARTNER_CAP } from '@/lib/tiers';
 import { STATS_FALLBACK } from '@/lib/statsFallback';
 import { cacheGet as sharedCacheGet, cacheSet as sharedCacheSet } from '@/lib/sharedCache';
@@ -80,7 +80,10 @@ async function computeStats(): Promise<Record<string, any>> {
       (getAllRecords(TABLES.BRANDS) as Promise<any[]>).catch(() => [] as any[]),
     ]);
 
-    const ranchersActive = ranchers.filter((r: any) => isRancherOperationalForBuyers(r)).length;
+    // SELLABLE, not merely operational (2026-08-19) — this number is public
+    // social proof ("N ranches live"), so it must not include a ranch whose
+    // Stripe Connect never finished onboarding or that has no cut priced.
+    const ranchersActive = ranchers.filter((r: any) => isRancherSellableForBuyers(r)).length;
 
     // "Families in pipeline" = anyone past raw lead status.
     // Includes NEW (just signed up) + WAITING (no rancher in state yet) +
@@ -187,11 +190,12 @@ async function computeStats(): Promise<Record<string, any>> {
       FOUNDING_BRAND_PARTNER_CAP - activeBrandPartners,
     );
 
-    // Distinct US states with at least one operational rancher.
-    // Used by homepage LiveCounter `stateCount` field.
+    // Distinct US states with at least one SELLABLE rancher — the homepage
+    // LiveCounter `stateCount`. Same predicate as the state pages, so the
+    // homepage cannot advertise more states than /half-a-cow can fill.
     const stateCount = new Set(
       ranchers
-        .filter((r: any) => isRancherOperationalForBuyers(r))
+        .filter((r: any) => isRancherSellableForBuyers(r))
         .map((r: any) => (r['State'] || '').toString().trim().toUpperCase())
         .filter(Boolean),
     ).size;

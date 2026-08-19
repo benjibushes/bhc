@@ -8,15 +8,24 @@
 // share-ranches, cross-links the buyer to /half-a-cow/[state] instead of
 // implying a supply desert.
 //
-// COUNTING CRITERIA — deliberately IDENTICAL to the shared discovery formula
-// (lib/airtable stateDiscoveryRanchersFormula) that /access/[state] and
-// /half-a-cow/[state] send to Airtable: a ranch counts for its primary
-// {State} when Public Map Hidden is not set, Verification Status !=
-// "Removed", its Active Status is not parked (Paused / Non-Compliant — see
-// PARKED_ACTIVE_STATUSES below), and it is page-live — {Page Live} for
-// onboarded ranchers, the `Broker Self Serve` opt-in for represented ones
-// (Wave A, 2026-08-17; a token-only broker ranch stays invisible). If you
-// change one, change both.
+// COUNTING CRITERIA — two layers, and both must hold.
+//
+// LAYER 1, VISIBILITY: identical to the shared discovery formula (lib/airtable
+// stateDiscoveryRanchersFormula) that /access/[state] and /half-a-cow/[state]
+// send to Airtable — a ranch is publishable for its primary {State} when
+// Public Map Hidden is not set, Verification Status != "Removed", its Active
+// Status is not parked (Paused / Non-Compliant — see PARKED_ACTIVE_STATUSES
+// below), and it is page-live: {Page Live} for onboarded ranchers, the
+// `Broker Self Serve` opt-in for represented ones (Wave A, 2026-08-17; a
+// token-only broker ranch stays invisible). If you change one, change both.
+//
+// LAYER 2, SELLABILITY (2026-08-19): isRancherSellableForBuyers — can a buyer
+// who arrives actually COMPLETE A PURCHASE. An Airtable formula cannot ask
+// this (it is rail-dependent: Connect gates on one rail, assertBrokerEligible
+// on the other), so it is applied in JS here and, on the SAME predicate, by
+// the two state pages after their fetch. Being published is not being for
+// sale: California's only page-live ranch has Stripe Connect stuck in
+// 'onboarding' and no cut priced, and this file called it live supply.
 //
 // FAILURE CONTRACT (mirrors lib/stateWaitlist): null = unknown (Airtable
 // unreachable/timed out) → callers render nothing. A failed fetch must never
@@ -30,6 +39,7 @@
 import { getAllRecords, TABLES, withTimeout, resolveAirtableTimeoutMs } from './airtable';
 import { normalizeState } from './states';
 import { isBrokerRancher, isBrokerSelfServe } from './brokerRail';
+import { isRancherSellableForBuyers } from './rancherEligibility';
 
 /**
  * JS mirror of lib/airtable PARKED_STATUS_EXCLUSION_FORMULA. Declared here
@@ -78,6 +88,22 @@ export function countLiveShareRanchesByState(
     } else if (!row?.['Page Live']) {
       continue;
     }
+    // SELLABILITY (2026-08-19) — the gate the visibility formula cannot ask.
+    // Everything above answers "is this row PUBLISHED"; this answers "can a
+    // buyer who arrives actually complete a purchase", using the same predicate
+    // the matcher uses (lib/rancherEligibility.isRancherSellableForBuyers =
+    // operational on its own rail AND a cut it can be paid for). Without it,
+    // /half-a-cow/california advertised "1 ranch is live in California right
+    // now" for a ranch whose Stripe Connect never finished onboarding and which
+    // has no cut priced at all — the matcher rejected it, so every ad-funded
+    // quiz completed into a waitlist. Maine was the same shape.
+    //
+    // This is why the criteria are no longer IDENTICAL to
+    // stateDiscoveryRanchersFormula: that formula stays the cheap server-side
+    // VISIBILITY pre-filter, and this predicate is the authority on supply.
+    // /access/[state] and /half-a-cow/[state] apply the same JS predicate to
+    // the rows the formula returns, so the three surfaces still agree.
+    if (!isRancherSellableForBuyers(row)) continue;
     const st = normalizeState(row?.['State']);
     if (!st) continue;
     counts[st] = (counts[st] || 0) + 1;

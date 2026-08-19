@@ -44,11 +44,26 @@
 // Capacity is intentionally NOT checked here — it's caller-dependent (hot-lead
 // bypass, etc.). This function answers "is this rancher live + signed up?",
 // not "can they take one more right now?"
+//
+// TWO PREDICATES, AND THE DIFFERENCE MATTERS (2026-08-19):
+//   • isRancherOperationalForBuyers — "can they RECEIVE a buyer" (unchanged).
+//   • isRancherSellableForBuyers    — "...and can that buyer actually PAY":
+//     operational AND a cut clearing the price floor the deposit endpoint
+//     enforces. Every surface that COUNTS supply, or promises a buyer their
+//     state is covered, must use the second one. Three of them used three
+//     different weaker rules, and California's only page-live ranch — tier_v2,
+//     Stripe Connect stuck in 'onboarding', no cut priced — was sold to
+//     visitors as "1 ranch is live in California right now" while the matcher
+//     rejected it and every completed quiz landed on a waitlist.
 
 import { normalizeState, normalizeStates } from './states';
 // lib/brokerRail is deliberately hermetic (imports only lib/pricing) so this
 // import cannot close a cycle back through lib/reserveDeposit.
 import { isBrokerRancher, isBrokerRoutable } from './brokerRail';
+// lib/pricing imports NOTHING at all — the same reason brokerRail can hold it.
+import { MIN_TIER_PRICE } from './pricing';
+// Hermetic (zero imports of its own) — cannot close a cycle.
+import { isRequestOnlyRancher } from './requestOnlyRanchers';
 
 export type RancherFields = Record<string, unknown> & {
   'Active Status'?: unknown;
@@ -165,6 +180,87 @@ export function isRancherOperationalForBuyers(rancher: RancherFields): boolean {
 }
 
 /**
+ * The buyer cut a price floor is being asked about. `null` = the buyer has not
+ * pinned a cut yet ("Not Sure" / blank Order Type), or the caller is asking the
+ * SUPPLY question ("can this ranch sell anything at all?") rather than the
+ * match question.
+ */
+export type BuyerCut = 'Quarter' | 'Half' | 'Whole' | null;
+
+const CUT_PRICE_FIELD: Record<Exclude<BuyerCut, null>, string> = {
+  Quarter: 'Quarter Price',
+  Half: 'Half Price',
+  Whole: 'Whole Price',
+};
+
+function clearsFloor(price: unknown): boolean {
+  const n = Number(price);
+  return Number.isFinite(n) && n >= MIN_TIER_PRICE;
+}
+
+/**
+ * THE cut-price floor — one definition, two callers.
+ *
+ * A tier_v2 rancher who has not validly priced a cut CANNOT accept a deposit
+ * for it: /api/checkout/deposit derives the charge from that cut's price and
+ * 409s when it is missing or below MIN_TIER_PRICE (the DD-Ranch "$7.40 whole
+ * cow" class of per-lb mis-entry). This used to live ONLY inside
+ * app/api/matching/suggest as a local `passesTierV2CutFloor`, which is why
+ * every supply-COUNTING surface disagreed with the matcher: California's only
+ * page-live ranch has no cut priced at all, and three screens still called it
+ * live supply.
+ *
+ * WHO IS EXEMPT, and why the exemption is load-bearing:
+ *   • LEGACY (Pricing Model != 'tier_v2') — they check out off-platform via
+ *     their own links, or on the phone, and never touch the Connect deposit
+ *     endpoint that enforces this floor. Applying it here would strand the
+ *     rail that has earned most of BHC's money to date.
+ *   • BROKER / represented — a blank Pricing Model reads as legacy here, which
+ *     is correct: their sellability is decided by assertBrokerEligible (price
+ *     floor INCLUDED) inside isBrokerRoutable, on the rail they are actually on.
+ *
+ * `cut === null` falls back to any-cut so an undecided buyer is never
+ * over-excluded — the matcher's documented behavior, preserved verbatim.
+ */
+export function passesCutPriceFloor(rancher: RancherFields, cut: BuyerCut): boolean {
+  if (String(rancher['Pricing Model'] || 'legacy').toLowerCase() !== 'tier_v2') return true;
+  if (cut) return clearsFloor(rancher[CUT_PRICE_FIELD[cut]]);
+  return (['Quarter', 'Half', 'Whole'] as const).some((c) =>
+    clearsFloor(rancher[CUT_PRICE_FIELD[c]]),
+  );
+}
+
+/**
+ * CAN A BUYER IN THIS STATE ACTUALLY COMPLETE A PURCHASE HERE, TODAY?
+ *
+ * This is what "live supply" has to mean on every surface that spends ad money
+ * or makes a promise to a visitor. It is deliberately the SAME two questions
+ * the matcher asks, in the same order and with no fourth definition:
+ *
+ *   1. isRancherOperationalForBuyers — rail-aware "can they receive a buyer"
+ *      (Connect gates for the Connect rail, isBrokerRoutable for represented).
+ *   2. passesCutPriceFloor(r, null)  — "and is there a cut they can be paid for"
+ *      (tier_v2 only; the exemptions above).
+ *
+ * WHAT IT COST TO NOT HAVE THIS. lib/stateSupply counted a ranch as live supply
+ * on {Page Live} alone. California's 5 Bar Beef is page-live, tier_v2, Stripe
+ * Connect stuck on 'onboarding', and has NO cut priced — so /half-a-cow/california
+ * advertised "1 ranch is live in California right now" while the matcher rejected
+ * that same ranch and dead-ended every completed quiz on a waitlist. Maine was
+ * identical (Rocky Ridge Livestock).
+ *
+ * NOT included here: the request-only belt. That is a GENERIC-supply question,
+ * not a sellability one — a request-only ranch sells perfectly well to a buyer
+ * who asked for it by name. lib/routingSegment layers isRequestOnlyRancher on
+ * top for the coverage answers; lib/requestOnlyRanchers documents which paths
+ * stay open.
+ */
+export function isRancherSellableForBuyers(rancher: RancherFields): boolean {
+  if (!isRancherOperationalForBuyers(rancher)) return false;
+  return passesCutPriceFloor(rancher, null);
+}
+
+/**
  * Returns the deduped 2-letter state codes a rancher serves.
  *
  * HOME-STATE GATE (2026-05-13): default behavior is HOME STATE ONLY. Multi-
@@ -222,8 +318,20 @@ export function isRancherOnConnect(rancher: RancherFields): boolean {
 }
 
 /**
- * Convenience: does any rancher in the list serve `buyerState`?
- * Used by the signup-time gate to decide ready-to-buy-prompt vs waitlist.
+ * Convenience: is there GENERIC supply a buyer in `buyerState` could actually
+ * buy from? Used by the signup-time gate to decide ready-to-buy-prompt vs
+ * waitlist (app/api/consumers: Buyer Stage READY vs WAITING, and the public
+ * `rancherAvailable` flag on the signup response).
+ *
+ * Deliberately the SAME two belts lib/routingSegment.getServedStates applies,
+ * because it is the same question asked one state at a time —
+ * lib/sellableSupply.test.ts pins that the two agree:
+ *   • SELLABLE, not merely operational. Gating on operational alone told a
+ *     buyer in a state whose only ranch cannot take a deposit that they were
+ *     READY, and the matcher then found nobody.
+ *   • NOT request-only. Specialty supply is reachable only by explicit buyer
+ *     request, so it can never satisfy "is my state covered?".
+ * (It cannot import getServedStates — routingSegment imports THIS module.)
  */
 export function hasOperationalRancherForState(
   ranchers: RancherFields[],
@@ -232,7 +340,8 @@ export function hasOperationalRancherForState(
   const stateNorm = normalizeState(buyerState);
   if (!stateNorm) return false;
   return ranchers.some((r) => {
-    if (!isRancherOperationalForBuyers(r)) return false;
+    if (!isRancherSellableForBuyers(r)) return false;
+    if (isRequestOnlyRancher(r)) return false;
     const served = getOperationalServedStates(r);
     return served.includes(stateNorm);
   });

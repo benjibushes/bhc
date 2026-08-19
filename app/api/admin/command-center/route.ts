@@ -41,6 +41,14 @@ import {
   countConnectFeePayments,
   computeProductMargin,
 } from '@/lib/commissionStats';
+import { selectOwedDepositPayments } from '@/lib/owedDeposits';
+import {
+  computeBhcRevenue,
+  revenueCoverageNote,
+  REVENUE_RAILS,
+  REVENUE_RAIL_LABELS,
+  UNMEASURED_REVENUE_RAILS,
+} from '@/lib/bhcRevenue';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -77,14 +85,18 @@ export async function GET(request: Request) {
   // (module-scope + shared-Redis, 3-min TTL) — health / analytics /
   // referrals-stats scan the same big tables, so the whole admin surface now
   // shares ONE set of scans per TTL window instead of 4-5 independent ones.
-  const [consumers, ranchers, referrals, payments, conversations, rancherOrders] = await Promise.all([
-    safe(() => adminSnapshotTable(TABLES.CONSUMERS) as Promise<any[]>, 'consumers'),
-    safe(() => adminSnapshotTable(TABLES.RANCHERS) as Promise<any[]>, 'ranchers'),
-    safe(() => adminSnapshotTable(TABLES.REFERRALS) as Promise<any[]>, 'referrals'),
-    safe(() => adminSnapshotTable(TABLES.PAYMENTS) as Promise<any[]>, 'payments'),
-    safe(() => adminSnapshotTable(TABLES.CONVERSATIONS) as Promise<any[]>, 'conversations'),
-    safe(() => adminSnapshotTable(TABLES.RANCHER_ORDERS) as Promise<any[]>, 'rancherOrders'),
-  ]);
+  const [consumers, ranchers, referrals, payments, conversations, rancherOrders, brands] =
+    await Promise.all([
+      safe(() => adminSnapshotTable(TABLES.CONSUMERS) as Promise<any[]>, 'consumers'),
+      safe(() => adminSnapshotTable(TABLES.RANCHERS) as Promise<any[]>, 'ranchers'),
+      safe(() => adminSnapshotTable(TABLES.REFERRALS) as Promise<any[]>, 'referrals'),
+      safe(() => adminSnapshotTable(TABLES.PAYMENTS) as Promise<any[]>, 'payments'),
+      safe(() => adminSnapshotTable(TABLES.CONVERSATIONS) as Promise<any[]>, 'conversations'),
+      safe(() => adminSnapshotTable(TABLES.RANCHER_ORDERS) as Promise<any[]>, 'rancherOrders'),
+      // Brand-partner rail — same shared snapshot, no new pipeline. Needed so
+      // this screen's revenue total covers the same rails /admin/today's does.
+      safe(() => adminSnapshotTable(TABLES.BRANDS) as Promise<any[]>, 'brands'),
+    ]);
 
   const now = Date.now();
   const DAY = 24 * 60 * 60 * 1000;
@@ -128,22 +140,24 @@ export async function GET(request: Request) {
       // Deposits collected vs outstanding (Payments table — same fields as
       // /api/admin/payments/data). Collected = succeeded.
       //
-      // OUTSTANDING used to mean Status='pending' ONLY. In practice the deposit
-      // rail almost never parks a row at 'pending' — a checkout that isn't paid
-      // ends up 'abandoned'. Live today: 0 pending, 4 abandoned. So the tile
-      // rendered "$0 owed" while real uncollected money sat in the table, and
-      // the one number Ben would use to decide who to chase was structurally
-      // always zero. Outstanding = pending + abandoned.
+      // OUTSTANDING — ONE SHARED RULE (money-truth audit, 2026-08-19). This was
+      // a raw `pending || abandoned` reduce with no settled check and no retry
+      // dedupe, so it counted a referral that had SINCE PAID and counted every
+      // failed checkout attempt separately. Live: $3,750 across 6 rows here
+      // against /admin/today's corrected $500 across 1 — the same table, 7.5x
+      // apart, with nothing on either screen explaining the gap. Both screens
+      // now call lib/owedDeposits.selectOwedDepositPayments, whose rule is
+      // written once and unit-tested against these very rows.
+      //
+      // The REFERRAL side of the ask (Awaiting Payment, deposit not landed) is
+      // added here too, exactly as /admin/today adds it, so "outstanding" means
+      // the same thing on both screens.
       let depositsCollected: number | null = null;
       let depositsOutstanding: number | null = null;
       let depositsCollectedCount: number | null = null;
       let depositsOutstandingCount: number | null = null;
       if (payments) {
         const succeeded = payments.filter((p: any) => str(p['Status']) === 'succeeded');
-        const pending = payments.filter((p: any) => {
-          const s = str(p['Status']);
-          return s === 'pending' || s === 'abandoned';
-        });
         // Net of any partial refunds, in dollars.
         depositsCollected = round2(
           succeeded.reduce(
@@ -151,9 +165,22 @@ export async function GET(request: Request) {
             0,
           ),
         );
-        depositsOutstanding = round2(pending.reduce((s: number, p: any) => s + num(p['Amount Cents']) / 100, 0));
         depositsCollectedCount = succeeded.length;
-        depositsOutstandingCount = pending.length;
+
+        const awaitingUnpaid = (referrals as any[]).filter(
+          (r: any) => str(r['Status']) === 'Awaiting Payment' && !r['Deposit Paid At'],
+        );
+        const awaitingUnpaidIds = new Set(awaitingUnpaid.map((r: any) => String(r.id)));
+        const openRows = selectOwedDepositPayments(
+          payments as any[],
+          referrals as any[],
+          awaitingUnpaidIds,
+        );
+        depositsOutstanding = round2(
+          awaitingUnpaid.reduce((s: number, r: any) => s + num(r['Deposit Amount']), 0) +
+            openRows.reduce((s: number, p: any) => s + num(p['Amount Cents']) / 100, 0),
+        );
+        depositsOutstandingCount = awaitingUnpaid.length + openRows.length;
       }
 
       // CONNECT-RAIL FEE REVENUE — the half of BHC's income that does not
@@ -195,21 +222,36 @@ export async function GET(request: Request) {
         }).length;
       }
 
-      // BHC REVENUE — computed here, AFTER product margin exists.
+      // BHC REVENUE — ONE SHARED DEFINITION (money-truth audit, 2026-08-19).
       //
-      // This used to be `commissionEarned + connectFeeCaptured` and was
-      // labelled "all rails". It was neither: it omitted the shop/product
-      // margin entirely (computed 40 lines below it), and its largest term —
-      // commissionEarned — is the DEPRECATED invoice-after-close receivable,
-      // not money on a current rail. Ben read one number as "what BHC has
-      // earned" when the live-model figure was a fraction of it. Split them:
-      //   • current  = Connect marketplace fee + shop margin (the live models)
-      //   • legacy   = the old invoice-after-close receivable
-      //   • allRails = both, and now genuinely all three money models
-      // ROAS divides by allRails, since ads did earn the legacy closes too.
-      const bhcRevenueCurrentRails = round2((connectFeeCaptured ?? 0) + (productMarginBHC ?? 0));
-      const bhcRevenueLegacyRail = round2(commissionEarned);
-      const bhcRevenueAllRails = round2(bhcRevenueCurrentRails + bhcRevenueLegacyRail);
+      // History: this was `commissionEarned + connectFeeCaptured` labelled "all
+      // rails" (it omitted shop margin), then a hand-rolled three-way split
+      // here — while /admin/today totalled a DIFFERENT pair and the analytics
+      // route a THIRD. Five live definitions of one number, none of which named
+      // its rails on screen.
+      //
+      // lib/bhcRevenue is now the authority for both admin screens: it names
+      // every rail it counts (Connect fee, broker deposit, shop margin, legacy
+      // commission, founders, brand partners), keeps a rail at `null` rather
+      // than 0 when its table failed to read, and ships the list of rails that
+      // take money with NO amount recorded in Airtable so "all rails" is never
+      // read as "all money". The current/legacy split below is preserved — Ben
+      // uses it to separate live-model income from the deprecated receivable —
+      // but it is now DERIVED from the shared breakdown, not recomputed.
+      const revenue = computeBhcRevenue(
+        { payments, rancherOrders, referrals, consumers, brands },
+        () => true, // all-time
+      );
+      const railDollars = (rail: (typeof REVENUE_RAILS)[number]) => revenue.byRail[rail] ?? 0;
+      const bhcRevenueCurrentRails = round2(
+        railDollars('connectFee') +
+          railDollars('brokerDeposit') +
+          railDollars('shopMargin') +
+          railDollars('founders') +
+          railDollars('brandPartner'),
+      );
+      const bhcRevenueLegacyRail = round2(railDollars('legacyCommission'));
+      const bhcRevenueAllRails = revenue.total;
       try {
         const spend = await getSpendInRange(0); // all-time
         adSpend = round2(spend.total);
@@ -234,14 +276,26 @@ export async function GET(request: Request) {
         // null ⇒ Payments read failed; render "—", never $0.
         connectFeeCaptured,
         connectFeeCount,
-        // What BHC earns on the models it actually sells today (Connect fee +
-        // shop margin). This is the honest "what have I made" number.
+        // What BHC earns on the models it sells today: Connect fee + broker
+        // deposit + shop margin + founders + brand partners.
         bhcRevenueCurrentRails,
         // The deprecated invoice-after-close receivable, shown separately so
         // it can never be mistaken for current-rail earnings.
         bhcRevenueLegacyRail,
-        // All three money models combined — what ROAS is measured against.
+        // EVERY measurable rail — what ROAS is measured against, and the same
+        // definition /admin/today's "Earned" uses (lib/bhcRevenue).
         bhcRevenueAllRails,
+        // Per-rail breakdown + provenance. null on a rail ⇒ its table failed to
+        // read, so the total is a FLOOR — the screen says so rather than render
+        // a confident number that quietly lost a rail.
+        bhcRevenueByRail: revenue.byRail,
+        bhcRevenueRails: REVENUE_RAILS.map((rail) => ({ rail, label: REVENUE_RAIL_LABELS[rail] })),
+        bhcRevenueCoverage: revenueCoverageNote(revenue),
+        bhcRevenueComplete: revenue.complete,
+        bhcRevenueOmits: UNMEASURED_REVENUE_RAILS,
+        // What the outstanding figure counts — same rule as /admin/today.
+        depositsOutstandingCoverage:
+          'Unpaid Awaiting-Payment referrals + open deposit checkouts (abandoned or pending), one per referral',
         blendedRoas,
         adSpend,
         productOrders,

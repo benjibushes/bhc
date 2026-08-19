@@ -30,13 +30,16 @@ import { NextResponse } from 'next/server';
 import { getAllRecords, TABLES } from '@/lib/airtable';
 import { adminSnapshot, adminSnapshotTable } from '@/lib/adminSnapshot';
 import { requireAdmin } from '@/lib/adminAuth';
-import {
-  computeConnectFeeCapturedInRange,
-  computeProductMarginInRange,
-} from '@/lib/commissionStats';
 import { selectSlaEligible } from '@/lib/depositSla';
 import { isAcceptedInFlight } from '@/lib/referralStage';
-import { selectOwedAbandonedPayments } from '@/lib/owedDeposits';
+import { selectOwedDepositPayments } from '@/lib/owedDeposits';
+import {
+  computeBhcRevenue,
+  revenueCoverageNote,
+  REVENUE_RAILS,
+  REVENUE_RAIL_LABELS,
+  UNMEASURED_REVENUE_RAILS,
+} from '@/lib/bhcRevenue';
 import {
   selectObligations,
   summarizeObligations,
@@ -110,6 +113,7 @@ export async function GET(request: Request) {
     referrals,
     payments,
     rancherOrders,
+    brands,
     rancherProducts,
     cronRuns,
     probes,
@@ -121,6 +125,11 @@ export async function GET(request: Request) {
       safe(() => adminSnapshotTable(TABLES.REFERRALS) as Promise<any[]>, 'referrals'),
       safe(() => adminSnapshotTable(TABLES.PAYMENTS) as Promise<any[]>, 'payments'),
       safe(() => adminSnapshotTable(TABLES.RANCHER_ORDERS) as Promise<any[]>, 'rancherOrders'),
+      // MONEY band — the brand-partner rail. Two rows today; it rides the same
+      // shared snapshot as everything else, so this is not a new pipeline. A
+      // failed read degrades THAT rail to null (the tile says so) rather than
+      // silently reporting it as $0.
+      safe(() => adminSnapshotTable(TABLES.BRANDS) as Promise<any[]>, 'brands'),
       // OBLIGATIONS band only — the shop rail is judged against the ranch's
       // OWN 'Ships In Days' promise, which lives on the PRODUCT. One small
       // table, under the shared snapshot; a failed read degrades the shop lane
@@ -186,13 +195,31 @@ export async function GET(request: Request) {
   let money: any = null;
   try {
     if (payments && rancherOrders && referrals) {
-      // Earned = Connect fee captured (Payments) + shop margin (Rancher
-      // Orders) — the CURRENT money models only, same rails as command-
-      // center's bhcRevenueCurrentRails, bounded to Ben's day/month.
-      const feesToday = computeConnectFeeCapturedInRange(payments as any[], isToday);
-      const feesMtd = computeConnectFeeCapturedInRange(payments as any[], isThisMonth);
-      const marginToday = computeProductMarginInRange(rancherOrders as any[], isToday);
-      const marginMtd = computeProductMarginInRange(rancherOrders as any[], isThisMonth);
+      // EARNED — EVERY RAIL (money-truth audit, 2026-08-19).
+      //
+      // This used to be `Connect fee captured + shop margin`, matching
+      // command-center's bhcRevenueCurrentRails. Those are the rails BHC SELLS
+      // today; they are not the rails BHC has EARNED on. The LEGACY invoiced
+      // commission was absent by construction — and legacy is 84% of lifetime
+      // revenue ($3,350.80 of $3,982.57 the day this shipped). Month-to-date
+      // read $178.72 against a true $273.13. The founder's primary screen, the
+      // one the arming runbook calls ground truth, understated his own income
+      // by a third that month and by five sixths lifetime.
+      //
+      // lib/bhcRevenue is now the ONE definition, shared with /admin's
+      // command-center, and it names its rails: a partial can no longer be
+      // read as a total. `rails` and `omits` ride along in the payload so the
+      // screen can print what the number covers and what no Airtable field can
+      // answer for (rancher tier MRR, renewals, add-ons, affiliate).
+      const snap = {
+        payments: payments as any[],
+        rancherOrders: rancherOrders as any[],
+        referrals: referrals as any[],
+        consumers: (consumers as any[]) || null,
+        brands: (brands as any[]) || null,
+      };
+      const earnedToday = computeBhcRevenue(snap, isToday);
+      const earnedMtd = computeBhcRevenue(snap, isThisMonth);
 
       // OWED — money asked for but not collected:
       //   • Awaiting-Payment referrals whose deposit has NOT landed (the ones
@@ -215,7 +242,7 @@ export async function GET(request: Request) {
         (s, r) => s + toCents(num(r['Deposit Amount'])),
         0,
       );
-      const abandonedRows = selectOwedAbandonedPayments(
+      const abandonedRows = selectOwedDepositPayments(
         (payments as any[]) || [],
         (referrals as any[]) || [],
         awaitingUnpaidIds,
@@ -244,20 +271,39 @@ export async function GET(request: Request) {
         return oldest === null || t < oldest ? t : oldest;
       }, null as number | null);
 
+      const railCents = (r: typeof earnedToday) =>
+        Object.fromEntries(
+          REVENUE_RAILS.map((rail) => [
+            rail,
+            r.byRail[rail] === null ? null : toCents(r.byRail[rail] as number),
+          ]),
+        );
+
       money = {
-        earnedTodayCents: toCents(feesToday + marginToday),
-        earnedMtdCents: toCents(feesMtd + marginMtd),
+        earnedTodayCents: toCents(earnedToday.total),
+        earnedMtdCents: toCents(earnedMtd.total),
         owedCents: owedReferralCents + abandonedCents,
         owedCount: awaitingUnpaid.length + abandonedRows.length,
         stuckCents,
         stuckCount: stuck.length,
         stuckOldestHours:
           oldestStuckMs === null ? null : Math.floor((now - oldestStuckMs) / 3_600_000),
+        // WHAT THE NUMBER INCLUDES, on the wire. Rendered next to the tile so a
+        // future reader cannot mistake a partial for a total — the exact
+        // mistake this band shipped with.
+        earnedRails: REVENUE_RAILS.map((rail) => ({ rail, label: REVENUE_RAIL_LABELS[rail] })),
+        earnedCoverage: revenueCoverageNote(earnedMtd),
+        earnedComplete: earnedToday.complete && earnedMtd.complete,
+        earnedOmits: UNMEASURED_REVENUE_RAILS,
+        // "Money asked for and not collected: unpaid Awaiting-Payment referrals
+        // + open (abandoned OR pending) deposit checkouts, deduped per referral
+        // to the newest attempt." lib/owedDeposits is the shared rule; /admin
+        // reads the same selector, so the two screens cannot disagree again.
+        owedCoverage:
+          'Unpaid Awaiting-Payment referrals + open deposit checkouts (abandoned or pending), one per referral',
         breakdown: {
-          feesTodayCents: toCents(feesToday),
-          marginTodayCents: toCents(marginToday),
-          feesMtdCents: toCents(feesMtd),
-          marginMtdCents: toCents(marginMtd),
+          earnedTodayByRailCents: railCents(earnedToday),
+          earnedMtdByRailCents: railCents(earnedMtd),
           owedReferralCents,
           owedAbandonedCents: abandonedCents,
         },

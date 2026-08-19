@@ -19,7 +19,7 @@
 // in the 2026-05-20 incident.
 
 import {
-  isRancherOperationalForBuyers,
+  isRancherSellableForBuyers,
   getOperationalServedStates,
   type RancherFields,
 } from './rancherEligibility';
@@ -106,7 +106,12 @@ export function getServedStates(
   const excludeAtCapacity = !!opts?.excludeAtCapacity;
   const set = new Set<string>();
   for (const r of ranchers) {
-    if (!isRancherOperationalForBuyers(r)) continue;
+    // SELLABLE, not merely operational (2026-08-19). isRancherSellableForBuyers
+    // = operational AND a cut the ranch can actually be paid for, which is the
+    // matcher's own floor. Gating on operational alone let a tier_v2 ranch with
+    // no cut priced count as coverage, so a buyer was told their state was
+    // served and then matched to nobody.
+    if (!isRancherSellableForBuyers(r)) continue;
     // Request-only belt — checked BEFORE anything else so no variant of this
     // helper can leak specialty supply into a generic coverage answer.
     // isRequestOnlyRancher consults BOTH keys of the policy (slug AND record
@@ -122,6 +127,33 @@ export function getServedStates(
     for (const s of getOperationalServedStates(r)) set.add(s);
   }
   return set;
+}
+
+/**
+ * Per-state COUNT of generic sellable supply — the number form of
+ * getServedStates, with byte-identical membership rules (sellable, not
+ * request-only, capacity-OUT by default). A state appears here if and only if
+ * it appears in getServedStates; lib/sellableSupply.test.ts pins that.
+ *
+ * WHY IT EXISTS. /api/funnel/stats needs a COUNT ("you match 3 ranches near
+ * you"), not a set, and used to build one from its own loop over
+ * isRancherOperationalForBuyers + getOperationalServedStates. That loop had no
+ * request-only belt, so the single request-only ranch — Admin Approved
+ * Multi-State with 48 Routing States — made the funnel promise in-state supply
+ * in 48 states when 16 had any. Ads pointed at the other 32 bought completed
+ * quizzes that dead-ended on a waitlist.
+ */
+export function sellableRancherCountsByState(
+  ranchers: RancherFields[],
+  opts?: ServedStatesOptions,
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const r of ranchers) {
+    // One ranch at a time through the SAME helper, so the count and the set can
+    // never drift apart — no second copy of the membership rule.
+    for (const s of getServedStates([r], opts)) counts[s] = (counts[s] || 0) + 1;
+  }
+  return counts;
 }
 
 /**

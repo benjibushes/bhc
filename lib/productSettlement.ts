@@ -30,6 +30,7 @@ import { zipFromStripePayment, buyerZipPatch, stateFromStripePayment, buyerState
 import { stateFromZip } from '@/lib/zipCentroids';
 import { orderStatusUrlFor } from '@/lib/orderStatusLink';
 import { operationTypeFor, operationTypeEmailLine } from '@/lib/operationType';
+import { TERMINAL_PRODUCT_ORDER_STATUSES } from '@/lib/productOrderStatus';
 
 function escapeHtml(s: string): string {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -598,12 +599,10 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
 // notifications, idempotency). Both statuses are terminal here, so a webhook
 // redelivery of the resulting charge.refunded can never downgrade a Cancelled
 // order to Refunded.
-export const TERMINAL_PRODUCT_ORDER_STATUSES: ReadonlySet<string> = new Set([
-  'Refunded',
-  'Cancelled',
-  // Imported/US spelling — lib/shopifyCatalogSync already treats it terminal.
-  'Canceled',
-]);
+// The set itself now lives in lib/productOrderStatus (hermetic) so the pure
+// money readers can share it instead of hand-copying the three strings; the
+// re-export keeps every existing call site and pin unchanged.
+export { TERMINAL_PRODUCT_ORDER_STATUSES };
 
 export async function reconcileProductOrderRefund(
   piId: string,

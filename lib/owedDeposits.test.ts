@@ -76,10 +76,15 @@ test('already-counted referrals (the Awaiting-Payment side of the tile) are drop
   assert.deepEqual(selectOwedAbandonedPayments(payments, referrals, new Set(['refAwaiting'])), []);
 });
 
-test('non-abandoned rows never enter the tile', () => {
+test('settled and failed rows never enter the tile', () => {
+  // 'pending' moved INTO the open set on 2026-08-19 (see the block at the foot
+  // of this file) — it is an ask that was made and not collected, and the two
+  // admin screens were 7.5x apart precisely because they disagreed about it.
+  // Everything that is not an OPEN status still cannot enter.
   const payments = [
-    { id: 'pending', Status: 'pending', 'Amount Cents': 9999, 'Referral Id Text': 'a' },
     { id: 'succeeded', Status: 'succeeded', 'Amount Cents': 9999, 'Referral Id Text': 'b' },
+    { id: 'failed', Status: 'failed', 'Amount Cents': 9999, 'Referral Id Text': 'c' },
+    { id: 'replay', Status: 'requires_webhook_replay', 'Amount Cents': 9999, 'Referral Id Text': 'd' },
   ];
   assert.deepEqual(selectOwedAbandonedPayments(payments, []), []);
 });
@@ -126,10 +131,96 @@ test('WIRING /api/admin/today: the money band selects through this module', asyn
     path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'app', 'api', 'admin', 'today', 'route.ts'),
     'utf8',
   );
-  assert.match(src, /selectOwedAbandonedPayments/, 'the cockpit must not hand-roll the abandoned filter');
+  assert.match(src, /selectOwedDepositPayments/, 'the cockpit must not hand-roll the open-row filter');
   assert.doesNotMatch(
     src.replace(/^\s*\/\/.*$/gm, ''),
     /str\(p\['Status'\]\) === 'abandoned'/,
     'the old inline filter (no settled check, no dedupe) is gone',
   );
+});
+
+test('WIRING /admin command-center: the SAME selector, not a second reduce', async () => {
+  // The defect this pin exists to prevent: command-center computed outstanding
+  // from `pending || abandoned` inline — no settled check, no retry dedupe —
+  // and read $3,750 while /admin/today read $500 off the same Payments table.
+  const { readFileSync } = await import('node:fs');
+  const { fileURLToPath } = await import('node:url');
+  const path = await import('node:path');
+  const src = readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'app', 'api', 'admin', 'command-center', 'route.ts'),
+    'utf8',
+  );
+  // IDENTITY FIRST. A pin that only greps for a symbol passes happily against
+  // the WRONG file — during this very change a stray restore overwrote
+  // command-center/route.ts with today/route.ts and every pin still went green,
+  // because both files contain the symbol. Anchor on something only this route
+  // has before asserting anything about its contents.
+  assert.match(src, /^\/\/ app\/api\/admin\/command-center\/route\.ts/, 'wrong file');
+  assert.match(src, /bhcRevenueAllRails/, 'command-center must still expose its revenue payload');
+  assert.match(src, /selectOwedDepositPayments/);
+  assert.match(src, /computeBhcRevenue\(/, 'revenue must come from the shared definition');
+  const code = src.replace(/^\s*\/\/.*$/gm, '');
+  assert.doesNotMatch(code, /s === 'pending' \|\| s === 'abandoned'/, 'the un-deduped reduce is gone');
+});
+
+test('WIRING /api/admin/today: earned comes from the shared rail-complete total', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { fileURLToPath } = await import('node:url');
+  const path = await import('node:path');
+  const src = readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'app', 'api', 'admin', 'today', 'route.ts'),
+    'utf8',
+  );
+  assert.match(src, /^\/\/ app\/api\/admin\/today\/route\.ts/, 'wrong file');
+  assert.match(src, /computeBhcRevenue\(/);
+  const code = src.replace(/^\s*\/\/.*$/gm, '');
+  // The partial that shipped: Connect fee + shop margin, legacy rail absent.
+  assert.doesNotMatch(code, /computeConnectFeeCapturedInRange/, 'the two-rail partial is gone');
+  assert.doesNotMatch(code, /computeProductMarginInRange/, 'the two-rail partial is gone');
+  // And the screen must SAY what the number covers.
+  assert.match(code, /earnedCoverage/);
+  assert.match(code, /earnedOmits/);
+});
+
+// ── PENDING IS OPEN TOO (2026-08-19) ───────────────────────────────────────
+// /admin/today counted abandoned rows only; /admin's command-center counted
+// `pending || abandoned` un-deduped. On the live base that was $500 against
+// $3,750 — the SAME table, 7.5x apart, with no label on either screen saying
+// why. One selector now answers both, and it answers "pending" the same way it
+// answers "abandoned": open unless the money provably landed.
+
+import { selectOwedDepositPayments, OPEN_PAYMENT_STATUSES } from './owedDeposits';
+
+test('OPEN_PAYMENT_STATUSES is abandoned + pending, and nothing else', () => {
+  assert.deepEqual([...OPEN_PAYMENT_STATUSES].sort(), ['abandoned', 'pending']);
+});
+
+test('a PENDING checkout that never settled is owed', () => {
+  const referrals = [{ id: 'refOpen', Status: 'Awaiting Payment' }];
+  const payments = [{ id: 'payPend', Status: 'pending', 'Amount Cents': 90000, 'Referral Id Text': 'refOpen' }];
+  assert.deepEqual(ids(selectOwedDepositPayments(payments, referrals)), ['payPend']);
+});
+
+test('a PENDING row on a since-PAID referral is NOT owed', () => {
+  const referrals = [{ id: 'refPaid', 'Deposit Paid At': '2026-08-11T00:01:48.881Z' }];
+  const payments = [{ id: 'payPend', Status: 'pending', 'Amount Cents': 90000, 'Referral Id Text': 'refPaid' }];
+  assert.deepEqual(selectOwedDepositPayments(payments, referrals), []);
+});
+
+test('pending + abandoned on ONE referral is ONE ask — the newest attempt', () => {
+  const referrals = [{ id: 'refOpen' }];
+  const payments = [
+    { id: 'payOld', Status: 'abandoned', 'Amount Cents': 65000, 'Referral Id Text': 'refOpen', 'Abandoned At': '2026-07-17T18:30:41.576Z' },
+    { id: 'payNew', Status: 'pending', 'Amount Cents': 90000, 'Referral Id Text': 'refOpen', 'Created At': '2026-08-17T23:19:21.067Z' },
+  ];
+  assert.deepEqual(ids(selectOwedDepositPayments(payments, referrals)), ['payNew']);
+});
+
+test('a FAILED row is not an outstanding ask', () => {
+  const payments = [{ id: 'payFail', Status: 'failed', 'Amount Cents': 65000, 'Referral Id Text': 'refOpen' }];
+  assert.deepEqual(selectOwedDepositPayments(payments, [{ id: 'refOpen' }]), []);
+});
+
+test('the back-compat alias is the SAME function, not a second definition', () => {
+  assert.equal(selectOwedAbandonedPayments, selectOwedDepositPayments);
 });
