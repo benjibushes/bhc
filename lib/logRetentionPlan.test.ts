@@ -22,6 +22,7 @@ import {
   RUNS_PER_DAY,
   MAX_DELETES_PER_TABLE_PER_RUN,
   MIN_RETENTION_DAYS,
+  EMAIL_SENDS_RETENTION_DAYS,
   MEASURED_DAILY_INFLOW_ROWS,
   AIRTABLE_REQ_PER_SEC_CEILING,
   rowsAffordable,
@@ -148,14 +149,27 @@ test('windows with audit/compliance value are flagged so nobody shortens them ca
   }
 });
 
-test('Email Sends is NOT marked a pure log — it doubles as an unbounded send-dedupe ledger', () => {
-  // send-scheduled and testimonial-collection query it with NO date bound to
-  // build "already contacted" sets. Shortening its window shortens that memory
-  // and can produce a duplicate send. That is why this PR does not shorten it.
+test('Email Sends is safe to expire ONLY because no lifetime fact is derived from it any more', () => {
+  // It used to double as an unbounded send-dedupe ledger: send-scheduled and
+  // testimonial-collection queried it with NO date bound, so shortening the
+  // window shortened that memory and could produce a duplicate send to a real
+  // buyer. That is why it sat at 90d (72% of the base cap) with an
+  // operator-decision flag on it.
+  //
+  // Both couplings are gone: the "already asked" fact moved to
+  // Consumers[Testimonial Asked At], and the per-campaign "already attempted"
+  // set is now bounded by the campaign's own start, with send-scheduled
+  // refusing to send when that start predates EMAIL_SENDS_RETENTION_DAYS.
+  // The window could therefore come down. If anyone re-introduces an unbounded
+  // reader, this reasoning — and this test — must be revisited first.
   const es = RETENTION.find((r) => r.table === 'Email Sends');
   assert.ok(es);
-  assert.equal(es!.operatorDecision, true);
-  assert.match(es!.why, /dedupe|duplicate/i, 'the reason must name the duplicate-send hazard');
+  assert.ok(es!.days <= 45, 'the whole point was to get this window down');
+  assert.match(
+    es!.why,
+    /dedupe|duplicate|Testimonial Asked At/i,
+    'the reason must still name the hazard that used to block this',
+  );
 });
 
 // ── Env override: make the decision cheap and reversible for the operator ──
@@ -186,10 +200,15 @@ test('an override for an UNKNOWN table is ignored — retention never invents a 
 });
 
 test('applyRetentionOverrides swaps only the days, preserving order and metadata', () => {
-  const applied = applyRetentionOverrides(RETENTION, { 'Email Sends': 45 });
+  // Use a table that still carries operator-decision metadata, so this pin
+  // tests the override mechanics rather than one table's current flags.
+  const applied = applyRetentionOverrides(RETENTION, { 'Email Sends': 45, 'Deal Events': 200 });
   const es = applied.find((r) => r.table === 'Email Sends')!;
   assert.equal(es.days, 45);
-  assert.equal(es.operatorDecision, true, 'metadata must survive an override');
+  const flagged = RETENTION.find((r) => r.operatorDecision);
+  assert.ok(flagged, 'at least one table should still be operator-flagged');
+  const appliedFlagged = applied.find((r) => r.table === flagged!.table)!;
+  assert.equal(appliedFlagged.operatorDecision, true, 'metadata must survive an override');
   assert.deepEqual(applied.map((r) => r.table), RETENTION.map((r) => r.table));
   // Untouched tables keep their compiled-in window.
   const cron = applied.find((r) => r.table === 'Cron Runs')!;
@@ -212,4 +231,29 @@ test('a manual/off-schedule invocation still gets a backup rather than silently 
   // inside the same UTC hour must still produce a backup.
   assert.equal(isCensusOrBackupRun(new Date(Date.UTC(2026, 7, 19, 9, 59))), true);
   assert.equal(isCensusOrBackupRun(new Date(Date.UTC(2026, 7, 19, 10, 0))), false);
+});
+
+// ── The Email Sends window and the campaign-resume horizon are ONE number ──
+// send-scheduled refuses to send a campaign whose start predates the Email
+// Sends retention, because its dedupe set would be silently incomplete and
+// recipients already emailed would be emailed AGAIN. That check reads
+// EMAIL_SENDS_RETENTION_DAYS; the drain reads the RETENTION table. If the two
+// ever disagree, the cron either blocks sends it could safely make, or — far
+// worse — sends against a dedupe set the drain has already eaten.
+
+test('EMAIL_SENDS_RETENTION_DAYS equals the RETENTION entry it guards', () => {
+  const rule = RETENTION.find((r) => r.table === 'Email Sends');
+  assert.ok(rule, 'Email Sends must have a retention rule');
+  assert.equal(
+    EMAIL_SENDS_RETENTION_DAYS,
+    rule!.days,
+    'send-scheduled would guard the wrong window — a double-blast risk',
+  );
+});
+
+test('the Email Sends window never drops below the hard retention floor', () => {
+  assert.ok(
+    EMAIL_SENDS_RETENTION_DAYS >= MIN_RETENTION_DAYS,
+    `${EMAIL_SENDS_RETENTION_DAYS}d is below the ${MIN_RETENTION_DAYS}d floor`,
+  );
 });
