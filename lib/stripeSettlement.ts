@@ -108,14 +108,11 @@ import { funnelRecord } from '@/lib/funnelMetrics';
 import {
   fireCapi,
   buildUserData,
-  closePurchaseEnabled,
   depositPurchaseEnabled,
   depositEventId,
   reconstructFbc,
-  shouldFireClosePurchase,
 } from '@/lib/metaCapi';
 import { metaEventId } from '@/lib/analytics';
-import { isBrokerReferralRow } from '@/lib/commission';
 import { logAuditEntry } from '@/lib/auditLog';
 import { zipFromStripePayment, buyerZipPatch, stateFromStripePayment, buyerStatePatch } from '@/lib/buyerZip';
 import { stateFromZip } from '@/lib/zipCentroids';
@@ -634,69 +631,30 @@ export async function settleFinalInvoice(pi: any): Promise<void> {
     saleAmount: closeSaleAmount,
   });
 
-  // ── Meta Conversions API: server-side `Purchase` event (Closed Won) ─
-  // LEGACY fire — only when the attributed close Purchase is NOT enabled.
-  // When META_CLOSE_PURCHASE_ENABLED='true', recordClose() (invoked just above)
-  // owns the single Purchase for this close, with a real fbc + action_source
-  // 'website'. Firing here too would double-count on the same event_id (only
-  // saved by Meta's idempotency window), so we suppress it. This branch is the
-  // unattributed (system_generated, no fbc) fallback for the flag-off state.
+  // ── Meta Conversions API: NO Purchase fires from here ──────────────────
+  // There is exactly ONE close-Purchase path, and it is the gated helper
+  // fireClosePurchaseIfEnabled() inside recordClose() (invoked just above).
   //
-  // DEDUP GUARD (deposit vs close): even in the legacy flag-off close path, if
-  // the deposit-Purchase flag is on AND this deal already paid a deposit, the
-  // deposit Purchase already counted it — suppress the close Purchase so the
-  // deal counts ONCE. shouldFireClosePurchase mirrors the recordClose guard so
-  // BOTH close-Purchase paths (attributed + legacy) dedup identically. referralRow
-  // was read above; a null 'Deposit Paid At' (legacy no-deposit close) still fires.
+  // This site used to hold a SECOND, unattributed fire whose condition was the
+  // NEGATION of the close flag, ANDed with the shared dedup predicate. That
+  // negation was
+  // deliberate — it kept the two sites mutually exclusive — but the net effect
+  // was that META_CLOSE_PURCHASE_ENABLED chose WHICH Purchase shipped and never
+  // WHETHER one shipped. With the flag off (its state in production), this
+  // branch sent Meta a Purchase carrying `value = closeSaleAmount`: the full
+  // share price, on the settlement where BHC's own incremental take is $0
+  // (money model: the commission rides the deposit; the final invoice adds no
+  // fee). That is the largest number in the account attached to the smallest
+  // revenue event — precisely the signal you must not hand value-based bidding
+  // — and it shipped without the privacy-policy disclosure the flag's own
+  // docstring makes a precondition.
   //
-  // RAIL GUARD (broker), same as the recordClose path: closeSaleAmount is the
-  // FULL share price and a represented ranch's revenue is only the deposit, so a
-  // broker row emits no Purchase here either. A broker referral should never
-  // reach a platform final invoice at all (isPostCloseInvoiceRail already keeps
-  // it out of commission invoicing) — this is the cheap belt, reading the
-  // already-fetched row rather than adding a call.
-  // Fire-and-forget — never block the webhook response.
-  if (
-    !closePurchaseEnabled() &&
-    shouldFireClosePurchase({
-      depositPurchaseEnabled: depositPurchaseEnabled(),
-      depositPaidAt: referralRow?.['Deposit Paid At'],
-      brokerRail: isBrokerReferralRow(referralRow),
-    })
-  ) (async () => {
-    try {
-      const buyerLinks: string[] = (referralRow?.['Buyer'] || []) as string[];
-      const buyerId = buyerLinks[0] || '';
-      const closedWonBuyer: any = buyerId
-        ? await getRecordById(TABLES.CONSUMERS, buyerId).catch(() => null)
-        : null;
-      if (closedWonBuyer?.['Email']) {
-        const fullName = String(closedWonBuyer['Full Name'] || '').trim();
-        const nameParts = fullName.split(/\s+/);
-        const closedWonState = String(closedWonBuyer['State'] || '');
-        fireCapi([{
-          event_name: 'Purchase',
-          event_time: Math.floor(Date.now() / 1000),
-          event_id: metaEventId(referralId),
-          action_source: 'system_generated',
-          user_data: buildUserData({
-            email: String(closedWonBuyer['Email']).toLowerCase(),
-            firstName: nameParts[0] || undefined,
-            lastName: nameParts.slice(1).join(' ') || undefined,
-            state: closedWonState || undefined,
-          }),
-          custom_data: {
-            value: closeSaleAmount,
-            currency: 'usd',
-            content_name: 'Beef — full sale',
-            content_category: 'closed-won',
-          },
-        }]).catch((e) => console.error('[meta-capi] closed-won Purchase fire failed:', e));
-      }
-    } catch (e) {
-      console.error('[meta-capi] closed-won Purchase buyer fetch failed:', e);
-    }
-  })();
+  // Deleting it, rather than re-gating it, is what makes the flag honest: OFF
+  // is now genuinely dark, ON fires the strictly better event (attributed,
+  // real fbc rebuilt from the buyer's stored fbclid), and no combination of
+  // flags can produce two. The deposit/broker dedup guards this branch carried
+  // live on inside fireClosedWonPurchase, which applies them to the one
+  // remaining fire. See lib/metaCapi.closePurchaseEnabled.
 
   // ── Rancher instant-notify (push + email) ───────────────────────────────
   // Deposit-paid's sibling (2026-07-14): before this, only the admin Telegram

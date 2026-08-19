@@ -15,6 +15,10 @@ export default function RemoveForm({
   ranchName: string;
 }) {
   const [contactEmail, setContactEmail] = useState('');
+  // Honeypot — bots fill hidden fields, humans never see them. The API treats
+  // a filled value as a silent no-op (same convention as the claim and
+  // self-submit doors, which key on `website2` / `company`).
+  const [website2, setWebsite2] = useState('');
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -28,7 +32,7 @@ export default function RemoveForm({
       const res = await fetch('/api/prospects/remove', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slug, contactEmail, reason }),
+        body: JSON.stringify({ slug, contactEmail, reason, website2 }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -72,6 +76,16 @@ export default function RemoveForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
+      <input
+        type="text"
+        name="website2"
+        value={website2}
+        onChange={(e) => setWebsite2(e.target.value)}
+        tabIndex={-1}
+        autoComplete="off"
+        aria-hidden="true"
+        className="hidden"
+      />
       <div>
         <label className="block text-sm font-medium mb-1">
           Your email <span className="text-muted">(optional)</span>

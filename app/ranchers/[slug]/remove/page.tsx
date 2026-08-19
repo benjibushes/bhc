@@ -53,8 +53,11 @@ export default async function RemovePage({
               stops being indexed within minutes.
             </p>
             <p className="text-sm text-saddle">
-              No verification needed — we honor opt-outs immediately. Ben gets
-              an alert and will reach out personally if you want to talk.
+              No account needed — an unclaimed listing comes off the moment you
+              tap the button, and Ben gets an alert so he can reach out
+              personally if you want to talk. If you already have a
+              BuyHalfCow account, email hello@buyhalfcow.com instead and he
+              will handle it by hand the same day.
             </p>
           </div>
         </Container>
