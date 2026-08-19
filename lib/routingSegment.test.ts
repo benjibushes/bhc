@@ -288,3 +288,80 @@ test('TIMING: terminal/suppression still outrank the promotion (MATCHED + W30 �
   );
   assert.equal(seg, 'TERMINAL');
 });
+
+// ── 4 · REQUEST-ONLY BELT on getServedStates (P0, 2026-08-18) ───────────────
+//
+// WHAT THIS PROTECTS. `getServedStates` is the shared answer to "does GENERIC
+// supply exist in this state?" — every caller is a marketing/routing gate that
+// hands an ordinary buyer to whatever rancher covers their state. Request-only
+// specialty supply (lib/requestOnlyRanchers) is reachable ONLY by explicit
+// buyer request, so it is not generic coverage and must contribute ZERO states
+// here. It gated only on isRancherOperationalForBuyers, and the one
+// request-only ranch carries `Admin Approved Multi-State` + 48 Routing States,
+// so it inflated the served set to 48 states — the waiting-activation cron
+// then told ~45 buyers/day that ranchers served their state when 15 states
+// had real coverage. Both keys of the policy are pinned (slug AND rec id),
+// and both directions (a normal rancher must still count).
+
+// The seeded request-only ranch: operational, multi-state approved, 3 routing
+// states — the exact shape that inflated the set in prod.
+function requestOnlyMultiStateRancher(over: Record<string, unknown> = {}) {
+  return operationalRancher({
+    Slug: 'rep-provisions',
+    'Admin Approved Multi-State': true,
+    'Routing States': 'TX, FL, NY',
+    State: 'TX',
+    ...over,
+  });
+}
+
+test('BELT: a request-only rancher contributes ZERO served states (slug key)', () => {
+  assert.equal(getServedStates([requestOnlyMultiStateRancher()]).size, 0);
+});
+
+test('BELT: the rec-id key holds when the slug is renamed in Airtable', () => {
+  const renamed = requestOnlyMultiStateRancher({ id: 'recYE5zpedhPg6KIV', Slug: 'renamed-in-airtable' });
+  assert.equal(getServedStates([renamed]).size, 0);
+});
+
+test('BELT: both capacity variants exclude request-only supply', () => {
+  const r = requestOnlyMultiStateRancher({ 'Current Active Referrals': 0, 'Max Active Referalls': 5 });
+  assert.equal(getServedStates([r], { excludeAtCapacity: true }).size, 0);
+  assert.equal(getCoveredStates([r]).size, 0);
+});
+
+test('BELT does NOT over-block: a normal rancher still counts, in both directions', () => {
+  const normal = operationalRancher({ Slug: 'champion-valley', State: 'MT', id: 'recNormalRanch123' });
+  assert.equal(getServedStates([normal]).has('MT'), true);
+  assert.equal(getCoveredStates([normal]).has('MT'), true);
+  // Multi-state routing still expands a NORMAL rancher's coverage.
+  const normalMulti = operationalRancher({
+    Slug: 'foodstead',
+    'Admin Approved Multi-State': true,
+    'Routing States': 'TX, FL',
+    State: 'GA',
+  });
+  assert.deepEqual(
+    Array.from(getServedStates([normalMulti])).sort(),
+    ['FL', 'GA', 'TX'],
+  );
+});
+
+test('BELT: request-only supply never widens a mixed pool beyond real coverage', () => {
+  // Real coverage = MT (one normal ranch). The request-only ranch claims
+  // TX/FL/NY on top; none of them may appear.
+  const served = getServedStates([
+    operationalRancher({ Slug: 'champion-valley', State: 'MT' }),
+    requestOnlyMultiStateRancher(),
+  ]);
+  assert.deepEqual(Array.from(served), ['MT']);
+});
+
+test('BELT: a state whose ONLY cover is request-only reads as UNSERVED downstream', () => {
+  // The buyer-visible consequence: TX has request-only supply and nothing
+  // else, so a TX buyer is stranded (waitlist) rather than promised a match.
+  const ranchers = [operationalRancher({ Slug: 'champion-valley', State: 'MT' }), requestOnlyMultiStateRancher()];
+  assert.equal(classifyBuyer(buyer({ State: 'TX' }), ranchers), 'STATE_WAITLIST');
+  // ...and an MT buyer is unaffected.
+  assert.notEqual(classifyBuyer(buyer({ State: 'MT' }), ranchers), 'STATE_WAITLIST');
+});
