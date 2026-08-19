@@ -57,6 +57,7 @@
 // JS where absent is just `undefined` — the {Refunded At} lesson.
 
 import { isMoneyReturnedToBuyer, isBrokerRailReferral, ESCALATION_AFTER_HOURS } from './depositSla';
+import { capturedTotalCents } from './paymentCapture';
 import { FULFILLMENT_FIELDS } from './fulfillmentTracking';
 import {
   CHASE_FIELDS,
@@ -206,23 +207,23 @@ function isBrokerRow(
  * `Deposit Amount` is the deposit alone. On the Connect rail BHC's 10% is
  * charged ON TOP of it (money model #1 — the rancher keeps 100% of the price,
  * the buyer pays the fee), so the deposit understates the charge by exactly
- * the platform fee and a tile labelled "collected" was quietly wrong. Same
- * precedence as lib/contracts/payments::markDepositRefunded's capturedCents,
- * so this band and the refund gate agree on what a full charge is:
- *   1. 'Total Charged Cents' — stamped at settlement, the true charged total;
- *   2. deposit + 'Platform Fee Cents' — for rows predating that field;
- *   3. the Payments row's deposit alone;
- *   4. the Referral's 'Deposit Amount' (dollars) when there is no Payments row.
+ * the platform fee and a tile labelled "collected" was quietly wrong.
+ *
+ * The ledger arithmetic is NOT restated here. Data-layer audit P0-1
+ * (2026-08-18): this function used to hand-roll `deposit + fee`, which is
+ * right on Connect and DOUBLE on broker — recordBrokerDeposit writes the same
+ * number into both fields because there the deposit IS the commission. It now
+ * delegates to lib/paymentCapture::capturedTotalCents, the one rail-aware
+ * definition the refund gate also uses, so this band and that gate can never
+ * again disagree about what a full charge is. Falling back to the Referral's
+ * own 'Deposit Amount' (dollars) is this module's alone: a ledger row that
+ * carries no amounts at all answers 0, and a band of $0 would understate the
+ * money at risk.
  */
 function collectedCents(ref: Record<string, any>, payment: Record<string, any> | null): number {
   const fallback = toCents(num(ref['Deposit Amount']));
   if (!payment) return fallback;
-  const total = num(payment['Total Charged Cents']);
-  if (total > 0) return total;
-  const deposit = num(payment['Amount Cents']);
-  const fee = num(payment['Platform Fee Cents']);
-  if (deposit > 0) return deposit + fee;
-  return fallback;
+  return capturedTotalCents(payment) || fallback;
 }
 
 function days(msSpan: number): number {

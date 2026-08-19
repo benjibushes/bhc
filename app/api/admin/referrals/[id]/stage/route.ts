@@ -8,17 +8,17 @@ import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/adminAuth';
 import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+// Allowed stage transitions — canonical advance path, STAMP-aware.
+// Data-layer audit P1-1 (2026-08-18): the table used to be a plain
+// Status→Status map here, which offered an already-accepted 'Awaiting Payment'
+// row 'Slot Locked' (a backward re-accept) instead of the close. The
+// send-final-invoice route rewrites Status over the accepted row, so Status
+// alone cannot tell the two 'Awaiting Payment' meanings apart — see
+// lib/referralStage. The desk button renders nextStageFor() from this same
+// table, so the two can never drift.
+import { allowedStagesFrom } from '@/lib/referralStage';
 
 export const dynamic = 'force-dynamic';
-
-// Allowed stage transitions (canonical advance path).
-// Permits any → Closed Lost (manual abandon) by special case.
-const ALLOWED: Record<string, string[]> = {
-  'Intro Sent': ['Awaiting Payment', 'Closed Lost'],
-  'Awaiting Payment': ['Slot Locked', 'Closed Lost'],
-  'Slot Locked': ['Closed Won', 'Closed Lost'],
-  'Closed Lost': ['Intro Sent'], // revive
-};
 
 export async function POST(
   req: Request,
@@ -50,7 +50,7 @@ export async function POST(
   }
 
   const currentStatus = String((referral as any)['Status'] || '');
-  const allowed = ALLOWED[currentStatus] || [];
+  const allowed = allowedStagesFrom(referral);
   if (!allowed.includes(targetStatus)) {
     return NextResponse.json(
       { ok: false, error: `cannot transition ${currentStatus} → ${targetStatus}` },

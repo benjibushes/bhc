@@ -37,7 +37,10 @@ export function refundReferralClearFields(
     'Closed At': null,
     'Sale Amount': null,
     'Commission Due': null,
-    'Commission Status': null,
+    // NOTE (audit P3, 2026-08-18): 'Commission Status' used to be nulled here.
+    // No table in the base has that field, so lib/airtable stripped it and
+    // fired an operator signal on EVERY full refund — noise that teaches the
+    // operator to ignore the alarm that catches real drift. Removed.
     // C2 fix: a refund must fully reset the deposit/accept lifecycle. Leaving
     // these stamped let the send-final-invoice gate (!!Deposit Paid At) pass
     // for a refunded buyer, and blocked a clean re-deposit (NRD lock).

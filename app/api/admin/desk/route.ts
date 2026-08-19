@@ -14,6 +14,7 @@ import {
   rankDialQueue,
 } from '@/lib/callbackQueue';
 import { buildDialCandidates } from '@/lib/dialCandidates';
+import { ACCEPTED_IN_FLIGHT_FORMULA, DEPOSIT_PENDING_FORMULA } from '@/lib/referralStage';
 import { selectDueFollowUps, operatorToday } from '@/lib/followUpQueue';
 import {
   isRancherOperationalForBuyers,
@@ -94,14 +95,14 @@ export async function GET(req: Request) {
         TABLES.CONSUMERS,
         `AND(NOT({Qualified At}=''),{Buyer Stage}='READY')`,
       ).catch(() => []),
-      getAllRecords(
-        TABLES.REFERRALS,
-        `{Status}='Awaiting Payment'`,
-      ).catch(() => []),
-      getAllRecords(
-        TABLES.REFERRALS,
-        `{Status}='Slot Locked'`,
-      ).catch(() => []),
+      // P1-1 (2026-08-18): these two queues used to be plain Status reads, and
+      // Status is OVERLOADED — send-final-invoice rewrites an accepted 'Slot
+      // Locked' row back to 'Awaiting Payment', so the accepted queue was
+      // PERMANENTLY EMPTY (0 of 1,806 rows) while its deals hid in the
+      // deposit queue. Both now key on the accept STAMP, which nothing but a
+      // refund clears, and the formulas are mutually exclusive.
+      getAllRecords(TABLES.REFERRALS, DEPOSIT_PENDING_FORMULA).catch(() => []),
+      getAllRecords(TABLES.REFERRALS, ACCEPTED_IN_FLIGHT_FORMULA).catch(() => []),
       getAllRecords(
         TABLES.REFERRALS,
         `AND({Status}='Closed Won',IS_AFTER({Closed At},'${todayIso}'))`,

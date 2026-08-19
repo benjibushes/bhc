@@ -35,6 +35,7 @@ import {
   computeProductMarginInRange,
 } from '@/lib/commissionStats';
 import { selectSlaEligible } from '@/lib/depositSla';
+import { isAcceptedInFlight } from '@/lib/referralStage';
 import { selectOwedAbandonedPayments } from '@/lib/owedDeposits';
 import {
   selectObligations,
@@ -479,8 +480,11 @@ export async function GET(request: Request) {
         state: String(r['Buyer State'] || ''),
         depositPaidAt: String(r['Deposit Paid At'] || ''),
       }));
+      // P1-1 (2026-08-18): filtering on Status here found NOTHING — the
+      // final-invoice write erases 'Slot Locked' seconds after the accept.
+      // The accept stamp is the durable truth (lib/referralStage).
       const nbaSlots = (referrals as any[])
-        .filter((r: any) => str(r['Status']) === 'Slot Locked')
+        .filter((r: any) => isAcceptedInFlight(r))
         .map((r: any) => ({
           id: String(r.id),
           buyerEmail: String(r['Buyer Email'] || '?'),

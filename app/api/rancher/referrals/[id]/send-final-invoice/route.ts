@@ -365,6 +365,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       'Total Sale Amount': totalSaleAmount,
       ...(processingFeeInput !== null ? { 'Processing Fee': processingFeeInput } : {}),
       ...(body.processingDate ? { 'Processing Date': body.processingDate } : {}),
+      // LOAD-BEARING — do not remove (data-layer audit P1-1, 2026-08-18).
+      //
+      // This write DOES overwrite 'Slot Locked' on an accepted deal, and a
+      // 2026-08-18 audit proposed dropping it for exactly that reason. Doing
+      // so would silently kill both final-balance recovery rails:
+      //   • app/api/cron/final-invoice-dunning selects `{Status} = "Awaiting
+      //     Payment"` in Airtable AND re-checks it in isDunningEligible;
+      //   • app/api/cron/awaiting-payment-nudge selects the same string.
+      // An unpaid final invoice would become permanently un-chaseable.
+      //
+      // Referral Status is simply OVERLOADED: 'Awaiting Payment' means "the
+      // deposit has not landed" before the accept and "the balance has not
+      // landed" after it. `Rancher Accepted At` — stamped by lib/deal and
+      // cleared only by a full refund — is the durable record of the accept,
+      // and every operator surface now reads THAT (lib/referralStage) instead
+      // of asking Status a question it cannot answer. Deliberately a raw
+      // updateRecord: routing it through lib/deal's transition() would hit the
+      // forward-only guard (SLOT_LOCKED -> DEPOSIT_PENDING is illegal) and
+      // drop the invoice fields with it.
       Status: 'Awaiting Payment',
     });
   } catch (e: any) {

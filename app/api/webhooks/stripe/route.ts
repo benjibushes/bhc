@@ -2001,18 +2001,7 @@ async function handleBrandPartnerSubscriptionUpdated(sub: any): Promise<void> {
     // Optional best-effort timestamp — field may not exist on schema yet.
     fields['Cancel At Period End'] = new Date(sub.cancel_at * 1000).toISOString();
   }
-  try {
-    await updateRecord(TABLES.BRANDS, brandRecordId, fields);
-  } catch (e: any) {
-    // Schema-drift tolerant: if Cancel At Period End / Active doesn't exist
-    // yet, retry without those optional fields so the core status/tier flip
-    // still lands.
-    console.warn(`[brand-sub-updated] full write failed, retrying core fields only: ${e?.message}`);
-    const core: Record<string, any> = {};
-    if (statusChanged) core['Subscription Status'] = newStatus;
-    if (tierChanged) core['Tier'] = newTierLabel;
-    await updateRecord(TABLES.BRANDS, brandRecordId, core);
-  }
+  await updateRecord(TABLES.BRANDS, brandRecordId, fields);
 
   // ── Operator alert per cause ──
   // F13 (Wave 1): recurring-revenue state change — operatorSignal so a
@@ -2109,15 +2098,7 @@ async function handleBrandPartnerSubscriptionDeleted(sub: any): Promise<void> {
     'Featured': false,
     'Cancelled At': new Date().toISOString(),
   };
-  try {
-    await updateRecord(TABLES.BRANDS, brandRecordId, fields);
-  } catch (e: any) {
-    // Schema-drift tolerant: retry without optional fields.
-    console.warn(`[brand-sub-deleted] full write failed, retrying core only: ${e?.message}`);
-    await updateRecord(TABLES.BRANDS, brandRecordId, {
-      'Subscription Status': 'canceled',
-    });
-  }
+  await updateRecord(TABLES.BRANDS, brandRecordId, fields);
 
   // ── Operator alert ──
   // F13 (Wave 1): terminal churn on a paying brand — loud + failover
@@ -2308,16 +2289,7 @@ async function handleFounderSubscriptionDeleted(sub: any): Promise<void> {
     'Subscription Status': 'canceled',
     'Founder Tier Cancelled At': new Date().toISOString(),
   };
-  try {
-    await updateRecord(TABLES.CONSUMERS, consumerId, fields);
-  } catch (e: any) {
-    // Schema-drift tolerant: if Founder Tier Cancelled At doesn't exist yet,
-    // retry with just the status flip.
-    console.warn(`[founder-sub-deleted] full write failed, retrying core only: ${e?.message}`);
-    await updateRecord(TABLES.CONSUMERS, consumerId, {
-      'Subscription Status': 'canceled',
-    });
-  }
+  await updateRecord(TABLES.CONSUMERS, consumerId, fields);
 
   // Telegram alert via existing helper.
   try {
@@ -2455,16 +2427,7 @@ async function handleFounderLifetimeRefundOrDispute(
     [stampField]: new Date().toISOString(),
     [reasonField]: reason.slice(0, 250),
   };
-  try {
-    await updateRecord(TABLES.CONSUMERS, consumerId, fields);
-  } catch (e: any) {
-    // Schema-drift tolerant: optional stamp/reason fields may not exist —
-    // retry with just the Founder Tier flip so the seat-release still lands.
-    console.warn(`[founder-lifetime-${kind}] full write failed, retrying tier flip only: ${e?.message}`);
-    await updateRecord(TABLES.CONSUMERS, consumerId, {
-      'Founder Tier': flipLabel,
-    });
-  }
+  await updateRecord(TABLES.CONSUMERS, consumerId, fields);
 
   // ── Decrement Redis counter so the tier seat is reclaimable ──
   // Only applies to numbered tiers (Founding 100 / Title Founder). The
