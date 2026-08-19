@@ -23,6 +23,11 @@
 
 import { useState } from 'react';
 import { track } from '@/lib/track';
+import {
+  reserveAddToCartEvent,
+  reserveInitiateCheckoutEvent,
+  referralIdFromCheckoutPath,
+} from '@/lib/reserveTracking';
 import { readStoredAttribution, hasAdAttribution } from '@/lib/adAttribution';
 import { BROKER_REFUND_POLICY_SHORT } from '@/lib/refundPolicy';
 import { TermsNotice } from '@/app/components/SmsConsentCheckbox';
@@ -67,10 +72,19 @@ export default function BrokerReserve({
   const steps = fulfillmentSteps.filter(Boolean);
 
   function pick(c: BrokerCutCard) {
-    track('AddToCart', {
-      content_name: ranchName, content_category: c.label,
-      ranchSlug: slug, value: c.priceCents / 100, currency: 'USD',
+    // AD-TRACKING TRUTH (2026-08-18): value = the DEPOSIT, the only money that
+    // ever reaches a card on this rail (money model 3 — the balance is paid to
+    // the ranch off-platform and no event ever confirms it). Same decision, and
+    // the same number, as the server-side fires in lib/brokerCapi; the old
+    // priceCents fire reported ~4-5x the real transaction and, on a
+    // weight-priced cut, reported the range FLOOR as if it were a fact.
+    const e = reserveAddToCartEvent({
+      ranchName,
+      ranchSlug: slug,
+      cutLabel: c.label,
+      dueNowDollars: c.depositCents / 100,
     });
+    track(e.name, e.params);
     setCut(c.cut);
     setError('');
   }
@@ -114,10 +128,21 @@ export default function BrokerReserve({
         return;
       }
       if (j?.redirect) {
-        track('InitiateCheckout', {
-          content_name: ranchName, ranchSlug: slug,
-          value: selected.priceCents / 100, currency: 'USD',
+        // DEDUP (2026-08-18): this fire carried NO event_id, so it could not
+        // dedup against the server InitiateCheckout lib/brokerCapi fires at
+        // settlement with event_id = metaEventId(referralId) — one buyer
+        // journey, two IC events. The broker endpoint returns only
+        // { redirect }, so the id is recovered from the path it hands back
+        // (fail-closed: an unrecognised path yields '' and we simply send no
+        // event_id rather than a fabricated one).
+        const ic = reserveInitiateCheckoutEvent({
+          ranchName,
+          ranchSlug: slug,
+          cutLabel: selected.label,
+          dueNowDollars: selected.depositCents / 100,
+          referralId: referralIdFromCheckoutPath(j.redirect),
         });
+        track(ic.name, ic.params);
         window.location.href = j.redirect; // → /checkout/[refId]/broker?cut=…
       } else {
         setError('Could not start your reservation — try again.');

@@ -8,6 +8,7 @@
 
 import { useEffect, useState } from 'react';
 import { track } from '@/lib/track';
+import { reserveAddToCartEvent, reserveInitiateCheckoutEvent } from '@/lib/reserveTracking';
 import { deriveDeposit } from '@/lib/pricing';
 import { REFUND_POLICY_SHORT } from '@/lib/refundPolicy';
 import { accessFallbackUrl } from '@/lib/accessFallbackUrl';
@@ -109,10 +110,20 @@ export default function DepositReserveForm({
   };
 
   function pick(c: Cut) {
-    track('AddToCart', {
-      content_name: ranchName, content_category: CUT_LABEL[c],
-      ranchSlug: slug, value: cd(c)?.price || 0, currency: 'USD',
+    // AD-TRACKING TRUTH (2026-08-18): the conversion value is depositOf(c) —
+    // the ALL-IN amount this buyer's card is charged (deposit + platform fee,
+    // lib/pricing depositDisplay.dueNowCents) — NOT `price`, the rancher's
+    // listed number. Under money model 1 the fee is added ON TOP of the price,
+    // so the old fire overstated every AddToCart by the ranch's commission
+    // rate (7-10%) and disagreed with the server InitiateCheckout, which
+    // reports totalChargedCents / 100. Shape lives in lib/reserveTracking.
+    const e = reserveAddToCartEvent({
+      ranchName,
+      ranchSlug: slug,
+      cutLabel: CUT_LABEL[c],
+      dueNowDollars: depositOf(c),
     });
+    track(e.name, e.params);
     setCut(c);
     setError('');
   }
@@ -203,10 +214,26 @@ export default function DepositReserveForm({
         setLoading(false);
         return;
       }
-      track('InitiateCheckout', {
-        content_name: ranchName, ranchSlug: slug,
-        value: cd(cut)?.price || 0, currency: 'USD',
+      // DEDUP (2026-08-18): this fire used to carry NO event_id, so it could
+      // not dedup against the referral-keyed server InitiateCheckouts (POST
+      // /api/checkout/deposit and lib/stripeSettlement both fire with
+      // event_id = metaEventId(referralId)) or the deposit page's own client
+      // fire. One buyer journey produced two InitiateCheckouts, roughly
+      // doubling the funnel step and making IC->Purchase meaningless.
+      //
+      // We keep firing here rather than deleting it: this is the EARLIEST and
+      // best-attributed IC on the rail (real browser, real cookies, moment of
+      // intent), and it survives a buyer who bounces before the deposit page
+      // paints. Meta keeps the first fire per (event_name, event_id) and drops
+      // the rest, so the same id turns a duplicate into a redundant safety net.
+      const ic = reserveInitiateCheckoutEvent({
+        ranchName,
+        ranchSlug: slug,
+        cutLabel: CUT_LABEL[cut],
+        dueNowDollars: depositOf(cut),
+        referralId: j.referralId,
       });
+      track(ic.name, ic.params);
       if (j.depositUrl) {
         window.location.href = j.depositUrl; // → /checkout/[refId]/deposit?cut=…
       } else {

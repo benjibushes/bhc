@@ -33,10 +33,12 @@ import {
   SEO_STATES,
   stateBySlug,
   typicalShareRanges,
+  resolveShareRanges,
   stateFaqs,
   waitlistLine,
   fmtRange,
   type SeoState,
+  type SupplyRancherRow,
 } from '@/lib/stateSeo';
 
 // Hourly ISR — counts drift slowly (ranchers go live weekly), and SSG keeps
@@ -67,9 +69,15 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const r = typicalShareRanges();
   const url = `${BASE_URL}/half-a-cow/${slug}`;
   const title = `Buy Half a Cow in ${name} — What It Costs & How It Works`;
+  // PRICE TRUTH (2026-08-18): this range is the NETWORK band, and it says so.
+  // generateMetadata is PURE by contract (no Airtable — the prerender-timeout
+  // build killer), so unlike the page body it cannot know what the ranches in
+  // THIS state charge; the old wording read as a claim about {name} and was
+  // ~60% high in Arizona. The page itself publishes the local truth.
   const description =
-    `Half a cow in ${name}: typical half-beef shares run ${fmtRange(r.half)} all-in (~$8–11/lb hanging weight vs $13–17/lb boxed delivery). ` +
-    `90-second quiz, a real local ranch, ${r.depositPercent}% refundable deposit.`;
+    `Half a cow in ${name}: half-beef shares run ${fmtRange(r.half)} all-in across our ranch network, ` +
+    `and every ranch sets its own price (vs $13–17/lb for boxed delivery). ` +
+    `90-second quiz, a real local ranch, refundable deposit.`;
 
   return {
     title,
@@ -88,6 +96,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 interface StateCounts {
   liveRanchers: number | null;
   waitlistCount: number | null;
+  /**
+   * The live ranchers' published prices — the SAME rows the count is taken
+   * from, so what the page charges for and what it says is live can never
+   * disagree. null = the read failed (unknown), which must fall back to the
+   * network band, never to "no supply".
+   */
+  rancherPriceRows: SupplyRancherRow[] | null;
 }
 
 async function fetchStateCounts(s: SeoState): Promise<StateCounts> {
@@ -99,6 +114,7 @@ async function fetchStateCounts(s: SeoState): Promise<StateCounts> {
   const stateMatch = `OR(UPPER({State}) = "${safeCode}", UPPER({State}) = "${safeName}")`;
 
   let liveRanchers: number | null = null;
+  let rancherPriceRows: SupplyRancherRow[] | null = null;
   try {
     const records = await withTimeout(
       base(TABLES.RANCHERS)
@@ -110,7 +126,17 @@ async function fetchStateCounts(s: SeoState): Promise<StateCounts> {
           // represented ranch stays invisible. The three surfaces must never
           // disagree — change the builder, never a local copy.
           filterByFormula: stateDiscoveryRanchersFormula(s.code, s.name),
-          fields: ['Slug'],
+          // PRICE TRUTH (2026-08-18): the price columns ride along on the read
+          // that already happens. `… Price Max` is set only on weight-priced
+          // (hanging-weight) cuts, where `… Price` is the range FLOOR — see
+          // lib/brokerRail. No extra Airtable round-trip, and no second
+          // visibility rule to drift from this one.
+          fields: [
+            'Slug',
+            'Quarter Price', 'Quarter Price Max',
+            'Half Price', 'Half Price Max',
+            'Whole Price', 'Whole Price Max',
+          ],
           maxRecords: 100,
         })
         .all(),
@@ -118,6 +144,7 @@ async function fetchStateCounts(s: SeoState): Promise<StateCounts> {
       `half-a-cow ranchers ${s.code}`,
     );
     liveRanchers = records.length;
+    rancherPriceRows = records.map((rec) => rec.fields as SupplyRancherRow);
   } catch (e) {
     // Soft-fail: page renders the no-counts fallback; ISR retries in an hour.
     console.error(`[half-a-cow/${s.slug}] rancher count fetch failed:`, e);
@@ -137,7 +164,7 @@ async function fetchStateCounts(s: SeoState): Promise<StateCounts> {
     console.error(`[half-a-cow/${s.slug}] waitlist count fetch failed:`, e);
   }
 
-  return { liveRanchers, waitlistCount };
+  return { liveRanchers, waitlistCount, rancherPriceRows };
 }
 
 // ── Page ───────────────────────────────────────────────────────────────────
@@ -149,9 +176,15 @@ const STEPS: { title: string; body: (name: string) => string }[] = [
       `Share size, timing, freezer space. That's it — it's how we match you instead of listing you.`,
   },
   {
+    // COPY TRUTH (2026-08-18): this step used to promise the matched ranch
+    // comes with photos. Photos are optional on a listing and the only live
+    // Arizona ranch has none, so the promise was flatly false for the buyer
+    // most likely to read it. Promise what every match actually delivers —
+    // a named operation you can talk to first. (The pin below greps the whole
+    // file for the old word, so do not reintroduce it even in a comment.)
     title: 'get matched with a local family ranch',
     body: (name) =>
-      `We route you to a real family operation serving ${name} — named, pictured, yours to talk to.`,
+      `We route you to a real family operation serving ${name} — named, and yours to talk to before you commit.`,
   },
   {
     title: 'reserve with a refundable deposit',
@@ -166,9 +199,16 @@ export default async function HalfACowStatePage({ params }: Props) {
   if (!resolved) notFound();
 
   const { name, code, slug } = resolved;
-  const { liveRanchers, waitlistCount } = await fetchStateCounts(resolved);
-  const r = typicalShareRanges();
-  const faqs = stateFaqs(name);
+  const { liveRanchers, waitlistCount, rancherPriceRows } = await fetchStateCounts(resolved);
+  // PRICE TRUTH (2026-08-18) — the fix this page existed to need. The published
+  // ranges now come from what the ranches live in THIS state actually charge;
+  // the network-typical band is the fallback for a state with no supply we can
+  // price from (and for an Airtable read that failed — unknown is not empty).
+  // /half-a-cow/arizona published $3,300–$3,850 for a half while its only live
+  // ranch sells one for $2,025–$2,363.
+  const shareRanges = resolveShareRanges(rancherPriceRows);
+  const r = shareRanges.ranges;
+  const faqs = stateFaqs(name, shareRanges);
 
   // "the {State} market" strip (farmers-market cross-wiring 2026-07-15):
   // up to 3 products a buyer in this state can actually get — nationwide
@@ -186,17 +226,22 @@ export default async function HalfACowStatePage({ params }: Props) {
   const waitlist = waitlistLine(name, waitlistCount);
   const accessHref = `/access?state=${code}`;
 
-  const priceRows = [
-    { k: 'whole beef, all-in (animal + processing)', v: fmtRange(r.whole) },
-    { k: 'half beef (~55% of a whole)', v: fmtRange(r.half) },
-    { k: 'quarter beef (~28% of a whole)', v: fmtRange(r.quarter) },
-    { k: 'your price per pound, hanging weight', v: '~$8–11/lb' },
-    { k: 'boxed-delivery services, comparable cuts', v: '$13–17/lb' },
+  // `typical` = this row is the NETWORK band, not this state's live supply. It
+  // is only surfaced when the rest of the table IS live supply — otherwise the
+  // intro copy already says the whole table is network-typical.
+  const priceRows: { k: string; v: string; typical: boolean }[] = [
+    { k: 'whole beef, all-in (animal + processing)', v: fmtRange(r.whole), typical: !shareRanges.fromSupply.whole },
+    { k: 'half beef (~55% of a whole)', v: fmtRange(r.half), typical: !shareRanges.fromSupply.half },
+    { k: 'quarter beef (~28% of a whole)', v: fmtRange(r.quarter), typical: !shareRanges.fromSupply.quarter },
+    // Both of these are network/market figures with no per-state source, so
+    // they are always flagged as such once the table is quoting live supply.
+    { k: 'your price per pound, hanging weight', v: '~$8–11/lb', typical: true },
+    { k: 'boxed-delivery services, comparable cuts', v: '$13–17/lb', typical: true },
     // No percent here (sweep fix 2026-08-13): under Model 1 the buyer's
     // actual card charge at deposit is the deposit PLUS the platform fee on
     // the full price (~2x the bare deposit percent), so a "25%" promise
     // understates the real charge. The deposit page shows the exact total.
-    { k: 'deposit to reserve', v: 'refundable until the rancher accepts' },
+    { k: 'deposit to reserve', v: 'refundable until the rancher accepts', typical: false },
   ];
 
   const breadcrumbJsonLd = {
@@ -298,9 +343,20 @@ export default async function HalfACowStatePage({ params }: Props) {
                   total, not a split). Say the true thing instead: the exact
                   total is shown before payment. */}
               <p className="text-saddle text-[15.5px] leading-relaxed">
-                every ranch sets its own price — these are the typical all-in ranges
-                across the network. the deposit page shows your exact total before
-                you pay — no surprise add-ons after that.
+                {shareRanges.hasSupplyPricing ? (
+                  <>
+                    these are the all-in prices published by the{' '}
+                    {liveRanchers === 1 ? 'ranch' : 'ranches'} currently live in {name} — not a
+                    national average. the deposit page shows your exact total before you pay —
+                    no surprise add-ons after that.
+                  </>
+                ) : (
+                  <>
+                    every ranch sets its own price — these are the typical all-in ranges
+                    across the network. the deposit page shows your exact total before
+                    you pay — no surprise add-ons after that.
+                  </>
+                )}
               </p>
             </div>
             <div className="border border-dust bg-bone-warm">
@@ -309,7 +365,12 @@ export default async function HalfACowStatePage({ params }: Props) {
                   key={row.k}
                   className="flex justify-between gap-4 items-baseline px-5 py-3.5 border-b border-dust last:border-b-0"
                 >
-                  <span className="text-[14.5px] text-saddle">{row.k}</span>
+                  <span className="text-[14.5px] text-saddle">
+                    {row.k}
+                    {shareRanges.hasSupplyPricing && row.typical ? (
+                      <span className="ml-2 text-[12px] text-muted">(network typical)</span>
+                    ) : null}
+                  </span>
                   <span className="font-serif text-lg text-charcoal whitespace-nowrap">{row.v}</span>
                 </div>
               ))}

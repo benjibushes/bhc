@@ -13,7 +13,7 @@
 // slug space ('/access/tx').
 
 import { US_STATES, type StateCode } from './states';
-import { deriveLadder, DEPOSIT_PCT } from './pricing';
+import { deriveLadder, DEPOSIT_PCT, MIN_TIER_PRICE } from './pricing';
 
 export interface SeoState {
   slug: string; // 'texas', 'new-york' — lowercase full name, hyphenated
@@ -86,9 +86,116 @@ export function fmtUsd(n: number): string {
   return `$${Math.round(n).toLocaleString('en-US')}`;
 }
 
-/** '$1,100–$1,950' for a tier range. */
+/**
+ * '$1,100–$1,950' for a tier range. A market with ONE price collapses to that
+ * single figure — once these ranges are derived from live supply (below), a
+ * state with a single ranch would otherwise publish the absurd '$2,600–$2,600'.
+ * Compared after rounding, because that is what the reader sees.
+ */
 export function fmtRange(r: TierRange): string {
-  return `${fmtUsd(r.low)}–${fmtUsd(r.high)}`;
+  const low = fmtUsd(r.low);
+  const high = fmtUsd(r.high);
+  return low === high ? low : `${low}–${high}`;
+}
+
+// ── Live-supply pricing (2026-08-18) ───────────────────────────────────────
+// THE BUG: /half-a-cow/arizona published half beef at $3,300–$3,850 while the
+// only live Arizona supply sells a half at $2,025–$2,363. The band above is a
+// NETWORK ASSUMPTION (a whole-cow guess run through the ladder), not a
+// measurement, so every state page anchored its buyers against a number no
+// ranch on the page charges — in Arizona's case ~60% high.
+//
+// The band is now the FALLBACK. When a state has live ranchers we can price
+// from, the page publishes what those ranchers actually charge, and the caller
+// can tell (per tier) which of the two it is holding.
+
+export type ShareTier = 'whole' | 'half' | 'quarter';
+
+/** The Airtable price columns, per tier. `Max` is set only on weight-priced
+ *  (hanging-weight) cuts, where `Price` is the range FLOOR — see lib/brokerRail. */
+const TIER_PRICE_FIELDS: Record<ShareTier, { price: string; max: string }> = {
+  whole: { price: 'Whole Price', max: 'Whole Price Max' },
+  half: { price: 'Half Price', max: 'Half Price Max' },
+  quarter: { price: 'Quarter Price', max: 'Quarter Price Max' },
+};
+
+/** A live Ranchers row, projected to the price columns. */
+export type SupplyRancherRow = Record<string, unknown>;
+
+export interface ResolvedShareRanges {
+  /** What to publish. Supply-derived per tier where possible, network band elsewhere. */
+  ranges: ShareRanges;
+  /** Per tier: did this range come from ranchers who are actually live in the state? */
+  fromSupply: Record<ShareTier, boolean>;
+  /** True when ANY tier is real live supply — i.e. the page is quoting the market. */
+  hasSupplyPricing: boolean;
+}
+
+/**
+ * A published share price, or null. Rejects the per-lb mis-entry class of bug
+ * (DD Ranch's $7.40 "whole cow") with the platform's own floor, so a typo can
+ * never become the headline price on a state landing page.
+ */
+function usablePrice(v: unknown): number | null {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < MIN_TIER_PRICE) return null;
+  return n;
+}
+
+/**
+ * Per-tier price ranges across the live ranchers in one state. Only tiers some
+ * ranch actually sells appear. Weight-priced cuts contribute floor→max; every
+ * other cut contributes its exact price on both ends.
+ */
+export function supplyShareRanges(
+  rows: SupplyRancherRow[] | null | undefined,
+): Partial<Record<ShareTier, TierRange>> {
+  const out: Partial<Record<ShareTier, TierRange>> = {};
+  if (!Array.isArray(rows) || rows.length === 0) return out;
+  for (const tier of Object.keys(TIER_PRICE_FIELDS) as ShareTier[]) {
+    const fields = TIER_PRICE_FIELDS[tier];
+    let low = Infinity;
+    let high = -Infinity;
+    for (const row of rows) {
+      const price = usablePrice(row?.[fields.price]);
+      if (price === null) continue;
+      // Max counts only when it is a real ceiling ABOVE the floor — the same
+      // rule lib/brokerRail applies before calling a cut weight-priced.
+      const max = usablePrice(row?.[fields.max]);
+      const ceiling = max !== null && max > price ? max : price;
+      if (price < low) low = price;
+      if (ceiling > high) high = ceiling;
+    }
+    if (low !== Infinity) out[tier] = { low, high };
+  }
+  return out;
+}
+
+/**
+ * What a state page should publish. `rows` is the live-rancher set for that
+ * state, or null when Airtable could not answer — and null must fall back, not
+ * invent: an unknown market is not an empty one.
+ */
+export function resolveShareRanges(
+  rows: SupplyRancherRow[] | null | undefined,
+): ResolvedShareRanges {
+  const network = typicalShareRanges();
+  const supply = supplyShareRanges(rows);
+  const fromSupply: Record<ShareTier, boolean> = {
+    whole: Boolean(supply.whole),
+    half: Boolean(supply.half),
+    quarter: Boolean(supply.quarter),
+  };
+  return {
+    ranges: {
+      whole: supply.whole ?? network.whole,
+      half: supply.half ?? network.half,
+      quarter: supply.quarter ?? network.quarter,
+      depositPercent: network.depositPercent,
+    },
+    fromSupply,
+    hasSupplyPricing: fromSupply.whole || fromSupply.half || fromSupply.quarter,
+  };
 }
 
 // ── Social-proof copy (honest; null when there is nothing true to say) ─────
@@ -119,13 +226,27 @@ export interface FaqItem {
  * and the FAQPage JSON-LD so rich results can never diverge from what the
  * page actually says.
  */
-export function stateFaqs(stateName: string): FaqItem[] {
-  const r = typicalShareRanges();
+export function stateFaqs(stateName: string, resolved?: ResolvedShareRanges): FaqItem[] {
+  // Default = the network band, i.e. exactly the old behaviour for any caller
+  // that has no live-supply read to hand.
+  const res = resolved ?? resolveShareRanges(null);
+  const r = res.ranges;
+  // The visible FAQ and the FAQPage JSON-LD share this source, so a state with
+  // live supply must not be able to publish the network band as rich-result
+  // structured data about that state.
+  // NOTE the per-lb figure: '$8–$11/lb hanging weight' is derived from the same
+  // network whole-cow assumption as the fallback band, so it is only asserted
+  // when the band itself is what we are quoting. A state priced off real supply
+  // gets the mechanism (hanging weight sets the exact figure) without a made-up
+  // rate — the live Arizona half works out nowhere near $8–$11/lb.
+  const halfSentence = res.fromSupply.half
+    ? `At the ranches serving ${stateName} today, a half-beef share runs ${fmtRange(r.half)} all-in (animal + processing) — the exact figure depends on the ranch and the animal's hanging weight.`
+    : `A typical half-beef share runs ${fmtRange(r.half)} all-in (animal + processing), depending on the ranch and final weight — about $8–$11 per pound of hanging weight.`;
   return [
     {
       q: `How much does half a cow cost in ${stateName}?`,
       a:
-        `A typical half-beef share runs ${fmtRange(r.half)} all-in (animal + processing), depending on the ranch and final weight — about $8–$11 per pound of hanging weight. Boxed-delivery services work out to roughly $13–$17 per pound for comparable cuts. A quarter share typically runs ${fmtRange(r.quarter)}, a whole ${fmtRange(r.whole)}.`,
+        `${halfSentence} Boxed-delivery services work out to roughly $13–$17 per pound for comparable cuts. A quarter share runs ${fmtRange(r.quarter)}, a whole ${fmtRange(r.whole)}.`,
     },
     {
       q: 'How much freezer space do I need?',
