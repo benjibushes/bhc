@@ -37,9 +37,64 @@ export const DEFAULT_REPING_COOLDOWN_HOURS = 20;
 // slaHours + 3×cooldown = 64h — the 4th ping (~64h) can never fire.
 export const DEFAULT_MAX_RANCHER_PINGS = 3;
 // After this many hours unaccepted, the machine stops emailing the rancher
-// and hands the deal to a human: ONE loud operator escalation per referral
-// (cron-side claimOnce + sendOperatorSignal dedupe).
+// and hands the deal to a human.
 export const ESCALATION_AFTER_HOURS = 72;
+
+// ── RE-ESCALATION (fulfillment audit P0-2, 2026-08-18) ─────────────────────
+// The escalation used to be ONE-SHOT FOREVER: the cron took a claimOnce with a
+// 365-day TTL (plus a 7-day sendOperatorSignal dedupe window), so after the
+// single 72h alert the machine was permanently mute on that row. Combined with
+// the re-ping window closing at ~64h (repingWindowHours above), a paid deposit
+// whose ranch simply never answered got exactly ONE human-facing mention in
+// its entire life, and then silence — with the buyer's money still collected.
+//
+// Now it re-surfaces on a cooldown, mirroring lib/pipelineSla's
+// RE_ESCALATE_COOLDOWN_DAYS: a row escalated inside the window is left alone
+// (the human list has it); past the window the money is STILL collected and
+// the slot STILL unaccepted, so it escalates again — until it is accepted,
+// refunded, or closed. Tighter than pipelineSla's 14d because this cohort has
+// already taken the customer's money.
+export const RE_ESCALATE_COOLDOWN_DAYS = 3;
+
+/**
+ * TTL (seconds) for the cron's Redis escalation claim. The claim IS the
+ * durable "last escalated at" for this rail — Referrals has no free field for
+ * a deposit-escalation stamp — so its TTL must equal the cooldown exactly,
+ * or the cadence silently becomes whichever of the two is longer.
+ */
+export function escalationClaimTtlSec(
+  cooldownDays: number = RE_ESCALATE_COOLDOWN_DAYS,
+): number {
+  return Math.round(cooldownDays * 24 * 60 * 60);
+}
+
+/**
+ * Dedupe window for the escalation's operator signal. Deliberately SHORTER
+ * than the cooldown: the claim is the throttle, and a signal dedupe window
+ * that outlived it would swallow every re-escalation after the first (the
+ * exact bug this fixes — the old window was 7d against a 365d claim).
+ */
+export function escalationDedupeWindowMs(
+  cooldownDays: number = RE_ESCALATE_COOLDOWN_DAYS,
+): number {
+  return Math.max(1, Math.round(cooldownDays * 24 * 60 * 60 * 1000 - 3_600_000));
+}
+
+/**
+ * Is a re-escalation due for a row we last escalated at `lastEscalatedAt`?
+ *
+ * `null`/blank/unparseable ⇒ never escalated ⇒ due (fail OPEN: an unreadable
+ * timestamp on collected money must surface, not vanish).
+ */
+export function isReEscalationDue(
+  lastEscalatedAt: unknown,
+  now: number,
+  cooldownDays: number = RE_ESCALATE_COOLDOWN_DAYS,
+): boolean {
+  const t = toMs(lastEscalatedAt);
+  if (!t) return true;
+  return now - t >= cooldownDays * 24 * 60 * 60 * 1000;
+}
 
 /**
  * Hours after Deposit Paid At beyond which NO further rancher re-ping fires.
@@ -233,10 +288,15 @@ export interface EscalationOptions {
 /**
  * Past ESCALATION_AFTER_HOURS unaccepted, the machine stops emailing the
  * rancher and a HUMAN takes over: this predicate says "this referral needs the
- * one loud operator escalation". Same hard exclusions as the re-ping (terminal
- * status, refunded/disputed, accepted) — the cron dedupes the actual send per
- * referral (claimOnce + sendOperatorSignal dedupeKey), so this returning true
- * on every run after 72h is safe by design.
+ * loud operator escalation". Same hard exclusions as the re-ping (terminal
+ * status, refunded/disputed, accepted) — the cron throttles the actual send
+ * per referral (claimOnce at escalationClaimTtlSec + sendOperatorSignal
+ * dedupeKey), so this returning true on every run after 72h is safe by design.
+ *
+ * P0-2 (2026-08-18): that throttle is now a COOLDOWN, not a life sentence —
+ * see RE_ESCALATE_COOLDOWN_DAYS. The predicate itself is unchanged: it says
+ * "this deal is past 72h and still unresolved", which stays true every run
+ * until someone accepts, refunds or closes it.
  *
  * BROKER ROWS ARE DELIBERATELY NOT EXCLUDED (2026-08-17). They are excluded
  * from the re-ping (isSlaEligible) because that rail's copy is Connect-only,
@@ -245,7 +305,8 @@ export interface EscalationOptions {
  * Accept, no thread, no payout event — so a one-shot "did the ranch make
  * contact?" prompt to a human is the only backstop that exists, and dropping it
  * would leave broker sales with no safety net at all. It is operator-facing,
- * fires once per referral ever, and the cron renders broker-correct copy for it
+ * repeats only on the RE_ESCALATE_COOLDOWN_DAYS cadence, and the cron renders
+ * broker-correct copy for it
  * (the buyer and the ranch are never emailed by this path).
  */
 export function isEscalationDue(ref: SlaReferralLike, opts: EscalationOptions = {}): boolean {

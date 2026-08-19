@@ -19,7 +19,16 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { selectFulfillmentChase, DEFAULT_FALLBACK_DAYS } from './fulfillmentChase';
+import {
+  selectFulfillmentChase,
+  selectExhaustedChases,
+  exhaustionClaimTtlSec,
+  DEFAULT_FALLBACK_DAYS,
+  MAX_LIFETIME_CHASES,
+  EXHAUSTION_GRACE_DAYS,
+  FULFILLMENT_ESCALATED_AT_FIELD,
+  FULFILLMENT_RE_ESCALATE_COOLDOWN_DAYS,
+} from './fulfillmentChase';
 
 // Frozen "now" for every test.
 const NOW = '2026-07-01T12:00:00.000Z';
@@ -678,4 +687,124 @@ test('PIN fulfillment-chase route: broker-pickup goes to the BUYER, never the ra
   // old `kind !== 'confirm' || tier === 1 || tier === 2` shape would have
   // emailed an off-platform ranch a dashboard CTA.
   assert.match(src, /kind !== 'broker-pickup' && \(kind !== 'confirm' \|\| tier === 1 \|\| tier === 2\)/);
+});
+
+// ── P0-3 (2026-08-18): the ladder now EXHAUSTS instead of going silent ───────
+//
+// THE BUG THESE PIN: MAX_LIFETIME_CHASES was a cliff. Once `Fulfillment Chase
+// Count` hit 3 the selector skipped the row for the rest of time — no terminal
+// stamp, no escalation, no surface inheriting it — while the buyer's
+// non-refundable money sat with delivery unproven. selectExhaustedChases is
+// what picks those rows up, and it keeps picking them up on a cooldown.
+
+const DAY_ISO = (d: number) => new Date(Date.parse(NOW) - d * 24 * 60 * 60 * 1000).toISOString();
+
+/** A referral whose ladder is spent: 3 chases, last one 5 days ago. */
+function spent(overrides: Record<string, any> = {}): Record<string, any> {
+  return {
+    id: 'recSpent',
+    'Deposit Paid At': DAY_ISO(40),
+    'Rancher Accepted At': DAY_ISO(39),
+    'Fulfillment Chase Count': MAX_LIFETIME_CHASES,
+    'Fulfillment Chase Last Sent At': DAY_ISO(5),
+    Status: 'Slot Locked',
+    ...overrides,
+  };
+}
+
+function exhausted(refs: Record<string, any>[], opts: Record<string, any> = {}) {
+  return selectExhaustedChases(refs, { nowISO: NOW, ...opts });
+}
+
+test('exhaustion: empty input → empty output', () => {
+  assert.deepEqual(exhausted([]), []);
+});
+
+test('exhaustion: the OLD cliff row is now selected, with its silence measured', () => {
+  // Proof of the cliff itself: the chase selector will never look at it again.
+  assert.deepEqual(selectFulfillmentChase([spent()], { nowISO: NOW }), []);
+  const out = exhausted([spent()]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].referralId, 'recSpent');
+  assert.equal(out[0].rail, 'connect');
+  assert.equal(out[0].daysSinceLastChase, 5);
+  assert.equal(out[0].previouslyEscalatedAt, null);
+});
+
+test('exhaustion: a ladder with rungs left is NOT exhausted', () => {
+  assert.deepEqual(exhausted([spent({ 'Fulfillment Chase Count': MAX_LIFETIME_CHASES - 1 })]), []);
+});
+
+test('exhaustion: confirmed / closed / refunded rows are never escalated', () => {
+  assert.deepEqual(exhausted([spent({ 'Fulfillment Confirmed At': DAY_ISO(1) })]), []);
+  assert.deepEqual(exhausted([spent({ 'Fulfillment Status': 'fulfilled' })]), []);
+  assert.deepEqual(exhausted([spent({ Status: 'Closed Won' })]), []);
+  assert.deepEqual(exhausted([spent({ Status: 'Closed Lost' })]), []);
+  assert.deepEqual(exhausted([spent({ Status: 'Refunded' })]), []);
+});
+
+test('exhaustion: a row with no deposit is not an obligation to escalate', () => {
+  assert.deepEqual(exhausted([spent({ 'Deposit Paid At': '' })]), []);
+});
+
+test('exhaustion: waits out the grace window so it cannot double up on tier 3', () => {
+  // The third chase went out today — the tier-3 operator signal just landed.
+  assert.deepEqual(exhausted([spent({ 'Fulfillment Chase Last Sent At': DAY_ISO(0) })]), []);
+  assert.deepEqual(
+    exhausted([spent({ 'Fulfillment Chase Last Sent At': DAY_ISO(EXHAUSTION_GRACE_DAYS - 1) })]),
+    [],
+  );
+  assert.equal(
+    exhausted([spent({ 'Fulfillment Chase Last Sent At': DAY_ISO(EXHAUSTION_GRACE_DAYS) })]).length,
+    1,
+  );
+});
+
+test('exhaustion: re-escalates on the SECOND window and not before', () => {
+  const justEscalated = spent({
+    [FULFILLMENT_ESCALATED_AT_FIELD]: DAY_ISO(FULFILLMENT_RE_ESCALATE_COOLDOWN_DAYS - 1),
+  });
+  assert.deepEqual(exhausted([justEscalated]), []);
+
+  const windowClosed = spent({
+    id: 'recAgain',
+    [FULFILLMENT_ESCALATED_AT_FIELD]: DAY_ISO(FULFILLMENT_RE_ESCALATE_COOLDOWN_DAYS),
+    'Fulfillment Chase Last Sent At': DAY_ISO(30),
+  });
+  const out = exhausted([windowClosed]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].referralId, 'recAgain');
+  assert.ok(out[0].previouslyEscalatedAt);
+});
+
+test('exhaustion: the cooldown is configurable', () => {
+  const row = spent({ [FULFILLMENT_ESCALATED_AT_FIELD]: DAY_ISO(10) });
+  assert.deepEqual(exhausted([row], { reEscalateCooldownDays: 14 }), []);
+  assert.equal(exhausted([row], { reEscalateCooldownDays: 7 }).length, 1);
+});
+
+test('exhaustion: broker rows carry their own rail so the copy can differ', () => {
+  const out = exhausted([spent({ 'Match Type': 'Broker — Deposit', 'Rancher Accepted At': '' })]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].rail, 'broker');
+});
+
+test('exhaustion: longest silence first, id tiebreak (stable across runs)', () => {
+  const out = exhausted([
+    spent({ id: 'recB', 'Fulfillment Chase Last Sent At': DAY_ISO(9) }),
+    spent({ id: 'recA', 'Fulfillment Chase Last Sent At': DAY_ISO(9) }),
+    spent({ id: 'recOldest', 'Fulfillment Chase Last Sent At': DAY_ISO(40) }),
+  ]);
+  assert.deepEqual(
+    out.map((r) => r.referralId),
+    ['recOldest', 'recA', 'recB'],
+  );
+});
+
+test('exhaustion: the claim TTL equals the cooldown (Redis is the stamp until Ben adds the field)', () => {
+  assert.equal(
+    exhaustionClaimTtlSec(),
+    FULFILLMENT_RE_ESCALATE_COOLDOWN_DAYS * 24 * 60 * 60,
+  );
+  assert.equal(exhaustionClaimTtlSec(3), 3 * 24 * 60 * 60);
 });

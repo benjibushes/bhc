@@ -15,7 +15,13 @@
 // re-pings each stuck deposit at most ~once/day — and at most 3 times TOTAL
 // (email-hygiene 2026-08-02: the re-ping window closes at slaHours + 3×cooldown,
 // derived purely from Deposit Paid At; after 72h the rancher goes quiet and a
-// one-shot loud operator escalation takes over — see the escalation pass below).
+// loud operator escalation takes over — see the escalation pass below).
+//
+// P0-2 (fulfillment audit, 2026-08-18): that escalation is no longer ONE-SHOT
+// FOREVER. It re-fires every RE_ESCALATE_COOLDOWN_DAYS while the deposit stays
+// unaccepted, and the same rows sit permanently in the cockpit's OBLIGATIONS
+// band (/admin/today) — a paid deposit with a silent ranch can no longer fall
+// out of every surface the system has.
 //
 // Mirrors awaiting-payment-nudge: CRON_SECRET auth wrapper + withCronRun +
 // maintenance gate + throttle-stamp-BEFORE-side-effect ordering.
@@ -70,8 +76,11 @@ import {
   selectEscalationDue,
   isBrokerRailReferral,
   hoursSinceDeposit,
+  escalationClaimTtlSec,
+  escalationDedupeWindowMs,
   DEFAULT_SLA_HOURS,
   ESCALATION_AFTER_HOURS,
+  RE_ESCALATE_COOLDOWN_DAYS,
 } from '@/lib/depositSla';
 
 export const maxDuration = 60;
@@ -89,11 +98,19 @@ const BUYER_DELAY_HOURS = 24;
 const BUYER_DELAY_CLAIM_TTL_SEC = 365 * 24 * 60 * 60;
 // Email-hygiene 2026-08-02: past 72h the rancher re-ping rail is DONE (the
 // selector's time-derived cap already stopped emailing them at ~3 pings) and
-// a human takes over — ONE loud operator escalation per referral, ever.
-// Same one-shot pattern as the buyer delay notice: Redis claimOnce keyed on
-// the referral (no free Referrals field), claim taken BEFORE the send, with
-// sendOperatorSignal's own dedupeKey as the belt.
-const ESCALATION_CLAIM_TTL_SEC = 365 * 24 * 60 * 60;
+// a human takes over — a loud operator escalation per referral.
+//
+// P0-2 (fulfillment audit, 2026-08-18): that claim used to carry a 365-DAY
+// TTL, which made the escalation fire EXACTLY ONCE, ever. Paired with the
+// re-ping window closing at ~64h, a paid deposit whose ranch never answered
+// got one human-facing mention in its whole life and then permanent silence —
+// with the buyer's money still collected and the slot still unaccepted. The
+// claim is now the RE-ESCALATION COOLDOWN (lib/depositSla), so the row
+// re-surfaces every RE_ESCALATE_COOLDOWN_DAYS until it is accepted, refunded
+// or closed. The Redis claim IS the durable "last escalated at" for this rail
+// (Referrals has no free field for the stamp), which is why its TTL and the
+// operator-signal dedupe window are derived from the same constant — a dedupe
+// window longer than the claim would silently restore the one-shot bug.
 const MAX_ESCALATIONS_PER_RUN = 10;
 
 async function realHandler(
@@ -276,17 +293,20 @@ async function realHandler(
     }
   }
 
-  // ── 72h+: ONE loud operator escalation per referral (email-hygiene) ────────
+  // ── 72h+: loud operator escalation, on a cooldown (P0-2) ──────────────────
   // The rancher heard from us ~3 times and never tapped Accept — more email is
-  // noise. Hand the deal to a human, loudly, exactly once. claimOnce fires
+  // noise. Hand the deal to a human, loudly, and KEEP handing it to them every
+  // RE_ESCALATE_COOLDOWN_DAYS until someone resolves it. claimOnce fires
   // BEFORE the send so a crashed run costs one escalation, never a repeat;
   // sendOperatorSignal's dedupeKey backstops the local-dev no-Redis case.
+  // The same rows are also visible, continuously, in the cockpit's
+  // OBLIGATIONS band (/admin/today) — this alert is the push, that is the pull.
   let escalationsSent = 0;
   const escalationDue = selectEscalationDue(candidates, { now });
   for (const ref of escalationDue.slice(0, MAX_ESCALATIONS_PER_RUN)) {
     const refId = ref.id;
     try {
-      const won = await claimOnce(`deposit-sla-escalation:${refId}`, ESCALATION_CLAIM_TTL_SEC);
+      const won = await claimOnce(`deposit-sla-escalation:${refId}`, escalationClaimTtlSec());
       if (!won) continue;
       const hrs = hoursSinceDeposit(ref, now);
       // Rancher name for the card, from the enrichment read above. Null (an
@@ -311,13 +331,14 @@ async function realHandler(
           ? `${buyerLabel} paid a deposit ${hrs}h ago on the represented-seller rail with ${rancherLabel}. ` +
             `Nothing in the system can tell us whether that ranch has the order or has called the buyer — ` +
             `this rail has no dashboard and no accept step. Check the ranch has the fulfillment sheet, ` +
-            `then call them. This alert fires once.`
+            `then call them. This repeats every ${RE_ESCALATE_COOLDOWN_DAYS}d until the deal is closed or refunded.`
           : `${buyerLabel} paid a deposit ${hrs}h ago and ${rancherLabel} ` +
             `still hasn't tapped Accept Slot. The rancher has had 3 email pings — automated chasing is DONE ` +
-            `for this deal. Call ${rancherLabel}, re-route the buyer, or refund. This alert fires once.`,
+            `for this deal. Call ${rancherLabel}, re-route the buyer, or refund. This repeats every ` +
+            `${RE_ESCALATE_COOLDOWN_DAYS}d until the deal is accepted, closed or refunded.`,
         refs: [{ type: 'referral', id: String(refId) }],
         dedupeKey: `deposit-sla-escalation:${refId}`,
-        dedupeWindowMs: 7 * 24 * 60 * 60 * 1000,
+        dedupeWindowMs: escalationDedupeWindowMs(),
       });
       escalationsSent++;
     } catch (e: any) {
@@ -328,7 +349,7 @@ async function realHandler(
   return {
     status: errors.length ? 'partial' : 'success',
     recordsTouched: pinged + buyersTold + escalationsSent,
-    notes: `candidates=${candidates.length} eligible=${eligible.length} pinged=${pinged} buyersTold=${buyersTold} escalated=${escalationsSent}/${escalationDue.length} slaHrs=${slaHours} buyerDelayHrs=${BUYER_DELAY_HOURS} escHrs=${ESCALATION_AFTER_HOURS} errs=${errors.length}${errors.length ? ' err1=' + errors[0].slice(0, 80) : ''}`,
+    notes: `candidates=${candidates.length} eligible=${eligible.length} pinged=${pinged} buyersTold=${buyersTold} escalated=${escalationsSent}/${escalationDue.length} slaHrs=${slaHours} buyerDelayHrs=${BUYER_DELAY_HOURS} escHrs=${ESCALATION_AFTER_HOURS} reEscDays=${RE_ESCALATE_COOLDOWN_DAYS} errs=${errors.length}${errors.length ? ' err1=' + errors[0].slice(0, 80) : ''}`,
   };
 }
 

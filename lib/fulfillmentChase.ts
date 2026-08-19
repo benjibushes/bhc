@@ -94,6 +94,44 @@ export const CHASE_AIRTABLE_FIELDS_NEEDED: readonly string[] = [
   'Fulfillment Chase Count (number, integer)',
 ] as const;
 
+// ── LADDER EXHAUSTION (fulfillment audit P0-3, 2026-08-18) ─────────────────
+// The 3-lifetime cap below used to be a CLIFF: once `Fulfillment Chase Count`
+// hit MAX_LIFETIME_CHASES the selector skipped the row forever — no terminal
+// stamp, no escalation, no surface inheriting it. A buyer's non-refundable
+// money could sit with delivery unproven and the machine simply stopped
+// talking about it. Now exhaustion is a STATE, not a silence: the cron stamps
+// this field, raises one loud operator signal, and re-raises it every
+// FULFILLMENT_RE_ESCALATE_COOLDOWN_DAYS until the row is confirmed or closed.
+//
+// NEW FIELD — verified absent from the live Referrals schema on 2026-08-18.
+// Ben must add it (dateTime). Until he does, nothing breaks: lib/airtable's
+// updateRecord strips unknown fields, the Redis claim below supplies the exact
+// same cadence, and the obligations band derives the pin from
+// `Fulfillment Chase Count` instead (lib/obligations::isChaseExhausted). The
+// field buys durability across a Redis flush, and a stamp Ben can see in the
+// base.
+export const FULFILLMENT_ESCALATED_AT_FIELD = 'Fulfillment Escalated At';
+
+export const FULFILLMENT_ESCALATION_AIRTABLE_FIELDS_NEEDED: readonly string[] = [
+  'Fulfillment Escalated At (date with time)',
+] as const;
+
+/**
+ * How long an exhausted row stays quiet before it re-surfaces. Mirrors
+ * lib/pipelineSla's RE_ESCALATE_COOLDOWN_DAYS pattern (a stamped row inside
+ * the window is never re-escalated; past it the situation is STILL wrong, so
+ * it escalates again) — tighter than pipelineSla's 14d because this cohort has
+ * the customer's money and no proof of delivery.
+ */
+export const FULFILLMENT_RE_ESCALATE_COOLDOWN_DAYS = 7;
+
+/**
+ * Days of silence after the LAST ladder touch before exhaustion escalates.
+ * Without this the escalation would fire the same day the third chase went
+ * out, stepping on the tier-3 operator signal that just landed.
+ */
+export const EXHAUSTION_GRACE_DAYS = 2;
+
 // Tier thresholds in whole days past the due date.
 export const TIER_1_DAYS = 2;
 export const TIER_2_DAYS = 5;
@@ -343,6 +381,105 @@ function selectBrokerPickup(
   if (tier === null || tier <= count) return null;
 
   return { referralId: String(ref.id), kind: 'broker-pickup', tier, daysPastDue };
+}
+
+// ---------------------------------------------------------------------------
+// P0-3 (2026-08-18) — LADDER EXHAUSTION: the terminal state the cap never had
+// ---------------------------------------------------------------------------
+
+export interface ExhaustedChase {
+  referralId: string;
+  /** Which rail's copy the escalation should carry. */
+  rail: 'connect' | 'broker';
+  /** Whole days since the last chase touch (the length of the silence). */
+  daysSinceLastChase: number;
+  /** Previous `Fulfillment Escalated At`, or null on the first escalation. */
+  previouslyEscalatedAt: string | null;
+}
+
+/**
+ * Referrals whose chase ladder is SPENT and whose delivery is still unproven.
+ *
+ * The old cliff: `Fulfillment Chase Count >= MAX_LIFETIME_CHASES` made
+ * selectFulfillmentChase skip the row for the rest of time, with nothing
+ * stamped and nobody told. This selector is what inherits those rows.
+ *
+ * Due when ALL hold:
+ *   1. money landed (`Deposit Paid At`);
+ *   2. the ladder is spent (Count ≥ MAX_LIFETIME_CHASES);
+ *   3. delivery is unproven (neither fulfillment shape says confirmed);
+ *   4. the deal is still open (not closed won/lost, not refunded);
+ *   5. the last touch was ≥ EXHAUSTION_GRACE_DAYS ago, so this never doubles
+ *      up on the tier-3 signal that just fired;
+ *   6. it has not been escalated inside FULFILLMENT_RE_ESCALATE_COOLDOWN_DAYS.
+ *
+ * PURE. Oldest silence first, id tiebreak, so a per-run cap always reaches the
+ * worst case and the order is stable between runs.
+ */
+export function selectExhaustedChases(
+  referrals: Array<Record<string, any>>,
+  opts: { nowISO: string; reEscalateCooldownDays?: number; graceDays?: number },
+): ExhaustedChase[] {
+  const now = parseMs(opts.nowISO);
+  if (now === null) return [];
+  const cooldownDays =
+    typeof opts.reEscalateCooldownDays === 'number' && opts.reEscalateCooldownDays >= 0
+      ? opts.reEscalateCooldownDays
+      : FULFILLMENT_RE_ESCALATE_COOLDOWN_DAYS;
+  const graceDays =
+    typeof opts.graceDays === 'number' && opts.graceDays >= 0 ? opts.graceDays : EXHAUSTION_GRACE_DAYS;
+
+  const out: ExhaustedChase[] = [];
+
+  for (const ref of referrals || []) {
+    if (!ref || !ref.id) continue;
+    if (!ref['Deposit Paid At']) continue;
+
+    const count = Number(ref[CHASE_FIELDS.count]) || 0;
+    if (count < MAX_LIFETIME_CHASES) continue; // ladder still has rungs left
+
+    const confirmed =
+      !!ref['Fulfillment Confirmed At'] ||
+      String(ref[FULFILLMENT_FIELDS.status] || '').toLowerCase() === 'fulfilled';
+    if (confirmed) continue;
+
+    const status = String(ref['Status'] || '').toLowerCase();
+    if (status === 'closed lost' || status === 'closed won' || status === 'refunded') continue;
+
+    // Silence must have had time to become silence.
+    const lastSent = parseMs(ref[CHASE_FIELDS.lastSentAt]);
+    if (lastSent === null) continue; // Count without a stamp: unreadable ladder, leave it
+    const daysSinceLastChase = Math.floor((now - lastSent) / DAY_MS);
+    if (daysSinceLastChase < graceDays) continue;
+
+    // Re-escalation cooldown — the human list already has it.
+    const escalatedRaw = ref[FULFILLMENT_ESCALATED_AT_FIELD];
+    const escalatedAt = parseMs(escalatedRaw);
+    if (escalatedAt !== null && now - escalatedAt < cooldownDays * DAY_MS) continue;
+
+    out.push({
+      referralId: String(ref.id),
+      rail: isBrokerReferralRow(ref) ? 'broker' : 'connect',
+      daysSinceLastChase,
+      previouslyEscalatedAt: escalatedAt === null ? null : String(escalatedRaw),
+    });
+  }
+
+  out.sort(
+    (a, b) => b.daysSinceLastChase - a.daysSinceLastChase || a.referralId.localeCompare(b.referralId),
+  );
+  return out;
+}
+
+/**
+ * TTL for the Redis claim that throttles the exhaustion escalation. Equal to
+ * the re-escalation cooldown so the cadence holds identically whether or not
+ * `Fulfillment Escalated At` exists in the schema yet.
+ */
+export function exhaustionClaimTtlSec(
+  cooldownDays: number = FULFILLMENT_RE_ESCALATE_COOLDOWN_DAYS,
+): number {
+  return Math.round(cooldownDays * 24 * 60 * 60);
 }
 
 // ---------------------------------------------------------------------------

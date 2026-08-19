@@ -13,6 +13,10 @@ import {
   DEFAULT_REPING_COOLDOWN_HOURS,
   DEFAULT_MAX_RANCHER_PINGS,
   ESCALATION_AFTER_HOURS,
+  RE_ESCALATE_COOLDOWN_DAYS,
+  isReEscalationDue,
+  escalationClaimTtlSec,
+  escalationDedupeWindowMs,
 } from './depositSla';
 
 const NOW = Date.parse('2026-06-27T12:00:00.000Z');
@@ -447,4 +451,71 @@ test('broker referrals STILL escalate at 72h — the operator backstop is kept',
     ),
     true,
   );
+});
+
+// ── P0-2 (2026-08-18): the escalation re-fires on a cooldown, not once ever ──
+//
+// THE BUG THESE PIN: the cron took its escalation claim with a 365-day TTL and
+// a 7-day signal dedupe window, so a paid deposit whose ranch never answered
+// got ONE human-facing alert in its entire life and then permanent silence —
+// while BHC still held the buyer's money. These tests pin the cadence, and
+// pin that the two throttles can never drift apart again (a dedupe window
+// longer than the claim silently restores the one-shot bug).
+
+test('re-escalation: never escalated → due immediately', () => {
+  assert.equal(isReEscalationDue(null, NOW), true);
+  assert.equal(isReEscalationDue('', NOW), true);
+  assert.equal(isReEscalationDue(undefined, NOW), true);
+});
+
+test('re-escalation: an unparseable stamp fails OPEN (collected money must surface)', () => {
+  assert.equal(isReEscalationDue('not-a-date', NOW), true);
+});
+
+test('re-escalation: NOT due inside the cooldown window', () => {
+  const justEscalated = new Date(NOW - 1 * HOUR).toISOString();
+  assert.equal(isReEscalationDue(justEscalated, NOW), false);
+  const nearlyDue = new Date(NOW - (RE_ESCALATE_COOLDOWN_DAYS * 24 - 1) * HOUR).toISOString();
+  assert.equal(isReEscalationDue(nearlyDue, NOW), false);
+});
+
+test('re-escalation: fires on the SECOND window and not before', () => {
+  const day = 24 * HOUR;
+  const firstEscalation = NOW - RE_ESCALATE_COOLDOWN_DAYS * day;
+  // One tick before the window closes: still quiet.
+  assert.equal(isReEscalationDue(new Date(firstEscalation).toISOString(), firstEscalation + RE_ESCALATE_COOLDOWN_DAYS * day - 1), false);
+  // The window closes: it re-surfaces.
+  assert.equal(isReEscalationDue(new Date(firstEscalation).toISOString(), NOW), true);
+  // And keeps re-surfacing on the next window, forever, until resolved.
+  assert.equal(isReEscalationDue(new Date(NOW).toISOString(), NOW + RE_ESCALATE_COOLDOWN_DAYS * day), true);
+});
+
+test('re-escalation: the cooldown is configurable and honored', () => {
+  const tenDaysAgo = new Date(NOW - 10 * 24 * HOUR).toISOString();
+  assert.equal(isReEscalationDue(tenDaysAgo, NOW, 14), false);
+  assert.equal(isReEscalationDue(tenDaysAgo, NOW, 7), true);
+});
+
+test('re-escalation: the claim TTL equals the cooldown (the claim IS the stamp)', () => {
+  assert.equal(escalationClaimTtlSec(), RE_ESCALATE_COOLDOWN_DAYS * 24 * 60 * 60);
+  assert.equal(escalationClaimTtlSec(5), 5 * 24 * 60 * 60);
+});
+
+test('re-escalation: the signal dedupe window never outlives the claim', () => {
+  // A dedupe window ≥ the claim TTL would swallow every re-escalation after
+  // the first — that WAS the bug (7d window, 365d claim).
+  assert.ok(escalationDedupeWindowMs() < escalationClaimTtlSec() * 1000);
+  assert.ok(escalationDedupeWindowMs(14) < escalationClaimTtlSec(14) * 1000);
+  assert.ok(escalationDedupeWindowMs() > 0);
+});
+
+test('re-escalation: an accepted / refunded deal stops being escalation-due at all', () => {
+  const paid = { 'Deposit Paid At': hoursAgo(500), Status: 'Awaiting Payment' };
+  assert.equal(isEscalationDue(paid, { now: NOW }), true);
+  assert.equal(isEscalationDue({ ...paid, 'Rancher Accepted At': hoursAgo(1) }, { now: NOW }), false);
+  assert.equal(
+    isEscalationDue({ ...paid, __payment: { 'Refunded At': hoursAgo(1) } }, { now: NOW }),
+    false,
+  );
+  assert.equal(isEscalationDue({ ...paid, Status: 'Closed Won' }, { now: NOW }), false);
 });
