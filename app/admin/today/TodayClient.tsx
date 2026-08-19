@@ -12,6 +12,15 @@
 //   • REPLIES WAITING renders the staged/escalated Conversations rows with a
 //     one-tap Send that rides the Telegram bsend rail (shared lib).
 //
+// OBLIGATIONS (fulfillment audit P0-1, 2026-08-18) sits directly under the
+// queue, above everything growth-shaped, because it is the only band that
+// answers "what do I owe a customer right now": every row on every rail where
+// BHC took money and cannot prove delivery. Before it, a deal disappeared from
+// this screen the moment a rancher tapped Accept — the Stuck tile below reads
+// `Deposit Paid At && !Rancher Accepted At` and nothing anywhere read
+// `Fulfillment Confirmed At`. Rows marked "nobody chasing" have exhausted
+// every automated ladder: a human is the only thing left.
+//
 // Polling: every 120s (HARD FLOOR — the backing route rides the shared
 // 3-min admin snapshot, and the Airtable org limit is 5 req/s across 63
 // crons; do not lower this) + a manual refresh button.
@@ -20,6 +29,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { ADMIN_NAV } from '../nav';
 import type { CockpitDialRow } from '@/lib/cockpitDialList';
+import type { ObligationRow, ObligationsSummary } from '@/lib/obligations';
 import MarketingScoreboard from './MarketingScoreboard';
 
 const POLL_MS = 120_000;
@@ -48,6 +58,7 @@ interface TodayData {
     stuckCount: number;
     stuckOldestHours: number | null;
   } | null;
+  obligations: { rows: ObligationRow[]; summary: ObligationsSummary } | null;
   health: {
     healthy: boolean;
     reds: Array<{ name: string; detail: string; fix?: string }>;
@@ -184,6 +195,38 @@ export default function TodayClient() {
         )}
       </section>
 
+      {/* OBLIGATIONS — money collected, delivery unproven (P0-1) */}
+      <section aria-label="Obligations" className="space-y-2">
+        <div className="flex items-baseline justify-between gap-2">
+          <h2 className="text-xs font-semibold tracking-widest text-muted">OBLIGATIONS</h2>
+          {data?.obligations && data.obligations.summary.count > 0 && (
+            <p className="text-xs text-saddle tabular-nums">
+              {data.obligations.summary.count} open ·{' '}
+              {fmtUsd(data.obligations.summary.totalCents)} collected
+              {data.obligations.summary.pinnedCount > 0 && (
+                <span className="text-weathered">
+                  {' '}
+                  · {data.obligations.summary.pinnedCount} nobody chasing
+                </span>
+              )}
+            </p>
+          )}
+        </div>
+        {data?.obligations == null ? (
+          <p className="text-sm text-saddle">Obligations band unavailable.</p>
+        ) : data.obligations.rows.length === 0 ? (
+          <p className="text-sm py-2 px-3 bg-white border border-dust rounded-sm">
+            ✓ Nobody is stranded — every dollar collected has delivery confirmed or a live clock.
+          </p>
+        ) : (
+          <ul className="space-y-2">
+            {data.obligations.rows.map((row) => (
+              <ObligationCard key={`${row.rail}:${row.id}`} row={row} />
+            ))}
+          </ul>
+        )}
+      </section>
+
       {/* REPLIES WAITING (C3) */}
       <section aria-label="Replies waiting" className="space-y-2">
         <h2 className="text-xs font-semibold tracking-widest text-muted">REPLIES WAITING</h2>
@@ -311,6 +354,48 @@ export default function TodayClient() {
         </ul>
       </details>
     </main>
+  );
+}
+
+// ── OBLIGATIONS row: one collected payment with delivery unproven ───────────
+//
+// Age is the headline because age is the harm: the number of days a paying
+// customer has been waiting is the only fact that needs no interpretation.
+
+const RAIL_LABEL: Record<ObligationRow['rail'], string> = {
+  connect: 'deposit',
+  broker: 'broker',
+  shop: 'shop',
+};
+
+function ObligationCard({ row }: { row: ObligationRow }) {
+  const ageDays = Math.floor(row.ageHours / 24);
+  const age = ageDays >= 1 ? `${ageDays}d` : `${row.ageHours}h`;
+  return (
+    <li
+      className={`py-2 px-3 bg-white border border-dust rounded-sm border-l-4 ${
+        row.pinned ? 'border-l-weathered' : 'border-l-dust'
+      }`}
+    >
+      <div className="flex items-baseline justify-between gap-2">
+        <p className="text-sm font-semibold truncate">
+          {row.buyerName || 'Buyer'}
+          {row.buyerState ? <span className="text-saddle"> · {row.buyerState}</span> : null}
+        </p>
+        <p className="text-sm tabular-nums whitespace-nowrap">
+          {age}
+          {row.amountCents > 0 && (
+            <span className="text-saddle"> · {fmtUsd(row.amountCents)}</span>
+          )}
+        </p>
+      </div>
+      <p className="text-xs text-saddle mt-0.5">
+        <span className="uppercase tracking-wide">{RAIL_LABEL[row.rail]}</span> · {row.ranchName} ·{' '}
+        {row.stage}
+        {row.pinned && <span className="text-weathered"> · nobody chasing</span>}
+      </p>
+      <p className="text-sm mt-1 leading-snug">{row.nextAction}</p>
+    </li>
   );
 }
 

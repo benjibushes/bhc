@@ -35,6 +35,12 @@ import {
   computeProductMarginInRange,
 } from '@/lib/commissionStats';
 import { selectSlaEligible } from '@/lib/depositSla';
+import {
+  selectObligations,
+  summarizeObligations,
+  type ObligationRow,
+  type ObligationsSummary,
+} from '@/lib/obligations';
 import { classifyCronFailures } from '@/lib/cronFailures';
 import { missingExpectedCrons, type CronRunSummary } from '@/lib/cronIntrospection';
 import { runPlatformProbes } from '@/lib/platformProbes';
@@ -96,13 +102,28 @@ export async function GET(request: Request) {
     }
   };
 
-  const [consumers, ranchers, referrals, payments, rancherOrders, cronRuns, probes, waitingReplies] =
+  const [
+    consumers,
+    ranchers,
+    referrals,
+    payments,
+    rancherOrders,
+    rancherProducts,
+    cronRuns,
+    probes,
+    waitingReplies,
+  ] =
     await Promise.all([
       safe(() => adminSnapshotTable(TABLES.CONSUMERS) as Promise<any[]>, 'consumers'),
       safe(() => adminSnapshotTable(TABLES.RANCHERS) as Promise<any[]>, 'ranchers'),
       safe(() => adminSnapshotTable(TABLES.REFERRALS) as Promise<any[]>, 'referrals'),
       safe(() => adminSnapshotTable(TABLES.PAYMENTS) as Promise<any[]>, 'payments'),
       safe(() => adminSnapshotTable(TABLES.RANCHER_ORDERS) as Promise<any[]>, 'rancherOrders'),
+      // OBLIGATIONS band only — the shop rail is judged against the ranch's
+      // OWN 'Ships In Days' promise, which lives on the PRODUCT. One small
+      // table, under the shared snapshot; a failed read degrades the shop lane
+      // to the flat 3/6 windows rather than nulling the band.
+      safe(() => adminSnapshotTable(TABLES.RANCHER_PRODUCTS) as Promise<any[]>, 'rancherProducts'),
       safe(
         () =>
           adminSnapshot('cron-runs-25h', () => {
@@ -138,6 +159,24 @@ export async function GET(request: Request) {
       for (const s of getOperationalServedStates(r)) coveredStates.add(s);
     }
   }
+
+  // ── Shared joins — built ONCE off the snapshots, used by the money band
+  // and the obligations band (zero extra Airtable reads). Refund/dispute
+  // truth for an Awaiting-Payment deposit lives ONLY on the Payments row, so
+  // prefer a flagged row whenever a referral has several.
+  const paymentByReferralId = new Map<string, any>();
+  for (const p of (payments as any[]) || []) {
+    const rid = String(p['Referral Id Text'] || '');
+    if (!rid) continue;
+    const existing = paymentByReferralId.get(rid);
+    const flagged =
+      p['Refunded At'] ||
+      String(p['Status'] || '').toLowerCase() === 'refunded' ||
+      String(p['Dispute Status'] || '').trim();
+    if (!existing || flagged) paymentByReferralId.set(rid, p);
+  }
+  const rancherRecordById = new Map<string, any>();
+  for (const r of (ranchers as any[]) || []) rancherRecordById.set(String(r.id), r);
 
   // ════════════════════════════════════════════════════════════════════════
   // BAND 1 — MONEY: Earned today · Earned MTD · Owed to me · Stuck
@@ -181,17 +220,6 @@ export async function GET(request: Request) {
       // cron does per-row is done here in memory off the snapshot (Referral
       // Id Text), so refunded/disputed deposits are excluded the same way at
       // zero extra reads.
-      const paymentByReferralId = new Map<string, any>();
-      for (const p of payments as any[]) {
-        const rid = String(p['Referral Id Text'] || '');
-        if (!rid) continue;
-        const existing = paymentByReferralId.get(rid);
-        const flagged =
-          p['Refunded At'] ||
-          String(p['Status'] || '').toLowerCase() === 'refunded' ||
-          String(p['Dispute Status'] || '').trim();
-        if (!existing || flagged) paymentByReferralId.set(rid, p);
-      }
       const stuckCandidates = (referrals as any[])
         .filter((r) => r['Deposit Paid At'] && !r['Rancher Accepted At'])
         .map((r) => ({ ...r, __payment: paymentByReferralId.get(String(r.id)) || null }));
@@ -229,6 +257,42 @@ export async function GET(request: Request) {
   } catch (e: any) {
     console.warn('[admin/today] money band failed:', e?.message);
     money = null;
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // BAND 1b — OBLIGATIONS: money collected, delivery unproven (P0-1)
+  //
+  // THE HOLE THIS CLOSES: the "Stuck" tile above is `Deposit Paid At &&
+  // !Rancher Accepted At`, so a deal left EVERY operator surface the instant a
+  // rancher tapped Accept — and nothing anywhere read `Fulfillment Confirmed
+  // At`. "What do I owe a customer right now?" had no answer on any screen.
+  // This band answers it across all three rails at once (lib/obligations),
+  // derived from snapshots already in hand: ZERO extra Airtable reads beyond
+  // the small Rancher Products table the shop lane needs for the ship promise.
+  // ════════════════════════════════════════════════════════════════════════
+  let obligations: { rows: ObligationRow[]; summary: ObligationsSummary } | null = null;
+  try {
+    if (referrals) {
+      const shipDaysByProductId = new Map<string, number>();
+      for (const prod of (rancherProducts as any[]) || []) {
+        const days = Number(prod?.['Ships In Days']);
+        if (Number.isFinite(days) && days > 0) shipDaysByProductId.set(String(prod.id), days);
+      }
+      const rows = selectObligations({
+        referrals: referrals as any[],
+        // A failed Rancher Orders read must not null the whole band — the two
+        // referral rails still answer for the money that matters most.
+        rancherOrders: (rancherOrders as any[]) || [],
+        paymentByReferralId,
+        rancherById: rancherRecordById,
+        shipDaysByProductId,
+        now,
+      });
+      obligations = { rows, summary: summarizeObligations(rows) };
+    }
+  } catch (e: any) {
+    console.warn('[admin/today] obligations band failed:', e?.message);
+    obligations = null;
   }
 
   // ════════════════════════════════════════════════════════════════════════
@@ -505,6 +569,11 @@ export async function GET(request: Request) {
         oneMove = `${state} has ${buyers} qualified buyer${buyers === 1 ? '' : 's'} and no operational rancher — 1 signed rancher there ≈ +$162/mo recurring.`;
       } else if (money && money.stuckCount > 0) {
         oneMove = `${money.stuckCount} paid deposit${money.stuckCount === 1 ? ' is' : 's are'} waiting on a rancher accept — chase that before anything else.`;
+      } else if (obligations && obligations.summary.pinnedCount > 0) {
+        // Money already collected with no machine left to chase it beats every
+        // growth move on the board.
+        const oldest = obligations.rows.find((r) => r.pinned);
+        oneMove = `${obligations.summary.pinnedCount} paid order${obligations.summary.pinnedCount === 1 ? '' : 's'} nobody is chasing any more — start with ${oldest ? oldest.ranchName : 'the oldest'} (${oldest ? Math.floor(oldest.ageHours / 24) : '?'}d).`;
       } else if (dial && dial.length > 0) {
         oneMove = `Work the dial list top-down — ${dial[0].name} (${dial[0].state || '?'}) first.`;
       } else {
@@ -559,6 +628,7 @@ export async function GET(request: Request) {
     generatedAt: new Date().toISOString(),
     operatorDay: todayStr,
     money,
+    obligations,
     health,
     dial,
     replies,

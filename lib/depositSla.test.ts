@@ -5,6 +5,7 @@ import {
   selectSlaEligible,
   hoursSinceDeposit,
   isRefundedOrDisputed,
+  isMoneyReturnedToBuyer,
   isEscalationDue,
   selectEscalationDue,
   isBrokerRailReferral,
@@ -13,6 +14,10 @@ import {
   DEFAULT_REPING_COOLDOWN_HOURS,
   DEFAULT_MAX_RANCHER_PINGS,
   ESCALATION_AFTER_HOURS,
+  RE_ESCALATE_COOLDOWN_DAYS,
+  isReEscalationDue,
+  escalationClaimTtlSec,
+  escalationDedupeWindowMs,
 } from './depositSla';
 
 const NOW = Date.parse('2026-06-27T12:00:00.000Z');
@@ -447,4 +452,182 @@ test('broker referrals STILL escalate at 72h — the operator backstop is kept',
     ),
     true,
   );
+});
+
+// ── P0-2 (2026-08-18): the escalation re-fires on a cooldown, not once ever ──
+//
+// THE BUG THESE PIN: the cron took its escalation claim with a 365-day TTL and
+// a 7-day signal dedupe window, so a paid deposit whose ranch never answered
+// got ONE human-facing alert in its entire life and then permanent silence —
+// while BHC still held the buyer's money. These tests pin the cadence, and
+// pin that the two throttles can never drift apart again (a dedupe window
+// longer than the claim silently restores the one-shot bug).
+
+test('re-escalation: never escalated → due immediately', () => {
+  assert.equal(isReEscalationDue(null, NOW), true);
+  assert.equal(isReEscalationDue('', NOW), true);
+  assert.equal(isReEscalationDue(undefined, NOW), true);
+});
+
+test('re-escalation: an unparseable stamp fails OPEN (collected money must surface)', () => {
+  assert.equal(isReEscalationDue('not-a-date', NOW), true);
+});
+
+test('re-escalation: NOT due inside the cooldown window', () => {
+  const justEscalated = new Date(NOW - 1 * HOUR).toISOString();
+  assert.equal(isReEscalationDue(justEscalated, NOW), false);
+  const nearlyDue = new Date(NOW - (RE_ESCALATE_COOLDOWN_DAYS * 24 - 1) * HOUR).toISOString();
+  assert.equal(isReEscalationDue(nearlyDue, NOW), false);
+});
+
+test('re-escalation: fires on the SECOND window and not before', () => {
+  const day = 24 * HOUR;
+  const firstEscalation = NOW - RE_ESCALATE_COOLDOWN_DAYS * day;
+  // One tick before the window closes: still quiet.
+  assert.equal(isReEscalationDue(new Date(firstEscalation).toISOString(), firstEscalation + RE_ESCALATE_COOLDOWN_DAYS * day - 1), false);
+  // The window closes: it re-surfaces.
+  assert.equal(isReEscalationDue(new Date(firstEscalation).toISOString(), NOW), true);
+  // And keeps re-surfacing on the next window, forever, until resolved.
+  assert.equal(isReEscalationDue(new Date(NOW).toISOString(), NOW + RE_ESCALATE_COOLDOWN_DAYS * day), true);
+});
+
+test('re-escalation: the cooldown is configurable and honored', () => {
+  const tenDaysAgo = new Date(NOW - 10 * 24 * HOUR).toISOString();
+  assert.equal(isReEscalationDue(tenDaysAgo, NOW, 14), false);
+  assert.equal(isReEscalationDue(tenDaysAgo, NOW, 7), true);
+});
+
+test('re-escalation: the claim TTL equals the cooldown (the claim IS the stamp)', () => {
+  assert.equal(escalationClaimTtlSec(), RE_ESCALATE_COOLDOWN_DAYS * 24 * 60 * 60);
+  assert.equal(escalationClaimTtlSec(5), 5 * 24 * 60 * 60);
+});
+
+test('re-escalation: the signal dedupe window never outlives the claim', () => {
+  // A dedupe window ≥ the claim TTL would swallow every re-escalation after
+  // the first — that WAS the bug (7d window, 365d claim).
+  assert.ok(escalationDedupeWindowMs() < escalationClaimTtlSec() * 1000);
+  assert.ok(escalationDedupeWindowMs(14) < escalationClaimTtlSec(14) * 1000);
+  assert.ok(escalationDedupeWindowMs() > 0);
+});
+
+test('re-escalation: an accepted / refunded deal stops being escalation-due at all', () => {
+  const paid = { 'Deposit Paid At': hoursAgo(500), Status: 'Awaiting Payment' };
+  assert.equal(isEscalationDue(paid, { now: NOW }), true);
+  assert.equal(isEscalationDue({ ...paid, 'Rancher Accepted At': hoursAgo(1) }, { now: NOW }), false);
+  assert.equal(
+    isEscalationDue({ ...paid, __payment: { 'Refunded At': hoursAgo(1) } }, { now: NOW }),
+    false,
+  );
+  assert.equal(isEscalationDue({ ...paid, Status: 'Closed Won' }, { now: NOW }), false);
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// B3 — "refunded" is TWO questions, not one
+//
+// markDepositRefunded stamps 'Refunded At' on every refund and sets
+// Status='refunded' only on a FULL one. Reading the stamp as "money gone" let
+// a $1 goodwill refund — or an open chargeback — erase an obligation for a
+// customer who is still owed a side of beef.
+//
+// isMoneyReturnedToBuyer (narrow) = the money actually went back. Only this
+//   may erase an obligation; lib/obligations uses it.
+// isRefundedOrDisputed (broad)    = should automated OUTREACH pause. UNCHANGED
+//   on purpose — narrowing it would resume sends the send rails deliberately
+//   suppress (see the tests above, and lib/reserveRecovery).
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('B3: a PARTIAL refund is not money returned', () => {
+  const partial = {
+    'Deposit Paid At': hoursAgo(10),
+    Status: 'Awaiting Payment',
+    __payment: {
+      'Refunded At': hoursAgo(1),
+      Status: 'succeeded',
+      'Amount Cents': 75_000,
+      'Platform Fee Cents': 7_500,
+      'Total Charged Cents': 82_500,
+      'Refunded Amount Cents': 100,
+    },
+  };
+  assert.equal(isMoneyReturnedToBuyer(partial), false);
+  // ...but outreach still pauses. The two answers differ, and that is the fix.
+  assert.equal(isRefundedOrDisputed(partial), true);
+});
+
+test('B3: a stamp with no Status flip and no amounts reads as partial', () => {
+  // Old-schema shape: markDepositRefunded's fallback write strips the amount
+  // fields but ALWAYS keeps Status on a full refund — so a missing flip means
+  // partial on every schema.
+  assert.equal(
+    isMoneyReturnedToBuyer({ __payment: { 'Refunded At': hoursAgo(1), Status: 'succeeded' } }),
+    false,
+  );
+});
+
+test('B3: a FULL refund is money returned — via Status, or via the amounts', () => {
+  assert.equal(
+    isMoneyReturnedToBuyer({ __payment: { 'Refunded At': hoursAgo(1), Status: 'refunded' } }),
+    true,
+  );
+  assert.equal(
+    isMoneyReturnedToBuyer({
+      __payment: {
+        'Refunded At': hoursAgo(1),
+        Status: 'succeeded',
+        'Amount Cents': 50_000,
+        'Platform Fee Cents': 5_000,
+        'Total Charged Cents': 55_000,
+        'Refunded Amount Cents': 55_000,
+      },
+    }),
+    true,
+  );
+});
+
+test('B3: capturedCents uses the TRUE charged total, fee included', () => {
+  // Refunding only the deposit portion is NOT a full refund — the buyer still
+  // paid the on-top platform fee. Same arithmetic as markDepositRefunded.
+  assert.equal(
+    isMoneyReturnedToBuyer({
+      __payment: {
+        'Refunded At': hoursAgo(1),
+        Status: 'succeeded',
+        'Amount Cents': 50_000,
+        'Platform Fee Cents': 5_000,
+        'Total Charged Cents': 55_000,
+        'Refunded Amount Cents': 50_000,
+      },
+    }),
+    false,
+  );
+});
+
+test('B3: an OPEN dispute is not money returned; a LOST one is', () => {
+  for (const status of ['needs_response', 'warning_needs_response', 'under_review', 'won']) {
+    assert.equal(
+      isMoneyReturnedToBuyer({ __payment: { Status: 'succeeded', 'Dispute Status': status } }),
+      false,
+      status,
+    );
+    // Outreach still pauses for every one of them.
+    assert.equal(
+      isRefundedOrDisputed({ __payment: { Status: 'succeeded', 'Dispute Status': status } }),
+      true,
+      status,
+    );
+  }
+  assert.equal(
+    isMoneyReturnedToBuyer({ __payment: { Status: 'succeeded', 'Dispute Status': 'lost' } }),
+    true,
+  );
+});
+
+test('B3: no payment row and no stamps = nothing returned', () => {
+  assert.equal(isMoneyReturnedToBuyer({ 'Deposit Paid At': hoursAgo(10) }), false);
+  assert.equal(isMoneyReturnedToBuyer({ __payment: { Status: 'succeeded' } }), false);
+});
+
+test('B3: the referral-side stamp is always a full refund', () => {
+  assert.equal(isMoneyReturnedToBuyer({ 'Refunded At': hoursAgo(1) }), true);
 });
