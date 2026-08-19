@@ -442,8 +442,17 @@ export async function GET(request: Request) {
           callbackHandledAt: c['Callback Handled At'],
         }),
       );
+      // The DEPOSIT cohort only — the JS twin of the desk API's
+      // DEPOSIT_PENDING_FORMULA. 'Awaiting Payment' also means "the BALANCE
+      // has not landed" once a deal is accepted (lib/referralStage), and this
+      // list feeds two things that need the split: the dial queue (an accepted
+      // deal is not a walked checkout — lib/closeQueue owns it) and the NBA
+      // deposit rule, which reads a paid deposit as "awaiting rancher accept"
+      // and told the operator to confirm-or-refund a slot the rancher took
+      // days ago. The accepted cohort is not lost: nbaSlots below reads the
+      // same stamp.
       const depositPending = referrals.filter(
-        (r: any) => str(r['Status']) === 'Awaiting Payment',
+        (r: any) => str(r['Status']) === 'Awaiting Payment' && !isAcceptedInFlight(r),
       );
       const quizComplete = consumers.filter(
         (c: any) => c['Qualified At'] && str(c['Buyer Stage']) === 'READY',
