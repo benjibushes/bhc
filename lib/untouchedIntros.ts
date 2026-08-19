@@ -27,9 +27,11 @@ export interface IntroTouchFields {
 // is already in motion (Awaiting Payment / Slot Locked have their own queue
 // rows and prove heavy engagement). 'Dormant' is the stale-hold expiry cron's
 // terminal — those buyers were reset READY and re-routed to another rancher,
-// so surfacing them with a tap-to-call invites double-contact. ('Refunded' is
-// not a live Airtable Status — REFUNDED maps to 'Closed Lost' in
-// lib/deal/states — kept as cheap defense if the vocabulary ever grows it.)
+// so surfacing them with a tap-to-call invites double-contact. ('Refunded' IS
+// a live Airtable Status — refundReferralClearFields writes it on every full
+// refund; the note here used to claim otherwise, which was a stale-truth trap.
+// lib/deal/states maps it to its own REFUNDED state as of the 2026-08-18
+// data-layer audit.)
 const EXCLUDED_STATUSES = new Set([
   'Closed Won',
   'Closed Lost',

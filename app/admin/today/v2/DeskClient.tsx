@@ -9,7 +9,9 @@
 //  - Cal bookings (next 7 days) inline w/ Join + Send Invoice + buyer dossier (fix 7)
 //  - Quiz-complete awaiting outreach
 //  - Awaiting Payment split (fix 1): invoice unpaid → chase buyer; deposit paid → nudge rancher
-//  - Slot Locked fulfillment watch w/ final-invoice state (fix 3)
+//  - Accepted-deal fulfillment watch w/ final-invoice state (fix 3). Keyed on
+//    the accept STAMP, not Status: the final invoice rewrites an accepted row
+//    back to 'Awaiting Payment', which used to empty this list entirely (P1-1).
 //  - Closed today celebration tape
 //  - Waitlisted-by-state
 //  - Inline SendDepositModal for closing a buyer post-call
@@ -17,6 +19,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import SendDepositModal from './SendDepositModal';
 import { toast } from '@/lib/toast';
+import { nextStageFor } from '@/lib/referralStage';
 
 interface CalBooking {
   id: string;
@@ -748,7 +751,12 @@ export default function DeskClient() {
                   >
                     Chase buyer
                   </a>
-                  <AdvanceStageButton id={r.id} from="Awaiting Payment" onSuccess={tick} />
+                  <AdvanceStageButton
+                    id={r.id}
+                    from={r.status || 'Awaiting Payment'}
+                    rancherAcceptedAt={r.rancherAcceptedAt}
+                    onSuccess={tick}
+                  />
                 </li>
               ))}
             </ul>
@@ -775,7 +783,12 @@ export default function DeskClient() {
                   </span>
                   <span className="text-saddle whitespace-nowrap">{fmtUsd(r.depositAmountCents)}</span>
                   <DealLink id={r.id} />
-                  <AdvanceStageButton id={r.id} from="Awaiting Payment" onSuccess={tick} />
+                  <AdvanceStageButton
+                    id={r.id}
+                    from={r.status || 'Awaiting Payment'}
+                    rancherAcceptedAt={r.rancherAcceptedAt}
+                    onSuccess={tick}
+                  />
                 </li>
               ))}
             </ul>
@@ -787,7 +800,7 @@ export default function DeskClient() {
         {desk.slotsLocked.length > 0 && (
           <section className="mb-8">
             <h2 className="font-serif text-xl text-charcoal mb-3">
-              Slot Locked — fulfillment in motion ({desk.slotsLocked.length})
+              Accepted — fulfillment in motion ({desk.slotsLocked.length})
             </h2>
             <ul className="space-y-1">
               {desk.slotsLocked.map((r) => {
@@ -820,7 +833,12 @@ export default function DeskClient() {
                         </span>
                       )}
                       <DealLink id={r.id} />
-                      <AdvanceStageButton id={r.id} from="Slot Locked" onSuccess={tick} />
+                      <AdvanceStageButton
+                        id={r.id}
+                        from={r.status || 'Slot Locked'}
+                        rancherAcceptedAt={r.rancherAcceptedAt}
+                        onSuccess={tick}
+                      />
                     </span>
                   </li>
                 );
@@ -1306,20 +1324,23 @@ function EmailEngageBadge({
 function AdvanceStageButton({
   id,
   from,
+  rancherAcceptedAt,
   onSuccess,
 }: {
   id: string;
   from: string;
+  /** The accept STAMP — required, because Status alone cannot tell an
+   *  already-accepted 'Awaiting Payment' row from a deposit-pending one. */
+  rancherAcceptedAt?: string;
   onSuccess: () => void;
 }) {
   const [busy, setBusy] = useState(false);
-  // Next-step map mirrors the server-side ALLOWED transitions.
-  const NEXT: Record<string, string> = {
-    'Intro Sent': 'Awaiting Payment',
-    'Awaiting Payment': 'Slot Locked',
-    'Slot Locked': 'Closed Won',
-  };
-  const target = NEXT[from];
+  // P1-1 (2026-08-18): this used to be a hand-copied Status→Status map that
+  // offered an ACCEPTED awaiting-payment deal 'Slot Locked' — a backward
+  // re-accept — so closing the only two deals that ever got this far took two
+  // clicks. Now it reads the same lib/referralStage table the server
+  // validates against, so the button and the endpoint cannot drift.
+  const target = nextStageFor({ Status: from, 'Rancher Accepted At': rancherAcceptedAt });
   if (!target) return null;
   async function advance() {
     if (busy) return;

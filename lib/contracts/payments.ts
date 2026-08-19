@@ -51,54 +51,39 @@ export const PAYOUTS_TABLE = 'Payouts';
 
 export const REFERRAL_ID_TEXT_FIELD = 'Referral Id Text';
 
-/**
- * Is this Payments row a BROKER-rail deposit?
- *
- * The discriminator is the ledger's own `Type` marker, written by
- * recordBrokerDeposit and by nothing else — recordDeposit (Connect) leaves the
- * field unset entirely, so this is exact in both directions. Preferred over
- * joining back to the rancher: the row is the thing being refunded, and the
- * rancher record can be edited (or unreadable) long after the charge.
- *
- * Tolerates Airtable's `{name}` singleSelect object form. Fails CLOSED — an
- * unreadable or absent Type is Connect, the rail whose refund path is
- * unchanged.
- */
-export function isBrokerPaymentRow(payment: any): boolean {
-  const raw = payment?.['Type'] ?? payment?.type ?? '';
-  const value =
-    raw && typeof raw === 'object' && 'name' in raw ? String((raw as any).name || '') : String(raw || '');
-  return value.trim() === BROKER_PAYMENT_TYPE;
-}
+// ── NO SCHEMA-FALLBACK RETRIES (data-layer audit P3, 2026-08-18) ────────────
+//
+// Every write below used to sit in a try/catch that re-issued the write with
+// the newest fields stripped, "in case the schema hasn't caught up". Every one
+// of those catches was UNREACHABLE, and had been since lib/airtable grew its
+// strip-and-retry loop: updateRecord/createRecord catch `Unknown field name`
+// themselves, delete the offending key, fire a deduped operator signal, and
+// retry — they SUCCEED rather than throw. Nothing ever reached the fallback.
+//
+// Worse than dead: the catches were harmful. They caught EVERY throw, not just
+// a schema one, so a rate-limit exhaustion or a permission failure triggered a
+// second doomed write whose error replaced the original in the logs. And they
+// made a stripped field look handled when the only real signal — lib/airtable's
+// alarm — is the thing an operator must act on.
+//
+// So: write once, let it throw. If a field is genuinely missing, the strip
+// alarm is the loud (and only) signal, which is the design. Do not reintroduce
+// these catches; lib/contracts/payments.schemaFallback.test.ts pins their
+// absence across the money paths.
 
-/**
- * What the buyer's card was ACTUALLY charged on this Payments row, in cents.
- * The ceiling every refund is capped against, and the number a "full refund"
- * is measured against.
- *
- * RAIL-AWARE, and it has to be:
- *   • CONNECT deposit — 'Amount Cents' is the deposit and 'Platform Fee Cents'
- *     is BHC's fee charged ON TOP of it. The card total is their SUM.
- *   • BROKER deposit — recordBrokerDeposit writes the SAME number into BOTH
- *     fields on purpose (the deposit IS the commission, the same dollars seen
- *     from two sides). Summing them DOUBLES the captured total, so a refund of
- *     the entire real charge reads as merely partial: no restore runs, the
- *     referral stays 'Awaiting Payment' with a stale Deposit Paid At, and the
- *     ranch's capacity slot is held forever.
- *
- * 'Total Charged Cents' — stamped at settlement on both rails — wins whenever
- * it is present. The field arithmetic is only the fallback for rows settled
- * before that field existed. Connect behaviour is byte-identical to the
- * inline chain this replaced.
- */
-export function capturedTotalCents(payment: any): number {
-  const depositCents = Number(payment?.['Amount Cents'] || 0);
-  const platformFeeCents = Number(payment?.['Platform Fee Cents'] || 0);
-  const totalChargedCents = Number(payment?.['Total Charged Cents'] || 0);
-  if (totalChargedCents > 0) return totalChargedCents;
-  if (isBrokerPaymentRow(payment)) return depositCents;
-  return (depositCents + platformFeeCents) || depositCents;
-}
+// THE CAPTURED-TOTAL CONTRACT lives in lib/paymentCapture — a hermetic module
+// (its only import is lib/brokerRail) so the PURE read surfaces can share it.
+//
+// Data-layer audit P0-1 (2026-08-18): this arithmetic used to live inline here.
+// lib/depositSla (Airtable-free by contract) and lib/obligations (pure by
+// contract) could not import it without dragging lib/airtable + lib/telegram
+// into their graphs, so both hand-rolled `deposit + fee` and both read a
+// BROKER charge as 2x — making a genuinely full broker refund measure as
+// PARTIAL, which leaves the obligation standing and the capacity slot held
+// forever. Moved out and re-exported here so every caller of
+// '@/lib/contracts/payments' is unchanged and exactly ONE definition exists.
+export { isBrokerPaymentRow, capturedTotalCents } from '@/lib/paymentCapture';
+import { isBrokerPaymentRow, capturedTotalCents } from '@/lib/paymentCapture';
 
 /**
  * The "your buyer's deposit was refunded" notice to the rancher — RAIL-AWARE,
@@ -610,12 +595,7 @@ export async function markDepositRowAbandoned(
   };
   if (opts.reason) fields['Abandoned Reason'] = opts.reason;
 
-  try {
-    await updateRecord(PAYMENTS_TABLE, paymentRowId, fields);
-  } catch (e: any) {
-    console.warn('[markDepositRowAbandoned] schema fallback (retrying with Status only):', e?.message);
-    await updateRecord(PAYMENTS_TABLE, paymentRowId, { 'Status': 'abandoned' });
-  }
+  await updateRecord(PAYMENTS_TABLE, paymentRowId, fields);
   return { found: true, flipped: true };
 }
 
@@ -694,17 +674,7 @@ export async function markDepositSucceeded(
   if (typeof opts.totalChargedCents === 'number' && opts.totalChargedCents > 0) {
     fields['Total Charged Cents'] = Math.round(opts.totalChargedCents);
   }
-  try {
-    await updateRecord(PAYMENTS_TABLE, payment.id, fields);
-  } catch (e: any) {
-    console.warn('[markDepositSucceeded] schema fallback (retrying without Total Charged Cents):', e?.message);
-    const retry: Record<string, any> = {
-      'Status': 'succeeded',
-      'Captured At': new Date().toISOString(),
-    };
-    if (backfillPi) retry['Stripe Payment Intent Id'] = stripePaymentIntentId;
-    await updateRecord(PAYMENTS_TABLE, payment.id, retry);
-  }
+  await updateRecord(PAYMENTS_TABLE, payment.id, fields);
   return true;
 }
 
@@ -743,16 +713,7 @@ export async function markDepositAbandoned(
   };
   if (opts.stripeStatus) fields['Abandoned Reason'] = `stripe_status=${opts.stripeStatus}`;
 
-  try {
-    await updateRecord(PAYMENTS_TABLE, payment.id, fields);
-  } catch (e: any) {
-    // Schema fallback — Abandoned At + Abandoned Reason may not exist yet in
-    // older Airtable schemas. Retry with just Status so the cron still
-    // makes forward progress. createRecord/updateRecord typecast will create
-    // the 'abandoned' singleSelect option on first hit.
-    console.warn('[markDepositAbandoned] schema fallback (retrying with Status only):', e?.message);
-    await updateRecord(PAYMENTS_TABLE, payment.id, { 'Status': 'abandoned' });
-  }
+  await updateRecord(PAYMENTS_TABLE, payment.id, fields);
   return { found: true, flipped: true };
 }
 
@@ -777,16 +738,11 @@ export async function markDepositRequiresReplay(
   if (!payment) return { found: false, flipped: false };
   if (payment['Status'] !== 'pending') return { found: true, flipped: false };
 
-  try {
-    await updateRecord(PAYMENTS_TABLE, payment.id, {
-      'Status': 'requires_webhook_replay',
-      'Abandoned At': new Date().toISOString(),
-      'Abandoned Reason': 'webhook_missed_succeeded',
-    });
-  } catch (e: any) {
-    console.warn('[markDepositRequiresReplay] schema fallback (Status only):', e?.message);
-    await updateRecord(PAYMENTS_TABLE, payment.id, { 'Status': 'requires_webhook_replay' });
-  }
+  await updateRecord(PAYMENTS_TABLE, payment.id, {
+    'Status': 'requires_webhook_replay',
+    'Abandoned At': new Date().toISOString(),
+    'Abandoned Reason': 'webhook_missed_succeeded',
+  });
   return { found: true, flipped: true };
 }
 
@@ -831,9 +787,6 @@ export async function markDepositRefunded(
   // Idempotently no-op on re-call for full refunds.
   if (isFullRefund && payment['Status'] === 'refunded') return { flipped: false };
 
-  // Best-effort field writes — Refund Reason + Refunded Amount Cents may not
-  // exist in older Airtable schemas. Catch the typed-field error and retry
-  // without them.
   const fields: Record<string, any> = {
     'Refunded At': new Date().toISOString(),
   };
@@ -843,16 +796,7 @@ export async function markDepositRefunded(
     fields['Refunded Amount Cents'] = opts.refundedAmountCents;
   }
 
-  try {
-    await updateRecord(PAYMENTS_TABLE, payment.id, fields);
-  } catch (e: any) {
-    // Fallback: strip the new fields and retry. Old Airtable schemas without
-    // Refund Reason / Refunded Amount Cents will reject those keys outright.
-    console.warn('[markDepositRefunded] schema fallback (retrying without new fields):', e?.message);
-    const fallback: Record<string, any> = { 'Refunded At': fields['Refunded At'] };
-    if (isFullRefund) fallback['Status'] = 'refunded';
-    await updateRecord(PAYMENTS_TABLE, payment.id, fallback);
-  }
+  await updateRecord(PAYMENTS_TABLE, payment.id, fields);
 
   // P2-A audit fix: full-refund post-flip restore.
   //
@@ -865,7 +809,7 @@ export async function markDepositRefunded(
   // Referral is in a RESTORABLE state (Closed Won / Awaiting Payment /
   // Slot Locked — Blocker-2 widening, lib/refundLifecycle.ts), revert the deal:
   //   - Referral.Status → 'Refunded' (new option, typecast-created)
-  //   - Clear Closed At, Sale Amount, Commission Due, Commission Status
+  //   - Clear Closed At, Sale Amount, Commission Due
   //   - Stamp Refunded At
   //   - Rancher capacity: NO decrement from Closed Won (C4 — recordClose
   //     already freed the slot at close time; gated via
@@ -982,16 +926,7 @@ async function restoreReferralAfterRefund(
   // Field set is pure + unit-tested in lib/refundLifecycle.test.ts. typecast
   // creates the 'Refunded' singleSelect option if it doesn't exist yet.
   const referralUpdates: Record<string, any> = refundReferralClearFields(now);
-  try {
-    await updateRecord(TABLES.REFERRALS, referralId, referralUpdates);
-  } catch (e: any) {
-    // Schema fallback: Refunded At on Referral may not exist yet. Retry
-    // without it — the Refunded At on the Payments row is the primary audit.
-    console.warn('[restoreReferralAfterRefund] Referral update fallback:', e?.message);
-    const fallback = { ...referralUpdates };
-    delete fallback['Refunded At'];
-    await updateRecord(TABLES.REFERRALS, referralId, fallback);
-  }
+  await updateRecord(TABLES.REFERRALS, referralId, referralUpdates);
 
   // 1b. Wave C (2026-07-14) — tell the RANCHER. The refund physically debits
   // their Connect balance (reverse_transfer / on-account refund), yet until

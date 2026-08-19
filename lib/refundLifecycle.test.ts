@@ -33,8 +33,18 @@ test('refund keeps the existing Closed Won teardown intact', () => {
   assert.equal(updates['Closed At'], null);
   assert.equal(updates['Sale Amount'], null);
   assert.equal(updates['Commission Due'], null);
-  assert.equal(updates['Commission Status'], null);
   assert.equal(updates['Refunded At'], NOW);
+});
+
+test('no PHANTOM keys — every field written must exist on Referrals', () => {
+  // Data-layer audit P3 (2026-08-18): this object used to null a 'Commission
+  // Status' field that exists on NO table in the base. lib/airtable strips an
+  // unknown field and retries, so the write still succeeded — but every full
+  // refund raised a deduped "Airtable strip Referrals.Commission Status"
+  // operator signal for a key nothing ever wanted. A phantom key trains the
+  // operator to ignore the one alarm that catches real schema drift.
+  const updates = refundReferralClearFields(NOW);
+  assert.ok(!('Commission Status' in updates), 'Commission Status is not a field on any table');
 });
 
 test('refund updates use explicit null (idempotent Airtable clear), never undefined', () => {

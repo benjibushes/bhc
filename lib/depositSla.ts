@@ -23,6 +23,7 @@
 // brokerRail and nothing else), so this stays Airtable-free and unit-testable.
 
 import { isBrokerRancher, BROKER_PAYMENT_TYPE } from './brokerRail';
+import { capturedTotalCents } from './paymentCapture';
 import { isBrokerReferralRow } from './commission';
 
 export const DEFAULT_SLA_HOURS = 4;
@@ -210,13 +211,19 @@ export function isBrokerRailReferral(ref: SlaReferralLike): boolean {
 //     lib/reserveRecovery's buyer email/SMS) deliberately suppress today.
 //     Read surfaces must not borrow a send rail's caution.
 
-/** Total the buyer was actually charged. Mirrors markDepositRefunded exactly. */
-function capturedCentsOf(p: SlaPaymentLike): number {
-  const deposit = Number(p['Amount Cents'] || 0);
-  const fee = Number(p['Platform Fee Cents'] || 0);
-  const total = Number(p['Total Charged Cents'] || 0);
-  return total > 0 ? total : (deposit + fee) || deposit;
-}
+/**
+ * Total the buyer was actually charged.
+ *
+ * Data-layer audit P0-1 (2026-08-18): this used to be an inline
+ * `deposit + fee` under a comment claiming it "mirrors markDepositRefunded
+ * exactly". It did not — it had no BROKER branch, and recordBrokerDeposit
+ * writes the deposit into BOTH `Amount Cents` and `Platform Fee Cents`, so a
+ * broker charge read as 2x and a refund of the WHOLE charge measured as
+ * partial. Now it delegates, so the claim is enforced by construction rather
+ * than by comment. lib/paymentCapture is hermetic (lib/brokerRail only), so
+ * this module stays Airtable-free.
+ */
+const capturedCentsOf = capturedTotalCents;
 
 /**
  * Stripe dispute statuses in which the money has left for good. `won` means we

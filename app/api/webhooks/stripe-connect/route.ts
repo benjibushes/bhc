@@ -1298,9 +1298,8 @@ async function handleConnectDeauthorized(event: any): Promise<void> {
     rancher['Ranch Name'] || rancher['Operator Name'] || rancher['Email'] || accountId;
 
   // Build the write payload. We always flip Status + Active Status; the
-  // Connect Detached At timestamp is best-effort (the field may not yet
-  // exist in the schema — wrapping the whole write in try/catch with a
-  // retry-without-timestamp fallback keeps the pause path bulletproof).
+  // Connect Detached At timestamp rides along (lib/airtable strips + alarms on
+  // an unknown field, so a schema gap costs the stamp, never the pause).
   const now = new Date().toISOString();
   const writeFields: Record<string, unknown> = {
     'Stripe Connect Status': 'detached', // singleSelect; typecast auto-creates option
@@ -1308,32 +1307,12 @@ async function handleConnectDeauthorized(event: any): Promise<void> {
     'Connect Detached At': now,
   };
 
-  try {
-    await updateRecord(TABLES.RANCHERS, rancherId, writeFields);
-  } catch (e: any) {
-    // Likely cause: `Connect Detached At` field missing from Airtable
-    // schema. Retry without the timestamp so the critical fields (pause
-    // routing + flip status) still land.
-    console.warn(
-      '[stripe-connect deauthorized] write w/ Connect Detached At failed — retrying without timestamp:',
-      e?.message,
-    );
-    try {
-      delete (writeFields as any)['Connect Detached At'];
-      await updateRecord(TABLES.RANCHERS, rancherId, writeFields);
-      console.warn(
-        '[stripe-connect deauthorized] TODO: add `Connect Detached At` (dateTime) field to Ranchers table.',
-      );
-    } catch (retryErr: any) {
-      console.error(
-        '[stripe-connect deauthorized] critical write retry failed — rancher still routing:',
-        retryErr?.message,
-      );
-      // Re-throw to bubble to the outer try/catch → Stripe Events row
-      // flipped to 'failed' → operator can replay.
-      throw retryErr;
-    }
-  }
+  // Throws bubble to the outer handler → the Stripe Events row flips to
+  // 'failed' and the operator can replay. There is no schema-fallback retry:
+  // see the P3 note in lib/contracts/payments — a missing field never reaches
+  // here, and a real failure would fail the retry identically while hiding the
+  // original error.
+  await updateRecord(TABLES.RANCHERS, rancherId, writeFields);
 
   // Free residual capacity. If the rancher has active referrals counted
   // in Current Active Referrals, the matching engine still treats those

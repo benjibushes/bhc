@@ -28,7 +28,15 @@ const STATE_TO_STATUS: Record<DealState, string> = {
   DELIVERED: 'Slot Locked',
   CLOSED_WON: 'Closed Won',
   CLOSED_LOST: 'Closed Lost',
-  REFUNDED: 'Closed Lost',
+  // Data-layer audit P2 (2026-08-18): was 'Closed Lost'. 'Refunded' is a REAL
+  // Referral Status — lib/refundLifecycle::refundReferralClearFields writes it
+  // on every full refund (payments.ts typecast-creates the option) and ~15
+  // surfaces read it as its own terminal: the final-invoice send block, the
+  // dunning skip list, the stuck-referral reaper, untouchedIntros, the rancher
+  // dashboard's closed bucket, earnings export. Mapping it onto 'Closed Lost'
+  // would have collapsed "the buyer walked" into "we gave the money back" the
+  // first time anything routed a refund through the machine.
+  REFUNDED: 'Refunded',
 };
 
 const STATUS_TO_STATE: Record<string, DealState> = {
@@ -41,6 +49,15 @@ const STATUS_TO_STATE: Record<string, DealState> = {
   'Slot Locked': 'SLOT_LOCKED',
   'Closed Won': 'CLOSED_WON',
   'Closed Lost': 'CLOSED_LOST',
+  // Same audit, reverse direction. Without this entry statusToState('Refunded')
+  // returned null, and applyTransition skips its illegal-move guard entirely
+  // when `from` is null — so ANY move out of a refunded deal was silently
+  // allowed. REFUNDED is already in transitions.ts's TERMINAL list, so mapping
+  // it here is what actually makes a refunded row terminal. The rancher PATCH
+  // and pass rails both fall back to a direct write plus an operator signal
+  // when the machine rejects, so a deliberate correction still lands — loudly,
+  // which is the right volume for reviving a refunded deal.
+  'Refunded': 'REFUNDED',
 };
 
 const STATE_TIMESTAMP: Partial<Record<DealState, string>> = {
