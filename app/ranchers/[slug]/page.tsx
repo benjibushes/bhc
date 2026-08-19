@@ -14,9 +14,16 @@ import { getRancherOrProspectBySlug, getRancherByPreviousSlug, getActiveRancherP
 import { isRancherOnConnect } from '@/lib/rancherEligibility';
 import { depositDisplay } from '@/lib/pricing';
 import { tierFor, depositCommissionRate } from '@/lib/tiers';
-import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
+import { getMaxActiveReferrals, hasExplicitMaxActiveReferrals } from '@/lib/rancherCapacity';
 import { normalizeImageUrl } from '@/lib/imageUrl';
 import { safeExternalUrl, heroPillText, formatCustomProductPrice } from '@/lib/rancherPageGuards';
+import {
+  pickOgImage,
+  heroTrustPill,
+  reachLine,
+  readableReviewsUrl,
+  getVideoEmbedUrl,
+} from '@/lib/rancherAdSurface';
 import { isProcessingDatePast } from '@/lib/processingDate';
 import RancherOrderForm from './RancherOrderForm';
 import DepositReserveForm from './DepositReserveForm';
@@ -35,10 +42,17 @@ import { getClosedWonDealCountForRancher } from '@/lib/socialProof';
 import { jsonLdSafe } from '@/lib/jsonLdSafe';
 import { hasServiceZipGate } from '@/lib/exclusiveZip';
 
-// Public rancher landing page — the unit of conversion. Verified partners
-// get full pricing + lead capture; prospects get the same shell with pricing
+// Public rancher landing page — the unit of conversion. Claimed ranches get
+// full pricing + lead capture; prospects get the same shell with pricing
 // hidden + a claim banner. This page is the SEO surface for every rancher
 // in the network — every section here is a search hit.
+//
+// AD SURFACE DISCIPLINE (2026-08-18): this page is where paid traffic lands,
+// so nothing on it may assert more than the record supports. Every claim —
+// the verification pill, the fulfillment reach line, the scarcity badge, the
+// Reviews link, the og:image — is derived in lib/rancherAdSurface (pinned in
+// lib/rancherAdSurface.test.ts + app/ranchers/rancherPage.pins.test.ts) and
+// HIDES itself on missing data rather than defaulting into a claim.
 //
 // Visual hierarchy (post-rebuild):
 //   1. Cover hero — full-bleed gallery photo (or branded fallback) with
@@ -118,7 +132,18 @@ export async function generateMetadata(
     || (isProspect
         ? `${name}${stateLabel ? ` (${stateLabel})` : ''} — direct-to-consumer rancher. Unclaimed listing on BuyHalfCow.`
         : `Buy direct from ${name} on BuyHalfCow`);
-  const logo = normalizeImageUrl((rancher['Logo URL'] || '').toString());
+  // og:image — the HERO PHOTO first, logo only as a fallback, site card last.
+  // Ad-readiness audit 2026-08-18: the logo used to win unconditionally, so
+  // every Facebook / Instagram / LinkedIn preview for every ranch was a
+  // black-and-white logo on white instead of cattle or food — on paid social
+  // the preview image IS the creative. The page also declared a flat 800x600
+  // for assets that are really 802x659 / 1000x1000 / 1500x541, so the cards
+  // cropped wrong too; pickOgImage omits the dimension hint for anything
+  // rancher-supplied (scrapers measure the real bytes) and declares it only
+  // for the site card we ship ourselves. Always emits SOMETHING, so a rancher
+  // with neither photo nor logo (e.g. ZK Ranches) still can't fall through to
+  // an arbitrary page image.
+  const og = pickOgImage(rancher, name);
 
   return {
     title: isProspect ? `${name} — Unclaimed Listing` : name,
@@ -130,24 +155,9 @@ export async function generateMetadata(
     openGraph: {
       title: `${name} — BuyHalfCow`,
       description: tagline,
-      // Always emit an og:image: a rancher with no Logo URL (e.g. DD Ranch)
-      // otherwise gets NO openGraph image and FB/IG link previews pick an
-      // arbitrary page image. Fall back to the site card, same as twitter:image.
-      images: logo
-        ? [{ url: logo, width: 800, height: 600, alt: name }]
-        : [{ url: 'https://www.buyhalfcow.com/og-image.png', width: 1200, height: 630, alt: 'BuyHalfCow' }],
+      images: [og],
     },
   };
-}
-
-function getYouTubeEmbedUrl(url: string): string | null {
-  if (!url) return null;
-  const shortMatch = url.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);
-  if (shortMatch) return `https://www.youtube.com/embed/${shortMatch[1]}`;
-  const longMatch = url.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
-  if (longMatch) return `https://www.youtube.com/embed/${longMatch[1]}`;
-  if (url.includes('youtube.com/embed') || url.includes('vimeo.com')) return url;
-  return null;
 }
 
 const PROCESSING_MONTHS = [
@@ -234,7 +244,6 @@ export default async function RancherPage(
   const state = r['State'] || '';
   const city = r['City'] || '';
   const beefTypes = r['Beef Types'] || '';
-  const statesServed = r['States Served'] || '';
   const certifications = r['Certifications'] || '';
   const nextProcessingDate = r['Next Processing Date'] || '';
   const reserveLink = r['Reserve Link'] || '';
@@ -277,7 +286,14 @@ export default async function RancherPage(
   // straight into href. A rancher typing a handle ("ZK Ranches") or a status
   // ("coming soon") produced a link resolving to a broken RELATIVE path on our
   // own origin. Only absolute http(s) URLs survive; anything else hides the link.
-  const googleReviewsUrl = safeExternalUrl(r['Google Reviews URL']);
+  // readableReviewsUrl = safeExternalUrl PLUS a write-a-review guard. The
+  // field holds Renick Valley's `g.page/r/<CID>/review`, which is Google's
+  // LEAVE-a-review deep link and dead-ends at a sign-in wall — rendered under
+  // the label "Reviews" it sent cold ad traffic to a login prompt. A write
+  // form suppresses the link entirely (guard doctrine: a bad value hides its
+  // element); the page's own purchase-linked #reviews section is the honest
+  // social proof. Fixing the field value itself is Ben's data call.
+  const googleReviewsUrl = readableReviewsUrl(r['Google Reviews URL']);
   const facebookUrl = safeExternalUrl(r['Facebook URL']);
   const instagramUrl = safeExternalUrl(r['Instagram URL']);
   const processingFacility = r['Processing Facility'] || '';
@@ -427,7 +443,10 @@ export default async function RancherPage(
   // depositDisplay math, DepositReserveForm, and RancherOrderForm are all
   // wrong money models for a represented ranch).
   const hasPricing = !isProspect && !brokerSelfServe && (quarterPrice || halfPrice || wholePrice);
-  const embedUrl = getYouTubeEmbedUrl(videoUrl);
+  // Shorts support (2026-08-18): the old inline matcher knew youtu.be/,
+  // ?v=, /embed and vimeo but NOT /shorts/ — and both ranchers who filled
+  // this field stored a Shorts link, so both videos silently never rendered.
+  const embedUrl = getVideoEmbedUrl(videoUrl);
 
   // Cover photo — first gallery photo if available, else null. We layer a
   // dark gradient over it so hero text stays readable on any image.
@@ -450,6 +469,13 @@ export default async function RancherPage(
   // want converting — the order form/capacity gate handles the sold-out path).
   const sharesLeft: number | null = (() => {
     if (isProspect) return null;
+    // NO CONFIGURED CAP → NO BADGE (2026-08-18). getMaxActiveReferrals defaults
+    // to 5 on a blank field, which is right for routing and a fabrication here:
+    // Gila River Cattle (cap blank, 2 active) was advertising "3 shares left
+    // this round" — a scarcity number nobody set, invented by a code default,
+    // live to buyers. Routing/capacity logic below is untouched; this is a
+    // display gate only.
+    if (!hasExplicitMaxActiveReferrals(r)) return null;
     const maxRef = getMaxActiveReferrals(r);
     const currentRaw = r['Current Active Referrals'];
     if (currentRaw === undefined || currentRaw === null || currentRaw === '') return null;
@@ -592,6 +618,23 @@ export default async function RancherPage(
 
   const locationLine = [city, state].filter(Boolean).join(', ');
 
+  // Which hero status pill has this ranch actually EARNED? Until 2026-08-18
+  // "✓ Verified partner" was the else-branch of the prospect/broker ternary, so
+  // it rendered for every ranch that was neither — Champion Valley Farm
+  // (Verification Status = 'Not Started'), DD Ranch and Thomas Cattle (blank)
+  // all carried a verification claim their record does not support, on pages we
+  // are about to buy traffic for. null = render no pill at all: anything in
+  // that slot reads as a platform vouch, so the only honest fillers are the
+  // ones that were earned.
+  const trustPill = heroTrustPill(r);
+
+  // The quick-fact states line, derived from real Fulfillment Types. The strip
+  // used to hardcode "Ships to <States Served>", so Champion Valley (Local
+  // Pickup + Local Delivery only) advertised "Ships to NE, CO, KS" — as did
+  // Renick Valley and Gift Farms. Now a ranch that ships says ships, and one
+  // that doesn't says what it really does.
+  const reach = reachLine(r);
+
   return (
     <main className="min-h-screen bg-bone text-charcoal">
       <script
@@ -643,12 +686,16 @@ export default async function RancherPage(
                   a represented (broker self-serve) ranch never ran
                   verification and signed nothing — "Verified partner" on its
                   hero was a false trust claim on an ad-bound page. It gets
-                  the honest #630 badge voice instead; the Verified pill stays
-                  exactly as-was for ranches that actually earned it. */}
+                  the honest #630 badge voice instead.
+                  AD-READINESS FIX (2026-08-18): the Verified pill was the
+                  ELSE-BRANCH of this ternary, so it also rendered for every
+                  ranch whose Verification Status was blank or 'Not Started'.
+                  It now sits behind heroTrustPill's verdict, and a ranch with
+                  no verdict renders no pill — an empty slot beats a claim. */}
               <div className="flex flex-wrap items-center gap-2">
-                {isProspect ? (
+                {trustPill === 'prospect' ? (
                   <Pill tone="amber" className="!bg-amber !text-charcoal !border-transparent">Unclaimed listing</Pill>
-                ) : brokerSelfServe ? (
+                ) : trustPill === 'represented' ? (
                   <Pill
                     tone="positive"
                     icon={<span aria-hidden>●</span>}
@@ -659,7 +706,7 @@ export default async function RancherPage(
                   >
                     Represented ranch
                   </Pill>
-                ) : (
+                ) : trustPill === 'verified' ? (
                   <Pill
                     tone="positive"
                     icon={<span aria-hidden>✓</span>}
@@ -669,7 +716,7 @@ export default async function RancherPage(
                   >
                     Verified partner
                   </Pill>
-                )}
+                ) : null}
                 {locationLine && (
                   <Pill tone="inverted">{locationLine}</Pill>
                 )}
@@ -861,7 +908,7 @@ export default async function RancherPage(
           for processing date + USDA facility + states served. Replaces the
           old "social proof" section that was floating awkwardly mid-page.
          ───────────────────────────────────────────────────────────────────── */}
-      {(processingDateDisplay || processingDatePast || hasRealProcessingFacility || statesServed) && (
+      {(processingDateDisplay || processingDatePast || hasRealProcessingFacility || reach) && (
         <section className="bg-bone-warm border-b border-dust">
           <Container>
             <div className="py-5 md:py-6 flex flex-wrap items-center justify-center gap-x-8 gap-y-2 text-sm text-charcoal/85">
@@ -894,10 +941,15 @@ export default async function RancherPage(
                   <strong>{heroPillText(processingFacility)}</strong>
                 </span>
               )}
-              {statesServed && statesServed !== state && (
+              {/* AD-READINESS FIX (2026-08-18): this said "Ships to" for every
+                  ranch with a States Served value. Three of the four it
+                  rendered for — Champion Valley, Renick Valley, Gift Farms —
+                  are pickup/delivery operations that cannot ship a box.
+                  reachLine picks a verb the record actually supports. */}
+              {reach && (
                 <span>
-                  <span className="text-saddle">Ships to</span>{' '}
-                  <strong>{statesServed}</strong>
+                  <span className="text-saddle">{reach.label}</span>{' '}
+                  <strong>{reach.states}</strong>
                 </span>
               )}
             </div>

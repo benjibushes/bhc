@@ -2,6 +2,7 @@ import React from 'react';
 import Container from '../../components/Container';
 import Pill from '../../components/Pill';
 import Card from '../../components/Card';
+import { normalizeFulfillmentTypes } from '@/lib/rancherAdSurface';
 
 // ── "How you get your beef" ──────────────────────────────────────────────
 // P1 #5: render the rancher's fulfillment options from the existing setup-
@@ -36,10 +37,9 @@ export interface FulfillmentData {
 // render the section (and pass the same object) without duplicating parse
 // logic.
 export function parseFulfillment(rancher: any): FulfillmentData | null {
-  const rawTypes = rancher?.['Fulfillment Types'];
-  const types: string[] = Array.isArray(rawTypes)
-    ? rawTypes.map((t: any) => (t && typeof t === 'object' && 'name' in t ? String(t.name) : String(t))).filter(Boolean)
-    : [];
+  // Shared with the quick-fact strip's reachLine so the two surfaces can
+  // never disagree about whether this ranch ships (2026-08-18).
+  const types: string[] = normalizeFulfillmentTypes(rancher?.['Fulfillment Types']);
   const pickupCity = String(rancher?.['Pickup City'] || '').trim();
   const pickupAddress = String(rancher?.['Pickup Address'] || '').trim();
   const deliveryRadiusMiles = Number(rancher?.['Delivery Radius Miles']) || null;
