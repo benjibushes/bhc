@@ -805,7 +805,13 @@ export async function sendConsumerApproval(data: {
            never reaches out and no cron backs the clock on Connect either.
            Same rail-neutral promise as the rest of the welcome family. */}
       <li><strong>Personal introduction</strong> — As soon as you click yes, I match you with a real ranch in your state. Your match lands by email within minutes — the ranch, current pricing, and a reserve link.</li>
-      <li><strong>Buy direct</strong> — You purchase directly from the rancher at their price. No middlemen, no markup.</li>
+      ${''/* Truth sweep (2026-08-18): "at their price. No middlemen, no markup."
+           shipped to EVERY approved beef buyer and is false on the Connect rail
+           — the buyer's card is charged the rancher's price PLUS the platform
+           fee on top (lib/tiers.ts: "the buyer pays our 10% on top"), baked into
+           ONE unitemized line item. "at their price" is the same money claim in
+           other words, so both halves go; "no middlemen" is true and stays. */}
+      <li><strong>Buy direct</strong> — You purchase directly from the rancher who raised your beef. No middlemen.</li>
     </ol>
     <div class="divider"></div>
     <p><strong>What you get access to:</strong></p>
