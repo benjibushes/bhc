@@ -125,9 +125,15 @@ export const SLA_EXCLUDED_STATUSES: ReadonlySet<string> = new Set([
 // Payments-row shape we care about for refund/dispute exclusion. The cron
 // attaches the linked Payments row as `__payment` so this module stays pure.
 export interface SlaPaymentLike {
-  'Refunded At'?: unknown;
-  Status?: unknown;            // 'refunded' on a full refund
-  'Dispute Status'?: unknown;  // any non-empty value = active/closed dispute
+  'Refunded At'?: unknown;     // stamped on a PARTIAL refund too — never read alone
+  Status?: unknown;            // 'refunded' on a full refund, and ONLY then
+  'Dispute Status'?: unknown;  // Stripe dispute.status; only 'lost' returns the money
+  // Amounts, used to recognise a full refund on a row whose Status write was
+  // lost. Same precedence as lib/contracts/payments::markDepositRefunded.
+  'Refunded Amount Cents'?: unknown;
+  'Amount Cents'?: unknown;
+  'Platform Fee Cents'?: unknown;
+  'Total Charged Cents'?: unknown;
   // Ledger-side rail marker — 'broker_deposit' on the broker rail
   // (lib/contracts/payments recordBrokerDeposit). Present on every settled
   // broker row, so the rail is readable without a second Airtable lookup.
@@ -181,22 +187,117 @@ export function isBrokerRailReferral(ref: SlaReferralLike): boolean {
   return isBrokerReferralRow(ref);
 }
 
+// ---------------------------------------------------------------------------
+// REFUND / DISPUTE TRUTH (review fix B3, 2026-08-18)
+// ---------------------------------------------------------------------------
+//
+// THE BUG THIS CLOSES. `Refunded At` on the Payments row was read as "this
+// money is gone". It is not: markDepositRefunded (lib/contracts/payments.ts)
+// stamps `Refunded At` on EVERY refund and only sets `Status: 'refunded'` when
+// the refund is FULL. So a $1 goodwill refund against a $750 deposit — or an
+// open chargeback, which merely means the buyer is contesting — silently
+// deleted the whole obligation: the customer is still owed a side of beef and
+// no surface says so. This goes live the moment PR #650 lands, which adds
+// partial-refund support on the rail where the deposit IS 100% of revenue.
+//
+// The fix is two predicates instead of one question doing two jobs:
+//   isMoneyReturnedToBuyer — did the buyer actually get their money back for
+//     good (FULL refund, or a dispute we lost)? The ONLY thing allowed to
+//     erase an obligation. New; used by lib/obligations.
+//   isRefundedOrDisputed   — should automated OUTREACH pause? Any refund, any
+//     dispute. UNCHANGED, because narrowing it would resume sends that the
+//     send rails (lib/depositSla's own re-ping + escalation,
+//     lib/reserveRecovery's buyer email/SMS) deliberately suppress today.
+//     Read surfaces must not borrow a send rail's caution.
+
+/** Total the buyer was actually charged. Mirrors markDepositRefunded exactly. */
+function capturedCentsOf(p: SlaPaymentLike): number {
+  const deposit = Number(p['Amount Cents'] || 0);
+  const fee = Number(p['Platform Fee Cents'] || 0);
+  const total = Number(p['Total Charged Cents'] || 0);
+  return total > 0 ? total : (deposit + fee) || deposit;
+}
+
 /**
- * Has this deposit been refunded or disputed? Checks BOTH the Referral (Closed
- * Won refund path) and its linked Payments row (Awaiting-Payment refunds + all
- * disputes, which only ever land on the Payments row).
+ * Stripe dispute statuses in which the money has left for good. `won` means we
+ * KEPT the money (so the beef is still owed); every `*needs_response` /
+ * `under_review` / `warning_*` value is a dispute still in flight, where the
+ * obligation very much still stands.
+ */
+const DISPUTE_LOST_STATUSES: ReadonlySet<string> = new Set(['lost']);
+
+/** Is a dispute recorded at all — in flight or settled, either way? */
+function hasAnyDispute(v: unknown): boolean {
+  return !!String(v || '').trim();
+}
+
+/**
+ * Did the buyer get their money back for good — a genuinely FULL refund, or a
+ * dispute we LOST?
+ *
+ * This is the only signal allowed to erase an obligation. A partial refund
+ * leaves it standing, because a partly-refunded customer is still a customer
+ * waiting on beef.
+ */
+export function isMoneyReturnedToBuyer(ref: SlaReferralLike): boolean {
+  // Referral-side: refundReferralClearFields (lib/refundLifecycle) writes this
+  // ONLY from restoreReferralAfterRefund, which payments.ts calls only when
+  // isFullRefund — so a Referral-side stamp always means a full refund. (It
+  // also nulls 'Deposit Paid At', so such a row rarely reaches here at all.)
+  if (ref['Refunded At']) return true;
+  if (DISPUTE_LOST_STATUSES.has(String(ref['Dispute Status'] || '').trim().toLowerCase())) {
+    return true;
+  }
+
+  const p = ref.__payment;
+  if (!p) return false;
+
+  if (DISPUTE_LOST_STATUSES.has(String(p['Dispute Status'] || '').trim().toLowerCase())) {
+    return true;
+  }
+  // AUTHORITATIVE full-refund signal. markDepositRefunded sets Status
+  // 'refunded' on a full refund under EVERY schema — its old-schema fallback
+  // write strips 'Refund Reason'/'Refunded Amount Cents' but keeps Status.
+  if (String(p.Status || '').toLowerCase() === 'refunded') return true;
+  // No stamp at all → nothing was returned.
+  if (!p['Refunded At']) return false;
+  // `Refunded At` WITHOUT the status flip means partial (or a write that
+  // landed half-way). Belt: if the amounts are legible and the refund covers
+  // everything the buyer was charged, treat it as full anyway.
+  const refunded = Number(p['Refunded Amount Cents'] || 0);
+  const captured = capturedCentsOf(p);
+  return refunded > 0 && captured > 0 && refunded >= captured;
+}
+
+/**
+ * Should automated OUTREACH about this deposit stop?
+ *
+ * Deliberately BROADER than isMoneyReturnedToBuyer, and deliberately UNCHANGED
+ * by the B3 fix. Any refund at all — even a $1 goodwill one — and any dispute,
+ * in flight or settled, silences the send rails: lib/depositSla's own re-ping
+ * and 72h escalation, and lib/reserveRecovery's buyer email/SMS. Emailing a
+ * partly-refunded buyer "come finish your reserve", or nudging a rancher about
+ * a slot whose money is being contested, is a send you cannot take back, and
+ * every one of those behaviours is separately pinned in the tests beside this
+ * file.
+ *
+ * The obligations band must NOT use this one. A band is a READ: showing a
+ * partly-refunded deal costs nothing and hiding it loses a customer who is
+ * still owed beef. That is why the two predicates exist — see
+ * isMoneyReturnedToBuyer, which is the narrow "the money actually went back"
+ * test, and lib/obligations, which calls it.
  */
 export function isRefundedOrDisputed(ref: SlaReferralLike): boolean {
   // Referral-side (Closed Won refund path / defense-in-depth).
   if (ref['Refunded At']) return true;
-  if (String(ref['Dispute Status'] || '').trim()) return true;
+  if (hasAnyDispute(ref['Dispute Status'])) return true;
 
   // Payments-side — the authoritative signal for the blocker case.
   const p = ref.__payment;
   if (p) {
     if (p['Refunded At']) return true;                       // full OR partial refund stamps this
     if (String(p.Status || '').toLowerCase() === 'refunded') return true;
-    if (String(p['Dispute Status'] || '').trim()) return true;
+    if (hasAnyDispute(p['Dispute Status'])) return true;
   }
   return false;
 }

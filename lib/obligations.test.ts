@@ -16,7 +16,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { selectObligations, type ObligationRow } from './obligations';
-import { MAX_LIFETIME_CHASES } from './fulfillmentChase';
+import {
+  MAX_LIFETIME_CHASES,
+  CHASE_FIELDS,
+  isFulfillmentTerminal,
+  selectExhaustedChases,
+  FULFILLMENT_TRACKING_EPOCH_MS,
+} from './fulfillmentChase';
 
 const NOW = Date.parse('2026-08-18T12:00:00.000Z');
 const HOUR = 3_600_000;
@@ -135,10 +141,9 @@ test('connect: deposit paid + NEVER accepted → still an obligation (P0-2 rows 
   assert.equal(rows[0].pinned, true); // 10d unaccepted is way past the 72h escalation
 });
 
-test('connect: closed / refunded / cancelled / expired statuses are NOT obligations', () => {
+test('connect: dead statuses are NOT obligations', () => {
   const rows = run({
     referrals: [
-      connectRef({ id: 'recW', Status: 'Closed Won' }),
       connectRef({ id: 'recL', Status: 'Closed Lost' }),
       connectRef({ id: 'recR', Status: 'Refunded' }),
       connectRef({ id: 'recC', Status: 'Cancelled' }),
@@ -149,21 +154,176 @@ test('connect: closed / refunded / cancelled / expired statuses are NOT obligati
   assert.deepEqual(rows, []);
 });
 
-test('connect: a refunded or disputed Payments row drops the obligation', () => {
+// ── B1: the P0 this whole PR exists to close, re-opened by one status value ──
+//
+// 'Closed Won' on the CONNECT rail means the buyer paid the BALANCE. It says
+// nothing about beef: lib/fulfillmentConfirm stamps 'Fulfillment Confirmed At'
+// on a completely separate event. Dropping these rows here while
+// selectFulfillmentChase kept chasing them is what produced a row that took
+// all 3 chases (including the loud tier-2 operator signal), hit the lifetime
+// cap, and then appeared on NEITHER terminal surface — permanent silence on
+// the one cohort that has already paid in full.
+
+test('B1 connect: Closed Won with no fulfillment confirmation IS an obligation', () => {
+  const rows = run({ referrals: [connectRef({ id: 'recW', Status: 'Closed Won' })] });
+  assert.deepEqual(ids(rows), ['recW']);
+});
+
+test('B1 connect: Closed Won that IS confirmed is not an obligation', () => {
+  // The other direction — 'Closed Won' alone must not become a free pass.
+  const rows = run({
+    referrals: [
+      connectRef({ id: 'recW', Status: 'Closed Won', 'Fulfillment Confirmed At': daysAgo(2) }),
+    ],
+  });
+  assert.deepEqual(rows, []);
+});
+
+test('B1 connect: a PRE-epoch Closed Won stays out (no legacy flood)', () => {
+  // Before FULFILLMENT_TRACKING_EPOCH (#514, the un-gated tracker) a legacy
+  // rancher had no route that could stamp a confirmation at all, so
+  // "unconfirmed" is an artifact, not a waiting customer. Age-sorted, these
+  // would outrank every live row and their pins would hijack `oneMove`.
+  const beforeEpoch = new Date(FULFILLMENT_TRACKING_EPOCH_MS - 5 * DAY).toISOString();
+  const rows = run({
+    referrals: [
+      connectRef({
+        id: 'recLegacy',
+        Status: 'Closed Won',
+        'Deposit Paid At': beforeEpoch,
+        'Closed At': beforeEpoch,
+      }),
+    ],
+  });
+  assert.deepEqual(rows, []);
+});
+
+test('B1 connect: a POST-epoch Closed At rescues an old deposit', () => {
+  // Deposit predates the epoch but the deal closed after it — the machine
+  // could have recorded delivery, so silence is real. 'Closed At' wins.
+  const rows = run({
+    referrals: [
+      connectRef({
+        id: 'recStraggler',
+        Status: 'Closed Won',
+        'Deposit Paid At': new Date(FULFILLMENT_TRACKING_EPOCH_MS - 30 * DAY).toISOString(),
+        'Closed At': new Date(FULFILLMENT_TRACKING_EPOCH_MS + 2 * DAY).toISOString(),
+      }),
+    ],
+  });
+  assert.deepEqual(ids(rows), ['recStraggler']);
+});
+
+test('B1 broker: Closed Won IS terminal — the confirm and the close are one act', () => {
+  // Rail-aware, and it stays correct after PR #650 lands: on broker,
+  // adminFulfillmentCloseDecision stamps 'Fulfillment Confirmed At' AND
+  // Status='Closed Won' in the same operation, so Closed Won means delivered.
+  const rows = run({ referrals: [brokerRef({ id: 'recBW', Status: 'Closed Won' })] });
+  assert.deepEqual(rows, []);
+});
+
+test('B1: the band and the chase lanes agree — chaseable implies visible', () => {
+  // The invariant the shared predicate buys. A Connect Closed Won row that the
+  // chase cron will still touch must never be invisible to the band, and the
+  // exhaustion escalation must inherit it rather than drop it.
+  const ref = connectRef({ id: 'recAgree', Status: 'Closed Won' });
+  assert.equal(isFulfillmentTerminal(ref, { rail: 'connect' }), false);
+  assert.deepEqual(ids(run({ referrals: [ref] })), ['recAgree']);
+
+  const spent = {
+    ...ref,
+    [CHASE_FIELDS.count]: MAX_LIFETIME_CHASES,
+    [CHASE_FIELDS.lastSentAt]: daysAgo(30),
+  };
+  assert.deepEqual(
+    selectExhaustedChases([spent], { nowISO: new Date(NOW).toISOString() }).map((r) => r.referralId),
+    ['recAgree'],
+  );
+});
+
+// ── B3: a partial refund must not silently delete an obligation ─────────────
+//
+// markDepositRefunded stamps 'Refunded At' on EVERY refund and only sets
+// Status='refunded' when the refund is FULL. Reading 'Refunded At' as "money
+// gone" meant a $1 goodwill refund on a $750 deposit erased the whole
+// obligation — and so did an open chargeback, which only means the buyer is
+// contesting. Goes live the moment PR #650 lands (partial refunds on the rail
+// where the deposit IS 100% of revenue).
+
+test('B3: a FULL refund drops the obligation', () => {
   const paymentByReferralId = new Map<string, any>([
-    ['recRefunded', { 'Refunded At': daysAgo(1) }],
-    ['recDisputed', { 'Dispute Status': 'needs_response' }],
+    // Authoritative: Status flips to 'refunded' only on a full refund.
+    ['recFull', { 'Refunded At': daysAgo(1), Status: 'refunded' }],
+    // Belt: no Status flip, but the amount covers everything charged.
+    ['recFullByAmount', {
+      'Refunded At': daysAgo(1),
+      Status: 'succeeded',
+      'Amount Cents': 50_000,
+      'Platform Fee Cents': 5_000,
+      'Total Charged Cents': 55_000,
+      'Refunded Amount Cents': 55_000,
+    }],
     ['recLive', { Status: 'succeeded' }],
   ]);
   const rows = run({
     referrals: [
-      connectRef({ id: 'recRefunded' }),
-      connectRef({ id: 'recDisputed' }),
+      connectRef({ id: 'recFull' }),
+      connectRef({ id: 'recFullByAmount' }),
       connectRef({ id: 'recLive' }),
     ],
     paymentByReferralId,
   });
   assert.deepEqual(ids(rows), ['recLive']);
+});
+
+test('B3: a PARTIAL refund leaves the obligation standing', () => {
+  const paymentByReferralId = new Map<string, any>([
+    // The shape markDepositRefunded actually writes on a partial refund.
+    ['recPartial', {
+      'Refunded At': daysAgo(1),
+      Status: 'succeeded',
+      'Amount Cents': 75_000,
+      'Platform Fee Cents': 7_500,
+      'Total Charged Cents': 82_500,
+      'Refunded Amount Cents': 100,
+    }],
+    // Old schema: the amount fields were stripped, so only the stamp survives.
+    // Without the Status flip that still means PARTIAL.
+    ['recPartialNoAmounts', { 'Refunded At': daysAgo(1), Status: 'succeeded' }],
+  ]);
+  const rows = run({
+    referrals: [connectRef({ id: 'recPartial' }), connectRef({ id: 'recPartialNoAmounts' })],
+    paymentByReferralId,
+  });
+  assert.deepEqual(ids(rows).sort(), ['recPartial', 'recPartialNoAmounts']);
+});
+
+test('B3: an OPEN dispute keeps the obligation, a LOST one ends it', () => {
+  const paymentByReferralId = new Map<string, any>([
+    ['recOpen', { Status: 'succeeded', 'Dispute Status': 'needs_response' }],
+    ['recReview', { Status: 'succeeded', 'Dispute Status': 'under_review' }],
+    // We KEPT the money — so the beef is still owed.
+    ['recWon', { Status: 'succeeded', 'Dispute Status': 'won' }],
+    // Funds withdrawn for good.
+    ['recLost', { Status: 'succeeded', 'Dispute Status': 'lost' }],
+  ]);
+  const rows = run({
+    referrals: [
+      connectRef({ id: 'recOpen' }),
+      connectRef({ id: 'recReview' }),
+      connectRef({ id: 'recWon' }),
+      connectRef({ id: 'recLost' }),
+    ],
+    paymentByReferralId,
+  });
+  assert.deepEqual(ids(rows).sort(), ['recOpen', 'recReview', 'recWon']);
+});
+
+test('B3: the referral-side Refunded At stamp still drops it (always full)', () => {
+  // refundReferralClearFields is only reached from restoreReferralAfterRefund,
+  // which payments.ts calls only when isFullRefund.
+  const rows = run({ referrals: [connectRef({ id: 'recRef', 'Refunded At': daysAgo(1) })] });
+  assert.deepEqual(rows, []);
 });
 
 test('connect: synthetic e2e buyers never reach the operator band', () => {
@@ -304,6 +464,92 @@ test('shop: refunded / cancelled orders are not obligations', () => {
     ],
   });
   assert.deepEqual(rows, []);
+});
+
+// ── B2: externally-fulfilled orders are not BHC obligations ─────────────────
+//
+// app/api/cron/product-fulfillment-sla deliberately filters
+// `External Push Status !== 'pushed'`: a connector-pushed order is Shopify's /
+// Printify's to fulfill, the store ships on its own SLA and the reverse
+// webhook stamps Shipped. Omitting that filter here did not merely add noise —
+// these rows PIN past the escalate window, and a pinned row hijacks the single
+// `oneMove` slot on /admin/today with an order nobody at BHC is meant to touch.
+
+test('B2 shop: a connector-pushed order is NOT an obligation', () => {
+  const rows = run({
+    rancherOrders: [shopOrder({ id: 'recPushed', 'External Push Status': 'pushed' })],
+    shipDaysByProductId: new Map(),
+  });
+  assert.deepEqual(rows, []);
+});
+
+test('B2 shop: every other push state still counts (mirrors the cron exactly)', () => {
+  // The cron keeps `!== 'pushed'`, so a failed/pending/absent push is BHC's
+  // problem and must stay visible. Pinned to the same escalate-window row the
+  // test below uses, so a pushed/unpushed pair differ only in that one field.
+  const rows = run({
+    rancherOrders: [
+      shopOrder({ id: 'recFailed', 'External Push Status': 'failed' }),
+      shopOrder({ id: 'recPending', 'External Push Status': 'pending' }),
+      shopOrder({ id: 'recNone' }),
+    ],
+    shipDaysByProductId: new Map(),
+  });
+  assert.deepEqual(ids(rows).sort(), ['recFailed', 'recNone', 'recPending']);
+});
+
+// ── Rail-correct copy: a broker row must never be told to chase an "accept" ──
+
+test('broker: the Payments rail signal keeps Connect copy off a broker row', () => {
+  // Rancher record unreadable AND 'Match Type' drifted — the two signals the
+  // old isBrokerRow had. Without the Payments Type='broker_deposit' signal this
+  // row rendered "the ranch never accepted the slot" on a rail that HAS no
+  // accept step, and pinned itself at 72h forever waiting for one.
+  const rows = run({
+    referrals: [brokerRef({ id: 'recBlind', 'Match Type': '', Rancher: ['recUnknown'] })],
+    paymentByReferralId: new Map([['recBlind', { Type: 'broker_deposit', Status: 'succeeded' }]]),
+  });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].rail, 'broker');
+  assert.ok(!/accept/i.test(rows[0].nextAction), `Connect copy leaked: ${rows[0].nextAction}`);
+});
+
+// ── amountCents says "collected from the customer" and must mean it ──────────
+
+test('amountCents prefers Total Charged Cents — the true charged total', () => {
+  // Deliberately NOT equal to deposit + fee, so this pins the precedence and
+  // cannot be satisfied by the fallback path.
+  const rows = run({
+    referrals: [connectRef({ id: 'recFee', 'Deposit Amount': 500 })],
+    paymentByReferralId: new Map([
+      ['recFee', {
+        Status: 'succeeded',
+        'Amount Cents': 50_000,
+        'Platform Fee Cents': 5_000,
+        'Total Charged Cents': 57_500,
+      }],
+    ]),
+  });
+  assert.equal(rows[0].amountCents, 57_500);
+});
+
+test('amountCents includes the on-top platform fee when there is no total', () => {
+  // Money model #1: the rancher keeps 100% of the price and BHC's 10% is added
+  // ON TOP of the buyer's deposit. 'Deposit Amount' alone understates the
+  // charge by exactly the fee, under a label that says "collected". Rows that
+  // predate 'Total Charged Cents' must still add it.
+  const rows = run({
+    referrals: [connectRef({ id: 'recOld', 'Deposit Amount': 500 })],
+    paymentByReferralId: new Map([
+      ['recOld', { Status: 'succeeded', 'Amount Cents': 50_000, 'Platform Fee Cents': 5_000 }],
+    ]),
+  });
+  assert.equal(rows[0].amountCents, 55_000);
+});
+
+test('amountCents falls back to the deposit when there is no Payments row', () => {
+  const rows = run({ referrals: [connectRef({ id: 'recNoPay', 'Deposit Amount': 500 })] });
+  assert.equal(rows[0].amountCents, 50_000);
 });
 
 test('shop: past the escalate window the row pins', () => {

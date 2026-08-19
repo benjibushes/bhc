@@ -5,6 +5,7 @@ import {
   selectSlaEligible,
   hoursSinceDeposit,
   isRefundedOrDisputed,
+  isMoneyReturnedToBuyer,
   isEscalationDue,
   selectEscalationDue,
   isBrokerRailReferral,
@@ -518,4 +519,115 @@ test('re-escalation: an accepted / refunded deal stops being escalation-due at a
     false,
   );
   assert.equal(isEscalationDue({ ...paid, Status: 'Closed Won' }, { now: NOW }), false);
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// B3 — "refunded" is TWO questions, not one
+//
+// markDepositRefunded stamps 'Refunded At' on every refund and sets
+// Status='refunded' only on a FULL one. Reading the stamp as "money gone" let
+// a $1 goodwill refund — or an open chargeback — erase an obligation for a
+// customer who is still owed a side of beef.
+//
+// isMoneyReturnedToBuyer (narrow) = the money actually went back. Only this
+//   may erase an obligation; lib/obligations uses it.
+// isRefundedOrDisputed (broad)    = should automated OUTREACH pause. UNCHANGED
+//   on purpose — narrowing it would resume sends the send rails deliberately
+//   suppress (see the tests above, and lib/reserveRecovery).
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('B3: a PARTIAL refund is not money returned', () => {
+  const partial = {
+    'Deposit Paid At': hoursAgo(10),
+    Status: 'Awaiting Payment',
+    __payment: {
+      'Refunded At': hoursAgo(1),
+      Status: 'succeeded',
+      'Amount Cents': 75_000,
+      'Platform Fee Cents': 7_500,
+      'Total Charged Cents': 82_500,
+      'Refunded Amount Cents': 100,
+    },
+  };
+  assert.equal(isMoneyReturnedToBuyer(partial), false);
+  // ...but outreach still pauses. The two answers differ, and that is the fix.
+  assert.equal(isRefundedOrDisputed(partial), true);
+});
+
+test('B3: a stamp with no Status flip and no amounts reads as partial', () => {
+  // Old-schema shape: markDepositRefunded's fallback write strips the amount
+  // fields but ALWAYS keeps Status on a full refund — so a missing flip means
+  // partial on every schema.
+  assert.equal(
+    isMoneyReturnedToBuyer({ __payment: { 'Refunded At': hoursAgo(1), Status: 'succeeded' } }),
+    false,
+  );
+});
+
+test('B3: a FULL refund is money returned — via Status, or via the amounts', () => {
+  assert.equal(
+    isMoneyReturnedToBuyer({ __payment: { 'Refunded At': hoursAgo(1), Status: 'refunded' } }),
+    true,
+  );
+  assert.equal(
+    isMoneyReturnedToBuyer({
+      __payment: {
+        'Refunded At': hoursAgo(1),
+        Status: 'succeeded',
+        'Amount Cents': 50_000,
+        'Platform Fee Cents': 5_000,
+        'Total Charged Cents': 55_000,
+        'Refunded Amount Cents': 55_000,
+      },
+    }),
+    true,
+  );
+});
+
+test('B3: capturedCents uses the TRUE charged total, fee included', () => {
+  // Refunding only the deposit portion is NOT a full refund — the buyer still
+  // paid the on-top platform fee. Same arithmetic as markDepositRefunded.
+  assert.equal(
+    isMoneyReturnedToBuyer({
+      __payment: {
+        'Refunded At': hoursAgo(1),
+        Status: 'succeeded',
+        'Amount Cents': 50_000,
+        'Platform Fee Cents': 5_000,
+        'Total Charged Cents': 55_000,
+        'Refunded Amount Cents': 50_000,
+      },
+    }),
+    false,
+  );
+});
+
+test('B3: an OPEN dispute is not money returned; a LOST one is', () => {
+  for (const status of ['needs_response', 'warning_needs_response', 'under_review', 'won']) {
+    assert.equal(
+      isMoneyReturnedToBuyer({ __payment: { Status: 'succeeded', 'Dispute Status': status } }),
+      false,
+      status,
+    );
+    // Outreach still pauses for every one of them.
+    assert.equal(
+      isRefundedOrDisputed({ __payment: { Status: 'succeeded', 'Dispute Status': status } }),
+      true,
+      status,
+    );
+  }
+  assert.equal(
+    isMoneyReturnedToBuyer({ __payment: { Status: 'succeeded', 'Dispute Status': 'lost' } }),
+    true,
+  );
+});
+
+test('B3: no payment row and no stamps = nothing returned', () => {
+  assert.equal(isMoneyReturnedToBuyer({ 'Deposit Paid At': hoursAgo(10) }), false);
+  assert.equal(isMoneyReturnedToBuyer({ __payment: { Status: 'succeeded' } }), false);
+});
+
+test('B3: the referral-side stamp is always a full refund', () => {
+  assert.equal(isMoneyReturnedToBuyer({ 'Refunded At': hoursAgo(1) }), true);
 });

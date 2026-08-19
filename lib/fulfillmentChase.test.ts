@@ -28,6 +28,12 @@ import {
   EXHAUSTION_GRACE_DAYS,
   FULFILLMENT_ESCALATED_AT_FIELD,
   FULFILLMENT_RE_ESCALATE_COOLDOWN_DAYS,
+  isFulfillmentTerminal,
+  FULFILLMENT_TRACKING_EPOCH_MS,
+  FULFILLMENT_TRACKING_EPOCH_ISO,
+  CHASE_FIELDS,
+  MAX_ESCALATIONS_PER_RUN,
+  MAX_EXHAUSTION_SCAN_PER_RUN,
 } from './fulfillmentChase';
 
 // Frozen "now" for every test.
@@ -807,4 +813,150 @@ test('exhaustion: the claim TTL equals the cooldown (Redis is the stamp until Be
     FULFILLMENT_RE_ESCALATE_COOLDOWN_DAYS * 24 * 60 * 60,
   );
   assert.equal(exhaustionClaimTtlSec(3), 3 * 24 * 60 * 60);
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE SHARED TERMINAL RULE (review fix B1)
+//
+// One predicate behind selectFulfillmentChase, selectBrokerPickup,
+// selectExhaustedChases and lib/obligations::selectObligations. Before it the
+// three lists disagreed about exactly one value — 'Closed Won' — so a Connect
+// row got chased three times, hit the cap, and then vanished from both
+// terminal surfaces.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const EPOCH = FULFILLMENT_TRACKING_EPOCH_MS;
+const afterEpoch = (d: number) => new Date(EPOCH + d * 86400000).toISOString();
+const beforeEpoch = (d: number) => new Date(EPOCH - d * 86400000).toISOString();
+
+test('terminal: the epoch is pinned to #514, the un-gated tracker', () => {
+  // Load-bearing constant — moving it changes which historical deals the
+  // operator band claims are outstanding. #514 (commit 6a67aea, 2026-07-29) is
+  // the first point at which EVERY rancher had a route that could stamp
+  // 'Fulfillment Confirmed At'; before it, "unconfirmed" proves nothing.
+  assert.equal(FULFILLMENT_TRACKING_EPOCH_ISO, '2026-07-29T00:00:00.000Z');
+  assert.ok(Number.isFinite(FULFILLMENT_TRACKING_EPOCH_MS));
+});
+
+test('terminal: hard-dead statuses are terminal on both rails', () => {
+  for (const status of ['Closed Lost', 'Refunded', 'Cancelled', 'Canceled', 'Expired']) {
+    for (const rail of ['connect', 'broker'] as const) {
+      assert.equal(isFulfillmentTerminal({ Status: status }, { rail }), true, `${status}/${rail}`);
+    }
+  }
+});
+
+test('terminal: live statuses are never terminal', () => {
+  for (const status of ['Awaiting Payment', 'Slot Locked', 'Negotiation', '']) {
+    assert.equal(isFulfillmentTerminal({ Status: status }, { rail: 'connect' }), false, status);
+  }
+});
+
+test('terminal: CONNECT Closed Won is NOT terminal after the epoch', () => {
+  // The whole B1 defect in one assertion. Closed Won here means the buyer paid
+  // the balance; lib/fulfillmentConfirm stamps delivery on a separate event.
+  assert.equal(
+    isFulfillmentTerminal(
+      { Status: 'Closed Won', 'Deposit Paid At': afterEpoch(3), 'Closed At': afterEpoch(9) },
+      { rail: 'connect' },
+    ),
+    false,
+  );
+});
+
+test('terminal: CONNECT Closed Won IS terminal before the epoch', () => {
+  assert.equal(
+    isFulfillmentTerminal(
+      { Status: 'Closed Won', 'Deposit Paid At': beforeEpoch(20), 'Closed At': beforeEpoch(10) },
+      { rail: 'connect' },
+    ),
+    true,
+  );
+});
+
+test("terminal: 'Closed At' outranks 'Deposit Paid At' for the epoch test", () => {
+  // Deposit before, close after → the machine could have recorded delivery.
+  assert.equal(
+    isFulfillmentTerminal(
+      { Status: 'Closed Won', 'Deposit Paid At': beforeEpoch(40), 'Closed At': afterEpoch(1) },
+      { rail: 'connect' },
+    ),
+    false,
+  );
+  // Deposit after, close missing → falls back to the deposit, still visible.
+  assert.equal(
+    isFulfillmentTerminal(
+      { Status: 'Closed Won', 'Deposit Paid At': afterEpoch(1) },
+      { rail: 'connect' },
+    ),
+    false,
+  );
+});
+
+test('terminal: BROKER Closed Won is terminal on either side of the epoch', () => {
+  // Rail-aware, and correct after PR #650: on broker the confirm and the close
+  // are ONE operation, so Closed Won there really does mean delivered.
+  for (const when of [afterEpoch(3), beforeEpoch(3)]) {
+    assert.equal(
+      isFulfillmentTerminal({ Status: 'Closed Won', 'Deposit Paid At': when }, { rail: 'broker' }),
+      true,
+    );
+  }
+});
+
+test('terminal: the rail is inferred from the referral row when not given', () => {
+  const base = { Status: 'Closed Won', 'Deposit Paid At': afterEpoch(3) };
+  assert.equal(isFulfillmentTerminal({ ...base, 'Match Type': 'Broker — Deposit' }), true);
+  assert.equal(isFulfillmentTerminal(base), false);
+});
+
+test('B1: an exhausted CONNECT Closed Won now reaches the escalation', () => {
+  // It used to be dropped here — after the ladder had already spent all three
+  // chases on it. That was the permanent silence.
+  const nowISO = afterEpoch(60);
+  const ref = {
+    id: 'recCW',
+    'Deposit Paid At': afterEpoch(1),
+    'Rancher Accepted At': afterEpoch(2),
+    Status: 'Closed Won',
+    [CHASE_FIELDS.count]: MAX_LIFETIME_CHASES,
+    [CHASE_FIELDS.lastSentAt]: afterEpoch(40),
+  };
+  assert.deepEqual(
+    selectExhaustedChases([ref], { nowISO }).map((r) => r.referralId),
+    ['recCW'],
+  );
+  // Broker's Closed Won still does not — same call, different rail.
+  assert.deepEqual(
+    selectExhaustedChases([{ ...ref, 'Match Type': 'Broker — Deposit' }], { nowISO }),
+    [],
+  );
+});
+
+test('B1: a pre-epoch Closed Won stops being CHASED too (no orphan)', () => {
+  // The other half of the invariant: if the band cannot show a row, no lane may
+  // keep chasing it. Otherwise we have just moved the chaseable-but-invisible
+  // bug rather than fixed it.
+  const ref = {
+    id: 'recOld',
+    'Deposit Paid At': beforeEpoch(40),
+    'Rancher Accepted At': beforeEpoch(39),
+    Status: 'Closed Won',
+  };
+  assert.deepEqual(selectFulfillmentChase([ref], { nowISO: beforeEpoch(1) }), []);
+});
+
+test('exhaustion: the scan window is wider than the per-run budget', () => {
+  // The starvation fix in one assertion. If a run may only LOOK at as many
+  // rows as it may FIRE, then rows whose Redis claim is still held (every
+  // already-escalated row, because `Fulfillment Escalated At` is not in the
+  // live schema yet so the selector cannot drop them) consume the whole budget
+  // and the tail of the list never escalates at all.
+  assert.ok(
+    MAX_EXHAUSTION_SCAN_PER_RUN > MAX_ESCALATIONS_PER_RUN,
+    'scan window must exceed the escalation budget or the tail starves',
+  );
+  // And wide enough that a full budget's worth of held claims cannot block it.
+  assert.ok(MAX_EXHAUSTION_SCAN_PER_RUN >= MAX_ESCALATIONS_PER_RUN * 5);
 });

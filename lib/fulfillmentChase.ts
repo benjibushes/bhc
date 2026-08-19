@@ -126,11 +126,148 @@ export const FULFILLMENT_ESCALATION_AIRTABLE_FIELDS_NEEDED: readonly string[] = 
 export const FULFILLMENT_RE_ESCALATE_COOLDOWN_DAYS = 7;
 
 /**
+ * Exhaustion escalations a single cron run may FIRE. Small on purpose: the
+ * first sweep over historical backlog drains over days instead of flooding Ben.
+ */
+export const MAX_ESCALATIONS_PER_RUN = 10;
+
+/**
+ * How far down the exhausted list one run may LOOK to find those escalations.
+ *
+ * Review fix. The route used to slice to MAX_ESCALATIONS_PER_RUN and only THEN
+ * try the Redis claim, so a row that merely LOST its claim still burned one of
+ * the ten slots. That starves the tail today, not hypothetically: the durable
+ * stamp `Fulfillment Escalated At` is not in the live Referrals schema yet, so
+ * selectExhaustedChases cannot filter an already-escalated row out — it stays
+ * at the top of the list (sorted by a silence that only grows) with its claim
+ * held for the whole cooldown. Ten such rows pin every slot and row 11 never
+ * escalates at all. The budget must therefore count escalations that FIRED,
+ * and this is the bound that keeps such a run finite (a lost claim is one
+ * cheap Redis read). Must stay comfortably larger than the budget or the fix
+ * is undone.
+ */
+export const MAX_EXHAUSTION_SCAN_PER_RUN = 200;
+
+/**
  * Days of silence after the LAST ladder touch before exhaustion escalates.
  * Without this the escalation would fire the same day the third chase went
  * out, stepping on the tier-3 operator signal that just landed.
  */
 export const EXHAUSTION_GRACE_DAYS = 2;
+
+// ---------------------------------------------------------------------------
+// THE SHARED TERMINAL RULE (review fix B1, 2026-08-18)
+// ---------------------------------------------------------------------------
+//
+// THE BUG THIS CLOSES. Three selectors each hard-coded their own list of
+// "dead" statuses and the three lists disagreed about exactly one value:
+//
+//   selectFulfillmentChase  excluded closed lost / refunded          → CHASED 'Closed Won'
+//   selectExhaustedChases   excluded closed lost / refunded / won    → invisible
+//   selectObligations       excluded closed lost / refunded / won    → invisible
+//
+// On the CONNECT rail 'Closed Won' means the MONEY closed — the buyer paid the
+// final invoice — and says nothing about whether beef ever moved;
+// lib/fulfillmentConfirm writes `Fulfillment Confirmed At` on a completely
+// separate event. So a Closed Won row with no confirmation took all three
+// chases INCLUDING the loud tier-2 operator signal, hit the lifetime cap, and
+// then fell out of BOTH terminal surfaces — permanent silence on the exact
+// cohort where the buyer has already paid in full, under a green "Nobody is
+// stranded" banner. Chaseable-but-invisible is the defect; one predicate that
+// every selector shares is the fix.
+//
+// RAIL-AWARE, because 'Closed Won' does not mean the same thing on both rails:
+//
+//   BROKER  — terminal. There is no final invoice on this rail: the deposit
+//             settled 100% to BHC and IS the whole fee, so the LAST event in a
+//             broker deal is the fulfillment confirm, and (PR #650)
+//             adminFulfillmentCloseDecision stamps `Fulfillment Confirmed At`
+//             and Status='Closed Won' in the same operation. Closed Won on
+//             broker therefore MEANS delivered. selectBrokerPickup already
+//             treated it that way; now everyone does, and it stays correct the
+//             moment #650 lands.
+//   CONNECT — NOT terminal. Closed Won is the balance payment, and delivery is
+//             still unproven. These rows are genuine obligations.
+//
+// ...bounded by the epoch below, which is the one thing that keeps the Connect
+// half from swamping the band with rows nobody can act on.
+
+/**
+ * FULFILLMENT TRACKING EPOCH — the cutoff that makes "no confirmation stamp"
+ * mean something.
+ *
+ * Pinned to 2026-07-29, the day #514 ("feat(fulfillment): scheduling, UN-GATED
+ * TRACKER, chase rework, delivered-sync, cut sheets", commit 6a67aea) shipped.
+ * Before it, confirming fulfillment was not a thing every rancher could do:
+ * the confirm row was tier_v2-gated, so a legacy-rail rancher had NO route
+ * that stamped `Fulfillment Confirmed At` at all, and the richer tracker's
+ * 'fulfilled' status never stamped it either (see the lib/fulfillmentConfirm
+ * header, which exists to describe exactly that hole).
+ *
+ * So for a deal closed before this date, "unconfirmed" is an artifact of
+ * missing machinery, not evidence a customer is waiting. Including those rows
+ * would be actively harmful rather than merely noisy: the band sorts OLDEST
+ * MONEY FIRST, so every unactionable legacy row outranks every live one, and
+ * the pinned ones hijack the cockpit's single `oneMove` slot.
+ *
+ * Deliberately set to midnight UTC rather than the commit timestamp: a few
+ * hours of over-inclusion errs toward SHOWING money-at-risk, which is the
+ * direction this whole PR exists to fail in.
+ */
+export const FULFILLMENT_TRACKING_EPOCH_ISO = '2026-07-29T00:00:00.000Z';
+export const FULFILLMENT_TRACKING_EPOCH_MS = Date.parse(FULFILLMENT_TRACKING_EPOCH_ISO);
+
+/** Statuses that are dead on EVERY rail, whatever the date. */
+const HARD_TERMINAL_STATUSES: ReadonlySet<string> = new Set([
+  'closed lost',
+  'refunded',
+  'cancelled',
+  'canceled',
+  'expired',
+]);
+
+/**
+ * Is this referral finished as far as FULFILLMENT is concerned — i.e. is there
+ * no longer any beef that BHC owes a customer on it?
+ *
+ * The single source of truth for selectFulfillmentChase, selectBrokerPickup,
+ * selectExhaustedChases and lib/obligations::selectObligations. Sharing it is
+ * the invariant: a row that is still CHASEABLE is always still VISIBLE, and a
+ * row whose ladder is spent always reaches the escalation. They cannot drift
+ * apart again without this function changing.
+ *
+ * PURE. Every field is read in JS, so an absent one is just `undefined` — the
+ * {Refunded At} lesson.
+ *
+ * @param opts.rail Explicit rail when the caller has better evidence than the
+ *   referral row alone (lib/obligations can see the linked Ranchers row and
+ *   the Payments row; this module only ever has the referral). Defaults to the
+ *   referral-row discriminator.
+ */
+export function isFulfillmentTerminal(
+  ref: Record<string, any>,
+  opts: { rail?: 'connect' | 'broker'; epochMs?: number } = {},
+): boolean {
+  const status = String(ref?.['Status'] ?? '').trim().toLowerCase();
+  if (!status) return false;
+  if (HARD_TERMINAL_STATUSES.has(status)) return true;
+  if (status !== 'closed won') return false;
+
+  // BROKER: the confirm and the close are one operation (#650) — delivered.
+  const rail = opts.rail ?? (isBrokerReferralRow(ref) ? 'broker' : 'connect');
+  if (rail === 'broker') return true;
+
+  // CONNECT: the money closed, the beef did not necessarily move. Terminal
+  // only for deals that predate the epoch, where no confirmation could exist.
+  const epochMs = typeof opts.epochMs === 'number' ? opts.epochMs : FULFILLMENT_TRACKING_EPOCH_MS;
+  // 'Closed At' is the close itself (lib/refundLifecycle clears it on refund,
+  // recordClose writes it); 'Deposit Paid At' is the belt for rows that never
+  // got one. Every caller already requires Deposit Paid At, so the final null
+  // branch is unreachable in practice — an undateable row is treated as legacy.
+  const closedAt = parseMs(ref?.['Closed At']) ?? parseMs(ref?.['Deposit Paid At']);
+  if (closedAt === null) return true;
+  return closedAt < epochMs;
+}
 
 // Tier thresholds in whole days past the due date.
 export const TIER_1_DAYS = 2;
@@ -236,10 +373,14 @@ export function selectFulfillmentChase(
     const accepted = parseMs(ref['Rancher Accepted At']);
     if (accepted === null) continue; // no clock derivable for any kind
 
-    // Dead deals. The formula excludes 'Closed Lost'; 'refunded' is
-    // belt-and-braces for any drifted/legacy status value.
+    // Dead deals — THE SHARED RULE (isFulfillmentTerminal). Was
+    // `closed lost || refunded`, which chased Connect 'Closed Won' rows that
+    // both terminal surfaces then dropped. Now: post-epoch Connect Closed Won
+    // still reaches the confirm kind below (the beef is genuinely unproven and
+    // the band shows it), pre-epoch ones stop being chased, and the hard-dead
+    // statuses cancelled/expired stop being chased at all.
     const status = String(ref['Status'] || '').toLowerCase();
-    if (status === 'closed lost' || status === 'refunded') continue;
+    if (isFulfillmentTerminal(ref, { rail: 'connect' })) continue;
 
     // Confirmed via EITHER path: the legacy binary confirm
     // (/api/rancher/fulfillment/confirm) or the richer tracker. Suppresses
@@ -337,8 +478,10 @@ export function selectFulfillmentChase(
  *      than Deposit Paid At and the row is excluded — the ranch was never
  *      told the order exists (raiseBrokerSheetAlert's operator rail owns it),
  *      so never ask the buyer about a pickup nobody arranged.
- *   3. Not closed (Closed Won means the pickup already happened; Closed
- *      Lost/Refunded are dead) and not confirmed via either fulfillment shape.
+ *   3. Not fulfillment-terminal (isFulfillmentTerminal at rail 'broker' —
+ *      Closed Won means the pickup already happened, because on this rail the
+ *      confirm and the close are one operation; Closed Lost/Refunded are dead)
+ *      and not confirmed via either fulfillment shape.
  *   4. Not a rancher-added CRM lead (#511 — never email their own customer).
  *
  * CADENCE — mirrors the Connect confirm lane exactly: due = Handoff Date >
@@ -357,8 +500,9 @@ function selectBrokerPickup(
   const sheetMs = parseMs(ref['Intro Sent At']);
   if (sheetMs === null || sheetMs < depositMs) return null; // sheet not delivered
 
-  const status = String(ref['Status'] || '').toLowerCase();
-  if (status === 'closed lost' || status === 'closed won' || status === 'refunded') return null;
+  // Same shared rule, pinned to this rail: on broker, 'Closed Won' IS the
+  // delivery stamp (#650), so it stays terminal here exactly as before.
+  if (isFulfillmentTerminal(ref, { rail: 'broker' })) return null;
 
   const confirmed =
     !!ref['Fulfillment Confirmed At'] ||
@@ -408,7 +552,10 @@ export interface ExhaustedChase {
  *   1. money landed (`Deposit Paid At`);
  *   2. the ladder is spent (Count ≥ MAX_LIFETIME_CHASES);
  *   3. delivery is unproven (neither fulfillment shape says confirmed);
- *   4. the deal is still open (not closed won/lost, not refunded);
+ *   4. the deal is not fulfillment-terminal (isFulfillmentTerminal — which on
+ *      the CONNECT rail deliberately does NOT include 'Closed Won': that means
+ *      the balance was paid, not that beef moved, and dropping those rows here
+ *      is what left the chase ladder's own graduates with nowhere to go);
  *   5. the last touch was ≥ EXHAUSTION_GRACE_DAYS ago, so this never doubles
  *      up on the tier-3 signal that just fired;
  *   6. it has not been escalated inside FULFILLMENT_RE_ESCALATE_COOLDOWN_DAYS.
@@ -443,8 +590,10 @@ export function selectExhaustedChases(
       String(ref[FULFILLMENT_FIELDS.status] || '').toLowerCase() === 'fulfilled';
     if (confirmed) continue;
 
-    const status = String(ref['Status'] || '').toLowerCase();
-    if (status === 'closed lost' || status === 'closed won' || status === 'refunded') continue;
+    // Shared rule — this is the surface that used to drop Connect 'Closed
+    // Won' on the floor after the ladder had already spent all three chases
+    // on it. Rail is inferred from the referral row (all this module ever has).
+    if (isFulfillmentTerminal(ref)) continue;
 
     // Silence must have had time to become silence.
     const lastSent = parseMs(ref[CHASE_FIELDS.lastSentAt]);

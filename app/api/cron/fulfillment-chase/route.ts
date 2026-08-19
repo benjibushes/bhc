@@ -83,6 +83,8 @@ import {
   FULFILLMENT_ESCALATED_AT_FIELD,
   FULFILLMENT_ESCALATION_AIRTABLE_FIELDS_NEEDED,
   FULFILLMENT_RE_ESCALATE_COOLDOWN_DAYS,
+  MAX_ESCALATIONS_PER_RUN,
+  MAX_EXHAUSTION_SCAN_PER_RUN,
 } from '@/lib/fulfillmentChase';
 
 export const maxDuration = 60;
@@ -90,7 +92,11 @@ export const maxDuration = 60;
 const MAX_PER_RUN = 25;
 // Ladder-exhaustion escalations per run (P0-3). Small on purpose: the first
 // sweep over historical backlog drains over days instead of flooding Ben.
-const MAX_ESCALATIONS_PER_RUN = 10;
+// MAX_ESCALATIONS_PER_RUN / MAX_EXHAUSTION_SCAN_PER_RUN are chase CADENCE
+// policy and live with the rest of it in lib/fulfillmentChase (imported below).
+// The pairing is load-bearing: the run escalates at most the budget, but must
+// be free to look PAST rows whose Redis claim is still held, or the tail
+// starves. See the constants' doc comments.
 
 async function realHandler(
   _request: Request,
@@ -350,7 +356,8 @@ async function realHandler(
   const exhausted = selectExhaustedChases(candidates, { nowISO: nowIso });
   let escalated = 0;
   let escalationStampChecked = false;
-  for (const row of exhausted.slice(0, MAX_ESCALATIONS_PER_RUN)) {
+  for (const row of exhausted.slice(0, MAX_EXHAUSTION_SCAN_PER_RUN)) {
+    if (escalated >= MAX_ESCALATIONS_PER_RUN) break;
     const { referralId, rail, daysSinceLastChase } = row;
     try {
       const won = await claimOnce(

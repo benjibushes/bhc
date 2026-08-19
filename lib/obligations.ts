@@ -32,20 +32,37 @@
 //             itself promised at checkout (`Ships In Days`), via the same
 //             lib/productFulfillmentSla arithmetic the chase cron uses, so
 //             the band and the cron can never disagree about "late".
+//             Connector-pushed rows are excluded on the same `External Push
+//             Status !== 'pushed'` test the cron applies — Shopify/Printify
+//             fulfill those, BHC does not.
+//
+// WHAT COUNTS AS OVER (review fix B1). "Closed" is NOT this module's own
+// opinion any more: it imports lib/fulfillmentChase::isFulfillmentTerminal,
+// the same predicate the chase lanes and the exhaustion escalation use, so a
+// row can never again be chaseable-but-invisible. The load-bearing case is
+// CONNECT 'Closed Won', which means the buyer paid the BALANCE — not that beef
+// moved — and therefore stays an obligation until something confirms delivery
+// (bounded by FULFILLMENT_TRACKING_EPOCH so pre-tracking deals don't swamp the
+// band). On BROKER, Closed Won is written by the same operation that stamps
+// the confirmation, so there it really does mean delivered.
+//
+// WHAT COUNTS AS REFUNDED (review fix B3). Only money genuinely returned —
+// lib/depositSla::isMoneyReturnedToBuyer, not the broader isRefundedOrDisputed
+// the send rails use. A partial refund and a live chargeback both leave the
+// obligation standing.
 //
 // PURE — no IO, no env, no Date.now(); the caller passes `now` and the already-
 // loaded Airtable snapshots. Everything that touches a possibly-missing field
 // (Fulfillment Confirmed At, Fulfillment Status, the chase stamps) is read in
 // JS where absent is just `undefined` — the {Refunded At} lesson.
 
-import { isBrokerRancher } from './brokerRail';
-import { isBrokerReferralRow } from './commission';
-import { isRefundedOrDisputed, ESCALATION_AFTER_HOURS } from './depositSla';
+import { isMoneyReturnedToBuyer, isBrokerRailReferral, ESCALATION_AFTER_HOURS } from './depositSla';
 import { FULFILLMENT_FIELDS } from './fulfillmentTracking';
 import {
   CHASE_FIELDS,
   FULFILLMENT_ESCALATED_AT_FIELD,
   MAX_LIFETIME_CHASES,
+  isFulfillmentTerminal,
 } from './fulfillmentChase';
 import { orderKind, slaWindowFor } from './productFulfillmentSla';
 import { isSyntheticTestEmail } from './demandRouter';
@@ -58,7 +75,11 @@ export interface ObligationRow {
   rail: ObligationRail;
   /** Hours since the money landed (deposit settled / order placed). */
   ageHours: number;
-  /** Money collected from the customer, in cents. */
+  /**
+   * Money collected FROM THE CUSTOMER, in cents — the deposit plus the on-top
+   * platform fee they were actually charged (see collectedCents). Not the
+   * rancher's take, and not BHC's fee.
+   */
   amountCents: number;
   buyerName: string;
   buyerState: string;
@@ -96,16 +117,6 @@ export interface ObligationsInput {
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 const DEFAULT_LIMIT = 50;
-
-/** Statuses that mean the deal is over — nothing is owed on them. */
-const CLOSED_STATUSES: ReadonlySet<string> = new Set([
-  'closed won',
-  'closed lost',
-  'refunded',
-  'cancelled',
-  'canceled',
-  'expired',
-]);
 
 function str(v: unknown): string {
   if (v == null) return '';
@@ -166,10 +177,52 @@ function ranchNameOf(ref: Record<string, any>, rancher: Record<string, any> | nu
   );
 }
 
-/** Is this referral on the BROKER rail? Rancher checkbox first (authoritative). */
-function isBrokerRow(ref: Record<string, any>, rancher: Record<string, any> | null): boolean {
-  if (isBrokerRancher(rancher)) return true;
-  return isBrokerReferralRow(ref);
+/**
+ * Is this referral on the BROKER rail?
+ *
+ * Delegates to lib/depositSla::isBrokerRailReferral so this band uses the SAME
+ * three-signal test as every other broker surface: the linked rancher's
+ * `Broker Rail` checkbox (authoritative), the Payments row's
+ * Type='broker_deposit' (written at settle), and the referral's `Match Type`
+ * (written at mint). The Payments signal is the one this function used to be
+ * missing, and its absence had teeth: a broker row whose Ranchers record could
+ * not be read AND whose Match Type had drifted fell through to
+ * connectObligation, which told the operator "the ranch never accepted the
+ * slot" — on a rail that HAS no accept step, so that row would also pin itself
+ * at 72h and never stop. OR-of-signals is the right bias: a false "broker"
+ * costs slightly vaguer copy, a false "connect" invents a milestone.
+ */
+function isBrokerRow(
+  ref: Record<string, any>,
+  rancher: Record<string, any> | null,
+  payment: Record<string, any> | null,
+): boolean {
+  return isBrokerRailReferral({ ...ref, __rancher: rancher, __payment: payment });
+}
+
+/**
+ * What the CUSTOMER actually paid, in cents.
+ *
+ * `Deposit Amount` is the deposit alone. On the Connect rail BHC's 10% is
+ * charged ON TOP of it (money model #1 — the rancher keeps 100% of the price,
+ * the buyer pays the fee), so the deposit understates the charge by exactly
+ * the platform fee and a tile labelled "collected" was quietly wrong. Same
+ * precedence as lib/contracts/payments::markDepositRefunded's capturedCents,
+ * so this band and the refund gate agree on what a full charge is:
+ *   1. 'Total Charged Cents' — stamped at settlement, the true charged total;
+ *   2. deposit + 'Platform Fee Cents' — for rows predating that field;
+ *   3. the Payments row's deposit alone;
+ *   4. the Referral's 'Deposit Amount' (dollars) when there is no Payments row.
+ */
+function collectedCents(ref: Record<string, any>, payment: Record<string, any> | null): number {
+  const fallback = toCents(num(ref['Deposit Amount']));
+  if (!payment) return fallback;
+  const total = num(payment['Total Charged Cents']);
+  if (total > 0) return total;
+  const deposit = num(payment['Amount Cents']);
+  const fee = num(payment['Platform Fee Cents']);
+  if (deposit > 0) return deposit + fee;
+  return fallback;
 }
 
 function days(msSpan: number): number {
@@ -183,6 +236,7 @@ function connectObligation(
   rancher: Record<string, any> | null,
   paidAt: number,
   now: number,
+  amountCents: number,
 ): ObligationRow {
   const ageDays = days(now - paidAt);
   const ranchName = ranchNameOf(ref, rancher);
@@ -213,7 +267,7 @@ function connectObligation(
     id: String(ref.id),
     rail: 'connect',
     ageHours: Math.floor((now - paidAt) / HOUR),
-    amountCents: toCents(num(ref['Deposit Amount'])),
+    amountCents,
     buyerName: str(ref['Buyer Name']),
     buyerState: str(ref['Buyer State']),
     ranchName,
@@ -229,6 +283,7 @@ function brokerObligation(
   rancher: Record<string, any> | null,
   paidAt: number,
   now: number,
+  amountCents: number,
 ): ObligationRow {
   const ageDays = days(now - paidAt);
   const ranchName = ranchNameOf(ref, rancher);
@@ -260,7 +315,7 @@ function brokerObligation(
     id: String(ref.id),
     rail: 'broker',
     ageHours: Math.floor((now - paidAt) / HOUR),
-    amountCents: toCents(num(ref['Deposit Amount'])),
+    amountCents,
     buyerName: str(ref['Buyer Name']),
     buyerState: str(ref['Buyer State']),
     ranchName,
@@ -334,28 +389,48 @@ export function selectObligations(input: ObligationsInput): ObligationRow[] {
     // 2. Delivery is genuinely unproven.
     if (isFulfillmentConfirmed(ref)) continue;
 
-    // 3. The deal is still open.
-    if (CLOSED_STATUSES.has(str(ref.Status).toLowerCase())) continue;
-
-    // 4. The money is still ours to answer for (Referral OR Payments row).
+    // 3. Which rail — decided BEFORE the terminal test, because 'Closed Won'
+    //    does not mean the same thing on both (see isFulfillmentTerminal).
     const payment = paymentByReferralId?.get(String(ref.id)) ?? null;
-    if (isRefundedOrDisputed({ ...ref, __payment: payment })) continue;
+    const rancher = rancherOf(ref, rancherById);
+    const broker = isBrokerRow(ref, rancher, payment);
 
-    // 5. Synthetic e2e rows never reach a human's list.
+    // 4. The deal is still open — THE SHARED RULE, identical to the one the
+    //    chase lanes and the exhaustion escalation use (lib/fulfillmentChase).
+    //    This band used to drop every 'Closed Won' row while the chase cron
+    //    happily kept chasing them: a Connect deal where the buyer paid the
+    //    balance IN FULL and the beef never moved took all three chases, hit
+    //    the lifetime cap, and then vanished from both terminal surfaces.
+    if (isFulfillmentTerminal(ref, { rail: broker ? 'broker' : 'connect' })) continue;
+
+    // 5. The money actually came back. NARROW on purpose (isMoneyReturnedToBuyer,
+    //    not isRefundedOrDisputed): a partial refund and an in-flight chargeback
+    //    both leave the obligation standing — a buyer who got $1 back on a $750
+    //    deposit is still a buyer waiting on a side of beef.
+    if (isMoneyReturnedToBuyer({ ...ref, __payment: payment })) continue;
+
+    // 6. Synthetic e2e rows never reach a human's list.
     const email = str(ref['Buyer Email']).toLowerCase();
     if (email && isSyntheticTestEmail(email)) continue;
 
-    const rancher = rancherOf(ref, rancherById);
+    const amountCents = collectedCents(ref, payment);
     rows.push(
-      isBrokerRow(ref, rancher)
-        ? brokerObligation(ref, rancher, paidAt, now)
-        : connectObligation(ref, rancher, paidAt, now),
+      broker
+        ? brokerObligation(ref, rancher, paidAt, now, amountCents)
+        : connectObligation(ref, rancher, paidAt, now, amountCents),
     );
   }
 
   for (const order of rancherOrders || []) {
     if (!order || !order.id) continue;
     if (str(order.Status) !== 'New') continue;
+    // Connector-pushed orders are Shopify's/Printify's to fulfill — mirrors
+    // app/api/cron/product-fulfillment-sla exactly (`!== 'pushed'` is kept).
+    // The store ships on its own SLA and the reverse webhook stamps Shipped,
+    // so these are not BHC obligations; without this they would not merely
+    // appear, they would PIN past the escalate window and hijack the cockpit's
+    // single `oneMove` slot with an order nobody at BHC is meant to touch.
+    if (str(order['External Push Status']) === 'pushed') continue;
     if (order['Refunded At'] || order['Cancelled At']) continue;
     const orderedAt = ms(order['Ordered At']);
     if (orderedAt === null) continue;
