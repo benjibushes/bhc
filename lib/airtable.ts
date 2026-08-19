@@ -780,6 +780,17 @@ export function activeRancherPagesFormula(): string {
  * a state. The `{State}` field is unnormalized (some records carry the
  * 2-letter code, some the full name) — match both, case-insensitively.
  *
+ * THIS IS THE VISIBILITY HALF ONLY (2026-08-19). It answers "is this row
+ * PUBLISHED", which is not the question "can a buyer who arrives actually
+ * complete a purchase". Sellability is rail-dependent — Connect status + cut
+ * price on one rail, assertBrokerEligible on the other — and no Airtable
+ * formula can express it, so all three surfaces additionally run
+ * lib/rancherEligibility.isRancherSellableForBuyers over the rows this
+ * returns. Widening this formula does NOT widen supply and must never be
+ * attempted as a substitute for that predicate: page-live is publication, not
+ * a price tag. California's only page-live ranch has Connect stuck in
+ * 'onboarding' and no cut priced at all.
+ *
  * PARKED GATE (2026-08-18 audit, P1-2): shares PARKED_STATUS_EXCLUSION_FORMULA
  * with mapPinsFormula. Without it these pages counted, named and PRICED
  * Paused ranches as live supply while the map showed none — Colorado and Utah

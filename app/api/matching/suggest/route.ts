@@ -16,7 +16,11 @@ import jwt from 'jsonwebtoken';
 import { getMaxActiveReferrals, incrementCapacity, decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { isActiveDealReferral } from '@/lib/capacityCount';
 import { equalStateSubCap } from '@/lib/stateSubCap';
-import { isRancherOperationalForBuyers, isRancherOnConnect } from '@/lib/rancherEligibility';
+import {
+  isRancherOperationalForBuyers,
+  isRancherOnConnect,
+  passesCutPriceFloor,
+} from '@/lib/rancherEligibility';
 // MONEY GUARD — a broker-rail match must be DEPOSIT-FIRST, never an intro
 // handoff. lib/brokerMatch owns that decision; this route only obeys it.
 import {
@@ -612,26 +616,16 @@ export async function POST(request: Request) {
     // Extracted as a named predicate (pre-flip guard, finding 3, 2026-07-01)
     // so the DIRECT-match path below enforces the SAME floor as the general
     // path — a ?rancher= / campaign pin used to skip it entirely.
-    const passesTierV2CutFloor = (r: any): boolean => {
-      if (String(r['Pricing Model'] || 'legacy') !== 'tier_v2') return true;
-      const hasFloorPrice = (p: any) => {
-        const n = Number(p);
-        return Number.isFinite(n) && n >= MIN_TIER_PRICE;
-      };
-      // Map the buyer's requested cut → the matching tier price field.
-      // buyerTier (Quarter|Half|Whole|null) is derived from Order Type below.
-      const requestedCutPrice =
-        buyerTier === 'Quarter' ? r['Quarter Price']
-        : buyerTier === 'Half' ? r['Half Price']
-        : buyerTier === 'Whole' ? r['Whole Price']
-        : null;
-      if (buyerTier) {
-        // Specific cut known — the rancher must have validly priced THAT cut.
-        return hasFloorPrice(requestedCutPrice);
-      }
-      // Ambiguous/unset tier — fall back to any-cut (don't over-exclude).
-      return [r['Quarter Price'], r['Half Price'], r['Whole Price']].some(hasFloorPrice);
-    };
+    //
+    // MOVED (2026-08-19): the floor itself now lives in lib/rancherEligibility
+    // as passesCutPriceFloor, because the SUPPLY-COUNTING surfaces need the
+    // identical rule and were each inventing their own. lib/stateSupply,
+    // lib/routingSegment and /api/funnel/stats ask it with cut=null (the
+    // any-cut form below); this route keeps asking it with the buyer's actual
+    // cut. One definition, so a state page can no longer advertise a ranch this
+    // route would reject. Behavior here is byte-identical to the local closure
+    // it replaces.
+    const passesTierV2CutFloor = (r: any): boolean => passesCutPriceFloor(r, buyerTier);
     const isEligibleBase = (r: any) => {
       // ── REQUEST-ONLY BACKSTOP ────────────────────────────────────────────
       // Both generic candidate sets (local pool + nationwide fallback) reject

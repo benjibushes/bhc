@@ -6,6 +6,7 @@ import Container from '../../components/Container';
 import Button from '../../components/Button';
 import Divider from '../../components/Divider';
 import base, { TABLES, escapeAirtableValue, stateDiscoveryRanchersFormula } from '@/lib/airtable';
+import { isRancherSellableForBuyers } from '@/lib/rancherEligibility';
 import { US_STATES, stateName, normalizeState } from '@/lib/states';
 import { normalizeImageUrl } from '@/lib/imageUrl';
 import StateLandingAnalytics from './StateLandingAnalytics';
@@ -100,16 +101,24 @@ async function fetchStateData(stateCode: string, stateName: string): Promise<{
       })
       .all();
 
-    ranchers = records.map((r) => ({
-      id: r.id,
-      slug: String(r.fields['Slug'] || ''),
-      ranchName: String(r.fields['Ranch Name'] || r.fields['Operator Name'] || 'Ranch'),
-      operatorName: String(r.fields['Operator Name'] || ''),
-      city: String(r.fields['City'] || ''),
-      logoUrl: normalizeImageUrl(String(r.fields['Logo URL'] || '')),
-      tagline: String(r.fields['Tagline'] || ''),
-      certifications: String(r.fields['Certifications'] || ''),
-    }));
+    // SUPPLY GATE (2026-08-19) — the formula publishes, this predicate SELLS.
+    // The read is unprojected, so isRancherSellableForBuyers has every field it
+    // needs. Without it this page listed a ranch whose Stripe Connect never
+    // finished onboarding and which has no cut priced, under a headline that
+    // says buyers get matched with it. Same predicate as lib/stateSupply and
+    // /half-a-cow/[state]; an empty list falls through to the recruiting copy.
+    ranchers = records
+      .filter((r) => isRancherSellableForBuyers(r.fields as any))
+      .map((r) => ({
+        id: r.id,
+        slug: String(r.fields['Slug'] || ''),
+        ranchName: String(r.fields['Ranch Name'] || r.fields['Operator Name'] || 'Ranch'),
+        operatorName: String(r.fields['Operator Name'] || ''),
+        city: String(r.fields['City'] || ''),
+        logoUrl: normalizeImageUrl(String(r.fields['Logo URL'] || '')),
+        tagline: String(r.fields['Tagline'] || ''),
+        certifications: String(r.fields['Certifications'] || ''),
+      }));
   } catch (e) {
     console.error(`[access/[state]] fetchStateData ranchers failed for ${stateCode}:`, e);
   }

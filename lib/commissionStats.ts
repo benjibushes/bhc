@@ -19,7 +19,8 @@
 // gets its own figure from Payments (computeConnectFeeCaptured) instead of
 // being folded into a single misleading total.
 
-import { referralRail } from './commission';
+import { referralRail, isBrokerReferralRow } from './commission';
+import { TERMINAL_PRODUCT_ORDER_STATUSES } from './productOrderStatus';
 
 export interface CommissionReferral {
   Status?: string;
@@ -44,9 +45,23 @@ function round2(n: number): number {
  * Closed Won referrals riding the LEGACY (invoice-after-close) rail — the only
  * rows for which `Commission Due` means anything. Uses the canonical per-row
  * discriminator from lib/commission.ts; never per-rancher.
+ *
+ * BROKER BELT (2026-08-19). `referralRail` discriminates on `Deposit Paid At`,
+ * which a broker row does not carry until its deposit settles — and a broker
+ * close that was stamped by hand may never carry one at all. Such a row read
+ * as 'legacy' here, so a `Commission Due` typed onto it was added to a total
+ * that ALREADY contains that same sale as a broker deposit BHC kept in full:
+ * the one sale, billed twice. `isBrokerReferralRow` keys on `Match Type`,
+ * stamped at referral CREATION, so it holds in exactly the window where
+ * `Deposit Paid At` does not. The same belt was already applied by
+ * lib/commissionOwed.isCommissionOwedRow and lib/commission's
+ * partitionUnpaidByRail + shouldWriteLegacyCommissionDue — this was the one
+ * legacy-rail selector missing it.
  */
 export function legacyClosedWon<T extends CommissionReferral>(referrals: T[]): T[] {
-  return referrals.filter((r) => r.Status === 'Closed Won' && referralRail(r) === 'legacy');
+  return referrals.filter(
+    (r) => r.Status === 'Closed Won' && !isBrokerReferralRow(r) && referralRail(r) === 'legacy',
+  );
 }
 
 /**
@@ -109,6 +124,13 @@ export function countConnectFeePayments(payments: ConnectFeePayment[]): number {
 
 // ── Range-aware variants (Wave 1B cockpit) ─────────────────────────────────
 //
+// SUPERSEDED for "what did BHC earn" (2026-08-19). /admin/today used to add
+// these two together and call the result "Earned", which omitted the legacy
+// rail — 84% of lifetime revenue. Both admin screens now read
+// lib/bhcRevenue.computeBhcRevenue, which spans EVERY measurable rail and
+// names them. These stay as single-rail helpers (and are unit-tested as such);
+// do NOT build a sixth "total revenue" out of them.
+//
 // The /admin/today cockpit needs "earned TODAY" and "earned MTD", which the
 // all-time helpers above cannot answer. Range membership is decided by the
 // caller via a predicate over the row's capture timestamp so the timezone
@@ -146,6 +168,27 @@ export interface ProductMarginOrder {
   /** Rancher Orders — dollars kept by BHC on a shop sale (lib/productSettlement). */
   'BHC Margin'?: number | string | null;
   'Ordered At'?: string | null;
+  /** New | Shipped | Refunded | Cancelled — terminal rows earned nothing. */
+  'Status'?: unknown;
+}
+
+/**
+ * A refunded / cancelled shop order is NOT earned revenue (2026-08-19).
+ *
+ * The refund path flips Status and stamps 'Refunded At' but deliberately
+ * leaves 'BHC Margin' intact — the field records what the sale WAS. Both
+ * helpers below used to sum every row, so money that went back out stayed in
+ * the founder's "earned" figure forever. The Connect rail was never exposed to
+ * this because its sums are succeeded-only; this is the same rule for the shop
+ * rail, sharing the one terminal set (lib/productOrderStatus).
+ */
+function earnedProductOrders<T extends ProductMarginOrder>(orders: T[]): T[] {
+  return orders.filter((o) => {
+    const raw = (o as any)['Status'];
+    const status =
+      raw && typeof raw === 'object' && 'name' in raw ? String((raw as any).name ?? '') : String(raw ?? '');
+    return !TERMINAL_PRODUCT_ORDER_STATUSES.has(status);
+  });
 }
 
 /**
@@ -154,7 +197,7 @@ export interface ProductMarginOrder {
  * definition of the product-rail money.
  */
 export function computeProductMargin(orders: ProductMarginOrder[]): number {
-  return round2(orders.reduce((sum, o) => sum + toNum(o['BHC Margin']), 0));
+  return round2(earnedProductOrders(orders).reduce((sum, o) => sum + toNum(o['BHC Margin']), 0));
 }
 
 /** Shop-rail margin within a caller-defined range (tested on `Ordered At`). */
@@ -163,7 +206,7 @@ export function computeProductMarginInRange(
   inRange: (isoTimestamp: string) => boolean,
 ): number {
   return round2(
-    orders
+    earnedProductOrders(orders)
       .filter((o) => {
         const ts = String(o['Ordered At'] || '');
         return !!ts && inRange(ts);

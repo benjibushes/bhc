@@ -6,7 +6,8 @@
 
 import { NextResponse } from 'next/server';
 import { getAllRecords, TABLES } from '@/lib/airtable';
-import { isRancherOperationalForBuyers, getOperationalServedStates } from '@/lib/rancherEligibility';
+import { isRancherSellableForBuyers } from '@/lib/rancherEligibility';
+import { sellableRancherCountsByState } from '@/lib/routingSegment';
 import { normalizeState } from '@/lib/states';
 import { cacheGet as sharedCacheGet, cacheSet as sharedCacheSet } from '@/lib/sharedCache';
 
@@ -39,13 +40,26 @@ async function compute(): Promise<StatsData> {
     // Ranchers full list rides the L1/L2 table cache (allowlisted).
     getAllRecords(TABLES.RANCHERS).catch(() => []) as Promise<any[]>,
   ]);
-  const op = rans.filter(isRancherOperationalForBuyers);
+  // GENERIC SELLABLE SUPPLY (2026-08-19). Both numbers below are promises to a
+  // buyer standing in the funnel — "you match N ranches near you", and the
+  // 24-48h call promise that branches on ranchesInState > 0 — so both have to
+  // mean "a ranch that could actually take your money", not "a ranch row".
+  //
+  // WHAT THIS REPLACED, and what it cost. The old loop was
+  // isRancherOperationalForBuyers + getOperationalServedStates with NO
+  // request-only belt, so the single request-only ranch (Admin Approved
+  // Multi-State + 48 Routing States) claimed in-state supply in 48 states when
+  // 16 had any — 32 states where a completed, ad-funded quiz dead-ends on a
+  // waitlist. lib/routingSegment already answers exactly this question for the
+  // cron rails (#652); routing this surface through the SAME helper is what
+  // stops the two from drifting again.
   const closed = cons.length;
-  const byState: Record<string, number> = {};
-  for (const r of op) {
-    for (const s of getOperationalServedStates(r)) byState[s] = (byState[s] || 0) + 1;
-  }
-  return { familiesMatched: Math.max(FAMILIES_FLOOR, closed), verifiedRanches: op.length, byState };
+  const byState = sellableRancherCountsByState(rans);
+  // "Verified ranches" is a network-wide social-proof count, not a coverage
+  // answer, so it keeps every sellable ranch INCLUDING request-only supply —
+  // that ranch is real and does sell, it just never gets handed out generically.
+  const sellable = rans.filter(isRancherSellableForBuyers);
+  return { familiesMatched: Math.max(FAMILIES_FLOOR, closed), verifiedRanches: sellable.length, byState };
 }
 
 export async function GET(req: Request) {

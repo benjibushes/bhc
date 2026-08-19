@@ -23,8 +23,17 @@
  * Payment' until the rancher accepts, so the since-paid rows slipped through
  * the one check that existed. 5.7x overstatement.
  *
- * THE RULE — an abandoned row is owed only when all four hold:
- *   1. Status is 'abandoned';
+ * OPEN, NOT JUST ABANDONED (2026-08-19). The rule was written for the
+ * 'abandoned' status alone, because that is where the deposit rail parks a
+ * checkout that is not paid. But a 'pending' row is the same fact one step
+ * earlier — a checkout minted, an ask made, money not collected — and
+ * /admin's command-center had always counted `pending || abandoned` while
+ * /admin/today counted abandoned only. Two screens, one base, no label saying
+ * why. The status set below is now the SHARED answer for both, so "outstanding"
+ * means one thing; every other rule is unchanged and still applies per row.
+ *
+ * THE RULE — an open deposit row is owed only when all four hold:
+ *   1. Status is one of OPEN_PAYMENT_STATUSES ('abandoned' | 'pending');
  *   2. its referral is not already counted on the referral side of the tile;
  *   3. the money never landed — no `Deposit Paid At` on the referral, and no
  *      succeeded (or refunded — you cannot refund what never paid) Payments
@@ -51,6 +60,13 @@ const statusOf = (row: Record<string, any>): string => cell(row?.['Status']).tri
  */
 const SETTLED_PAYMENT_STATUSES = new Set(['succeeded', 'refunded']);
 
+/**
+ * Statuses of a deposit ask that is still OPEN — money requested, never
+ * collected. 'failed' is deliberately absent: a declined card is not an
+ * outstanding ask, and the buyer's retry lands as its own row.
+ */
+export const OPEN_PAYMENT_STATUSES: ReadonlySet<string> = new Set(['abandoned', 'pending']);
+
 /** Newest-attempt ordering. An undated row loses to any dated one. */
 function attemptTime(row: Record<string, any>): number {
   const t = Date.parse(cell(row?.['Abandoned At']) || cell(row?.['Created At']));
@@ -58,7 +74,7 @@ function attemptTime(row: Record<string, any>): number {
 }
 
 /**
- * The abandoned Payments rows that are genuinely still owed.
+ * The OPEN Payments rows (abandoned or pending) that are genuinely still owed.
  *
  * @param payments   every Payments row in the snapshot.
  * @param referrals  every Referrals row in the snapshot (for `Deposit Paid At`).
@@ -68,9 +84,10 @@ function attemptTime(row: Record<string, any>): number {
  *
  * Returns at most one row per referral, in first-seen order. Rows with no
  * `Referral Id Text` are each kept on their own — two orphans cannot be proven
- * to be the same ask.
+ * to be the same ask. A referral with both a pending and an abandoned attempt
+ * yields ONE row (the newest), because it is one ask.
  */
-export function selectOwedAbandonedPayments(
+export function selectOwedDepositPayments(
   payments: Array<Record<string, any>>,
   referrals: Array<Record<string, any>>,
   alreadyCountedReferralIds: Set<string> = new Set(),
@@ -90,7 +107,7 @@ export function selectOwedAbandonedPayments(
   // keeps first-seen key order, so replacing a value never reshuffles output.
   const bySlot = new Map<string, Record<string, any>>();
   for (const p of payments || []) {
-    if (statusOf(p) !== 'abandoned') continue;
+    if (!OPEN_PAYMENT_STATUSES.has(statusOf(p))) continue;
     const rid = cell(p?.['Referral Id Text']);
     if (rid && (settledReferralIds.has(rid) || alreadyCountedReferralIds.has(rid))) continue;
     const slot = rid || `__orphan:${String(p?.id ?? bySlot.size)}`;
@@ -99,3 +116,10 @@ export function selectOwedAbandonedPayments(
   }
   return [...bySlot.values()];
 }
+
+/**
+ * Back-compat alias. The rule now covers pending rows too, so the name is kept
+ * only so an older call site cannot silently point at a different definition —
+ * there is exactly ONE selector.
+ */
+export const selectOwedAbandonedPayments = selectOwedDepositPayments;

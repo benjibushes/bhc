@@ -26,6 +26,7 @@ import Divider from '../../components/Divider';
 import ProofStrip from '../../components/ProofStrip';
 import ProductCard from '../../components/ProductCard';
 import base, { TABLES, escapeAirtableValue, withTimeout, resolveAirtableTimeoutMs, stateDiscoveryRanchersFormula } from '@/lib/airtable';
+import { isRancherSellableForBuyers } from '@/lib/rancherEligibility';
 import { getMarketProductsCached } from '@/lib/stateMarket';
 import { marketStripFor } from '@/lib/marketStands';
 import { jsonLdSafe } from '@/lib/jsonLdSafe';
@@ -134,11 +135,22 @@ async function fetchStateCounts(s: SeoState): Promise<StateCounts> {
           // (hanging-weight) cuts, where `… Price` is the range FLOOR — see
           // lib/brokerRail. No extra Airtable round-trip, and no second
           // visibility rule to drift from this one.
+          // SELLABILITY FIELDS (2026-08-19) ride along too. The formula above
+          // can only answer "is this row published"; whether a buyer can
+          // actually pay is rail-dependent (Connect gates on one rail,
+          // assertBrokerEligible on the other) and is decided in JS by
+          // isRancherSellableForBuyers. Still one read, still no second
+          // visibility rule — just enough columns for the predicate to run.
           fields: [
             'Slug',
             'Quarter Price', 'Quarter Price Max',
             'Half Price', 'Half Price Max',
             'Whole Price', 'Whole Price Max',
+            'Active Status', 'Onboarding Status', 'Agreement Signed',
+            'Subscription Status', 'Pricing Model', 'Stripe Connect Status',
+            'Verification Status', 'Public Map Hidden',
+            'Broker Rail', 'Broker Self Serve',
+            'Quarter Deposit', 'Half Deposit', 'Whole Deposit',
           ],
           maxRecords: 100,
         })
@@ -146,8 +158,17 @@ async function fetchStateCounts(s: SeoState): Promise<StateCounts> {
       timeoutMs,
       `half-a-cow ranchers ${s.code}`,
     );
-    liveRanchers = records.length;
-    rancherPriceRows = records.map((rec) => rec.fields as SupplyRancherRow);
+    // THE SUPPLY GATE. A published ranch is not a ranch a buyer can buy from:
+    // California's only page-live row is tier_v2 with Stripe Connect stuck in
+    // 'onboarding' and no cut priced at all, and this page told every visitor
+    // "1 ranch is live in California right now" while the matcher rejected that
+    // same ranch and sent the completed quiz to a waitlist. Maine was identical.
+    // Same predicate as lib/stateSupply and /access/[state], so the count, the
+    // published PRICE RANGES below (which are taken from these very rows), and
+    // /shop's empty-market fallback can never disagree again.
+    const sellable = records.filter((rec) => isRancherSellableForBuyers(rec.fields as any));
+    liveRanchers = sellable.length;
+    rancherPriceRows = sellable.map((rec) => rec.fields as SupplyRancherRow);
   } catch (e) {
     // Soft-fail: page renders the no-counts fallback; ISR retries in an hour.
     console.error(`[half-a-cow/${s.slug}] rancher count fetch failed:`, e);

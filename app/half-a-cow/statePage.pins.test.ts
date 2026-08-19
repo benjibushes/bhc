@@ -46,7 +46,19 @@ test('PIN: the live-supply prices ride the SAME query the live count comes from'
   for (const field of ['Quarter Price', 'Quarter Price Max', 'Half Price', 'Half Price Max', 'Whole Price', 'Whole Price Max']) {
     assert.ok(fetchFn.includes(`'${field}'`), `must project ${field}`);
   }
-  assert.match(fetchFn, /rancherPriceRows = records\.map\(/);
+  // COUNT AND PRICES COME OFF THE SAME FILTERED SET (2026-08-19). Publication
+  // is not sellability, so the rows are narrowed once — by the shared predicate
+  // — and BOTH the headline count and the published ranges read that one array.
+  // Counting `records` while pricing `sellable` (or the reverse) is exactly how
+  // a state comes to advertise a price nobody can be charged.
+  assert.match(fetchFn, /const sellable = records\.filter\(\(rec\) => isRancherSellableForBuyers\(/);
+  assert.match(fetchFn, /liveRanchers = sellable\.length;/);
+  assert.match(fetchFn, /rancherPriceRows = sellable\.map\(/);
+  // The predicate needs these columns; a projected read that drops one would
+  // silently make every ranch look unsellable and empty every state page.
+  for (const field of ['Active Status', 'Pricing Model', 'Stripe Connect Status', 'Agreement Signed', 'Broker Rail', 'Broker Self Serve']) {
+    assert.ok(fetchFn.includes(`'${field}'`), `sellability needs ${field} projected`);
+  }
 });
 
 test('PIN: a failed supply read stays NULL (unknown), never an empty market', () => {

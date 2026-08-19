@@ -29,10 +29,22 @@ interface MoneySection {
   // CONNECT rail — marketplace fee captured at deposit. null = Payments read failed.
   connectFeeCaptured: number | null;
   connectFeeCount: number | null;
+  // EVERY measurable rail — same definition /admin/today's "Earned" uses.
   bhcRevenueAllRails: number;
-  // Connect fee + shop margin — the models BHC actually sells today.
+  // The models BHC sells today: Connect fee + broker deposit + shop margin
+  // + founders + brand partners.
   bhcRevenueCurrentRails: number;
   bhcRevenueLegacyRail: number;
+  /** Per-rail dollars; null on a rail ⇒ its table failed to read. */
+  bhcRevenueByRail?: Record<string, number | null>;
+  bhcRevenueRails?: Array<{ rail: string; label: string }>;
+  /** What the total covers, in words — rendered under the tiles. */
+  bhcRevenueCoverage?: string;
+  /** false ⇒ a rail was unreadable; the total is a floor. */
+  bhcRevenueComplete?: boolean;
+  /** Rails that take money with no amount recorded in Airtable. */
+  bhcRevenueOmits?: Array<{ rail: string; why: string }>;
+  depositsOutstandingCoverage?: string;
   blendedRoas: number | null;
   adSpend: number | null;
   // Product rail (Rancher Orders — the low-ticket shop). null = table read failed.
@@ -236,7 +248,9 @@ export default function CommandCenter() {
                 <Metric
                   label="Deposits outstanding"
                   value={usd(money.depositsOutstanding)}
-                  sub={`${money.depositsOutstandingCount ?? 0} pending`}
+                  sub={`${money.depositsOutstandingCount ?? 0} open ask${
+                    money.depositsOutstandingCount === 1 ? '' : 's'
+                  }`}
                   tone={money.depositsOutstanding > 0 ? 'warn' : 'default'}
                 />
               )}
@@ -255,6 +269,16 @@ export default function CommandCenter() {
                   BHC earned on the two models it actually sells today. Sits
                   ahead of the legacy receivable so the honest figure is the
                   one read first. */}
+              {/* THE number — every rail BHC earns on that Airtable can
+                  measure. It used to be Connect fee + shop margin only, which
+                  omitted the legacy rail: 84% of lifetime revenue. The
+                  provenance line under this grid names what it covers. */}
+              <Metric
+                label="BHC earned (all rails)"
+                value={usd(money.bhcRevenueAllRails)}
+                sub={`current rails ${usd(money.bhcRevenueCurrentRails)} + legacy ${usd(money.bhcRevenueLegacyRail)}`}
+                tone={money.bhcRevenueAllRails > 0 ? 'good' : 'warn'}
+              />
               <Metric
                 label="BHC earned (current rails)"
                 value={usd(money.bhcRevenueCurrentRails)}
@@ -307,9 +331,35 @@ export default function CommandCenter() {
                   tone="warn"
                 />
               )}
-            </div>
+              </div>
           ) : (
             <Unavailable label="Money" />
+          )}
+          {/* WHAT THESE NUMBERS INCLUDE (money-truth audit, 2026-08-19). Two
+              screens totalled two different rail sets under the same words and
+              neither said so. Never render a money figure here unlabelled. */}
+          {money && (
+            <div className="mt-3 text-[11px] leading-snug text-saddle space-y-1">
+              {money.bhcRevenueCoverage && (
+                <p>
+                  <span className="font-semibold">BHC earned =</span> {money.bhcRevenueCoverage}.
+                  {money.bhcRevenueComplete === false && ' Some rails unreadable — treat as a floor.'}
+                </p>
+              )}
+              {money.depositsOutstandingCoverage && (
+                <p>
+                  <span className="font-semibold">Deposits outstanding =</span>{' '}
+                  {money.depositsOutstandingCoverage}.
+                </p>
+              )}
+              {!!money.bhcRevenueOmits?.length && (
+                <p>
+                  <span className="font-semibold">Not counted anywhere:</span>{' '}
+                  {money.bhcRevenueOmits.map((o) => o.rail).join('; ')} — money moves in Stripe with
+                  no amount recorded in Airtable.
+                </p>
+              )}
+            </div>
           )}
         </SectionShell>
 

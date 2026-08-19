@@ -57,6 +57,14 @@ interface TodayData {
     stuckCents: number;
     stuckCount: number;
     stuckOldestHours: number | null;
+    /** What "Earned" covers — rendered under the tiles (lib/bhcRevenue). */
+    earnedCoverage?: string;
+    /** false ⇒ a rail's table failed to read; the figure is a FLOOR. */
+    earnedComplete?: boolean;
+    /** Rails that take money with no amount recorded in Airtable. */
+    earnedOmits?: Array<{ rail: string; why: string }>;
+    /** What "Owed to me" counts. */
+    owedCoverage?: string;
   } | null;
   obligations: { rows: ObligationRow[]; summary: ObligationsSummary } | null;
   health: {
@@ -276,6 +284,32 @@ export default function TodayClient() {
             alert={(data?.money?.stuckCount ?? 0) > 0}
           />
         </div>
+        {/* WHAT THE NUMBERS INCLUDE (money-truth audit, 2026-08-19). "Earned"
+            shipped as Connect fee + shop margin with no label, so the tile read
+            as total income while omitting the legacy rail — 84% of it. Never
+            render a money figure here without saying what it covers. */}
+        {data?.money && (
+          <div className="text-[11px] leading-snug text-saddle space-y-1">
+            {data.money.earnedCoverage && (
+              <p>
+                <span className="font-semibold">Earned =</span> {data.money.earnedCoverage}.
+                {data.money.earnedComplete === false && ' Some rails unreadable — treat as a floor.'}
+              </p>
+            )}
+            {data.money.owedCoverage && (
+              <p>
+                <span className="font-semibold">Owed =</span> {data.money.owedCoverage}.
+              </p>
+            )}
+            {!!data.money.earnedOmits?.length && (
+              <p>
+                <span className="font-semibold">Not counted anywhere:</span>{' '}
+                {data.money.earnedOmits.map((o) => o.rail).join('; ')} — money moves in Stripe with
+                no amount recorded in Airtable.
+              </p>
+            )}
+          </div>
+        )}
       </section>
 
       {/* WHAT BROKE */}
