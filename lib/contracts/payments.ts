@@ -12,6 +12,11 @@ import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity
 import { logAuditEntry } from '@/lib/auditLog';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import { refundReferralClearFields, shouldDecrementOnRefundRestore, RESTORABLE_REFUND_STATUSES } from '@/lib/refundLifecycle';
+// lib/brokerRail is hermetic (imports only lib/pricing), so this can never
+// close a cycle — same reasoning as lib/commission's import of it.
+import { BROKER_PAYMENT_TYPE } from '@/lib/brokerRail';
+// lib/commission's only import is lib/brokerRail — equally hermetic.
+import { isBrokerReferralRow } from '@/lib/commission';
 
 export type PaymentStatus = 'pending' | 'succeeded' | 'refunded' | 'failed' | 'abandoned' | 'requires_webhook_replay';
 export type PayoutStatus = 'pending' | 'paid' | 'failed';
@@ -45,6 +50,115 @@ export const PAYOUTS_TABLE = 'Payouts';
 // recordDeposit below ALSO read-back-verifies the first write and warns loudly.
 
 export const REFERRAL_ID_TEXT_FIELD = 'Referral Id Text';
+
+/**
+ * Is this Payments row a BROKER-rail deposit?
+ *
+ * The discriminator is the ledger's own `Type` marker, written by
+ * recordBrokerDeposit and by nothing else — recordDeposit (Connect) leaves the
+ * field unset entirely, so this is exact in both directions. Preferred over
+ * joining back to the rancher: the row is the thing being refunded, and the
+ * rancher record can be edited (or unreadable) long after the charge.
+ *
+ * Tolerates Airtable's `{name}` singleSelect object form. Fails CLOSED — an
+ * unreadable or absent Type is Connect, the rail whose refund path is
+ * unchanged.
+ */
+export function isBrokerPaymentRow(payment: any): boolean {
+  const raw = payment?.['Type'] ?? payment?.type ?? '';
+  const value =
+    raw && typeof raw === 'object' && 'name' in raw ? String((raw as any).name || '') : String(raw || '');
+  return value.trim() === BROKER_PAYMENT_TYPE;
+}
+
+/**
+ * What the buyer's card was ACTUALLY charged on this Payments row, in cents.
+ * The ceiling every refund is capped against, and the number a "full refund"
+ * is measured against.
+ *
+ * RAIL-AWARE, and it has to be:
+ *   • CONNECT deposit — 'Amount Cents' is the deposit and 'Platform Fee Cents'
+ *     is BHC's fee charged ON TOP of it. The card total is their SUM.
+ *   • BROKER deposit — recordBrokerDeposit writes the SAME number into BOTH
+ *     fields on purpose (the deposit IS the commission, the same dollars seen
+ *     from two sides). Summing them DOUBLES the captured total, so a refund of
+ *     the entire real charge reads as merely partial: no restore runs, the
+ *     referral stays 'Awaiting Payment' with a stale Deposit Paid At, and the
+ *     ranch's capacity slot is held forever.
+ *
+ * 'Total Charged Cents' — stamped at settlement on both rails — wins whenever
+ * it is present. The field arithmetic is only the fallback for rows settled
+ * before that field existed. Connect behaviour is byte-identical to the
+ * inline chain this replaced.
+ */
+export function capturedTotalCents(payment: any): number {
+  const depositCents = Number(payment?.['Amount Cents'] || 0);
+  const platformFeeCents = Number(payment?.['Platform Fee Cents'] || 0);
+  const totalChargedCents = Number(payment?.['Total Charged Cents'] || 0);
+  if (totalChargedCents > 0) return totalChargedCents;
+  if (isBrokerPaymentRow(payment)) return depositCents;
+  return (depositCents + platformFeeCents) || depositCents;
+}
+
+/**
+ * The "your buyer's deposit was refunded" notice to the rancher — RAIL-AWARE,
+ * and pure so the money claims in it are unit-pinned.
+ *
+ * The CONNECT copy tells the rancher the refund "was returned out of your
+ * Stripe balance", that the deal "shows as Refunded in your dashboard", and
+ * links him to it. All three are FALSE on the broker rail:
+ *   • a represented ranch has no connected account, so the money came out of
+ *     BHC's OWN balance — telling him otherwise makes him hunt for a debit
+ *     that will never appear, or worse, expect an invoice;
+ *   • he collected nothing (the buyer pays the balance at pickup), so he owes
+ *     nothing back;
+ *   • he has no login, so a dashboard link is a dead end.
+ * Same operational facts either way — do not fulfil, the buyer is gone, your
+ * slot is open — told truthfully per rail.
+ */
+export function buildRefundedRancherNotice(args: {
+  brokerRail: boolean;
+  /** Rancher's first name; blank falls back to a neutral greeting. */
+  rancherFirst?: string;
+  buyerName?: string;
+  refundedDollars?: number;
+  siteUrl: string;
+}): { subject: string; templateName: string; html: string } {
+  const buyerName = String(args.buyerName || '').trim();
+  const buyerFirst = buyerName.split(/\s+/)[0] || 'Your buyer';
+  const dollars = Number(args.refundedDollars || 0);
+  const amountPhrase = dollars > 0 ? ` ($${dollars.toLocaleString('en-US')})` : '';
+  const greeting = `<p>hey ${args.rancherFirst || 'there'},</p>`;
+  const shell = (inner: string) =>
+    `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC;line-height:1.6;color:#0E0E0E">
+              ${greeting}
+              ${inner}
+              <p style="font-size:14px;color:#5A5752">Questions about why? Just reply — a real person reads this.</p>
+              <p style="font-size:12px;color:#A7A29A;">— Ben<br>BuyHalfCow</p>
+            </div>`;
+
+  if (args.brokerRail) {
+    return {
+      subject: `${buyerFirst} cancelled — their deposit was refunded`,
+      templateName: 'deposit_refunded_rancher_broker',
+      html: shell(
+        `<p>heads up — <strong>${buyerName || 'your buyer'}</strong> cancelled and their deposit${amountPhrase} was refunded, so this order is off.</p>
+              <p><strong>Do not fulfill this order</strong>, and don't expect the balance at pickup — they aren't coming.</p>
+              <p><strong>You don't owe anything.</strong> We refunded the buyer out of our own account, and since you never collected the balance there's nothing to send back. Your slot is open again.</p>`,
+      ),
+    };
+  }
+
+  return {
+    subject: `${buyerFirst}'s deposit was refunded — deal closed`,
+    templateName: 'deposit_refunded_rancher',
+    html: shell(
+      `<p>heads up — <strong>${buyerName || 'your buyer'}</strong>'s deposit${amountPhrase} was fully refunded and the deal is closed.</p>
+              <p><strong>Do not fulfill this order.</strong> The refund was returned out of your Stripe balance, their slot has been freed, and the deal now shows as Refunded in your dashboard.</p>
+              <p><a href="${args.siteUrl}/rancher#deals">See your deals &rarr;</a></p>`,
+    ),
+  };
+}
 
 // MONEY-TRUTH TAIL finding 3 (2026-07-01): under Clover the PaymentIntent is
 // created at PAY time, so 'Stripe Payment Intent Id' is EMPTY on every
@@ -702,19 +816,15 @@ export async function markDepositRefunded(
   // Belt-and-suspenders: a Stripe-Dashboard partial refund hits the webhook
   // directly with NO partial flag — without the amount check it would wrongly
   // restore (reverting Status/Sale/Commission + capacity) on a $1 refund.
-  // Base the full-refund test on the TRUE charged total (deposit + platform
-  // fee), captured as 'Total Charged Cents' at settlement. 'Amount Cents' is
-  // the deposit only — using it would treat a refund of just the deposit as
-  // "full" while the fee portion remains uncaptured-as-refunded, wrongly
-  // nuking the Closed Won deal. Fallbacks for older rows: deposit + fee, then
-  // deposit alone.
-  const depositCents = Number(payment['Amount Cents'] || 0);
-  const platformFeeCents = Number(payment['Platform Fee Cents'] || 0);
-  const totalChargedCents = Number(payment['Total Charged Cents'] || 0);
-  const capturedCents =
-    totalChargedCents > 0
-      ? totalChargedCents
-      : (depositCents + platformFeeCents) || depositCents;
+  // Base the full-refund test on the TRUE charged total, captured as
+  // 'Total Charged Cents' at settlement. 'Amount Cents' is the deposit only —
+  // using it would treat a refund of just the deposit as "full" while the fee
+  // portion remains uncaptured-as-refunded, wrongly nuking the Closed Won
+  // deal. capturedTotalCents owns the fallback chain for older rows AND the
+  // broker-rail correction (there, deposit and fee are the same dollars, so
+  // summing them would double the total and make a genuine full refund read
+  // as partial — leaving the referral stuck and the slot held).
+  const capturedCents = capturedTotalCents(payment);
   const refundedCents = Number(opts.refundedAmountCents ?? 0);
   const isFullRefund = !opts.partial && (capturedCents <= 0 || refundedCents <= 0 || refundedCents >= capturedCents);
 
@@ -894,14 +1004,20 @@ async function restoreReferralAfterRefund(
     const buyerName = String(referral['Buyer Name'] || '').trim();
     const buyerFirst = buyerName.split(/\s+/)[0] || 'Your buyer';
     // Refunded dollars: the in-memory payment row predates the Refunded
-    // Amount Cents write, so fall back through the captured-total chain the
-    // full-refund gate itself uses (total charged → deposit+fee → deposit).
+    // Amount Cents write, so fall back to the rail-aware captured total the
+    // full-refund gate itself uses.
     const refundedCents =
-      Number(payment['Refunded Amount Cents'] || 0) ||
-      Number(payment['Total Charged Cents'] || 0) ||
-      (Number(payment['Amount Cents'] || 0) + Number(payment['Platform Fee Cents'] || 0)) ||
-      Number(payment['Amount Cents'] || 0);
+      Number(payment['Refunded Amount Cents'] || 0) || capturedTotalCents(payment);
     const refundedDollars = Math.round(refundedCents / 100);
+    // RAIL-AWARE COPY. The Connect wording ("returned out of your Stripe
+    // balance", "shows as Refunded in your dashboard", a dashboard link) is
+    // FALSE on the broker rail in all three of its claims: a represented
+    // ranch has no Connect account, so the money came out of BHC's OWN
+    // balance; he owes nothing back and is not invoiced; and he has no login
+    // to check. Same facts he actually needs — do not fulfill, the buyer is
+    // gone — told truthfully. Detected from the ledger row (the thing
+    // refunded) OR the referral's Match Type, either of which is enough.
+    const brokerRail = isBrokerPaymentRow(payment) || isBrokerReferralRow(referral);
     try {
       const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
       if (rancher) {
@@ -909,20 +1025,14 @@ async function restoreReferralAfterRefund(
         const rancherEmail = resolveRancherEmail(rancher);
         if (rancherEmail) {
           const { sendEmail } = await import('@/lib/email');
-          const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
-          const r = await sendEmail({
-            to: rancherEmail,
-            subject: `${buyerFirst}'s deposit was refunded — deal closed`,
-            templateName: 'deposit_refunded_rancher',
-            html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC;line-height:1.6;color:#0E0E0E">
-              <p>hey ${rancherFirstName(rancher) || 'there'},</p>
-              <p>heads up — <strong>${buyerName || 'your buyer'}</strong>'s deposit${refundedDollars > 0 ? ` ($${refundedDollars.toLocaleString('en-US')})` : ''} was fully refunded and the deal is closed.</p>
-              <p><strong>Do not fulfill this order.</strong> The refund was returned out of your Stripe balance, their slot has been freed, and the deal now shows as Refunded in your dashboard.</p>
-              <p><a href="${siteUrl}/rancher#deals">See your deals &rarr;</a></p>
-              <p style="font-size:14px;color:#5A5752">Questions about why? Just reply — a real person reads this.</p>
-              <p style="font-size:12px;color:#A7A29A;">— Ben<br>BuyHalfCow</p>
-            </div>`,
+          const notice = buildRefundedRancherNotice({
+            brokerRail,
+            rancherFirst: rancherFirstName(rancher) || '',
+            buyerName,
+            refundedDollars,
+            siteUrl: process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com',
           });
+          const r = await sendEmail({ to: rancherEmail, ...notice });
           if (!r?.success) {
             console.warn(
               `[restoreReferralAfterRefund] rancher refund email suppressed (${r?.reason || 'unknown'}) — rancher not notified by email`,

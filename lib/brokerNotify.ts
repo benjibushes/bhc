@@ -624,10 +624,16 @@ export interface BrokerRancherDelivery {
 }
 
 /**
- * Pure verdict on a fulfillment-sheet send. Fails CLOSED: anything that is not
- * an explicit `success === true` is NOT delivered.
+ * Pure verdict on a broker-rail send — the RANCHER fulfillment sheet or the
+ * BUYER receipt. Fails CLOSED: anything that is not an explicit
+ * `success === true` is NOT delivered.
+ *
+ * Recipient-neutral by design. It was written for the rancher sheet, but
+ * guardedSend's `{ success:false, suppressed:true }`-without-throwing shape is
+ * identical on both sides, and the buyer receipt used to discard its result
+ * entirely — a suppressed receipt looked exactly like a delivered one.
  */
-export function classifyBrokerRancherDelivery(input: {
+export function classifyBrokerDelivery(input: {
   hasEmail: boolean;
   result?: { success?: boolean; suppressed?: boolean; reason?: string } | null;
   /** Set when the send threw instead of resolving. */
@@ -652,16 +658,39 @@ export function classifyBrokerRancherDelivery(input: {
   };
 }
 
+/** Back-compat alias — the classifier's original, rancher-only name. */
+export const classifyBrokerRancherDelivery = classifyBrokerDelivery;
+
+/** Recipient-neutral alias of the verdict type. */
+export type BrokerDelivery = BrokerRancherDelivery;
+
+/** Shared spelling of a delivery outcome for the referral Notes audit trail. */
+function deliveryPhrase(delivery: BrokerDelivery): string {
+  return delivery.delivered
+    ? 'DELIVERED'
+    : `NOT DELIVERED (${delivery.outcome}${delivery.reason ? `: ${delivery.reason}` : ''})`;
+}
+
 /**
  * The referral Notes line recording what happened to the fulfillment sheet.
  * Pure and deterministic so the delivery stamp and the later operator-alert
  * stamp can rebuild the identical prefix without passing state between them.
  */
 export function brokerSheetNote(nowIso: string, delivery: BrokerRancherDelivery): string {
-  const outcome = delivery.delivered
-    ? 'DELIVERED'
-    : `NOT DELIVERED (${delivery.outcome}${delivery.reason ? `: ${delivery.reason}` : ''})`;
-  return `[broker] rancher fulfillment sheet ${nowIso} — ${outcome}`;
+  return `[broker] rancher fulfillment sheet ${nowIso} — ${deliveryPhrase(delivery)}`;
+}
+
+/**
+ * The referral Notes line recording what happened to the BUYER receipt.
+ *
+ * Same shape and the same reason as brokerSheetNote: the outcome has to be
+ * readable off the referral itself, not reconstructed from Vercel logs. Before
+ * this the receipt's guardedSend result was discarded outright, so a
+ * suppressed receipt (unsubscribed / bounced / frequency-capped) was
+ * indistinguishable from a delivered one for a buyer who had just paid.
+ */
+export function brokerReceiptNote(nowIso: string, delivery: BrokerDelivery): string {
+  return `[broker] buyer receipt ${nowIso} — ${deliveryPhrase(delivery)}`;
 }
 
 /** Shape of an operator alert — structurally assignable to sendOperatorSignal's
@@ -756,6 +785,77 @@ export function buildBrokerNotifyFailureAlert(
   };
 }
 
+/**
+ * Build the operator alert for a BUYER RECEIPT that did not reach the buyer.
+ * Returns null on a real delivery — a delivered receipt is never an alert.
+ *
+ * WHY THIS IS LOUD TOO. The buyer just handed BuyHalfCow money on a page that
+ * promised a confirmation email, and on this rail that email is the ONLY place
+ * they are told what they still owe the ranch, to whom, and how to pay it. A
+ * silent failure reads to the buyer as "I paid a stranger and heard nothing" —
+ * the shape of a chargeback, not a support ticket.
+ *
+ * 'no-email' gets its own wording for the same reason the rancher alert does:
+ * a missing address is a DATA GAP, permanent until a human gets one, and no
+ * retry will ever help.
+ */
+export function buildBrokerReceiptFailureAlert(
+  f: BrokerOrderFacts,
+  ctx: { referralId: string; rancherId?: string; delivery: BrokerDelivery },
+): BrokerNotifyAlert | null {
+  const { delivery, referralId, rancherId } = ctx;
+  if (delivery.delivered) return null;
+
+  const { range, collectRange } = rangeFacts(f);
+  const owes = range ? `${collectRange} (exact set by hanging weight)` : money(f.balanceCents);
+  const noEmail = delivery.outcome === 'no-email';
+  const who = f.buyerName || f.buyerEmail || '(buyer name not given)';
+
+  const summary = noEmail
+    ? `BROKER sale: buyer ${who} has NO EMAIL — the receipt could not be sent (ref ${referralId})`
+    : `BROKER sale: the buyer receipt DID NOT REACH ${who} — send it by hand (ref ${referralId})`;
+
+  const why = noEmail
+    ? 'WHY: no buyer email was captured, so nothing was ever sent. This is a DATA GAP, not a transient failure — no retry can fix it.'
+    : delivery.outcome === 'suppressed'
+      ? `WHY: the send was SUPPRESSED (${delivery.reason}) — unsubscribed, bounced, complained, or frequency-capped. Nothing was delivered.`
+      : delivery.outcome === 'threw'
+        ? `WHY: the send threw (${delivery.reason}). Nothing was delivered.`
+        : `WHY: the email provider did not accept the send (${delivery.reason}). Nothing was delivered.`;
+
+  const detail = [
+    `The buyer PAID ${money(f.depositCents)} and got NO confirmation. They have not been told what they still owe the ranch or who to pay it to.`,
+    '',
+    why,
+    '',
+    `Order ${f.orderRef} — ${f.cutLabel}`,
+    `Buyer: ${f.buyerName || '(name not given)'} · ${f.buyerEmail || 'no email'} · ${
+      f.buyerPhone || 'no phone'
+    }`,
+    `THEY STILL OWE THE RANCH: ${owes}`,
+    `Ranch: ${f.ranchName}${f.rancherPhone ? ` · ${f.rancherPhone}` : ''}`,
+    '',
+    noEmail
+      ? 'DO NOW: call or text the buyer with the balance, the ranch, and the pickup next steps, then add an email to their record.'
+      : 'DO NOW: call or text the buyer, then re-send the receipt by hand from the email log.',
+  ].join('\n');
+
+  return {
+    urgency: 'loud',
+    kind: 'system-error',
+    summary,
+    detail,
+    // Distinct from the rancher-side keys: a buyer with no receipt and a ranch
+    // with no order sheet are different jobs, and one must never dedupe the
+    // other away.
+    refs: rancherId
+      ? [{ type: 'referral', id: referralId }, { type: 'rancher', id: rancherId }]
+      : [{ type: 'referral', id: referralId }],
+    dedupeKey: noEmail ? `broker-buyer-no-email-${referralId}` : `broker-buyer-receipt-undelivered-${referralId}`,
+    dedupeWindowMs: 60 * 60 * 1000,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Operator Telegram card
 // ---------------------------------------------------------------------------
@@ -765,8 +865,16 @@ export function buildBrokerNotifyFailureAlert(
  *   as ground truth, so it may only claim the ranch was emailed when the send
  *   really landed. Omitted (legacy callers) ⇒ the card says delivery is
  *   unconfirmed rather than asserting a send that nothing verified.
+ * @param receipt the ACTUAL outcome of the BUYER receipt. Rendered ONLY when
+ *   it failed — a delivered receipt is the expected case and does not earn a
+ *   line. Omitted ⇒ nothing is claimed either way, so every existing caller
+ *   renders byte-identically.
  */
-export function buildBrokerOperatorCard(f: BrokerOrderFacts, delivery?: BrokerRancherDelivery): string {
+export function buildBrokerOperatorCard(
+  f: BrokerOrderFacts,
+  delivery?: BrokerRancherDelivery,
+  receipt?: BrokerDelivery,
+): string {
   // WEIGHT-PRICED mode: the commission (deposit) line is exact in both modes;
   // the price + collect lines state the honest range.
   const { range, priceRange, collectRange } = rangeFacts(f);
@@ -790,6 +898,13 @@ export function buildBrokerOperatorCard(f: BrokerOrderFacts, delivery?: BrokerRa
       : `Rancher collects direct: ${money(f.balanceCents)}`,
     '',
     `${deliveryLine} No Connect, no payout, no invoice.`,
+    ...(receipt && !receipt.delivered
+      ? [
+          `🚨 <b>BUYER GOT NO RECEIPT</b> (${esc(receipt.outcome)}${
+            receipt.reason ? `: ${esc(receipt.reason)}` : ''
+          }). They paid and heard nothing — contact them by hand.`,
+        ]
+      : []),
     `Ref: ${esc(f.orderRef)}`,
   ].join('\n');
 }
