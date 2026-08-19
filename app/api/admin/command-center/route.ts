@@ -50,6 +50,11 @@ import {
   UNMEASURED_REVENUE_RAILS,
 } from '@/lib/bhcRevenue';
 
+/** Engagement is a RECENT-health metric, and the window must stay small
+ * enough that the read never approaches the Airtable call timeout. See the
+ * note at the read site. */
+const EMAIL_ENGAGEMENT_WINDOW_DAYS = 7;
+
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
@@ -472,10 +477,22 @@ export async function GET(request: Request) {
       // zero by definition and we'd be paying for a needless full-table scan.
       // Bounded to 30 days — engagement rates are a recent-health metric;
       // the unbounded scan was 46 pages and growing with every send.
+      // WINDOW: 7 days, not 30 (2026-08-19). At ~400 sends/day the 30-day
+      // window had grown to 8,698 rows = 87 paginated requests = 14.3s, which
+      // blows the 10s Airtable call timeout — so this tile was throwing on
+      // EVERY dashboard load and rendering as unconfigured. Field projection
+      // does not help (measured 14.3s -> 14.0s): the cost is round-trips, not
+      // payload. 7 days is ~2,800 rows / ~4.4s, with real headroom as volume
+      // grows, and engagement is a recent-health metric anyway.
+      //
+      // The window is REPORTED to the client (windowDays) because the tile
+      // renders a bare "N of M delivered" — silently swapping 30d for 7d would
+      // change a number the operator reads without telling him.
       const sends = await safe(
         () => getAllRecords(
           TABLES.EMAIL_SENDS,
-          "IS_AFTER(CREATED_TIME(), DATEADD(NOW(), -30, 'days'))",
+          `IS_AFTER(CREATED_TIME(), DATEADD(NOW(), -${EMAIL_ENGAGEMENT_WINDOW_DAYS}, 'days'))`,
+          { fields: ['Delivered At', 'Opened At', 'Clicked At'] },
         ) as Promise<any[]>,
         'emailSends',
       );
@@ -526,6 +543,7 @@ export async function GET(request: Request) {
         opens: emailOpens,
         clicks: emailClicks,
         delivered: emailDelivered,
+        windowDays: EMAIL_ENGAGEMENT_WINDOW_DAYS,
         hint: 'enable Resend open/click tracking to populate',
       },
       inbound: {

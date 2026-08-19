@@ -79,7 +79,7 @@ interface ChannelSection {
   worst: string | null;
 }
 interface TouchpointsSection {
-  email: { configured: boolean; opens: number | null; clicks: number | null; delivered: number | null; hint: string };
+  email: { configured: boolean; opens: number | null; clicks: number | null; delivered: number | null; windowDays?: number; hint: string };
   inbound: { configured: boolean; total: number | null; last24h: number | null; hint: string };
   calls: { configured: boolean; booked: number | null; done: number | null; hint: string };
 }
@@ -482,7 +482,13 @@ export default function CommandCenter() {
                   <Metric
                     label="Email opens"
                     value={intc(touchpoints.email.opens)}
-                    sub={touchpoints.email.delivered != null ? `of ${intc(touchpoints.email.delivered)} delivered` : undefined}
+                    sub={
+                      touchpoints.email.delivered != null
+                        ? `of ${intc(touchpoints.email.delivered)} delivered${
+                            touchpoints.email.windowDays ? ` · last ${touchpoints.email.windowDays}d` : ''
+                          }`
+                        : undefined
+                    }
                   />
                   <Metric label="Email clicks" value={intc(touchpoints.email.clicks)} />
                 </>
