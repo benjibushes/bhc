@@ -28,7 +28,8 @@ import { NextResponse } from 'next/server';
 import { createRecord, updateRecord, getAllRecords, escapeAirtableValue, TABLES } from '@/lib/airtable';
 import { sendBrokerRepresentConfirmation } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
-import { rateLimit, getRequestIp } from '@/lib/rateLimit';
+import { rateLimitStrict, getTrustedClientIp } from '@/lib/rateLimit';
+import { decideRepresent } from '@/lib/publicRepresentGuard';
 import { BROKER_RAIL_FIELD, BROKER_BALANCE_NOTE_FIELD, BROKER_BALANCE_NOTE_FALLBACK } from '@/lib/brokerRail';
 import { formatPhoneInput, isValidUsPhone } from '@/lib/phoneFormat';
 import { normalizeState } from '@/lib/states';
@@ -41,11 +42,14 @@ function isValidEmail(s: string): boolean {
 }
 
 export async function POST(request: Request) {
-  // Public endpoint — cap abuse. Fails OPEN (Redis absent) so a real rancher
-  // is never wrongly bounced.
-  const rl = await rateLimit(`partner-represent:${getRequestIp(request)}`, {
+  // Public endpoint — cap abuse. STRICT (2026-08-19): the base rateLimit fails
+  // OPEN, so Upstash drift or an outage left this unbounded — and this route
+  // writes to the Ranchers table. rateLimitStrict never allows unbounded: with
+  // no Redis it falls back to a per-instance window, weaker but never absent.
+  // getTrustedClientIp, not getRequestIp: a spoofable X-Forwarded-For makes a
+  // per-IP cap decorative.
+  const rl = await rateLimitStrict(`partner-represent:${getTrustedClientIp(request)}`, {
     requests: 5,
-    window: '15m',
   });
   if (!rl.ok) {
     return NextResponse.json(
@@ -103,19 +107,62 @@ export async function POST(request: Request) {
   // existing row is UPGRADED onto the broker rail and still alerts.
   let existingId = '';
   let alreadyBroker = false;
+  let existingRow: any = null;
   try {
     const existing: any[] = await getAllRecords(
       TABLES.RANCHERS,
       `LOWER({Email}) = "${escapeAirtableValue(email)}"`,
     );
     if (existing.length > 0) {
+      existingRow = existing[0];
       existingId = existing[0].id;
-      alreadyBroker = !!existing[0].fields?.[BROKER_RAIL_FIELD];
+      alreadyBroker = !!(existing[0].fields?.[BROKER_RAIL_FIELD] ?? existing[0][BROKER_RAIL_FIELD]);
     }
   } catch (e: any) {
     // A dedupe read failure must not block a real signup; worst case is a
     // duplicate row an operator merges.
     console.warn('[partner/represent] dedupe read failed (continuing):', e?.message);
+  }
+
+  // ── The upgrade guard (2026-08-19) ──────────────────────────────────────
+  // This endpoint is ANONYMOUS and it used to flip ANY email-matched row onto
+  // the broker rail. A row that is broker-flagged AND carries a Connect
+  // footprint is 'ambiguous' to lib/brokerRail, and app/api/checkout/deposit
+  // REFUSES to charge on 'ambiguous'. So one unauthenticated request naming a
+  // live Connect rancher's email took that rancher offline for payments.
+  //
+  // Refuse the write, tell the submitter the truth, and hand it to a human.
+  // We do NOT return the generic success message here: a real rancher who
+  // already sells through Connect must not walk away believing he was moved
+  // to the represented rail when nothing was written — that is the exact
+  // "told he was represented, nothing saved" failure this route already fixed
+  // once. Decision is pure + pinned in lib/publicRepresentGuard.test.ts.
+  const decision = decideRepresent(existingRow);
+  if (decision.action === 'refuse-connect') {
+    try {
+      await sendTelegramMessage(
+        TELEGRAM_ADMIN_CHAT_ID,
+        [
+          `⚠️ <b>REPRESENT REQUEST REFUSED — ranch already on Connect</b>`,
+          '',
+          `${ranchName}${state ? ` — ${state}` : ''}`,
+          `Email: ${email}`,
+          `Existing rancher: <code>${decision.rancherId}</code>`,
+          '',
+          `Flipping this row to Broker Rail would make its rail ambiguous and STOP its checkout.`,
+          `Nothing was written. Decide the rail by hand if this is genuine.`,
+        ].join('\n'),
+      );
+    } catch {}
+    return NextResponse.json(
+      {
+        ok: false,
+        needsReview: true,
+        error:
+          'This ranch already takes card payments through BuyHalfCow, so we can\'t switch it to the represented-seller rail automatically. We\'ve flagged it and someone will be in touch.',
+      },
+      { status: 409 },
+    );
   }
 
   const nowIso = new Date().toISOString();
