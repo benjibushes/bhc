@@ -137,8 +137,13 @@ test('heroTrustPill: prospect wins over everything (unclaimed listing)', () => {
 test('heroTrustPill: a represented (broker self-serve) ranch keeps its own pill', () => {
   const gilaRiver = { 'Broker Rail': true, 'Broker Self Serve': true, 'Ranch Name': 'Gila River Cattle' };
   assert.equal(heroTrustPill(gilaRiver), 'represented');
-  // ...and never the verified one, even if someone stamps the field.
-  assert.equal(heroTrustPill({ ...gilaRiver, 'Verification Status': 'Verified' }), 'verified');
+  // ...and never the verified one, even if someone stamps the field. The
+  // represented arm is checked BEFORE the Verified one precisely so that a
+  // stray 'Verified' write (auto-verify-stale, sign-agreement, or the
+  // /api/partner/represent upgrade path moving an already-Verified Connect
+  // rancher onto the broker rail) can never buy a broker ranch the trust pill
+  // it did not earn. Standing ruling: represented ranches are NEVER verified.
+  assert.equal(heroTrustPill({ ...gilaRiver, 'Verification Status': 'Verified' }), 'represented');
 });
 
 // ── 3. "Ships to" must mean the ranch ships ──────────────────────────────────

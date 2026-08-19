@@ -129,10 +129,17 @@ function readEnumOrString(v: unknown): string {
 export function heroTrustPill(rancher: any): HeroTrustPill {
   const verification = readEnumOrString(rancher?.['Verification Status']);
   if (verification === 'Prospect') return 'prospect';
-  if (verification === 'Verified') return 'verified';
-  // Terminology ruling (2026-08-18): a broker self-serve ranch is REPRESENTED,
-  // never "verified" — it never ran verification and signed nothing.
+  // Terminology ruling (2026-08-18, #636): a broker self-serve ranch is
+  // REPRESENTED, never "verified" — it never ran verification and signed
+  // nothing. This arm MUST stay ABOVE the Verified one. Three live writers
+  // stamp Verification Status = 'Verified' without asking whether the ranch is
+  // on the broker rail (auto-verify-stale, sign-agreement, and the
+  // /api/partner/represent upgrade path that moves an ALREADY-Verified Connect
+  // rancher onto the rail), so ordering Verified first would let one field
+  // write hand a represented ranch a trust claim it never earned. Checked
+  // first, the stamp is simply ignored for broker ranches.
   if (isBrokerSelfServe(rancher)) return 'represented';
+  if (verification === 'Verified') return 'verified';
   return null;
 }
 
