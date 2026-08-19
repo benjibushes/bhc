@@ -5,12 +5,21 @@
 //   detailed — the below-the-fold explainer on /map. Full sentences, SSR'd,
 //              doubles as indexable "how the map works" copy.
 //
-// Swatch shapes mirror the live pins exactly: teardrops for verified /
+// Swatch shapes mirror the live pins exactly: teardrops for live /
 // represented / onboarding / self-submitted, a muted DOT for prospects
 // (prospects render as dots on the map, not teardrops — de-emphasized on
-// purpose). Verified and represented share the in-network green body; the
+// purpose). Live and represented share the in-network green body; the
 // represented pin's tallow-gold CENTER is what tells them apart, so its
 // swatch carries the same gold center dot.
+//
+// TRUTH RULE (2026-08-18): a legend row describes a PIN COLOUR, so it may only
+// state what is true of every pin wearing that colour. The green row used to
+// read "Taking reservations — verified partner shipping via BuyHalfCow today"
+// and was false on both counts for most of the bucket: it holds ranches with
+// no verification stamp, ranches that only do pickup or local delivery, and
+// ranches with no deposit rail at all. The per-ranch truth (verified? ships?
+// reservable?) lives on the pin card and the list row, each read from that
+// ranch's own field.
 
 function PinSwatch({ fill, stroke, center }: { fill: string; stroke: string; center?: string }) {
   return (
@@ -46,11 +55,12 @@ function DotSwatch() {
 const ROWS = [
   {
     swatch: <PinSwatch fill="#4F7A3F" stroke="#2A4A20" />,
-    short: 'Taking reservations',
+    short: 'Live on BuyHalfCow',
     long: (
       <>
-        <strong>Taking reservations</strong> — verified partner shipping via
-        BuyHalfCow today
+        <strong>Live on BuyHalfCow</strong> — the ranch is on the platform and
+        selling. Open its card to see whether it ships, delivers or does pickup,
+        and whether you can reserve online today.
       </>
     ),
   },

@@ -1,6 +1,14 @@
 import type { Metadata } from 'next';
 import { getAllRecords, TABLES, mapPinsFormula } from '@/lib/airtable';
-import { derivePinStatus, isPinDepositReady, type MapPinStatus } from '@/lib/mapPinStatus';
+import {
+  derivePinStatus,
+  deriveMapStats,
+  isPinDepositReady,
+  isVerifiedRancher,
+  shipsColdChain,
+  type MapPinStatus,
+} from '@/lib/mapPinStatus';
+import { isRequestOnlyRancher } from '@/lib/requestOnlyRanchers';
 import { normalizeImageUrl } from '@/lib/imageUrl';
 import Container from '../components/Container';
 import StickyMobileCTA from '../components/StickyMobileCTA';
@@ -27,10 +35,14 @@ export const metadata: Metadata = {
 // phone, or operator name on non-verified pins (legal + spam concern).
 //
 // Pipeline-aligned status (added so the public map reflects the full
-// onboarding pipeline, not just verified vs prospect). The bucketing itself
+// onboarding pipeline, not just live vs prospect). The bucketing itself
 // lives in lib/mapPinStatus (derivePinStatus) so tests can pin it:
-//   verified       → Verification=Verified + Onboarding Status=Live
-//                    (green pin, public-routable, buyer can reach out)
+//   live           → Onboarding Status=Live OR Verification=Verified — the
+//                    terminal pipeline state (green pin, public-routable,
+//                    buyer can reach out). This is a PROGRESS bucket, not a
+//                    trust verdict: most of it carries no verification stamp,
+//                    which is why the word "verified" comes from the `verified`
+//                    field below and never from this status (2026-08-18).
 //   represented    → Broker self-serve ranch (#628/#630): BuyHalfCow
 //                    represents it and takes deposits for it TODAY. Never ran
 //                    the wizard, never signed anything — all pipeline fields
@@ -86,6 +98,21 @@ export type MapPin = {
   // false the card shows "View ranch →" (they can still browse + contact on
   // the store).
   depositReady: boolean;
+  // ── the three per-ranch facts every public claim on this page rests on ────
+  // Each is derived from that ranch's OWN field, never from its pin bucket.
+  // Before 2026-08-18 the page derived "verified" and "shipping" from the
+  // bucket instead, and both claims were false for most of the green pins.
+  //
+  // `Verification Status = 'Verified'` — the only thing that earns the WORD
+  // "verified" on any surface here. Same predicate as the rancher page's hero
+  // pill, so the map and a ranch's own page cannot contradict each other.
+  verified: boolean;
+  // Cold-Chain Shipping is in this ranch's Fulfillment Types. Blank field ⇒
+  // false: a ranch that never filled it in is not a shipper.
+  shipsColdChain: boolean;
+  // Request-only specialty supply — kept out of aggregate shipping claims
+  // (lib/requestOnlyRanchers; see MapStats.coldChainShippers for the why).
+  requestOnly: boolean;
 };
 
 async function fetchPins(): Promise<MapPin[]> {
@@ -180,38 +207,21 @@ async function fetchPins(): Promise<MapPin[]> {
         fromPrice,
         fromLabel,
         depositReady,
+        verified: isVerifiedRancher(r),
+        shipsColdChain: shipsColdChain(r),
+        requestOnly: isRequestOnlyRancher(r),
       };
     })
     .filter((x): x is MapPin => x !== null);
 }
 
-function deriveStats(pins: MapPin[]) {
-  const verified = pins.filter((p) => p.status === 'verified').length;
-  const represented = pins.filter((p) => p.status === 'represented').length;
-  const onboarding = pins.filter((p) => p.status === 'onboarding').length;
-  const selfSubmitted = pins.filter((p) => p.status === 'self-submitted').length;
-  const prospects = pins.filter((p) => p.status === 'prospect').length;
-  const states = new Set(pins.map((p) => p.state).filter(Boolean));
-  return {
-    verified,
-    represented,
-    // The number every "shipping today" label uses. Represented ranches
-    // COUNT — a buyer can open the page and put a deposit down right now,
-    // which is exactly what that label promises. No surface labels this
-    // number "verified" (the copy everywhere says "shipping today" /
-    // "taking reservations"); `verified` above stays pure for anything that
-    // ever needs the strict count.
-    shippingToday: verified + represented,
-    onboarding,
-    prospects,
-    selfSubmitted,
-    statesCovered: states.size,
-  };
-}
-
 export default async function MapPage() {
   const pins = await fetchPins();
-  const stats = deriveStats(pins);
+  // Every public number below is derived in lib/mapPinStatus from the pins'
+  // own fields (deposit rail, fulfillment types, verification stamp) — never
+  // from the pin bucket, which is what made the old headline claim that
+  // fourteen pickup-and-delivery ranches were shipping beef.
+  const stats = deriveMapStats(pins);
 
   return (
     <main className="min-h-screen bg-bone text-charcoal">
@@ -227,7 +237,8 @@ export default async function MapPage() {
       <section className="relative">
         <DiscoverMapClient
           pins={pins}
-          shippingTodayCount={stats.shippingToday}
+          reservableCount={stats.reservable}
+          coldChainShipperCount={stats.coldChainShippers}
           statesCovered={stats.statesCovered}
           listSlot={<RancherList pins={pins} />}
         />
@@ -244,21 +255,49 @@ export default async function MapPage() {
               <h2 className="font-serif text-3xl md:text-4xl leading-tight lowercase">
                 a live map of the network
               </h2>
+              {/* The green bucket is a PROGRESS bucket, so this sentence may
+                  describe it only as what it is — live on the platform. It used
+                  to read "taking reservations right now — verified partners and
+                  ranches we represent", which was false twice over: most green
+                  pins carry no verification stamp (see lib/mapPinStatus), and
+                  five of them have no deposit rail at all. */}
               <p className="text-charcoal/80 leading-relaxed">
                 Drop a pin in your state and reserve a quarter, half, or whole direct
-                from the rancher who raised it. Green pins are taking reservations
-                right now — verified partners and ranches we represent — amber and
-                grey show who&rsquo;s coming next.
+                from the rancher who raised it. Green pins are ranches that are live
+                on BuyHalfCow
+                {stats.reservable > 0
+                  ? ` — ${stats.reservable} of them can take your deposit right now`
+                  : ''}
+                ; amber and grey show who&rsquo;s coming next.
               </p>
-              {/* Lead with what a buyer can act on TODAY (verified + states).
-                  Pipeline-vanity counts (onboarding/self-submitted/prospect) are
-                  demoted to a quieter second line so the page sells availability,
-                  not a CRM funnel. */}
+              {/* Lead with what a buyer can act on TODAY. Every number here is
+                  derived from the ranch's own record — a deposit rail, a
+                  verification stamp, a fulfillment type — so none of them can
+                  drift into a claim the data doesn't make. Pipeline-vanity
+                  counts (onboarding/self-submitted/prospect) stay demoted to the
+                  quieter second line so the page sells availability, not a CRM
+                  funnel. */}
               <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2 pt-1">
                 <span className="text-saddle text-sm">
-                  <strong className="text-charcoal text-xl align-baseline">{stats.shippingToday}</strong>{' '}
-                  shipping today
+                  <strong className="text-charcoal text-xl align-baseline">{stats.reservable}</strong>{' '}
+                  taking reservations
                 </span>
+                {stats.coldChainShippers > 0 && (
+                  <span className="text-saddle text-sm">
+                    <strong className="text-charcoal text-xl align-baseline">
+                      {stats.coldChainShippers}
+                    </strong>{' '}
+                    ship cold-chain
+                  </span>
+                )}
+                {stats.verifiedPartners > 0 && (
+                  <span className="text-saddle text-sm">
+                    <strong className="text-charcoal text-xl align-baseline">
+                      {stats.verifiedPartners}
+                    </strong>{' '}
+                    verified partner{stats.verifiedPartners === 1 ? '' : 's'}
+                  </span>
+                )}
                 <span className="text-saddle text-sm">
                   <strong className="text-charcoal text-xl align-baseline">{stats.statesCovered}</strong>{' '}
                   states on the map
@@ -303,7 +342,7 @@ export default async function MapPage() {
       <StickyMobileCTA
         href="/access"
         label="Find a rancher near you"
-        subLabel={`${stats.shippingToday} shipping today · ${stats.statesCovered} states`}
+        subLabel={`${stats.reservable} taking reservations · ${stats.statesCovered} states`}
       />
     </main>
   );

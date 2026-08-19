@@ -40,16 +40,24 @@ const DiscoverMap = dynamic(() => import('./DiscoverMap'), {
 
 export default function DiscoverMapClient({
   pins,
-  shippingTodayCount,
+  reservableCount,
+  coldChainShipperCount,
   statesCovered,
   listSlot,
 }: {
   pins: MapPin[];
-  // verified + represented — everyone a buyer can put a deposit down with
-  // TODAY. Deliberately NOT named "verified": represented (broker self-serve)
-  // ranches count here, and no label this number feeds ever claims
-  // "verified" — they all say "shipping today" / "taking reservations".
-  shippingTodayCount: number;
+  // Green pins whose page will actually render a deposit form — the literal
+  // meaning of "taking reservations", and exactly the set the "Taking
+  // reservations" filter chip shows, so the headline and the map agree.
+  //
+  // This replaced `shippingTodayCount` (= every green pin) on 2026-08-18. That
+  // number fed the h1 "N ranchers shipping beef today" and was wrong twice:
+  // most green ranches ship nothing (they do pickup and/or local delivery),
+  // and five of them have no deposit rail at all.
+  reservableCount: number;
+  // Green pins with Cold-Chain Shipping in their Fulfillment Types, excluding
+  // request-only supply. The only number on this page allowed to say "ship".
+  coldChainShipperCount: number;
   statesCovered: number;
   listSlot?: ReactNode;
 }) {
@@ -66,17 +74,25 @@ export default function DiscoverMapClient({
       <header className="absolute inset-x-0 top-0 z-[1100] flex h-14 items-center gap-3 border-b border-dust/70 bg-bone/90 px-4 backdrop-blur-sm md:h-16 md:px-6">
         <div className="min-w-0 flex-1">
           <h1 className="truncate font-serif text-base leading-tight lowercase md:text-xl">
-            {shippingTodayCount > 0 ? (
+            {reservableCount > 0 ? (
               <>
-                {shippingTodayCount} rancher{shippingTodayCount === 1 ? '' : 's'} shipping beef today
+                {reservableCount} ranch{reservableCount === 1 ? '' : 'es'} taking reservations right
+                now
               </>
             ) : (
               <>every direct-to-consumer rancher in america</>
             )}
           </h1>
+          {/* Sub-line: the map's own size, then the ONE fulfillment fact a
+              national buyer actually needs. Only the positive is claimed — a
+              ranch with a blank Fulfillment Types is neither a shipper nor
+              provably local, so "the rest are pickup" would be its own lie. */}
           <p className="hidden truncate text-[11px] text-saddle sm:block">
             {pins.length} ranch{pins.length === 1 ? '' : 'es'} across {statesCovered} state
-            {statesCovered === 1 ? '' : 's'} — green pins are taking reservations
+            {statesCovered === 1 ? '' : 's'}
+            {coldChainShipperCount > 0
+              ? ` · ${coldChainShipperCount} ship cold-chain`
+              : ' · pickup and local delivery'}
           </p>
         </div>
         <div className="inline-flex shrink-0 border border-dust bg-bone text-xs" role="group" aria-label="View">
